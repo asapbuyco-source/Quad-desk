@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, ChevronDown, Bell } from 'lucide-react';
+import { ChevronDown, Bell } from 'lucide-react';
 import { MarketMetrics } from '../types';
 
 interface HeaderProps {

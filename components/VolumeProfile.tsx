@@ -6,12 +6,10 @@ import {
   YAxis, 
   Tooltip, 
   ResponsiveContainer,
-  Cell,
-  ReferenceLine,
-  Label
+  Cell
 } from 'recharts';
 import { CandleData } from '../types';
-import { AlignHorizontalJustifyStart, Info } from 'lucide-react';
+import { AlignHorizontalJustifyStart } from 'lucide-react';
 
 interface VolumeProfileProps {
   data: CandleData[];

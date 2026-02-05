@@ -4,7 +4,7 @@ import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
 import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist } from '../types';
 import { motion } from 'framer-motion';
-import { TrendingUp, Activity, Terminal } from 'lucide-react';
+import { Terminal } from 'lucide-react';
 
 interface DashboardViewProps {
   metrics: MarketMetrics;
@@ -29,7 +29,7 @@ const item = {
   show: { opacity: 1, y: 0 }
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ metrics, candles, asks, bids, checklist }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist }) => {
   return (
     <motion.div 
       variants={container}

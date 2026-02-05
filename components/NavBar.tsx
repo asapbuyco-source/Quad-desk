@@ -1,6 +1,5 @@
 import React from 'react';
-import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Bell, Wallet, CandlestickChart } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart } from 'lucide-react';
 
 interface NavBarProps {
   activeTab: string;

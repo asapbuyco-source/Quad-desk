@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MOCK_NEWS } from '../constants';
-import { Newspaper, ExternalLink, Clock, Tag, X, Share2, Bookmark } from 'lucide-react';
+import { Newspaper, ExternalLink, Clock, X, Share2, Bookmark } from 'lucide-react';
 import { NewsItem } from '../types';
 
 const IntelView: React.FC = () => {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { OrderBookLevel } from '../types';
 import { ArrowDownUp, Layers } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 
 interface OrderBookProps {
   asks: OrderBookLevel[];
