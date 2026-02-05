@@ -11,10 +11,11 @@ import {
   Brush,
   ReferenceLine,
   Label,
-  ReferenceDot
+  ReferenceDot,
+  ReferenceArea
 } from 'recharts';
 import { CandleData, TradeSignal, PriceLevel } from '../types';
-import { Maximize2, Zap, PanelRight } from 'lucide-react';
+import { Maximize2, Zap, PanelRight, ZoomOut } from 'lucide-react';
 
 interface PriceChartProps {
   data: CandleData[];
@@ -59,8 +60,10 @@ const Candlestick = (props: any) => {
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     const candle = payload.find((p: any) => p.dataKey === 'candleRange')?.payload || payload[0].payload;
+    if (!candle) return null;
+
     return (
-      <div className="bg-[#09090b]/95 backdrop-blur-xl border border-zinc-800 p-3 rounded-lg shadow-2xl z-50">
+      <div className="bg-[#09090b]/95 backdrop-blur-xl border border-zinc-800 p-3 rounded-lg shadow-2xl z-50 pointer-events-none">
         <p className="text-zinc-500 mb-2 font-mono text-[10px] uppercase tracking-wider">{label} UTC</p>
         <div className="space-y-1 text-xs font-mono">
            <div className="flex justify-between gap-4"><span className="text-zinc-500">Price</span> <span className={`font-bold ${candle.close > candle.open ? 'text-trade-bid' : 'text-trade-ask'}`}>{candle.close.toFixed(2)}</span></div>
@@ -68,6 +71,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
            <div className="flex justify-between gap-4"><span className="text-zinc-500">Low</span> <span className="text-zinc-400">{candle.low.toFixed(2)}</span></div>
            <div className="flex justify-between gap-4 border-t border-white/5 pt-1 mt-1"><span className="text-brand-accent">AI Upper</span> <span className="text-zinc-300">{candle.zScoreUpper2.toFixed(2)}</span></div>
            <div className="flex justify-between gap-4"><span className="text-brand-accent">AI Lower</span> <span className="text-zinc-300">{candle.zScoreLower2.toFixed(2)}</span></div>
+           <div className="flex justify-between gap-4"><span className="text-zinc-500">Vol</span> <span className="text-zinc-400">{candle.volume}</span></div>
         </div>
       </div>
     );
@@ -89,6 +93,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const [timeframe, setTimeframe] = useState('1H');
   const timeframes = ['1M', '15M', '1H', '4H', '1D'];
 
+  // Zoom State
+  const [zoomDomain, setZoomDomain] = useState<{ startIndex: number | undefined; endIndex: number | undefined }>({ startIndex: undefined, endIndex: undefined });
+  const [refAreaLeft, setRefAreaLeft] = useState<string | null>(null);
+  const [refAreaRight, setRefAreaRight] = useState<string | null>(null);
+
   const chartData = useMemo(() => {
     return data.map(d => ({
         ...d,
@@ -96,8 +105,40 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }));
   }, [data]);
 
+  const handleZoom = () => {
+    if (refAreaLeft === refAreaRight || refAreaRight === null || refAreaLeft === null) {
+        setRefAreaLeft(null);
+        setRefAreaRight(null);
+        return;
+    }
+
+    // Find indices in the original data
+    let leftIndex = data.findIndex(d => d.time === refAreaLeft);
+    let rightIndex = data.findIndex(d => d.time === refAreaRight);
+
+    // Handle case where time isn't found (shouldn't happen with correct usage)
+    if (leftIndex < 0 || rightIndex < 0) {
+        setRefAreaLeft(null);
+        setRefAreaRight(null);
+        return;
+    }
+
+    if (leftIndex > rightIndex) [leftIndex, rightIndex] = [rightIndex, leftIndex];
+
+    // Apply zoom
+    setZoomDomain({ startIndex: leftIndex, endIndex: rightIndex });
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  };
+
+  const handleZoomOut = () => {
+    setZoomDomain({ startIndex: undefined, endIndex: undefined });
+  };
+
+  const isZoomed = zoomDomain.startIndex !== undefined || zoomDomain.endIndex !== undefined;
+
   return (
-    <div className="w-full h-full flex flex-col relative rounded-xl overflow-hidden bg-[#18181b]/50">
+    <div className="w-full h-full flex flex-col relative rounded-xl overflow-hidden bg-[#18181b]/50 select-none">
         {/* Header Bar */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 gap-4">
             {/* Left: Timeframes */}
@@ -123,6 +164,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
             {/* Right: Status & Actions */}
             <div className="flex items-center gap-3 shrink-0">
+                 {isZoomed && (
+                     <button 
+                        onClick={handleZoomOut}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-brand-accent/20 hover:bg-brand-accent/30 text-brand-accent rounded-full text-[10px] font-bold transition-colors animate-in fade-in zoom-in duration-200"
+                     >
+                        <ZoomOut size={12} />
+                        RESET ZOOM
+                     </button>
+                 )}
+
                  <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-brand-accent/10 border border-brand-accent/20 rounded-full">
                     <Zap size={12} className="text-brand-accent" />
                     <span className="text-[10px] font-bold text-brand-accent uppercase tracking-wide">Sentinel Active</span>
@@ -156,7 +207,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       <div className="flex-1 w-full min-h-0 relative">
         <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 20, right: 60, left: -10, bottom: 5 }}>
+            <ComposedChart 
+                data={chartData} 
+                margin={{ top: 20, right: 60, left: -10, bottom: 5 }}
+                onMouseDown={(e) => e && e.activeLabel && setRefAreaLeft(e.activeLabel)}
+                onMouseMove={(e) => refAreaLeft && e && e.activeLabel && setRefAreaRight(e.activeLabel)}
+                onMouseUp={handleZoom}
+                onMouseLeave={() => { if(refAreaLeft) { setRefAreaLeft(null); setRefAreaRight(null); } }}
+            >
             <defs>
                 <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
                     <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
@@ -185,7 +243,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 axisLine={false} 
                 width={60}
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#3f3f46', strokeWidth: 1, strokeDasharray: '4 4' }} />
+            <Tooltip 
+                content={<CustomTooltip />} 
+                cursor={{ stroke: '#3f3f46', strokeWidth: 1, strokeDasharray: '4 4' }} 
+                isAnimationActive={false}
+            />
             
             {/* AI Auto-Drawn Lines (Z-Score Bands) */}
             {showZScore && (
@@ -240,6 +302,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 isAnimationActive={false} 
             />
 
+            {/* Zoom Selection Visualization */}
+            { (refAreaLeft && refAreaRight) ? (
+                <ReferenceArea 
+                    x1={refAreaLeft} 
+                    x2={refAreaRight} 
+                    strokeOpacity={0.3} 
+                    fill="#3b82f6" 
+                    fillOpacity={0.1} 
+                />
+            ) : null }
+
             <Brush 
                 dataKey="time" 
                 height={24} 
@@ -248,6 +321,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 tickFormatter={() => ''}
                 travellerWidth={10}
                 className="opacity-50 hover:opacity-100 transition-opacity"
+                // Sync Brush with Zoom State
+                startIndex={zoomDomain.startIndex}
+                endIndex={zoomDomain.endIndex}
+                onChange={(e) => setZoomDomain({ startIndex: e.startIndex, endIndex: e.endIndex })}
             />
             </ComposedChart>
         </ResponsiveContainer>
