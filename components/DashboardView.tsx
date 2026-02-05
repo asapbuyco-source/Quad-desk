@@ -60,12 +60,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, candles, asks, b
                 <span className="text-xs font-bold uppercase">System Logs</span>
             </div>
             <div className="flex-1 overflow-y-auto font-mono text-[10px] text-slate-500 space-y-1">
-                <p>> Connecting to institutional gateway...</p>
-                <p className="text-trade-bid">> [SUCCESS] Feed active: 12ms latency</p>
-                <p>> AI Model [SENTINEL-X] loaded.</p>
-                <p>> Monitoring order flow for icebergs...</p>
-                <p className="text-trade-warn">> [WARN] Volatility spike detected in Asian session.</p>
-                <p>> Adjusting risk parameters...</p>
+                <p>&gt; Connecting to institutional gateway...</p>
+                <p className="text-trade-bid">&gt; [SUCCESS] Feed active: 12ms latency</p>
+                <p>&gt; AI Model [SENTINEL-X] loaded.</p>
+                <p>&gt; Monitoring order flow for icebergs...</p>
+                <p className="text-trade-warn">&gt; [WARN] Volatility spike detected in Asian session.</p>
+                <p>&gt; Adjusting risk parameters...</p>
             </div>
         </div>
       </motion.div>
