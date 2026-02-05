@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { OrderBookLevel } from '../types';
-import { ArrowDownUp, Layers, Magnet } from 'lucide-react';
+import { ArrowDownUp, Magnet } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 
 interface OrderBookProps {

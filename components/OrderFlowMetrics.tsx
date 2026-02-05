@@ -1,6 +1,6 @@
 import React from 'react';
 import { MarketMetrics, HeatmapItem } from '../types';
-import { Activity, Zap, Skull, TrendingUp, Anchor } from 'lucide-react';
+import { Activity, Skull, TrendingUp, Anchor } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface OrderFlowMetricsProps {
@@ -11,7 +11,6 @@ const WhaleHunterWidget: React.FC<{ instCVD: number, retailSentiment: number }> 
     // Logic: Trap exists if Institutions are Buying (CVD > 0) AND Retail is Buying (> 65%)
     // OR Institutions Selling (CVD < 0) AND Retail is Selling (< 35%)
     const isTrap = (instCVD > 10 && retailSentiment > 70) || (instCVD < -10 && retailSentiment < 30);
-    const trapType = instCVD > 0 ? "LONG TRAP" : "SHORT TRAP";
 
     return (
         <div className="fintech-card p-4 relative overflow-hidden flex flex-col justify-between h-full group">
