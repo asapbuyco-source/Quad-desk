@@ -27,13 +27,28 @@ const App: React.FC = () => {
       const delta = (Math.random() - 0.5) * 0.5;
       const newPrice = metrics.price + delta;
       
-      setMetrics(prev => ({
-        ...prev,
-        price: newPrice,
-        change: prev.change + (Math.random() - 0.5) * 0.05,
-        ofi: Math.max(-500, Math.min(500, prev.ofi + Math.floor((Math.random() - 0.5) * 50))),
-        toxicity: Math.min(100, Math.max(0, prev.toxicity + Math.floor((Math.random() - 0.5) * 5)))
-      }));
+      setMetrics(prev => {
+          // Simulate Heatmap Flux
+          const newHeatmap = prev.heatmap.map(item => ({
+              ...item,
+              zScore: item.zScore + (Math.random() - 0.5) * 0.2
+          }));
+          
+          // Simulate Institutional vs Retail Divergence for Whale Hunter Widget
+          const newInstCVD = Math.max(-100, Math.min(100, prev.institutionalCVD + (Math.random() - 0.5) * 10));
+          const newRetail = Math.max(0, Math.min(100, prev.retailSentiment + (Math.random() - 0.5) * 5));
+
+          return {
+            ...prev,
+            price: newPrice,
+            change: prev.change + (Math.random() - 0.5) * 0.05,
+            ofi: Math.max(-500, Math.min(500, prev.ofi + Math.floor((Math.random() - 0.5) * 50))),
+            toxicity: Math.min(100, Math.max(0, prev.toxicity + Math.floor((Math.random() - 0.5) * 5))),
+            heatmap: newHeatmap,
+            institutionalCVD: newInstCVD,
+            retailSentiment: newRetail
+          };
+      });
 
       // 2. Update Candle
       setCandles(prev => {
@@ -55,7 +70,7 @@ const App: React.FC = () => {
       // 3. Jitter Book
       const jitterBook = (levels: OrderBookLevel[]) => levels.map(l => ({
           ...l,
-          size: Math.max(1, l.size + Math.floor((Math.random() - 0.5) * 10)),
+          size: Math.max(1, l.size + Math.floor((Math.random() - 0.5) * 20)),
       }));
       setAsks(prev => jitterBook(prev));
       setBids(prev => jitterBook(prev));

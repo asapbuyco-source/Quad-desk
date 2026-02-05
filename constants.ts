@@ -10,9 +10,15 @@ export const MOCK_METRICS: MarketMetrics = {
   safetyStatus: "CB: ACTIVE",
   regime: "FAT-TAIL",
   retailSentiment: 78,
+  institutionalCVD: 65, // Positive means buying
   zScore: -2.6,
   toxicity: 92,
-  ofi: 450
+  ofi: 450,
+  heatmap: [
+    { pair: "XAU/USD", zScore: -2.6, price: 2342.50 },
+    { pair: "AUD/JPY", zScore: 0.4, price: 98.20 },
+    { pair: "EUR/USD", zScore: 2.1, price: 1.0850 },
+  ]
 };
 
 export const CHECKLIST_ITEMS: SentinelChecklist[] = [

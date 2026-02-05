@@ -1,25 +1,24 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { OrderBookLevel } from '../types';
-import { ArrowDownUp, Layers } from 'lucide-react';
-import { AnimatePresence } from 'framer-motion';
+import { ArrowDownUp, Layers, Magnet } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 
 interface OrderBookProps {
   asks: OrderBookLevel[];
   bids: OrderBookLevel[];
 }
 
-const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid' }> = ({ level, type }) => {
-  const depthWidth = Math.min((level.size / 600) * 100, 100);
+const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; isMagnet: boolean; maxVol: number }> = ({ level, type, isMagnet, maxVol }) => {
+  const depthWidth = Math.min((level.size / maxVol) * 100, 100);
   const isBid = type === 'bid';
-  const isWall = level.isLiquidityWall;
 
   return (
     <div className={`
         relative flex justify-between items-center text-xs font-mono py-1.5 px-4 transition-all cursor-pointer group
-        ${isWall
+        ${isMagnet
             ? (isBid
-                ? 'bg-emerald-500/10 border-y border-emerald-500/30 my-1 shadow-[0_0_15px_rgba(16,185,129,0.1)] z-10'
-                : 'bg-rose-500/10 border-y border-rose-500/30 my-1 shadow-[0_0_15px_rgba(244,63,94,0.1)] z-10')
+                ? 'bg-emerald-500/10 border-y border-emerald-500/30 my-1 shadow-[0_0_15px_rgba(16,185,129,0.1)] z-10 scale-[1.02]'
+                : 'bg-rose-500/10 border-y border-rose-500/30 my-1 shadow-[0_0_15px_rgba(244,63,94,0.1)] z-10 scale-[1.02]')
             : 'hover:bg-white/5 border-y border-transparent'
         }
     `}>
@@ -29,8 +28,8 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid' }> = ({ le
         style={{ width: `${depthWidth}%` }}
       />
       
-      {/* Wall Glow Effects */}
-      {isWall && (
+      {/* Magnet Glow Effects */}
+      {isMagnet && (
           <>
             <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${isBid ? 'bg-emerald-400' : 'bg-rose-500'} shadow-[0_0_8px_currentColor] animate-pulse`} />
             <div className={`absolute right-0 top-0 bottom-0 w-0.5 ${isBid ? 'bg-emerald-400' : 'bg-rose-500'} shadow-[0_0_8px_currentColor] animate-pulse`} />
@@ -38,28 +37,30 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid' }> = ({ le
       )}
       
       {/* Price */}
-      <span className={`z-10 font-bold tracking-tight ${isBid ? 'text-trade-bid' : 'text-trade-ask'} ${isWall ? 'text-sm' : ''}`}>
+      <span className={`z-10 font-bold tracking-tight ${isBid ? 'text-trade-bid' : 'text-trade-ask'} ${isMagnet ? 'text-sm' : ''}`}>
         {level.price.toFixed(2)}
       </span>
       
-      {/* Liquidity Wall Indicator */}
-      {isWall && (
+      {/* Magnet Indicator */}
+      {isMagnet && (
         <div className="absolute left-1/2 -translate-x-1/2 z-20">
-             <div className={`
-                flex items-center gap-1.5 px-3 py-0.5 rounded text-[9px] font-black tracking-[0.2em] uppercase border backdrop-blur-md shadow-xl transform group-hover:scale-105 transition-transform
+             <motion.div 
+                initial={{ scale: 0.8 }} animate={{ scale: 1 }}
+                className={`
+                flex items-center gap-1.5 px-3 py-0.5 rounded text-[9px] font-black tracking-[0.2em] uppercase border backdrop-blur-md shadow-xl
                 ${isBid
                     ? 'bg-[#022c22] border-emerald-500/50 text-emerald-400 shadow-emerald-900/50'
                     : 'bg-[#4c0519] border-rose-500/50 text-rose-400 shadow-rose-900/50'
                 }
              `}>
-                <Layers size={10} className="animate-pulse" strokeWidth={3} />
-                LIQ WALL
-             </div>
+                <Magnet size={10} className="animate-bounce" strokeWidth={3} />
+                MAGNET
+             </motion.div>
         </div>
       )}
 
       {/* Size */}
-      <span className={`z-10 transition-colors ${isWall ? 'text-white font-bold text-sm drop-shadow-md' : 'text-slate-500 group-hover:text-white'}`}>
+      <span className={`z-10 transition-colors ${isMagnet ? 'text-white font-bold text-sm drop-shadow-md' : 'text-slate-500 group-hover:text-white'}`}>
         {level.size.toLocaleString()}
       </span>
     </div>
@@ -67,12 +68,21 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid' }> = ({ le
 };
 
 const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
+    
+  // Calculate average volume to determine "Magnets" (3x Avg)
+  const { avgVol, maxVol } = useMemo(() => {
+    const allLevels = [...asks, ...bids];
+    const total = allLevels.reduce((acc, curr) => acc + curr.size, 0);
+    const max = Math.max(...allLevels.map(l => l.size));
+    return { avgVol: total / allLevels.length, maxVol: max };
+  }, [asks, bids]);
+
   return (
     <div className="fintech-card h-full flex flex-col overflow-hidden">
       <div className="px-5 py-4 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
         <h3 className="text-sm font-bold text-white tracking-wide font-sans flex items-center gap-2">
             <ArrowDownUp size={16} className="text-brand-accent" />
-            Order Book
+            DOM Ladder
         </h3>
         <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -91,7 +101,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
         <div className="flex flex-col-reverse">
             <AnimatePresence>
             {asks.map((ask, i) => (
-                <OrderRow key={`ask-${i}`} level={ask} type="ask" />
+                <OrderRow key={`ask-${i}`} level={ask} type="ask" isMagnet={ask.size > avgVol * 3} maxVol={maxVol} />
             ))}
             </AnimatePresence>
         </div>
@@ -106,7 +116,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
         <div>
             <AnimatePresence>
             {bids.map((bid, i) => (
-                <OrderRow key={`bid-${i}`} level={bid} type="bid" />
+                <OrderRow key={`bid-${i}`} level={bid} type="bid" isMagnet={bid.size > avgVol * 3} maxVol={maxVol} />
             ))}
             </AnimatePresence>
         </div>

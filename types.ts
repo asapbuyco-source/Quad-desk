@@ -2,7 +2,7 @@ export interface OrderBookLevel {
   price: number;
   size: number;
   total: number;
-  isLiquidityWall?: boolean;
+  isLiquidityWall?: boolean; // Legacy, we will calculate dynamic magnets now
 }
 
 export interface CandleData {
@@ -25,6 +25,12 @@ export interface SentinelChecklist {
   value: string;
 }
 
+export interface HeatmapItem {
+  pair: string;
+  zScore: number;
+  price: number;
+}
+
 export interface MarketMetrics {
   pair: string;
   price: number;
@@ -33,9 +39,11 @@ export interface MarketMetrics {
   safetyStatus: string;
   regime: string;
   retailSentiment: number; // 0-100 (Long %)
+  institutionalCVD: number; // Normalized -100 to 100
   zScore: number;
   toxicity: number; // 0-100
   ofi: number;
+  heatmap: HeatmapItem[];
 }
 
 export interface NewsItem {
