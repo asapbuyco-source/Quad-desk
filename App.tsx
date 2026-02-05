@@ -10,6 +10,8 @@ import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, CHECKLIST_ITEMS, MOCK_CANDLES, MOCK
 import { CandleData, OrderBookLevel, MarketMetrics } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 
+const MotionDiv = motion.div as any;
+
 const App: React.FC = () => {
   const [hasEntered, setHasEntered] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -84,15 +86,15 @@ const App: React.FC = () => {
     <div className="h-screen w-screen bg-transparent text-slate-200 font-sans overflow-hidden">
       <AnimatePresence mode='wait'>
         {!hasEntered ? (
-            <motion.div
+            <MotionDiv
                 key="landing"
                 exit={{ opacity: 0, y: -50, transition: { duration: 0.5 } }}
                 className="absolute inset-0 z-50"
             >
                 <LandingPage onEnter={() => setHasEntered(true)} />
-            </motion.div>
+            </MotionDiv>
         ) : (
-            <motion.div 
+            <MotionDiv 
                 key="app"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -125,7 +127,7 @@ const App: React.FC = () => {
                         {activeTab === 'intel' && <IntelView />}
                     </main>
                 </div>
-            </motion.div>
+            </MotionDiv>
         )}
       </AnimatePresence>
     </div>

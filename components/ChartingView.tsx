@@ -4,6 +4,8 @@ import VolumeProfile from './VolumeProfile';
 import { CandleData, TradeSignal, PriceLevel } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const MotionDiv = motion.div as any;
+
 interface ChartingViewProps {
   candles: CandleData[];
   signals: TradeSignal[];
@@ -23,7 +25,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels })
   };
 
   return (
-    <motion.div 
+    <MotionDiv 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="h-full w-full p-0 lg:p-2 flex flex-col"
@@ -89,7 +91,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels })
         {/* Side Panel: Volume Profile */}
         <AnimatePresence>
             {layers.volumeProfile && (
-                <motion.div 
+                <MotionDiv 
                     initial={{ width: 0, opacity: 0 }}
                     animate={{ width: 280, opacity: 1 }}
                     exit={{ width: 0, opacity: 0 }}
@@ -97,11 +99,11 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels })
                     className="h-full shrink-0 hidden md:block"
                 >
                      <VolumeProfile data={candles} />
-                </motion.div>
+                </MotionDiv>
             )}
         </AnimatePresence>
       </div>
-    </motion.div>
+    </MotionDiv>
   );
 };
 

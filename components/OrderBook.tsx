@@ -3,6 +3,8 @@ import { OrderBookLevel } from '../types';
 import { ArrowDownUp, Magnet } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 
+const MotionDiv = motion.div as any;
+
 interface OrderBookProps {
   asks: OrderBookLevel[];
   bids: OrderBookLevel[];
@@ -44,7 +46,7 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; isMagnet:
       {/* Magnet Indicator */}
       {isMagnet && (
         <div className="absolute left-1/2 -translate-x-1/2 z-20">
-             <motion.div 
+             <MotionDiv 
                 initial={{ scale: 0.8 }} animate={{ scale: 1 }}
                 className={`
                 flex items-center gap-1.5 px-3 py-0.5 rounded text-[9px] font-black tracking-[0.2em] uppercase border backdrop-blur-md shadow-xl
@@ -55,7 +57,7 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; isMagnet:
              `}>
                 <Magnet size={10} className="animate-bounce" strokeWidth={3} />
                 MAGNET
-             </motion.div>
+             </MotionDiv>
         </div>
       )}
 

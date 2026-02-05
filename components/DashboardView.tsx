@@ -6,6 +6,8 @@ import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist } from '..
 import { motion } from 'framer-motion';
 import { Terminal } from 'lucide-react';
 
+const MotionDiv = motion.div as any;
+
 interface DashboardViewProps {
   metrics: MarketMetrics;
   candles: CandleData[];
@@ -31,24 +33,24 @@ const item = {
 
 const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist }) => {
   return (
-    <motion.div 
+    <MotionDiv 
       variants={container}
       initial="hidden"
       animate="show"
       className="flex flex-col gap-6 h-full lg:grid lg:grid-cols-12 lg:grid-rows-12 lg:h-full overflow-y-auto lg:overflow-hidden pb-24 lg:pb-0 px-2 lg:px-0"
     >
       {/* Top Row: Metrics Overview - Now prominent at the top */}
-      <motion.div variants={item} className="order-1 lg:col-span-12 lg:row-span-4 shrink-0">
+      <MotionDiv variants={item} className="order-1 lg:col-span-12 lg:row-span-4 shrink-0">
          <OrderFlowMetrics metrics={metrics} />
-      </motion.div>
+      </MotionDiv>
 
       {/* Bottom Left: Order Book - Expanded for better visibility */}
-      <motion.div variants={item} className="order-2 lg:col-span-8 lg:row-span-8 h-[500px] lg:h-full shrink-0">
+      <MotionDiv variants={item} className="order-2 lg:col-span-8 lg:row-span-8 h-[500px] lg:h-full shrink-0">
         <OrderBook asks={asks} bids={bids} />
-      </motion.div>
+      </MotionDiv>
 
       {/* Bottom Right: Sentinel & System Status */}
-      <motion.div variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
+      <MotionDiv variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
         <div className="flex-1">
              <SentinelPanel checklist={checklist} />
         </div>
@@ -68,8 +70,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
                 <p>&gt; Adjusting risk parameters...</p>
             </div>
         </div>
-      </motion.div>
-    </motion.div>
+      </MotionDiv>
+    </MotionDiv>
   );
 };
 

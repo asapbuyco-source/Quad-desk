@@ -3,6 +3,8 @@ import { MarketMetrics, HeatmapItem } from '../types';
 import { Activity, Skull, TrendingUp, Anchor } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+const MotionDiv = motion.div as any;
+
 interface OrderFlowMetricsProps {
   metrics: MarketMetrics;
 }
@@ -23,14 +25,14 @@ const WhaleHunterWidget: React.FC<{ instCVD: number, retailSentiment: number }> 
                     <span className="text-xs text-slate-500 font-mono mt-0.5">Inst. vs Retail Delta</span>
                 </div>
                 {isTrap && (
-                    <motion.div 
+                    <MotionDiv 
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ repeat: Infinity, duration: 1.5, repeatType: "reverse" }}
                         className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-amber-500 text-[9px] font-black uppercase tracking-wider shadow-[0_0_10px_rgba(245,158,11,0.3)]"
                     >
                         ⚠ LIQUIDITY GRAB
-                    </motion.div>
+                    </MotionDiv>
                 )}
             </div>
 
@@ -46,7 +48,7 @@ const WhaleHunterWidget: React.FC<{ instCVD: number, retailSentiment: number }> 
                     <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden flex">
                         <div className="w-1/2 flex justify-end">
                             {instCVD < 0 && (
-                                <motion.div 
+                                <MotionDiv 
                                     initial={{ width: 0 }} animate={{ width: `${Math.min(Math.abs(instCVD), 100)}%` }}
                                     className="h-full bg-trade-ask rounded-l-full" 
                                 />
@@ -54,7 +56,7 @@ const WhaleHunterWidget: React.FC<{ instCVD: number, retailSentiment: number }> 
                         </div>
                         <div className="w-1/2 flex justify-start">
                              {instCVD > 0 && (
-                                <motion.div 
+                                <MotionDiv 
                                     initial={{ width: 0 }} animate={{ width: `${Math.min(Math.abs(instCVD), 100)}%` }}
                                     className="h-full bg-trade-bid rounded-r-full" 
                                 />
@@ -70,7 +72,7 @@ const WhaleHunterWidget: React.FC<{ instCVD: number, retailSentiment: number }> 
                         <span className="text-white">{retailSentiment}% LONG</span>
                     </div>
                     <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden relative">
-                        <motion.div 
+                        <MotionDiv 
                             initial={{ width: "50%" }} 
                             animate={{ width: `${retailSentiment}%` }}
                             className="absolute top-0 bottom-0 left-0 bg-brand-accent"
@@ -157,7 +159,7 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
             <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden relative">
                  <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/20 z-20"></div>
                  {metrics.ofi !== 0 && (
-                     <motion.div 
+                     <MotionDiv 
                         animate={{ 
                             left: metrics.ofi > 0 ? '50%' : 'auto',
                             right: metrics.ofi < 0 ? '50%' : 'auto',

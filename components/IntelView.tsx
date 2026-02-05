@@ -4,6 +4,8 @@ import { MOCK_NEWS } from '../constants';
 import { Newspaper, ExternalLink, Clock, X, Share2, Bookmark } from 'lucide-react';
 import { NewsItem } from '../types';
 
+const MotionDiv = motion.div as any;
+
 const IntelView: React.FC = () => {
   const [sentimentFilter, setSentimentFilter] = useState<'all' | 'bullish' | 'bearish' | 'neutral'>('all');
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
@@ -49,7 +51,7 @@ const IntelView: React.FC = () => {
       <div className="flex-1 overflow-y-auto pb-20 lg:pb-0">
         <AnimatePresence mode='popLayout'>
         {filteredNews.map((item, idx) => (
-            <motion.div 
+            <MotionDiv 
               key={item.id}
               layoutId={`news-card-${item.id}`}
               initial={{ opacity: 0, y: 20 }}
@@ -90,7 +92,7 @@ const IntelView: React.FC = () => {
                     Read Report <ExternalLink size={12} />
                  </span>
               </div>
-            </motion.div>
+            </MotionDiv>
           ))}
         </AnimatePresence>
       </div>
@@ -100,7 +102,7 @@ const IntelView: React.FC = () => {
         {selectedNews && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                 {/* Backdrop */}
-                <motion.div 
+                <MotionDiv 
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -109,13 +111,13 @@ const IntelView: React.FC = () => {
                 />
 
                 {/* Modal Card */}
-                <motion.div 
+                <MotionDiv 
                     layoutId={`news-card-${selectedNews.id}`}
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.95, opacity: 0 }}
                     className="relative w-full max-w-2xl bg-[#09090b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
                 >
                     {/* Header Image/Banner Area */}
                     <div className="h-32 bg-gradient-to-br from-brand-accent/20 to-purple-900/20 flex items-center justify-center relative p-6">
@@ -184,7 +186,7 @@ const IntelView: React.FC = () => {
                             </button>
                         </div>
                     </div>
-                </motion.div>
+                </MotionDiv>
             </div>
         )}
       </AnimatePresence>

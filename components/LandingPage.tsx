@@ -1,6 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
-import { Hexagon, Activity, ArrowRight, Lock, Terminal, Cpu, Shield, Globe, Zap, BarChart3, Fingerprint, ChevronRight } from 'lucide-react';
+import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight } from 'lucide-react';
+
+const MotionDiv = motion.div as any;
+const MotionHeader = motion.header as any;
+const MotionH1 = motion.h1 as any;
+const MotionP = motion.p as any;
 
 interface LandingPageProps {
   onEnter: () => void;
@@ -12,7 +17,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   const { scrollY } = useScroll();
   
   // Parallax effects
-  const y1 = useTransform(scrollY, [0, 500], [0, 200]);
   const y2 = useTransform(scrollY, [0, 500], [0, -150]);
   const opacity = useTransform(scrollY, [0, 300], [1, 0]);
 
@@ -44,7 +48,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
       
       <AnimatePresence mode="wait">
       {!isInitializing ? (
-          <motion.div 
+          <MotionDiv 
             key="hero"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -53,7 +57,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             className="relative z-10 w-full"
           >
             {/* --- Navigation / Header --- */}
-            <motion.header 
+            <MotionHeader 
                 initial={{ y: -20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.5 }}
@@ -74,18 +78,18 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 >
                     Launch Terminal
                 </button>
-            </motion.header>
+            </MotionHeader>
 
             {/* --- Hero Section --- */}
             <section className="min-h-screen flex flex-col items-center justify-center pt-32 pb-20 px-6 relative">
                 
                 {/* Floating Elements */}
-                <motion.div style={{ y: y2 }} className="absolute top-1/4 left-[10%] hidden lg:block opacity-20">
+                <MotionDiv style={{ y: y2 }} className="absolute top-1/4 left-[10%] hidden lg:block opacity-20">
                      <Globe size={120} strokeWidth={0.5} className="text-brand-accent animate-[spin_60s_linear_infinite]" />
-                </motion.div>
+                </MotionDiv>
 
                 {/* Status Pill */}
-                <motion.div
+                <MotionDiv
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.2 }}
@@ -99,19 +103,19 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     <span className="group-hover:text-white transition-colors">SYSTEM STATUS: OPERATIONAL</span>
                     <span className="text-zinc-600">|</span>
                     <span className="text-brand-accent">V 2.4.0</span>
-                </motion.div>
+                </MotionDiv>
                 
                 {/* Main Title */}
                 <div className="space-y-4 mb-10 relative text-center z-20">
-                    <motion.h1 
+                    <MotionH1 
                         initial={{ y: 20, opacity: 0, letterSpacing: "-0.05em" }}
                         animate={{ y: 0, opacity: 1, letterSpacing: "-0.02em" }}
                         transition={{ delay: 0.3, duration: 0.8 }}
                         className="text-6xl md:text-8xl lg:text-9xl font-bold text-white tracking-tighter leading-[0.9]"
                     >
                         QUANT DESK
-                    </motion.h1>
-                    <motion.div 
+                    </MotionH1>
+                    <MotionDiv 
                         initial={{ scaleX: 0 }}
                         animate={{ scaleX: 1 }}
                         transition={{ delay: 0.8, duration: 1.2, ease: "circOut" }}
@@ -119,7 +123,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     />
                 </div>
 
-                <motion.p
+                <MotionP
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.5, duration: 0.8 }}
@@ -127,10 +131,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 >
                     Institutional-grade terminal for the <span className="text-white font-medium">post-latency era</span>. 
                     Real-time order flow analytics, Bayesian risk modeling, and sentinel logic.
-                </motion.p>
+                </MotionP>
 
                 {/* Primary CTA */}
-                <motion.div
+                <MotionDiv
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     whileHover={{ scale: 1.05 }}
@@ -148,20 +152,20 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         </div>
                         <div className="absolute inset-0 bg-gradient-to-r from-brand-accent/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500 ease-in-out"></div>
                     </button>
-                </motion.div>
+                </MotionDiv>
 
                 {/* Scroll Indicator */}
-                <motion.div 
+                <MotionDiv 
                     style={{ opacity }}
                     className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
                 >
                     <span className="text-[10px] text-zinc-600 uppercase tracking-widest">Scroll to Explore</span>
-                    <motion.div 
+                    <MotionDiv 
                         animate={{ y: [0, 5, 0] }}
                         transition={{ repeat: Infinity, duration: 2 }}
                         className="w-px h-8 bg-gradient-to-b from-zinc-600 to-transparent" 
                     />
-                </motion.div>
+                </MotionDiv>
             </section>
 
             {/* --- Infinite Ticker --- */}
@@ -184,7 +188,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             {/* --- Bento Grid Features --- */}
             <section className="py-32 px-6 relative z-10">
                 <div className="max-w-7xl mx-auto">
-                    <motion.div 
+                    <MotionDiv 
                         initial={{ opacity: 0, y: 50 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
@@ -192,11 +196,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     >
                         <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Market Structure <span className="text-brand-accent">Decoded</span>.</h2>
                         <p className="text-zinc-400 max-w-xl text-lg">Our proprietary engine processes millions of order book updates per second to reveal the liquidity landscape.</p>
-                    </motion.div>
+                    </MotionDiv>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-auto md:h-[600px]">
                         {/* Large Card Left */}
-                        <motion.div 
+                        <MotionDiv 
                             initial={{ opacity: 0, x: -50 }}
                             whileInView={{ opacity: 1, x: 0 }}
                             viewport={{ once: true }}
@@ -220,7 +224,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                 </div>
                                 <div className="flex items-end gap-1 h-24 w-full">
                                     {[40, 60, 30, 80, 50, 90, 20, 40, 70, 45, 80, 95].map((h, i) => (
-                                        <motion.div 
+                                        <MotionDiv 
                                             key={i}
                                             initial={{ height: 0 }}
                                             whileInView={{ height: `${h}%` }}
@@ -230,10 +234,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                     ))}
                                 </div>
                             </div>
-                        </motion.div>
+                        </MotionDiv>
 
                         {/* Tall Card Right */}
-                        <motion.div 
+                        <MotionDiv 
                              initial={{ opacity: 0, x: 50 }}
                              whileInView={{ opacity: 1, x: 0 }}
                              viewport={{ once: true }}
@@ -258,10 +262,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                     </div>
                                 ))}
                             </div>
-                        </motion.div>
+                        </MotionDiv>
 
                         {/* Bottom Wide Card */}
-                        <motion.div 
+                        <MotionDiv 
                             initial={{ opacity: 0, y: 50 }}
                             whileInView={{ opacity: 1, y: 0 }}
                             viewport={{ once: true }}
@@ -287,7 +291,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                     <div className="text-xs text-zinc-500 uppercase tracking-wider">Uptime</div>
                                 </div>
                             </div>
-                        </motion.div>
+                        </MotionDiv>
                     </div>
                 </div>
             </section>
@@ -299,7 +303,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     <p className="text-zinc-400">A unified interface for alpha generation.</p>
                 </div>
                 
-                <motion.div 
+                <MotionDiv 
                     initial={{ rotateX: 20, scale: 0.9, opacity: 0 }}
                     whileInView={{ rotateX: 0, scale: 1, opacity: 1 }}
                     transition={{ duration: 1.2, ease: "easeOut" }}
@@ -331,7 +335,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                              </div>
                         </div>
                     </div>
-                </motion.div>
+                </MotionDiv>
              </section>
 
             {/* --- Footer --- */}
@@ -352,9 +356,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 </div>
             </footer>
 
-          </motion.div>
+          </MotionDiv>
       ) : (
-          <motion.div 
+          <MotionDiv 
             key="loader"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -362,7 +366,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-8 bg-[#050505]"
           >
               <div className="w-64 h-1 bg-zinc-900 rounded-full overflow-hidden relative">
-                  <motion.div 
+                  <MotionDiv 
                     className="absolute inset-y-0 left-0 bg-white"
                     initial={{ width: "0%" }}
                     animate={{ width: `${loadingProgress}%` }}
@@ -384,7 +388,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                   <span className={loadingProgress > 60 ? "text-emerald-500" : "opacity-0"}>✓ Connecting to dark pools...</span>
                   <span className={loadingProgress > 90 ? "text-emerald-500" : "opacity-0"}>✓ Access granted</span>
               </div>
-          </motion.div>
+          </MotionDiv>
       )}
       </AnimatePresence>
     </div>

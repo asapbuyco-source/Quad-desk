@@ -2,6 +2,8 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Brush } from 'recharts';
 
+const MotionDiv = motion.div as any;
+
 const data = [
   { name: '09:00', uv: 4000, pv: 2400, amt: 2400 },
   { name: '10:00', uv: 3000, pv: 1398, amt: 2210 },
@@ -31,7 +33,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 const AnalyticsView: React.FC = () => {
   return (
-    <motion.div 
+    <MotionDiv 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="p-4 h-full overflow-y-auto pb-24 lg:pb-0"
@@ -110,7 +112,7 @@ const AnalyticsView: React.FC = () => {
         </div>
         
       </div>
-    </motion.div>
+    </MotionDiv>
   );
 };
 
