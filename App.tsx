@@ -5,6 +5,7 @@ import DashboardView from './components/DashboardView';
 import AnalyticsView from './components/AnalyticsView';
 import IntelView from './components/IntelView';
 import ChartingView from './components/ChartingView';
+import GuideView from './components/GuideView';
 import LandingPage from './components/LandingPage';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, CHECKLIST_ITEMS, MOCK_LEVELS } from './constants';
 import { CandleData, OrderBookLevel, MarketMetrics, TradeSignal, AiScanResult, PriceLevel } from './types';
@@ -479,6 +480,7 @@ const App: React.FC = () => {
                         )}
                         {activeTab === 'analytics' && <AnalyticsView />}
                         {activeTab === 'intel' && <IntelView />}
+                        {activeTab === 'guide' && <GuideView />}
                     </main>
 
                     {/* Circuit Breaker Overlay */}

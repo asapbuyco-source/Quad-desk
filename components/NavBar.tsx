@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart } from 'lucide-react';
+import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart, BookOpen } from 'lucide-react';
 
 interface NavBarProps {
   activeTab: string;
@@ -12,6 +12,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'charting', icon: CandlestickChart, label: 'Chart' },
     { id: 'analytics', icon: BarChart2, label: 'Data' },
     { id: 'intel', icon: Radio, label: 'Intel' },
+    { id: 'guide', icon: BookOpen, label: 'Guide' },
   ];
 
   return (
@@ -30,7 +31,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  relative flex flex-col items-center justify-center gap-1 w-full aspect-square rounded-xl transition-all duration-300
+                  relative flex flex-col items-center justify-center gap-1 w-full aspect-square rounded-xl transition-all duration-300 group
                   ${isActive ? 'bg-brand-accent shadow-[0_0_20px_rgba(59,130,246,0.4)]' : 'hover:bg-white/5 text-slate-400'}
                 `}
               >
@@ -39,6 +40,11 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
                   strokeWidth={2}
                   className={isActive ? 'text-white' : 'text-slate-400'} 
                 />
+                
+                {/* Tooltip */}
+                <span className="absolute left-14 bg-black/80 backdrop-blur px-2 py-1 rounded text-[10px] font-bold uppercase text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-white/10 z-50">
+                    {tab.label}
+                </span>
               </button>
             )
           })}
