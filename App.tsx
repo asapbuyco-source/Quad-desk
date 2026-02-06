@@ -13,6 +13,125 @@ import { Lock, RefreshCw } from 'lucide-react';
 
 const MotionDiv = motion.div as any;
 
+// --- ADX Calculation Utility ---
+const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
+    if (data.length === 0) return [];
+    
+    // Copy data to avoid mutation during calculation steps if we were using refs, but map creates new array
+    const result = [...data];
+    
+    let trs: number[] = [];
+    let plusDMs: number[] = [];
+    let minusDMs: number[] = [];
+
+    // 1. Calculate TR, +DM, -DM
+    for (let i = 0; i < result.length; i++) {
+        const curr = result[i];
+        const prev = result[i - 1];
+
+        if (i === 0) {
+            trs.push(0);
+            plusDMs.push(0);
+            minusDMs.push(0);
+            continue;
+        }
+
+        // True Range
+        const tr = Math.max(
+            curr.high - curr.low,
+            Math.abs(curr.high - prev.close),
+            Math.abs(curr.low - prev.close)
+        );
+        trs.push(tr);
+
+        // Directional Movement
+        const upMove = curr.high - prev.high;
+        const downMove = prev.low - curr.low;
+
+        let plusDM = 0;
+        let minusDM = 0;
+
+        if (upMove > downMove && upMove > 0) {
+            plusDM = upMove;
+        }
+        if (downMove > upMove && downMove > 0) {
+            minusDM = downMove;
+        }
+
+        plusDMs.push(plusDM);
+        minusDMs.push(minusDM);
+    }
+
+    // 2. Smooth TR, +DM, -DM (Wilder's Smoothing)
+    let smoothTR = 0;
+    let smoothPlusDM = 0;
+    let smoothMinusDM = 0;
+    let dxValues: number[] = new Array(result.length).fill(0);
+
+    for (let i = 0; i < result.length; i++) {
+        if (i < period) {
+             // Initial accumulation
+             smoothTR += trs[i];
+             smoothPlusDM += plusDMs[i];
+             smoothMinusDM += minusDMs[i];
+             
+             // At index period-1, we have enough for the first smoothed value (Sum)
+             // But Wilder's usually starts processing after. 
+             // Simplified: standard algo often sums first N, then smooths.
+             // We will stick to the iterative approach for i >= period.
+        }
+        
+        if (i === period) {
+            // First smoothed value is just the sum (some variations use sum/period, Wilder uses Sum)
+            // But to make DX valid immediately after period, let's treat the sum as the starting previous value
+            // Actually, Wilder's technique: First TR14 = Sum(TR, 14).
+            // Next TR14 = Previous TR14 - (Previous TR14 / 14) + Current TR
+        }
+
+        if (i >= period) {
+             smoothTR = smoothTR - (smoothTR / period) + trs[i];
+             smoothPlusDM = smoothPlusDM - (smoothPlusDM / period) + plusDMs[i];
+             smoothMinusDM = smoothMinusDM - (smoothMinusDM / period) + minusDMs[i];
+             
+             const plusDI = (smoothPlusDM / smoothTR) * 100;
+             const minusDI = (smoothMinusDM / smoothTR) * 100;
+             
+             if (plusDI + minusDI !== 0) {
+                 dxValues[i] = (Math.abs(plusDI - minusDI) / (plusDI + minusDI)) * 100;
+             }
+        }
+    }
+
+    // 3. Calculate ADX (Smoothed DX)
+    let adxValues: number[] = new Array(result.length).fill(0);
+    let smoothDX = 0;
+    
+    // ADX calculation needs 2 * period of data to start stabilizing
+    const adxStart = period * 2;
+
+    for (let i = 0; i < result.length; i++) {
+        if (i < adxStart) {
+            smoothDX += dxValues[i];
+        } 
+        if (i === adxStart) {
+             // First ADX is average of previous N DXs
+             smoothDX = smoothDX / period;
+             adxValues[i] = smoothDX;
+        }
+        if (i > adxStart) {
+             smoothDX = ((smoothDX * (period - 1)) + dxValues[i]) / period;
+             adxValues[i] = smoothDX;
+        }
+    }
+
+    // Assign back to candles
+    return result.map((c, i) => ({
+        ...c,
+        adx: adxValues[i]
+    }));
+};
+
+
 // Synthetic Data Generator for Backtest Mode
 const generateBacktestData = (): CandleData[] => {
     let price = 42000;
@@ -42,7 +161,7 @@ const generateBacktestData = (): CandleData[] => {
         });
         price = close;
     }
-    return data;
+    return calculateADX(data);
 };
 
 const BACKTEST_DATA = generateBacktestData();
@@ -94,7 +213,10 @@ const App: React.FC = () => {
                 zScoreUpper2: parseFloat(k[4]) * 1.005,
                 zScoreLower2: parseFloat(k[4]) * 0.995,
             }));
-            setCandles(formattedCandles);
+            
+            // Calculate ADX on initial load
+            const withAdx = calculateADX(formattedCandles);
+            setCandles(withAdx);
 
             // Set initial price
             if (formattedCandles.length > 0) {
@@ -141,12 +263,20 @@ const App: React.FC = () => {
 
           setCandles(prev => {
               const last = prev[prev.length - 1];
+              let updatedCandles = [...prev];
+
               // If same time, update last candle
               if (last && last.time === newCandle.time) {
-                  return [...prev.slice(0, -1), newCandle];
+                  updatedCandles = [...prev.slice(0, -1), newCandle];
+              } else {
+                  // Else add new candle
+                  updatedCandles = [...prev, newCandle];
               }
-              // Else add new candle
-              return [...prev, newCandle];
+              
+              // Recalculate ADX for the updated array
+              // Optimization: We could optimize this to only recalculate the tail, 
+              // but for <1000 items, full recalculation is negligible (<1ms)
+              return calculateADX(updatedCandles);
           });
       };
 
@@ -282,7 +412,10 @@ const App: React.FC = () => {
           const candle = BACKTEST_DATA[step];
           setCandles(prev => {
               const newC = [...prev, candle];
-              return newC.slice(-100); // Keep buffer manageable
+              // Ensure we maintain enough history for ADX, but slice for performance if needed
+              // However, calculateADX expects contiguous data. 
+              // Since BACKTEST_DATA is already fully calculated, we can just slice.
+              return newC.slice(-100); 
           });
           setMetrics(prev => ({ ...prev, price: candle.close }));
 

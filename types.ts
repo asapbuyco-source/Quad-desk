@@ -16,6 +16,7 @@ export interface CandleData {
   zScoreLower1: number; // -1.5 sigma
   zScoreUpper2: number; // +2.5 sigma
   zScoreLower2: number; // -2.5 sigma
+  adx?: number; // Average Directional Index
 }
 
 export interface SentinelChecklist {

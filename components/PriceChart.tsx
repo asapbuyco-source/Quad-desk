@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
-import { Zap, PanelRight, Rocket, Loader2, Clock } from 'lucide-react';
+import { Zap, PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus } from 'lucide-react';
 
 interface PriceChartProps {
   data: CandleData[];
@@ -42,6 +42,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   // Series Refs
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | any>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | any>(null);
+  const adxSeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
   
   // Band Series Refs
   const upper1SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
@@ -51,6 +52,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   const priceLinesRef = useRef<IPriceLine[]>([]); 
   const [hoveredData, setHoveredData] = useState<any>(null);
+  const [currentAdx, setCurrentAdx] = useState<number>(0);
 
   // Initialize Chart
   useEffect(() => {
@@ -93,7 +95,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
         scaleMargins: {
             top: 0.1,
             bottom: 0.2,
-        }
+        },
+        visible: true,
+      },
+      leftPriceScale: {
+          visible: true,
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          scaleMargins: {
+              top: 0.7,
+              bottom: 0,
+          }
       }
     });
 
@@ -109,11 +120,20 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const volumeSeries = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
       priceFormat: { type: 'volume' },
-      priceScaleId: '', 
+      priceScaleId: '', // Overlay
     });
     
     volumeSeries.priceScale().applyOptions({
         scaleMargins: { top: 0.85, bottom: 0 },
+    });
+
+    // Add ADX Series (Left Scale)
+    const adxSeries = chart.addSeries(LineSeries, {
+        color: '#a855f7', // Purple
+        lineWidth: 2,
+        priceScaleId: 'left',
+        crosshairMarkerVisible: false,
+        lastValueVisible: false,
     });
 
     // Add AI Band Series
@@ -125,6 +145,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
+    adxSeriesRef.current = adxSeries;
     upper1SeriesRef.current = upper1;
     lower1SeriesRef.current = lower1;
     upper2SeriesRef.current = upper2;
@@ -144,10 +165,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
         } else {
             const candle = param.seriesData.get(candlestickSeries);
             const volume = param.seriesData.get(volumeSeries);
+            const adx = param.seriesData.get(adxSeries);
+            
             if (candle) {
                 setHoveredData({
                     ...candle,
                     volume: volume ? (volume as any).value : 0,
+                    adx: adx ? (adx as any).value : 0,
                     time: param.time
                 });
             }
@@ -171,6 +195,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      adxSeriesRef.current = null;
       upper1SeriesRef.current = null;
       lower1SeriesRef.current = null;
       upper2SeriesRef.current = null;
@@ -178,7 +203,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     };
   }, []);
 
-  // Update Data & Bands
+  // Update Data & Bands & ADX
   useEffect(() => {
     if (!candlestickSeriesRef.current || !volumeSeriesRef.current || data.length === 0) return;
 
@@ -196,14 +221,26 @@ const PriceChart: React.FC<PriceChartProps> = ({
         color: d.close > d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'
     }));
 
+    const adxData = data.map(d => ({
+        time: d.time as any,
+        value: d.adx || 0
+    }));
+    
+    // Update current ADX state for the UI badge
+    if (data.length > 0) {
+        setCurrentAdx(data[data.length - 1].adx || 0);
+    }
+
+    candlestickSeriesRef.current.setData(candles);
+    volumeSeriesRef.current.setData(volumes);
+    
+    if(adxSeriesRef.current) adxSeriesRef.current.setData(adxData);
+    
     // Band Data
     const u1Data = data.map(d => ({ time: d.time as any, value: d.zScoreUpper1 }));
     const l1Data = data.map(d => ({ time: d.time as any, value: d.zScoreLower1 }));
     const u2Data = data.map(d => ({ time: d.time as any, value: d.zScoreUpper2 }));
     const l2Data = data.map(d => ({ time: d.time as any, value: d.zScoreLower2 }));
-
-    candlestickSeriesRef.current.setData(candles);
-    volumeSeriesRef.current.setData(volumes);
     
     if(upper1SeriesRef.current) upper1SeriesRef.current.setData(u1Data);
     if(lower1SeriesRef.current) lower1SeriesRef.current.setData(l1Data);
@@ -326,6 +363,23 @@ const PriceChart: React.FC<PriceChartProps> = ({
                  <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT LIVE</span>
              </div>
 
+             {/* ADX Trend Indicator */}
+             <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-white/5">
+                {currentAdx > 25 ? (
+                    <TrendingUp size={12} className={currentAdx > 50 ? "text-rose-500" : "text-emerald-500"} />
+                ) : (
+                    <Minus size={12} className="text-zinc-500" />
+                )}
+                <span className={`text-[10px] font-bold uppercase ${
+                    currentAdx > 50 ? "text-rose-500" : 
+                    currentAdx > 25 ? "text-emerald-500" : 
+                    "text-zinc-500"
+                }`}>
+                    {currentAdx > 50 ? "STRONG TREND" : currentAdx > 25 ? "TRENDING" : "RANGING"}
+                </span>
+                <span className="text-[9px] font-mono text-zinc-600">ADX {currentAdx.toFixed(1)}</span>
+             </div>
+
              {/* Timeframe Selector */}
              {onIntervalChange && (
                  <div className="flex items-center gap-1 bg-black/20 p-1 rounded-lg border border-white/5">
@@ -369,11 +423,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
                         {isScanning ? 'SCAN' : 'AI SCAN'}
                     </button>
                 )}
-
-                 <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-brand-accent/10 border border-brand-accent/20 rounded-full">
-                    <Zap size={10} className="text-brand-accent" />
-                    <span className="text-[9px] font-bold text-brand-accent uppercase tracking-wide">Active</span>
-                </div>
                 
                 {onToggleSidePanel && (
                     <button 
@@ -420,6 +469,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
                      </span>
                      <span className="text-zinc-500">Vol</span>
                      <span className="text-zinc-300">{hoveredData.volume.toLocaleString()}</span>
+                     <span className="text-zinc-500">ADX</span>
+                     <span className="text-purple-400">{hoveredData.adx ? hoveredData.adx.toFixed(2) : '-'}</span>
                  </div>
              </div>
         )}
