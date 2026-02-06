@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { CandleData, TradeSignal, PriceLevel } from '../types';
-import { Maximize2, Zap, PanelRight, Wifi } from 'lucide-react';
+import { Zap, PanelRight } from 'lucide-react';
 
 interface PriceChartProps {
   data: CandleData[];
@@ -19,7 +19,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     data, 
     signals = [], 
     levels = [],
-    showZScore = true,
     showLevels = true,
     showSignals = true,
     children,

@@ -9,7 +9,7 @@ import LandingPage from './components/LandingPage';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, CHECKLIST_ITEMS, MOCK_LEVELS } from './constants';
 import { CandleData, OrderBookLevel, MarketMetrics, TradeSignal, AiAnalysis, PriceLevel } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Lock, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Lock, RefreshCw } from 'lucide-react';
 
 const MotionDiv = motion.div as any;
 
@@ -163,7 +163,7 @@ const App: React.FC = () => {
                     metrics: data.metrics
                 });
 
-                const { signal, confidence, reason, entry, stop_loss, take_profit } = data.ai_analysis;
+                const { signal, confidence, entry, stop_loss, take_profit } = data.ai_analysis;
 
                 // Update Levels with AI Trade Setup
                 if (signal !== 'WAIT' && entry && stop_loss && take_profit) {
