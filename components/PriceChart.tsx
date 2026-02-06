@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine } from 'lightweight-charts';
+import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
 import { Zap, PanelRight, Rocket, Loader2 } from 'lucide-react';
 
@@ -81,7 +81,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
     });
 
-    const candlestickSeries = chart.addCandlestickSeries({
+    // v5 API: addSeries(SeriesType, options)
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#f43f5e',
       borderVisible: false,
@@ -89,7 +90,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       wickDownColor: '#f43f5e',
     });
 
-    const volumeSeries = chart.addHistogramSeries({
+    const volumeSeries = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
       priceFormat: {
         type: 'volume',
@@ -253,9 +254,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
             shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' : 'arrowUp',
             text: s.label,
         }));
-        candlestickSeriesRef.current.setMarkers(markers as any);
+        // Cast to any to bypass potential TS strictness issues with v5 Series types
+        (candlestickSeriesRef.current as any).setMarkers(markers);
     } else {
-        candlestickSeriesRef.current.setMarkers([]);
+        (candlestickSeriesRef.current as any).setMarkers([]);
     }
   }, [signals, showSignals]);
 

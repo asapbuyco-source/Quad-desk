@@ -1,6 +1,6 @@
 import React from 'react';
 import { SentinelChecklist, AiAnalysis, AiScanResult } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, Wallet, ScanSearch } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, ScanSearch } from 'lucide-react';
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
