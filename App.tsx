@@ -51,7 +51,7 @@ const App: React.FC = () => {
   const [hasEntered, setHasEntered] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isBacktest, setIsBacktest] = useState(false);
-  const [interval, setTimeframeInterval] = useState('1m'); // New State: Timeframe
+  const [interval, setTimeframeInterval] = useState('1m'); // State for Timeframe
   
   // Data State
   const [metrics, setMetrics] = useState<MarketMetrics>({
@@ -77,7 +77,7 @@ const App: React.FC = () => {
     if (isBacktest) return;
 
     const fetchHistory = async () => {
-        setCandles([]); // Clear old data on interval change
+        setCandles([]); // Clear data on interval change to prevent visual glitches
         try {
             const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=1000`);
             const data = await res.json();
@@ -88,7 +88,7 @@ const App: React.FC = () => {
                 low: parseFloat(k[3]),
                 close: parseFloat(k[4]),
                 volume: parseFloat(k[5]),
-                // AI Bands (Simulated based on real data for visual demo)
+                // AI Bands (Simulated calculation based on price for visual demo)
                 zScoreUpper1: parseFloat(k[4]) * 1.002,
                 zScoreLower1: parseFloat(k[4]) * 0.998,
                 zScoreUpper2: parseFloat(k[4]) * 1.005,
@@ -330,7 +330,6 @@ const App: React.FC = () => {
                                 checklist={CHECKLIST_ITEMS} 
                                 aiScanResult={aiScanResult}
                                 interval={interval}
-                                onIntervalChange={setTimeframeInterval}
                             />
                         )}
                         {activeTab === 'charting' && (

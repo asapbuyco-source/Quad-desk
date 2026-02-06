@@ -17,7 +17,6 @@ interface DashboardViewProps {
   aiAnalysis?: AiAnalysis; 
   aiScanResult?: AiScanResult;
   interval?: string;
-  onIntervalChange?: (interval: string) => void;
 }
 
 const container = {
@@ -35,7 +34,7 @@ const item = {
   show: { opacity: 1, y: 0 }
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis, aiScanResult, interval, onIntervalChange }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis, aiScanResult, interval }) => {
   return (
     <MotionDiv 
       variants={container}
