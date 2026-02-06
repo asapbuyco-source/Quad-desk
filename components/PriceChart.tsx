@@ -33,16 +33,22 @@ const PriceChart: React.FC<PriceChartProps> = ({
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const priceLinesRef = useRef<IPriceLine[]>([]); // Store price line objects
+  // Using any to avoid strict type mismatches during version upgrades, 
+  // though ISeriesApi<"Candlestick"> is technically correct in v5 typings.
+  const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | any>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | any>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]); 
   const [hoveredData, setHoveredData] = useState<any>(null);
 
   // Initialize Chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
+    // Create Chart with auto-size behavior via ResizeObserver logic later, 
+    // but start with container dimensions if available.
     const chart = createChart(chartContainerRef.current, {
+      width: chartContainerRef.current.clientWidth || 600,
+      height: chartContainerRef.current.clientHeight || 400,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: '#71717a',
@@ -81,7 +87,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
     });
 
-    // v5 API: addSeries(SeriesType, options)
+    // Add Series using v5 addSeries API
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#f43f5e',
@@ -109,6 +115,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
 
+    // Crosshair Handler
     chart.subscribeCrosshairMove((param) => {
         if (
             param.point === undefined ||
@@ -132,17 +139,22 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
     });
 
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight });
-      }
-    };
-    window.addEventListener('resize', handleResize);
+    // Robust Resize Handler
+    const resizeObserver = new ResizeObserver((entries) => {
+        if (entries.length === 0 || !entries[0].contentRect) return;
+        const { width, height } = entries[0].contentRect;
+        if(chartRef.current) {
+            chartRef.current.applyOptions({ width, height });
+        }
+    });
+    resizeObserver.observe(chartContainerRef.current);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-      chartRef.current = null;
+      resizeObserver.disconnect();
+      if(chartRef.current) {
+          chartRef.current.remove();
+          chartRef.current = null;
+      }
     };
   }, []);
 
@@ -166,6 +178,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     candlestickSeriesRef.current.setData(candles);
     volumeSeriesRef.current.setData(volumes);
+    
+    // Fit content on initial load if needed, but usually auto-scaling works.
+    // chartRef.current?.timeScale().fitContent(); 
   }, [data]);
 
   // Handle AI Scan Results & Manual Levels
@@ -174,12 +189,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       // REMOVE OLD LINES
       priceLinesRef.current.forEach(line => {
-          candlestickSeriesRef.current?.removePriceLine(line);
+          // Check existence before removal to prevent crashes
+          try {
+             candlestickSeriesRef.current?.removePriceLine(line);
+          } catch(e) {
+             // Ignore if line already removed
+          }
       });
       priceLinesRef.current = [];
 
       // ADD NEW LINES
-      // 1. App Levels (from props)
       levels.forEach(l => {
            let color = '#71717a'; 
            let lineStyle = LineStyle.Dashed;
@@ -200,9 +219,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
            if(line) priceLinesRef.current.push(line);
       });
 
-      // 2. AI Scan Results (if available)
       if (aiScanResult) {
-          // Support (Green Dashed)
           aiScanResult.support.forEach(price => {
               const line = candlestickSeriesRef.current?.createPriceLine({
                   price,
@@ -215,7 +232,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
               if(line) priceLinesRef.current.push(line);
           });
 
-          // Resistance (Red Dashed)
           aiScanResult.resistance.forEach(price => {
               const line = candlestickSeriesRef.current?.createPriceLine({
                   price,
@@ -228,7 +244,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
               if(line) priceLinesRef.current.push(line);
           });
 
-          // Decision Line (Thick Solid)
           const decisionColor = aiScanResult.verdict === 'ENTRY' ? '#3b82f6' : '#f97316';
           const line = candlestickSeriesRef.current?.createPriceLine({
               price: aiScanResult.decision_price,
@@ -254,10 +269,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
             shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' : 'arrowUp',
             text: s.label,
         }));
-        // Cast to any to bypass potential TS strictness issues with v5 Series types
-        (candlestickSeriesRef.current as any).setMarkers(markers);
+        candlestickSeriesRef.current.setMarkers(markers);
     } else {
-        (candlestickSeriesRef.current as any).setMarkers([]);
+        candlestickSeriesRef.current.setMarkers([]);
     }
   }, [signals, showSignals]);
 
@@ -267,7 +281,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         
         {/* Header Bar */}
         <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 gap-4">
-             {/* Live Status */}
              <div className="flex items-center gap-2">
                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                  <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT LIVE</span>
@@ -294,12 +307,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 </button>
             )}
 
-            {/* Center Controls */}
             <div className="hidden md:flex flex-1 justify-center">
                 {children}
             </div>
 
-            {/* Right: Actions */}
             <div className="flex items-center gap-3 shrink-0">
                  <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-brand-accent/10 border border-brand-accent/20 rounded-full">
                     <Zap size={10} className="text-brand-accent" />
