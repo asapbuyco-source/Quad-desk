@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
-import { Zap, PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus } from 'lucide-react';
+import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus } from 'lucide-react';
 
 interface PriceChartProps {
   data: CandleData[];
