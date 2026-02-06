@@ -1,3 +1,4 @@
+
 export interface OrderBookLevel {
   price: number;
   size: number;
@@ -78,6 +79,7 @@ export interface AiScanResult {
   resistance: number[];
   decision_price: number;
   verdict: 'ENTRY' | 'EXIT' | 'WAIT';
+  confidence?: number; // Added to match backend
   analysis: string;
   risk_reward_ratio?: number;
   entry_price?: number;

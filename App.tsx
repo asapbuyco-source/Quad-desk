@@ -221,7 +221,9 @@ const App: React.FC = () => {
                 zScoreLower1: parseFloat(k[4]) * 0.998,
                 zScoreUpper2: parseFloat(k[4]) * 1.005,
                 zScoreLower2: parseFloat(k[4]) * 0.995,
-            }));
+            })).filter((c: CandleData) => 
+                !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close) && !isNaN(c.volume)
+            );
             
             // Calculate ADX on initial load
             const withAdx = calculateADX(formattedCandles);
@@ -291,6 +293,9 @@ const App: React.FC = () => {
                   zScoreUpper2: bands ? bands.upper_2 : parseFloat(k.c) * 1.005,
                   zScoreLower2: bands ? bands.lower_2 : parseFloat(k.c) * 0.995,
               };
+
+              // Sanity check
+              if (isNaN(newCandle.close) || isNaN(newCandle.high) || isNaN(newCandle.low)) return;
 
               // Update Metrics
               setMetrics(prev => ({

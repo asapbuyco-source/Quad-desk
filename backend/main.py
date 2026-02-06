@@ -62,6 +62,7 @@ class MarketAnalysis(BaseModel):
     resistance: List[float]
     decision_price: float
     verdict: Literal["ENTRY", "EXIT", "WAIT"]
+    confidence: float # Added for Notification threshold
     analysis: str
     entry_price: Optional[float] = None
     stop_loss: Optional[float] = None
@@ -119,6 +120,51 @@ def calculate_z_score_bands(candles):
         "lower_2": float(mean - 2.5 * std),
     }
 
+async def send_vantage_alert(data: MarketAnalysis, current_price: float, z_score: float):
+    """
+    Sends a formatted alert to Telegram if credentials are present.
+    """
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        logger.warning("⚠️ Telegram credentials missing. Skipping alert.")
+        return
+
+    # Determine emoji based on Z-Score
+    z_emoji = "🟢"
+    if abs(z_score) > 2.0: z_emoji = "🔴"
+    elif abs(z_score) > 1.0: z_emoji = "🟡"
+
+    message = (
+        f"⚡ <b>VANTAGE ENTRY SIGNAL</b> ⚡\n\n"
+        f"💎 <b>Pair:</b> BTC/USDT\n"
+        f"💰 <b>Price:</b> ${current_price:,.2f}\n"
+        f"📊 <b>Z-Score:</b> {z_emoji} {z_score:.2f}σ\n"
+        f"🎯 <b>Confidence:</b> {data.confidence * 100:.0f}%\n"
+        f"⚖️ <b>Risk/Reward:</b> {data.risk_reward_ratio}\n"
+        f"🛡️ <b>Stop Loss:</b> ${data.stop_loss}\n"
+        f"🚀 <b>Target:</b> ${data.take_profit}\n\n"
+        f"🧠 <b>AI Reasoning:</b>\n<i>{data.analysis}</i>"
+    )
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=payload, timeout=5.0)
+            if resp.status_code == 200:
+                logger.info(f"📲 Telegram alert sent for Price: {current_price}")
+            else:
+                logger.error(f"❌ Telegram API Error: {resp.text}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send Telegram alert: {e}")
+
 # 6. API Endpoints
 
 @app.get("/bands")
@@ -143,6 +189,11 @@ async def analyze_market():
     closes = [c['close'] for c in context_candles]
     current_price = closes[-1]
     
+    # Calculate local Z-Score for the alert context
+    mean = np.mean(closes)
+    std = np.std(closes)
+    z_score = (current_price - mean) / std if std > 0 else 0
+    
     prompt = f"""
     You are a Quant Analyst. Analyze these {len(context_candles)} candlestick data points for BTC/USDT.
     Current Price: {current_price}
@@ -157,6 +208,7 @@ async def analyze_market():
     4. Calculate Risk/Reward Ratio.
     5. Provide a Verdict (ENTRY, EXIT, or WAIT). 
        CRITICAL: If Risk/Reward Ratio is < 2.0, Verdict MUST be "WAIT".
+    6. Provide a Confidence Score (0.0 to 1.0) based on signal clarity.
 
     Return EXACTLY this JSON structure:
     {{
@@ -164,6 +216,7 @@ async def analyze_market():
         "resistance": [float, float],
         "decision_price": float,
         "verdict": "ENTRY" | "EXIT" | "WAIT",
+        "confidence": float,
         "analysis": "string",
         "entry_price": float,
         "stop_loss": float,
@@ -186,6 +239,12 @@ async def analyze_market():
         
         # Validate with Pydantic
         validated = MarketAnalysis(**raw_result)
+        
+        # --- TRIGGER TELEGRAM ALERT ---
+        # If Verdict is ENTRY and Confidence >= 80% (0.8)
+        if validated.verdict == "ENTRY" and validated.confidence >= 0.80:
+            asyncio.create_task(send_vantage_alert(validated, current_price, z_score))
+        
         return validated.dict()
         
     except ValidationError as e:

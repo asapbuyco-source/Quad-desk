@@ -1,6 +1,6 @@
 import React from 'react';
 import { SentinelChecklist, AiAnalysis, AiScanResult } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, ScanSearch, Percent } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, ScanSearch, Percent, Zap } from 'lucide-react';
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
@@ -34,6 +34,14 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, ai
                         <ScanSearch size={16} className="text-purple-400" />
                         <span className="text-xs font-bold text-white tracking-wide">AI VERDICT</span>
                     </div>
+                    {aiScanResult.confidence && (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/40 border border-white/10">
+                            <Zap size={10} className={aiScanResult.confidence > 0.8 ? "text-brand-accent" : "text-slate-500"} />
+                            <span className="text-[10px] font-mono font-bold text-slate-300">
+                                {(aiScanResult.confidence * 100).toFixed(0)}%
+                            </span>
+                        </div>
+                    )}
                  </div>
                  <div className="flex items-baseline gap-2 mb-2">
                     <h3 className={`text-2xl font-black tracking-tighter ${

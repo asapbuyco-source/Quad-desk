@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { 
   BarChart, 
   Bar, 
@@ -10,51 +10,15 @@ import {
 } from 'recharts';
 import { CandleData } from '../types';
 import { AlignHorizontalJustifyStart } from 'lucide-react';
+import { useVolumeProfileData } from '../hooks/useChart';
 
 interface VolumeProfileProps {
   data: CandleData[];
 }
 
 const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
-  const profileData = useMemo(() => {
-    if (!data.length) return [];
-    
-    const steps = 40;
-    const minPrice = Math.min(...data.map(d => d.low));
-    const maxPrice = Math.max(...data.map(d => d.high));
-    const range = maxPrice - minPrice;
-    const stepSize = range / steps;
-
-    // Initialize buckets
-    const buckets = Array.from({ length: steps }, (_, i) => ({
-      price: minPrice + (i * stepSize),
-      endPrice: minPrice + ((i + 1) * stepSize),
-      vol: 0,
-      rangeLabel: `${(minPrice + (i * stepSize)).toFixed(2)} - ${(minPrice + ((i + 1) * stepSize)).toFixed(2)}`,
-      type: 'Normal'
-    }));
-
-    // Distribute volume (using close price approximation for performance)
-    data.forEach(candle => {
-      const index = Math.min(steps - 1, Math.floor((candle.close - minPrice) / stepSize));
-      if (index >= 0) buckets[index].vol += candle.volume;
-    });
-
-    // Calculate Stats
-    const maxVol = Math.max(...buckets.map(b => b.vol));
-    const volumes = buckets.map(b => b.vol).filter(v => v > 0);
-    const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-
-    // Assign Types
-    return buckets.map(b => {
-      let type = 'Normal';
-      if (b.vol === maxVol) type = 'POC'; // Point of Control
-      else if (b.vol > maxVol * 0.6) type = 'HVN'; // High Volume Node
-      else if (b.vol < avgVol * 0.5) type = 'LVN'; // Liquidity Hole
-      
-      return { ...b, type };
-    }).reverse(); // Reverse to have high prices at top standard display
-  }, [data]);
+  // Use Shared Hook for Calculation Logic
+  const profileData = useVolumeProfileData(data, 40);
 
   // Recharts defaults: Category Y Axis usually starts top. We want High price at top.
   // So we pass data sorted High -> Low.

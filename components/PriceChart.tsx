@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
+import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time } from 'lightweight-charts';
 import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
 import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus } from 'lucide-react';
+import { useLightweightChart } from '../hooks/useChart';
 
 interface PriceChartProps {
   data: CandleData[];
@@ -37,7 +38,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
     onIntervalChange
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
+  
+  // Use Shared Hook
+  const chartRef = useLightweightChart(chartContainerRef, {
+      leftPriceScale: {
+          visible: true,
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          scaleMargins: {
+              top: 0.7,
+              bottom: 0,
+          }
+      }
+  });
   
   // Series Refs
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | any>(null);
@@ -54,209 +66,154 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const [hoveredData, setHoveredData] = useState<any>(null);
   const [currentAdx, setCurrentAdx] = useState<number>(0);
 
-  // Initialize Chart
+  // Helper to validate number (Handles null, undefined, NaN)
+  const isValid = (n: number | undefined | null): boolean => typeof n === 'number' && !isNaN(n);
+
+  // Initialize Series
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+      if (!chartRef.current) return;
 
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth || 600,
-      height: chartContainerRef.current.clientHeight || 400,
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#71717a',
-        fontFamily: 'JetBrains Mono',
-      },
-      grid: {
-        vertLines: { color: 'rgba(255, 255, 255, 0.05)' },
-        horzLines: { color: 'rgba(255, 255, 255, 0.05)' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: {
-            width: 1,
-            color: 'rgba(255, 255, 255, 0.1)',
-            style: LineStyle.Dashed,
-            labelBackgroundColor: '#27272a',
-        },
-        horzLine: {
-            width: 1,
-            color: 'rgba(255, 255, 255, 0.1)',
-            style: LineStyle.Dashed,
-            labelBackgroundColor: '#27272a',
-        },
-      },
-      timeScale: {
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-        scaleMargins: {
-            top: 0.1,
-            bottom: 0.2,
-        },
-        visible: true,
-      },
-      leftPriceScale: {
-          visible: true,
-          borderColor: 'rgba(255, 255, 255, 0.1)',
-          scaleMargins: {
-              top: 0.7,
-              bottom: 0,
-          }
-      }
-    });
+      // Only initialize series if they don't exist
+      if (!candlestickSeriesRef.current) {
+        const chart = chartRef.current;
 
-    // Add Main Series
-    const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#10b981',
-      downColor: '#f43f5e',
-      borderVisible: false,
-      wickUpColor: '#10b981',
-      wickDownColor: '#f43f5e',
-    });
+        const candlestickSeries = chart.addSeries(CandlestickSeries, {
+            upColor: '#10b981',
+            downColor: '#f43f5e',
+            borderVisible: false,
+            wickUpColor: '#10b981',
+            wickDownColor: '#f43f5e',
+        });
 
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#26a69a',
-      priceFormat: { type: 'volume' },
-      priceScaleId: '', // Overlay
-    });
-    
-    volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.85, bottom: 0 },
-    });
+        const volumeSeries = chart.addSeries(HistogramSeries, {
+            color: '#26a69a',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // Overlay
+        });
+        
+        volumeSeries.priceScale().applyOptions({
+            scaleMargins: { top: 0.85, bottom: 0 },
+        });
 
-    // Add ADX Series (Left Scale)
-    const adxSeries = chart.addSeries(LineSeries, {
-        color: '#a855f7', // Purple
-        lineWidth: 2,
-        priceScaleId: 'left',
-        crosshairMarkerVisible: false,
-        lastValueVisible: false,
-    });
+        // Add ADX Series (Left Scale)
+        const adxSeries = chart.addSeries(LineSeries, {
+            color: '#a855f7', // Purple
+            lineWidth: 2,
+            priceScaleId: 'left',
+            crosshairMarkerVisible: false,
+            lastValueVisible: false,
+        });
 
-    // Add AI Band Series
-    const upper2 = chart.addSeries(LineSeries, { color: 'rgba(244, 63, 94, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); // Red Outer
-    const upper1 = chart.addSeries(LineSeries, { color: 'rgba(249, 115, 22, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); // Orange Inner
-    const lower1 = chart.addSeries(LineSeries, { color: 'rgba(59, 130, 246, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); // Blue Inner
-    const lower2 = chart.addSeries(LineSeries, { color: 'rgba(16, 185, 129, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); // Green Outer
+        // Add AI Band Series
+        const upper2 = chart.addSeries(LineSeries, { color: 'rgba(244, 63, 94, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); 
+        const upper1 = chart.addSeries(LineSeries, { color: 'rgba(249, 115, 22, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); 
+        const lower1 = chart.addSeries(LineSeries, { color: 'rgba(59, 130, 246, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); 
+        const lower2 = chart.addSeries(LineSeries, { color: 'rgba(16, 185, 129, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); 
 
-    chartRef.current = chart;
-    candlestickSeriesRef.current = candlestickSeries;
-    volumeSeriesRef.current = volumeSeries;
-    adxSeriesRef.current = adxSeries;
-    upper1SeriesRef.current = upper1;
-    lower1SeriesRef.current = lower1;
-    upper2SeriesRef.current = upper2;
-    lower2SeriesRef.current = lower2;
+        candlestickSeriesRef.current = candlestickSeries;
+        volumeSeriesRef.current = volumeSeries;
+        adxSeriesRef.current = adxSeries;
+        upper1SeriesRef.current = upper1;
+        lower1SeriesRef.current = lower1;
+        upper2SeriesRef.current = upper2;
+        lower2SeriesRef.current = lower2;
 
-    // Crosshair Handler
-    chart.subscribeCrosshairMove((param) => {
-        if (
-            param.point === undefined ||
-            !param.time ||
-            param.point.x < 0 ||
-            param.point.x > chartContainerRef.current!.clientWidth ||
-            param.point.y < 0 ||
-            param.point.y > chartContainerRef.current!.clientHeight
-        ) {
-            setHoveredData(null);
-        } else {
-            const candle = param.seriesData.get(candlestickSeries);
-            const volume = param.seriesData.get(volumeSeries);
-            const adx = param.seriesData.get(adxSeries);
-            
-            if (candle) {
-                setHoveredData({
-                    ...candle,
-                    volume: volume ? (volume as any).value : 0,
-                    adx: adx ? (adx as any).value : 0,
-                    time: param.time
-                });
+        // Crosshair Handler
+        chart.subscribeCrosshairMove((param) => {
+            if (
+                param.point === undefined ||
+                !param.time ||
+                !chartContainerRef.current ||
+                param.point.x < 0 ||
+                param.point.x > chartContainerRef.current.clientWidth ||
+                param.point.y < 0 ||
+                param.point.y > chartContainerRef.current.clientHeight
+            ) {
+                setHoveredData(null);
+            } else {
+                const candle = param.seriesData.get(candlestickSeries);
+                const volume = param.seriesData.get(volumeSeries);
+                const adx = param.seriesData.get(adxSeries);
+                
+                if (candle) {
+                    setHoveredData({
+                        ...candle,
+                        volume: volume ? (volume as any).value : 0,
+                        adx: adx ? (adx as any).value : 0,
+                        time: param.time
+                    });
+                }
             }
-        }
-    });
-
-    const resizeObserver = new ResizeObserver((entries) => {
-        if (entries.length === 0 || !entries[0].contentRect) return;
-        const { width, height } = entries[0].contentRect;
-        if(chartRef.current) {
-            chartRef.current.applyOptions({ width, height });
-        }
-    });
-    resizeObserver.observe(chartContainerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-      if(chartRef.current) {
-          chartRef.current.remove();
-          chartRef.current = null;
+        });
       }
-      candlestickSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-      adxSeriesRef.current = null;
-      upper1SeriesRef.current = null;
-      lower1SeriesRef.current = null;
-      upper2SeriesRef.current = null;
-      lower2SeriesRef.current = null;
-    };
-  }, []);
+  }, [chartRef.current]);
 
   // Update Data & Bands & ADX
   useEffect(() => {
     if (!candlestickSeriesRef.current || !volumeSeriesRef.current || data.length === 0) return;
 
-    const candles = data.map(d => ({
-        time: d.time as any,
+    // Filter and map valid data only
+    const validData = data.filter(d => 
+        d.time && isValid(d.open) && isValid(d.high) && isValid(d.low) && isValid(d.close)
+    );
+
+    const candles = validData.map(d => ({
+        time: d.time as Time,
         open: d.open,
         high: d.high,
         low: d.low,
         close: d.close
     }));
 
-    const volumes = data.map(d => ({
-        time: d.time as any,
-        value: d.volume,
+    const volumes = validData.map(d => ({
+        time: d.time as Time,
+        value: isValid(d.volume) ? d.volume : 0,
         color: d.close > d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'
     }));
 
-    const adxData = data.map(d => ({
-        time: d.time as any,
-        value: d.adx || 0
+    const adxData = validData.map(d => ({
+        time: d.time as Time,
+        value: isValid(d.adx) ? (d.adx || 0) : 0
     }));
     
-    // Update current ADX state for the UI badge
-    if (data.length > 0) {
-        setCurrentAdx(data[data.length - 1].adx || 0);
+    if (validData.length > 0) {
+        const lastAdx = validData[validData.length - 1].adx;
+        setCurrentAdx(isValid(lastAdx) ? (lastAdx || 0) : 0);
     }
 
-    candlestickSeriesRef.current.setData(candles);
-    volumeSeriesRef.current.setData(volumes);
-    
-    if(adxSeriesRef.current) adxSeriesRef.current.setData(adxData);
-    
-    // Band Data
-    const u1Data = data.map(d => ({ time: d.time as any, value: d.zScoreUpper1 }));
-    const l1Data = data.map(d => ({ time: d.time as any, value: d.zScoreLower1 }));
-    const u2Data = data.map(d => ({ time: d.time as any, value: d.zScoreUpper2 }));
-    const l2Data = data.map(d => ({ time: d.time as any, value: d.zScoreLower2 }));
-    
-    if(upper1SeriesRef.current) upper1SeriesRef.current.setData(u1Data);
-    if(lower1SeriesRef.current) lower1SeriesRef.current.setData(l1Data);
-    if(upper2SeriesRef.current) upper2SeriesRef.current.setData(u2Data);
-    if(lower2SeriesRef.current) lower2SeriesRef.current.setData(l2Data);
+    try {
+        candlestickSeriesRef.current.setData(candles);
+        volumeSeriesRef.current.setData(volumes);
+        if(adxSeriesRef.current) adxSeriesRef.current.setData(adxData);
+        
+        // Band Data
+        const u1Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreUpper1) ? d.zScoreUpper1 : 0 }));
+        const l1Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreLower1) ? d.zScoreLower1 : 0 }));
+        const u2Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreUpper2) ? d.zScoreUpper2 : 0 }));
+        const l2Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreLower2) ? d.zScoreLower2 : 0 }));
+        
+        if(upper1SeriesRef.current) upper1SeriesRef.current.setData(u1Data);
+        if(lower1SeriesRef.current) lower1SeriesRef.current.setData(l1Data);
+        if(upper2SeriesRef.current) upper2SeriesRef.current.setData(u2Data);
+        if(lower2SeriesRef.current) lower2SeriesRef.current.setData(l2Data);
+    } catch (err) {
+        console.error("Chart Data Update Error:", err);
+    }
 
   }, [data]);
 
   // Handle Band Visibility
   useEffect(() => {
     if(!upper1SeriesRef.current) return;
-    const visibility = showZScore ? true : false;
-    upper1SeriesRef.current.applyOptions({ visible: visibility });
-    lower1SeriesRef.current.applyOptions({ visible: visibility });
-    upper2SeriesRef.current.applyOptions({ visible: visibility });
-    lower2SeriesRef.current.applyOptions({ visible: visibility });
+    const visibility = !!showZScore; // Ensure boolean
+    try {
+        upper1SeriesRef.current.applyOptions({ visible: visibility });
+        lower1SeriesRef.current.applyOptions({ visible: visibility });
+        upper2SeriesRef.current.applyOptions({ visible: visibility });
+        lower2SeriesRef.current.applyOptions({ visible: visibility });
+    } catch(e) {
+        console.error("Band visibility error", e);
+    }
   }, [showZScore]);
 
   // Handle Levels (Support/Resistance)
@@ -273,6 +230,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       // ADD NEW LINES
       levels.forEach(l => {
+           // Skip invalid levels
+           if (!isValid(l.price)) return;
+
            let color = '#71717a'; 
            let lineStyle = LineStyle.Dashed;
            let lineWidth: 1 | 2 | 3 | 4 = 1;
@@ -281,52 +241,66 @@ const PriceChart: React.FC<PriceChartProps> = ({
            else if (l.type === 'STOP_LOSS') { color = '#f43f5e'; lineWidth = 2; lineStyle = LineStyle.Solid; }
            else if (l.type === 'TAKE_PROFIT') { color = '#10b981'; lineWidth = 2; lineStyle = LineStyle.Solid; }
            
-           const line = candlestickSeriesRef.current?.createPriceLine({
-               price: l.price,
-               color: color,
-               lineWidth: lineWidth,
-               lineStyle: lineStyle,
-               axisLabelVisible: true,
-               title: l.label,
-           });
-           if(line) priceLinesRef.current.push(line);
+           try {
+               const line = candlestickSeriesRef.current?.createPriceLine({
+                   price: l.price,
+                   color: color,
+                   lineWidth: lineWidth,
+                   lineStyle: lineStyle,
+                   axisLabelVisible: true,
+                   title: l.label,
+               });
+               if(line) priceLinesRef.current.push(line);
+           } catch(e) {
+               console.error("Failed to create price line", e);
+           }
       });
 
       if (aiScanResult) {
           aiScanResult.support.forEach(price => {
-              const line = candlestickSeriesRef.current?.createPriceLine({
-                  price,
-                  color: '#10b981',
-                  lineWidth: 1,
-                  lineStyle: LineStyle.Dashed,
-                  axisLabelVisible: true,
-                  title: 'AI SUPPORT',
-              });
-              if(line) priceLinesRef.current.push(line);
+              if (!isValid(price)) return;
+              try {
+                const line = candlestickSeriesRef.current?.createPriceLine({
+                    price,
+                    color: '#10b981',
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'AI SUPPORT',
+                });
+                if(line) priceLinesRef.current.push(line);
+              } catch(e) {}
           });
 
           aiScanResult.resistance.forEach(price => {
-              const line = candlestickSeriesRef.current?.createPriceLine({
-                  price,
-                  color: '#f43f5e',
-                  lineWidth: 1,
-                  lineStyle: LineStyle.Dashed,
-                  axisLabelVisible: true,
-                  title: 'AI RESIST',
-              });
-              if(line) priceLinesRef.current.push(line);
+              if (!isValid(price)) return;
+              try {
+                const line = candlestickSeriesRef.current?.createPriceLine({
+                    price,
+                    color: '#f43f5e',
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'AI RESIST',
+                });
+                if(line) priceLinesRef.current.push(line);
+              } catch(e) {}
           });
 
-          const decisionColor = aiScanResult.verdict === 'ENTRY' ? '#3b82f6' : '#f97316';
-          const line = candlestickSeriesRef.current?.createPriceLine({
-              price: aiScanResult.decision_price,
-              color: decisionColor,
-              lineWidth: 3,
-              lineStyle: LineStyle.Solid,
-              axisLabelVisible: true,
-              title: `AI PIVOT (${aiScanResult.verdict})`,
-          });
-          if(line) priceLinesRef.current.push(line);
+          if (isValid(aiScanResult.decision_price)) {
+              const decisionColor = aiScanResult.verdict === 'ENTRY' ? '#3b82f6' : '#f97316';
+              try {
+                const line = candlestickSeriesRef.current?.createPriceLine({
+                    price: aiScanResult.decision_price,
+                    color: decisionColor,
+                    lineWidth: 3,
+                    lineStyle: LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: `AI PIVOT (${aiScanResult.verdict})`,
+                });
+                if(line) priceLinesRef.current.push(line);
+              } catch(e) {}
+          }
       }
 
   }, [levels, aiScanResult, showLevels]);
@@ -335,20 +309,27 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     if (!candlestickSeriesRef.current) return;
     
-    // Safety check for setMarkers method existence
     if (typeof candlestickSeriesRef.current.setMarkers !== 'function') return;
 
     if (showSignals) {
-        const markers = signals.map(s => ({
-            time: s.time as any,
-            position: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'aboveBar' : 'belowBar',
-            color: s.type.includes('ENTRY') ? '#3b82f6' : '#f59e0b',
-            shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' : 'arrowUp',
-            text: s.label,
-        }));
-        candlestickSeriesRef.current.setMarkers(markers);
+        const markers = signals
+            .filter(s => s.time && isValid(s.price))
+            .map(s => ({
+                time: s.time as Time,
+                position: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'aboveBar' : 'belowBar',
+                color: s.type.includes('ENTRY') ? '#3b82f6' : '#f59e0b',
+                shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' : 'arrowUp',
+                text: s.label,
+            }));
+        try {
+            candlestickSeriesRef.current.setMarkers(markers);
+        } catch(e) {
+            console.error("Signal markers error", e);
+        }
     } else {
-        candlestickSeriesRef.current.setMarkers([]);
+        try {
+            candlestickSeriesRef.current.setMarkers([]);
+        } catch(e) {}
     }
   }, [signals, showSignals]);
 
@@ -457,18 +438,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
                  <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono">
                      <span className="text-zinc-500">O</span>
                      <span className={hoveredData.close >= hoveredData.open ? "text-emerald-400" : "text-rose-400"}>
-                         {hoveredData.open.toFixed(2)}
+                         {isValid(hoveredData.open) ? hoveredData.open.toFixed(2) : '-'}
                      </span>
                      <span className="text-zinc-500">H</span>
-                     <span className="text-zinc-300">{hoveredData.high.toFixed(2)}</span>
+                     <span className="text-zinc-300">{isValid(hoveredData.high) ? hoveredData.high.toFixed(2) : '-'}</span>
                      <span className="text-zinc-500">L</span>
-                     <span className="text-zinc-300">{hoveredData.low.toFixed(2)}</span>
+                     <span className="text-zinc-300">{isValid(hoveredData.low) ? hoveredData.low.toFixed(2) : '-'}</span>
                      <span className="text-zinc-500">C</span>
                      <span className={hoveredData.close >= hoveredData.open ? "text-emerald-400" : "text-rose-400"}>
-                         {hoveredData.close.toFixed(2)}
+                         {isValid(hoveredData.close) ? hoveredData.close.toFixed(2) : '-'}
                      </span>
                      <span className="text-zinc-500">Vol</span>
-                     <span className="text-zinc-300">{hoveredData.volume.toLocaleString()}</span>
+                     <span className="text-zinc-300">{hoveredData.volume ? hoveredData.volume.toLocaleString() : '-'}</span>
                      <span className="text-zinc-500">ADX</span>
                      <span className="text-purple-400">{hoveredData.adx ? hoveredData.adx.toFixed(2) : '-'}</span>
                  </div>
