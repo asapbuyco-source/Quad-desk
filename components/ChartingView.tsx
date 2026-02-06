@@ -20,7 +20,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
     zScore: true,
     levels: true,
     signals: true,
-    volumeProfile: true 
+    volumeProfile: false // Default closed on mobile to save space
   });
 
   const toggleLayer = (key: keyof typeof layers) => {
@@ -36,7 +36,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
       <div className="flex-1 w-full h-full relative overflow-hidden flex gap-2">
         
         {/* Main Chart Area */}
-        <div className="flex-1 min-w-0 h-full fintech-card overflow-hidden">
+        <div className="flex-1 min-w-0 h-full fintech-card overflow-hidden relative z-10">
              <PriceChart 
                 data={candles} 
                 signals={signals} 
@@ -51,11 +51,11 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
                 isSidePanelOpen={layers.volumeProfile}
             >
                 {/* Header Controls */}
-                <div className="flex gap-2 bg-zinc-900/50 p-1 rounded-full border border-white/5 items-center">
+                <div className="flex gap-2 bg-zinc-900/50 p-1 rounded-full border border-white/5 items-center max-w-full overflow-x-auto scrollbar-hide">
                     <button
                         onClick={() => toggleLayer('zScore')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border
+                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap
                             ${layers.zScore 
                                 ? 'bg-brand-accent/20 text-brand-accent border-brand-accent/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -63,12 +63,13 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
                     >
                         <div className={`w-1.5 h-1.5 rounded-full ${layers.zScore ? 'bg-brand-accent' : 'bg-slate-600'}`}></div>
                         <span className="hidden sm:inline">AI BANDS</span>
+                        <span className="sm:hidden">AI</span>
                     </button>
                     
                     <button
                         onClick={() => toggleLayer('levels')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border
+                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap
                             ${layers.levels 
                                 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -76,12 +77,13 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
                     >
                         <div className={`w-1.5 h-1.5 rounded-full ${layers.levels ? 'bg-emerald-500' : 'bg-slate-600'}`}></div>
                         <span className="hidden sm:inline">LEVELS</span>
+                        <span className="sm:hidden">LVL</span>
                     </button>
 
                     <button
                         onClick={() => toggleLayer('signals')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border
+                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap
                             ${layers.signals 
                                 ? 'bg-amber-500/20 text-amber-400 border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -89,12 +91,14 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
                     >
                         <div className={`w-1.5 h-1.5 rounded-full ${layers.signals ? 'bg-amber-500' : 'bg-slate-600'}`}></div>
                         <span className="hidden sm:inline">SIGNALS</span>
+                        <span className="sm:hidden">SIG</span>
                     </button>
                 </div>
             </PriceChart>
         </div>
 
         {/* Side Panel: Volume Profile */}
+        {/* On Mobile: Absolute Overlay | On Desktop: Relative Sidebar */}
         <AnimatePresence>
             {layers.volumeProfile && (
                 <MotionDiv 
@@ -102,7 +106,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
                     animate={{ width: 280, opacity: 1 }}
                     exit={{ width: 0, opacity: 0 }}
                     transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                    className="h-full shrink-0 hidden md:block"
+                    className="h-full shrink-0 absolute right-0 top-0 bottom-0 z-20 md:static"
                 >
                      <VolumeProfile data={candles} />
                 </MotionDiv>

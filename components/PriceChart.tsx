@@ -323,7 +323,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
                     <button 
                         onClick={onToggleSidePanel}
                         className={`
-                            hidden md:flex p-1.5 rounded-lg transition-colors border
+                            flex p-1.5 rounded-lg transition-colors border
                             ${isSidePanelOpen 
                                 ? 'bg-purple-500/10 text-purple-400 border-purple-500/20 shadow-[0_0_10px_rgba(168,85,247,0.1)]' 
                                 : 'text-zinc-500 border-transparent hover:bg-white/5 hover:text-zinc-300'}

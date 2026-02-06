@@ -70,9 +70,9 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#18181b]/50 rounded-xl overflow-hidden border border-white/5 relative">
-        {/* Header to align with PriceChart */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] backdrop-blur-md shrink-0">
+    <div className="flex flex-col h-full bg-[#09090b]/95 md:bg-[#18181b]/50 rounded-xl overflow-hidden border border-white/5 relative shadow-2xl md:shadow-none">
+        {/* Header aligned with PriceChart (h-12) */}
+        <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] backdrop-blur-md shrink-0">
             <div className="flex items-center gap-2 text-slate-300">
                 <AlignHorizontalJustifyStart size={16} />
                 <span className="text-xs font-bold uppercase tracking-wider">Volume Profile</span>
@@ -82,7 +82,7 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
             </div>
         </div>
 
-        <div className="flex-1 w-full min-h-0 relative p-2">
+        <div className="flex-1 w-full min-h-0 relative p-1">
             {/* Legend Overlay */}
             <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-1 pointer-events-none">
                 <div className="flex items-center gap-2 justify-end">
@@ -103,7 +103,7 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
                 <BarChart 
                     layout="vertical" 
                     data={chartData} 
-                    margin={{ top: 10, right: 10, left: 10, bottom: 5 }}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 5 }}
                     barGap={0}
                     barCategoryGap={1}
                 >
