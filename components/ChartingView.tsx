@@ -68,7 +68,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({
                     <button
                         onClick={() => toggleLayer('zScore')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap
+                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
                             ${layers.zScore 
                                 ? 'bg-brand-accent/20 text-brand-accent border-brand-accent/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -82,7 +82,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({
                     <button
                         onClick={() => toggleLayer('levels')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap
+                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
                             ${layers.levels 
                                 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -96,7 +96,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({
                     <button
                         onClick={() => toggleLayer('signals')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap
+                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
                             ${layers.signals 
                                 ? 'bg-amber-500/20 text-amber-400 border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}

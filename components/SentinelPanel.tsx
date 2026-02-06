@@ -1,6 +1,6 @@
 import React from 'react';
 import { SentinelChecklist, AiAnalysis, AiScanResult } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, ScanSearch } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, ScanSearch, Percent } from 'lucide-react';
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
@@ -43,9 +43,20 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, ai
                         {aiScanResult.verdict}
                     </h3>
                  </div>
-                 <p className="text-[10px] text-slate-300 leading-relaxed font-medium">
+                 <p className="text-[10px] text-slate-300 leading-relaxed font-medium mb-2">
                      "{aiScanResult.analysis}"
                  </p>
+                 
+                 {/* Risk/Reward Display */}
+                 {aiScanResult.risk_reward_ratio && (
+                     <div className="flex items-center gap-2 mt-2 pt-2 border-t border-purple-500/20">
+                         <Percent size={10} className="text-slate-500" />
+                         <span className="text-[10px] text-slate-400">R:R Ratio</span>
+                         <span className={`text-[10px] font-bold font-mono ${aiScanResult.risk_reward_ratio >= 2 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                             {aiScanResult.risk_reward_ratio.toFixed(2)}
+                         </span>
+                     </div>
+                 )}
              </div>
         )}
 

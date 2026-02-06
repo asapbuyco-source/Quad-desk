@@ -79,6 +79,10 @@ export interface AiScanResult {
   decision_price: number;
   verdict: 'ENTRY' | 'EXIT' | 'WAIT';
   analysis: string;
+  risk_reward_ratio?: number;
+  entry_price?: number;
+  stop_loss?: number;
+  take_profit?: number;
 }
 
 export interface AiAnalysis {

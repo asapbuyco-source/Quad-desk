@@ -180,7 +180,7 @@ const IntelView: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col gap-6 max-w-7xl mx-auto px-4 lg:px-0 relative">
+    <div className="h-full flex flex-col gap-6 max-w-7xl mx-auto px-4 lg:px-0 relative w-full">
       
       {/* Header Section */}
       <div className="flex flex-col gap-6">
@@ -309,7 +309,7 @@ const IntelView: React.FC = () => {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: idx * 0.05 }}
-                        className="fintech-card p-5 group hover:border-brand-accent/30 transition-all flex flex-col justify-between h-full"
+                        className="fintech-card p-5 group hover:border-brand-accent/30 transition-all flex flex-col justify-between h-full max-w-full"
                     >
                         <div>
                             <div className="flex justify-between items-start mb-4">

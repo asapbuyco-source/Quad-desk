@@ -77,7 +77,7 @@ const GuideView: React.FC = () => {
                 title="AI Market Scanner" 
                 colorClass="border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.05)]"
             >
-                <p>Leverages Google Gemini 1.5 Flash to analyze market structure in real-time.</p>
+                <p>Leverages Google Gemini 3 (Pro & Flash) to analyze market structure in real-time.</p>
                 <ul className="list-disc pl-4 space-y-1 mt-2 text-slate-500">
                     <li><strong className="text-white">"AI SCAN" Button:</strong> Located in the Chart view. Sends recent candle data to the backend for analysis.</li>
                     <li><strong className="text-white">Output:</strong> Generates key Support/Resistance levels, a "Decision Price" pivot, and a trade Verdict (ENTRY/WAIT).</li>

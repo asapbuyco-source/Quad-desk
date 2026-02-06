@@ -167,6 +167,9 @@ const generateBacktestData = (): CandleData[] => {
 
 const BACKTEST_DATA = generateBacktestData();
 
+// RATE LIMITING CONSTANTS
+const SCAN_COOLDOWN = 60; // Seconds
+
 const App: React.FC = () => {
   const [hasEntered, setHasEntered] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -185,10 +188,15 @@ const App: React.FC = () => {
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [levels, setLevels] = useState<PriceLevel[]>(MOCK_LEVELS);
   
+  // Bands State
+  const [bands, setBands] = useState<any>(null);
+
   // AI Scan State
   const [aiScanResult, setAiScanResult] = useState<AiScanResult | undefined>(undefined);
   const [isScanning, setIsScanning] = useState(false);
-  
+  const [lastScanTime, setLastScanTime] = useState(0);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+
   const [asks, setAsks] = useState<OrderBookLevel[]>(MOCK_ASKS);
   const [bids, setBids] = useState<OrderBookLevel[]>(MOCK_BIDS);
 
@@ -208,7 +216,7 @@ const App: React.FC = () => {
                 low: parseFloat(k[3]),
                 close: parseFloat(k[4]),
                 volume: parseFloat(k[5]),
-                // AI Bands (Simulated calculation based on price for visual demo)
+                // Placeholders, will be enriched by bands
                 zScoreUpper1: parseFloat(k[4]) * 1.002,
                 zScoreLower1: parseFloat(k[4]) * 0.998,
                 zScoreUpper2: parseFloat(k[4]) * 1.005,
@@ -232,67 +240,131 @@ const App: React.FC = () => {
     fetchHistory();
   }, [isBacktest, interval]);
 
-  // 2. Real-Time WebSocket Connection (Binance Direct) - LIVE MODE ONLY
+  // 2. Polling for Bands from Backend
+  useEffect(() => {
+      if (isBacktest) return;
+      const fetchBands = async () => {
+          try {
+              const res = await fetch('http://localhost:8000/bands');
+              if (res.ok) {
+                  const data = await res.json();
+                  if (!data.error) setBands(data);
+              }
+          } catch(e) {
+              // Silent fail
+          }
+      };
+      
+      fetchBands();
+      const i = setInterval(fetchBands, 60000); // Poll every minute
+      return () => clearInterval(i);
+  }, [isBacktest]);
+
+  // 3. Real-Time WebSocket Connection (Binance Direct) - LIVE MODE ONLY
   useEffect(() => {
       if (isBacktest) return;
 
-      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`);
-      
-      ws.onmessage = (event) => {
-          const message = JSON.parse(event.data);
-          const k = message.k;
+      let ws: WebSocket | null = null;
+      let reconnectTimer: any = null;
+
+      const connect = () => {
+          ws = new WebSocket(`wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`);
           
-          const newCandle: CandleData = {
-              time: k.t / 1000,
-              open: parseFloat(k.o),
-              high: parseFloat(k.h),
-              low: parseFloat(k.l),
-              close: parseFloat(k.c),
-              volume: parseFloat(k.v),
-              zScoreUpper1: parseFloat(k.c) * 1.002,
-              zScoreLower1: parseFloat(k.c) * 0.998,
-              zScoreUpper2: parseFloat(k.c) * 1.005,
-              zScoreLower2: parseFloat(k.c) * 0.995,
+          ws.onopen = () => {
+              console.log("WS Connected");
           };
 
-          // Update Metrics
-          setMetrics(prev => ({
-              ...prev,
-              price: newCandle.close,
-              change: parseFloat(k.P) || 0, // 24h change percent
-          }));
-
-          setCandles(prev => {
-              const last = prev[prev.length - 1];
-              let updatedCandles = [...prev];
-
-              // If same time, update last candle
-              if (last && last.time === newCandle.time) {
-                  updatedCandles = [...prev.slice(0, -1), newCandle];
-              } else {
-                  // Else add new candle
-                  updatedCandles = [...prev, newCandle];
-              }
+          ws.onmessage = (event) => {
+              const message = JSON.parse(event.data);
+              const k = message.k;
               
-              // Recalculate ADX for the updated array
-              // Optimization: We could optimize this to only recalculate the tail, 
-              // but for <1000 items, full recalculation is negligible (<1ms)
-              return calculateADX(updatedCandles);
-          });
+              const newCandle: CandleData = {
+                  time: k.t / 1000,
+                  open: parseFloat(k.o),
+                  high: parseFloat(k.h),
+                  low: parseFloat(k.l),
+                  close: parseFloat(k.c),
+                  volume: parseFloat(k.v),
+                  // Use real bands if available, else simulated
+                  zScoreUpper1: bands ? bands.upper_1 : parseFloat(k.c) * 1.002,
+                  zScoreLower1: bands ? bands.lower_1 : parseFloat(k.c) * 0.998,
+                  zScoreUpper2: bands ? bands.upper_2 : parseFloat(k.c) * 1.005,
+                  zScoreLower2: bands ? bands.lower_2 : parseFloat(k.c) * 0.995,
+              };
+
+              // Update Metrics
+              setMetrics(prev => ({
+                  ...prev,
+                  price: newCandle.close,
+                  change: parseFloat(k.P) || 0, // 24h change percent
+              }));
+
+              setCandles(prev => {
+                  const last = prev[prev.length - 1];
+                  let updatedCandles = [...prev];
+
+                  // If same time, update last candle
+                  if (last && last.time === newCandle.time) {
+                      updatedCandles = [...prev.slice(0, -1), newCandle];
+                  } else {
+                      // Else add new candle
+                      updatedCandles = [...prev, newCandle];
+                  }
+                  
+                  return calculateADX(updatedCandles);
+              });
+          };
+
+          ws.onerror = (err) => {
+              console.error("WS Error", err);
+              ws?.close();
+          };
+
+          ws.onclose = () => {
+              console.warn("WS Closed, reconnecting...");
+              reconnectTimer = setTimeout(connect, 5000);
+          };
       };
 
-      return () => ws.close();
-  }, [isBacktest, interval]);
+      connect();
 
-  // 3. Manual AI Market Scan with Robust Fallback
+      return () => {
+          if (ws) ws.close();
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+      };
+  }, [isBacktest, interval, bands]); // Re-bind if bands change to update realtime calc
+
+  // Cooldown Timer
+  useEffect(() => {
+      if (lastScanTime === 0) return;
+      
+      const interval = setInterval(() => {
+          const now = Date.now();
+          const elapsed = (now - lastScanTime) / 1000;
+          const remaining = Math.max(0, SCAN_COOLDOWN - elapsed);
+          setCooldownRemaining(Math.ceil(remaining));
+      }, 1000);
+
+      return () => clearInterval(interval);
+  }, [lastScanTime]);
+
+  // 4. Manual AI Market Scan with Rate Limiting
   const handleAiScan = async () => {
       if (isScanning || isBacktest) return;
+      
+      // Check Cooldown
+      if (cooldownRemaining > 0) {
+          alert(`Wait ${cooldownRemaining}s before next scan.`);
+          return;
+      }
+
       setIsScanning(true);
+      setLastScanTime(Date.now());
+      setCooldownRemaining(SCAN_COOLDOWN);
       
       try {
-          // Attempt fetch with short timeout
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout
+          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
           
           const response = await fetch('http://localhost:8000/analyze', {
               signal: controller.signal
@@ -305,6 +377,7 @@ const App: React.FC = () => {
               setAiScanResult(data);
               updateLevelsFromScan(data);
           } else {
+              if (data.message) alert(`AI Error: ${data.message}`);
               throw new Error(data.error || "Invalid response");
           }
       } catch (e) {
@@ -314,14 +387,15 @@ const App: React.FC = () => {
           await new Promise(r => setTimeout(r, 2000)); // Simulate processing
           
           const currentPrice = metrics.price || 43000;
-          const isBullish = Math.random() > 0.4; // Slight bullish bias for demo
+          const isBullish = Math.random() > 0.4;
           
           const simResult: AiScanResult = {
               support: [currentPrice * 0.985, currentPrice * 0.96],
               resistance: [currentPrice * 1.015, currentPrice * 1.04],
               decision_price: currentPrice * (isBullish ? 0.99 : 1.01),
               verdict: isBullish ? 'ENTRY' : 'WAIT',
-              analysis: `[SIMULATION] Volatility contraction detected near key Fibonacci levels. Order flow suggests ${isBullish ? 'institutional accumulation' : 'distribution'} with hidden iceberg orders.`
+              analysis: `[SIMULATION] Volatility contraction detected near key Fibonacci levels. Order flow suggests ${isBullish ? 'institutional accumulation' : 'distribution'} with hidden iceberg orders.`,
+              risk_reward_ratio: 2.5
           };
           
           setAiScanResult(simResult);
@@ -337,13 +411,16 @@ const App: React.FC = () => {
       data.resistance.forEach((p: number) => newLevels.push({ price: p, type: 'RESISTANCE', label: 'AI RES' }));
       newLevels.push({ price: data.decision_price, type: 'ENTRY', label: 'AI PIVOT' });
       
+      if (data.stop_loss) newLevels.push({ price: data.stop_loss, type: 'STOP_LOSS', label: 'STOP' });
+      if (data.take_profit) newLevels.push({ price: data.take_profit, type: 'TAKE_PROFIT', label: 'TARGET' });
+      
       setLevels(prev => [
-          ...prev.filter(l => !l.label.startsWith('AI')), 
+          ...prev.filter(l => !l.label.startsWith('AI') && l.label !== 'STOP' && l.label !== 'TARGET'), 
           ...newLevels
       ]);
   };
 
-  // 4. Background Simulation Engine (Metrics & Circuit Breaker) - ALWAYS RUNS
+  // 5. Background Simulation Engine (Metrics & Circuit Breaker) - ALWAYS RUNS
   useEffect(() => {
     if (!metrics.price && !isBacktest) return; 
 
@@ -394,7 +471,7 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [metrics.price, isBacktest]);
 
-  // 5. BACKTEST REPLAY ENGINE
+  // 6. BACKTEST REPLAY ENGINE
   useEffect(() => {
       if (!isBacktest) return;
 
@@ -473,7 +550,7 @@ const App: React.FC = () => {
                                 levels={levels}
                                 aiScanResult={aiScanResult}
                                 onScan={handleAiScan}
-                                isScanning={isScanning}
+                                isScanning={isScanning || cooldownRemaining > 0}
                                 interval={interval}
                                 onIntervalChange={setTimeframeInterval}
                             />
