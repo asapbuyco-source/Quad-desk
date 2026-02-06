@@ -33,8 +33,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  // Using any to avoid strict type mismatches during version upgrades, 
-  // though ISeriesApi<"Candlestick"> is technically correct in v5 typings.
+  // Using any to avoid strict type mismatches during version upgrades
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | any>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | any>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]); 
@@ -155,6 +154,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
           chartRef.current.remove();
           chartRef.current = null;
       }
+      // CRITICAL: Clear refs to prevent usage of destroyed series
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
     };
   }, []);
 
@@ -178,9 +180,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     candlestickSeriesRef.current.setData(candles);
     volumeSeriesRef.current.setData(volumes);
-    
-    // Fit content on initial load if needed, but usually auto-scaling works.
-    // chartRef.current?.timeScale().fitContent(); 
   }, [data]);
 
   // Handle AI Scan Results & Manual Levels
@@ -189,7 +188,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       // REMOVE OLD LINES
       priceLinesRef.current.forEach(line => {
-          // Check existence before removal to prevent crashes
           try {
              candlestickSeriesRef.current?.removePriceLine(line);
           } catch(e) {
@@ -261,6 +259,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
   // Handle Signals
   useEffect(() => {
     if (!candlestickSeriesRef.current) return;
+    
+    // Safety check for setMarkers method existence
+    if (typeof candlestickSeriesRef.current.setMarkers !== 'function') return;
+
     if (showSignals) {
         const markers = signals.map(s => ({
             time: s.time as any,
