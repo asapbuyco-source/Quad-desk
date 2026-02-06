@@ -72,6 +72,14 @@ export interface PriceLevel {
   label: string;
 }
 
+export interface AiScanResult {
+  support: number[];
+  resistance: number[];
+  decision_price: number;
+  verdict: 'ENTRY' | 'EXIT' | 'WAIT';
+  analysis: string;
+}
+
 export interface AiAnalysis {
     signal: 'BUY' | 'SELL' | 'WAIT';
     confidence: number;

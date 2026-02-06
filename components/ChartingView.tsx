@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
-import { CandleData, TradeSignal, PriceLevel } from '../types';
+import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const MotionDiv = motion.div as any;
@@ -10,14 +10,17 @@ interface ChartingViewProps {
   candles: CandleData[];
   signals: TradeSignal[];
   levels: PriceLevel[];
+  aiScanResult?: AiScanResult;
+  onScan?: () => void;
+  isScanning?: boolean;
 }
 
-const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels }) => {
+const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, aiScanResult, onScan, isScanning }) => {
   const [layers, setLayers] = useState({
     zScore: true,
     levels: true,
     signals: true,
-    volumeProfile: true // Default to true
+    volumeProfile: true 
   });
 
   const toggleLayer = (key: keyof typeof layers) => {
@@ -37,7 +40,10 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels })
              <PriceChart 
                 data={candles} 
                 signals={signals} 
-                levels={levels} 
+                levels={levels}
+                aiScanResult={aiScanResult}
+                onScan={onScan}
+                isScanning={isScanning}
                 showZScore={layers.zScore}
                 showLevels={layers.levels}
                 showSignals={layers.signals}

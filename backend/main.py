@@ -24,62 +24,22 @@ app.add_middleware(
 )
 
 # AI Configuration
-# Ensure GEMINI_API_KEY is set in your environment or .env file
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-pro')
+# Using Gemini 1.5 Flash for speed and JSON capabilities
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # 2. In-Memory Data Store
-# We store the last 50 candles to calculate rolling metrics
-# Format: [timestamp, open, high, low, close, volume]
-candle_cache = deque(maxlen=50)
-
-# 3. Quant Engine Functions
-def calculate_metrics(df):
-    if len(df) < 20:
-        return None, None
-
-    # Calculate Z-Score (20 period)
-    df['close'] = pd.to_numeric(df['close'])
-    df['volume'] = pd.to_numeric(df['volume'])
-    
-    rolling_mean = df['close'].rolling(window=20).mean()
-    rolling_std = df['close'].rolling(window=20).std()
-    
-    # Get last Z-Score
-    last_close = df['close'].iloc[-1]
-    last_mean = rolling_mean.iloc[-1]
-    last_std = rolling_std.iloc[-1]
-    
-    z_score = (last_close - last_mean) / last_std if last_std != 0 else 0
-
-    # Calculate VPIN Approximation (Volume-Synchronized Probability of Informed Trading)
-    # Since we only have 1m candles, we estimate buy/sell volume delta
-    # If Close > Open, we treat volume as Buy-dominant, else Sell-dominant
-    df['price_change'] = df['close'] - df['open']
-    df['buy_vol'] = np.where(df['price_change'] > 0, df['volume'], 0)
-    df['sell_vol'] = np.where(df['price_change'] < 0, df['volume'], 0)
-    
-    # VPIN proxy: Absolute Order Imbalance / Total Volume over window
-    rolling_buy = df['buy_vol'].rolling(window=20).sum()
-    rolling_sell = df['sell_vol'].rolling(window=20).sum()
-    total_vol = rolling_buy + rolling_sell
-    
-    # Calculate Order Imbalance
-    oi = np.abs(rolling_buy - rolling_sell)
-    # Get the last valid VPIN value
-    vpin = (oi / total_vol).iloc[-1] if total_vol.iloc[-1] != 0 else 0
-
-    return z_score, vpin
+# Increased cache size for better context
+candle_cache = deque(maxlen=1000)
 
 # 4. Background Data Ingestion
 async def binance_listener():
-    # Public client - no keys needed for public streams usually, 
-    # but python-binance AsyncClient requires them for init if strictly following docs, 
-    # passing None/None works for public endpoints often, but let's be safe.
     api_key = os.getenv("BINANCE_API_KEY")
     api_secret = os.getenv("BINANCE_API_SECRET")
     
-    client = await AsyncClient.create(api_key, api_secret)
+    # client = await AsyncClient.create(api_key, api_secret)
+    # Using public client creation often works better without keys for public streams if keys aren't set
+    client = await AsyncClient.create()
     bm = BinanceSocketManager(client)
     # Stream BTCUSDT 1 minute klines
     ts = bm.kline_socket('BTCUSDT', interval=AsyncClient.KLINE_INTERVAL_1MINUTE)
@@ -114,56 +74,52 @@ async def startup_event():
 # 5. API Endpoints
 @app.get("/analyze")
 async def analyze_market():
-    if len(candle_cache) < 20:
-        return {"status": "warming_up", "count": len(candle_cache)}
+    if len(candle_cache) < 50:
+        return {"error": "Not enough data yet, warming up..."}
 
-    df = pd.DataFrame(candle_cache)
-    z_score, vpin = calculate_metrics(df)
+    # Get last 100 candles for context
+    context_candles = list(candle_cache)[-100:]
     
-    # Prepare payload for AI
-    # LEVEL 3 UPGRADE: Increased context window (30 candles) for better hybrid context analysis
-    context_candles = list(candle_cache)[-30:]
+    # Calculate simple stats for the prompt
+    closes = [c['close'] for c in context_candles]
+    current_price = closes[-1]
     
     prompt = f"""
-    You are an institutional execution trader. Analyze this market data for BTC/USDT.
+    You are a Quant Analyst. Analyze these {len(context_candles)} candlestick data points for BTC/USDT.
+    Current Price: {current_price}
     
-    Technical Metrics:
-    - Z-Score (20 period): {z_score:.4f} (High > 2.0 Overbought, Low < -2.0 Oversold)
-    - VPIN (Whale Activity Proxy): {vpin:.4f} (High values > 0.3 indicate informed trading/whales)
-    
-    Recent Price Action (Last 30 candles):
-    {context_candles}
-    
-    Task: Return a valid JSON object.
-    1. Identify if there is a high-probability setup.
-    2. STRICT RULE: Only output 'BUY' or 'SELL' if the Risk/Reward ratio is at least 1:3. Otherwise 'WAIT'.
-    3. Define Entry, Stop Loss, and Take Profit levels that satisfy the 1:3 R:R.
-    
-    Format:
+    Candle Data (JSON format):
+    {json.dumps(context_candles[-30:])} 
+    (Last 30 shown for brevity, but assume trend context from last 100)
+
+    Task:
+    1. Identify key Support and Resistance levels based on recent swing highs/lows.
+    2. determine a "Decision Price" (pivot point).
+    3. Provide a Verdict (ENTRY, EXIT, or WAIT).
+    4. Provide a short 1-sentence analysis.
+
+    Return EXACTLY this JSON structure:
     {{
-        "signal": "BUY" | "SELL" | "WAIT",
-        "confidence": <float between 0.0 and 1.0>,
-        "entry": <float price>,
-        "stop_loss": <float price>,
-        "take_profit": <float price>,
-        "reason": "<short explanation, max 15 words>"
+        "support": [float, float],
+        "resistance": [float, float],
+        "decision_price": float,
+        "verdict": "ENTRY" | "EXIT" | "WAIT",
+        "analysis": "string"
     }}
     """
     
     try:
-        response = model.generate_content(prompt)
-        # Clean response string to ensure JSON parsing
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
-        analysis = json.loads(clean_text)
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
         
-        return {
-            "metrics": {
-                "z_score": z_score,
-                "vpin": vpin
-            },
-            "ai_analysis": analysis
-        }
+        # Parse the JSON response
+        result = json.loads(response.text)
+        return result
+        
     except Exception as e:
+        print(f"AI Error: {e}")
         return {"error": str(e)}
 
 if __name__ == "__main__":

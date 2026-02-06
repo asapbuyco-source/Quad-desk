@@ -7,7 +7,7 @@ import IntelView from './components/IntelView';
 import ChartingView from './components/ChartingView';
 import LandingPage from './components/LandingPage';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, CHECKLIST_ITEMS, MOCK_LEVELS } from './constants';
-import { CandleData, OrderBookLevel, MarketMetrics, TradeSignal, AiAnalysis, PriceLevel } from './types';
+import { CandleData, OrderBookLevel, MarketMetrics, TradeSignal, AiScanResult, PriceLevel } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lock, RefreshCw } from 'lucide-react';
 
@@ -63,7 +63,10 @@ const App: React.FC = () => {
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [levels, setLevels] = useState<PriceLevel[]>(MOCK_LEVELS);
-  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | undefined>(undefined);
+  
+  // AI Scan State
+  const [aiScanResult, setAiScanResult] = useState<AiScanResult | undefined>(undefined);
+  const [isScanning, setIsScanning] = useState(false);
   
   const [asks, setAsks] = useState<OrderBookLevel[]>(MOCK_ASKS);
   const [bids, setBids] = useState<OrderBookLevel[]>(MOCK_BIDS);
@@ -148,63 +151,37 @@ const App: React.FC = () => {
       return () => ws.close();
   }, [isBacktest]);
 
-  // 3. AI Analysis Polling (FastAPI Backend) - LIVE MODE ONLY
-  useEffect(() => {
-    if (isBacktest) return;
-
-    const fetchAnalysis = async () => {
-        try {
-            const response = await fetch('http://localhost:8000/analyze');
-            const data = await response.json();
-            
-            if (data.ai_analysis) {
-                setAiAnalysis({
-                    ...data.ai_analysis,
-                    metrics: data.metrics
-                });
-
-                const { signal, confidence, entry, stop_loss, take_profit } = data.ai_analysis;
-
-                // Update Levels with AI Trade Setup
-                if (signal !== 'WAIT' && entry && stop_loss && take_profit) {
-                     const newLevels: PriceLevel[] = [
-                         { price: entry, type: 'ENTRY', label: `AI ENTRY (${signal})` },
-                         { price: stop_loss, type: 'STOP_LOSS', label: 'STOP' },
-                         { price: take_profit, type: 'TAKE_PROFIT', label: 'TARGET' }
-                     ];
-                     setLevels(newLevels);
-                }
-
-                // Marker Logic: Strong Buy Signal (>80% Confidence)
-                if ((signal === 'BUY' || signal === 'SELL') && confidence > 0.8) {
-                    const currentTime = Math.floor(Date.now() / 1000);
-                    const newSignal: TradeSignal = {
-                        id: `sig-${currentTime}`,
-                        type: signal === 'BUY' ? 'ENTRY_LONG' : 'ENTRY_SHORT',
-                        price: metrics.price,
-                        time: currentTime,
-                        label: `AI ${signal} (${(confidence * 100).toFixed(0)}%)`
-                    };
-
-                    setSignals(prev => {
-                        // Prevent duplicate signals in short timeframe (last 60s)
-                        const lastSig = prev[prev.length - 1];
-                        if (lastSig && (currentTime - (lastSig.time as number) < 60)) {
-                            return prev;
-                        }
-                        return [...prev, newSignal];
-                    });
-                }
-            }
-        } catch (error) {
-            console.error("Backend offline or warming up");
-        }
-    };
-
-    // Poll every 10 seconds
-    const interval = setInterval(fetchAnalysis, 10000);
-    return () => clearInterval(interval);
-  }, [metrics.price, isBacktest]);
+  // 3. Manual AI Market Scan
+  const handleAiScan = async () => {
+      if (isScanning || isBacktest) return;
+      setIsScanning(true);
+      
+      try {
+          // Replace with your actual Railway URL if deployed
+          const response = await fetch('http://localhost:8000/analyze');
+          const data = await response.json();
+          
+          if (data && !data.error) {
+              setAiScanResult(data);
+              
+              // Automatically add levels from scan to the chart levels
+              const newLevels: PriceLevel[] = [];
+              data.support.forEach((p: number) => newLevels.push({ price: p, type: 'SUPPORT', label: 'AI SUP' }));
+              data.resistance.forEach((p: number) => newLevels.push({ price: p, type: 'RESISTANCE', label: 'AI RES' }));
+              newLevels.push({ price: data.decision_price, type: 'ENTRY', label: 'AI PIVOT' });
+              
+              // Merge with existing levels, removing old AI ones
+              setLevels(prev => [
+                  ...prev.filter(l => !l.label.startsWith('AI')), 
+                  ...newLevels
+              ]);
+          }
+      } catch (e) {
+          console.error("AI Scan failed", e);
+      } finally {
+          setIsScanning(false);
+      }
+  };
 
   // 4. Background Simulation Engine (Metrics & Circuit Breaker) - ALWAYS RUNS
   useEffect(() => {
@@ -257,7 +234,7 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [metrics.price, isBacktest]);
 
-  // 5. BACKTEST REPLAY ENGINE (Level 5 Feature)
+  // 5. BACKTEST REPLAY ENGINE
   useEffect(() => {
       if (!isBacktest) return;
 
@@ -280,18 +257,8 @@ const App: React.FC = () => {
           });
           setMetrics(prev => ({ ...prev, price: candle.close }));
 
-          // Simulate AI Triggering on "Crash" or "Pump" events in data
-          if (step === 90) { // Top of Pump
-              setSignals(prev => [...prev, { id: `bt-${step}`, type: 'ENTRY_SHORT', price: candle.close, time: candle.time, label: 'AI SHORT (BT)' }]);
-              setAiAnalysis({ signal: 'SELL', confidence: 0.92, reason: "Backtest: Excessive extension from Mean." });
-          }
-          if (step === 140) { // Bottom of Crash
-              setSignals(prev => [...prev, { id: `bt-${step}`, type: 'ENTRY_LONG', price: candle.close, time: candle.time, label: 'AI LONG (BT)' }]);
-              setAiAnalysis({ signal: 'BUY', confidence: 0.88, reason: "Backtest: VPIN Divergence detected." });
-          }
-
           step++;
-      }, 100); // 10x Speed
+      }, 100); 
 
       return () => clearInterval(interval);
   }, [isBacktest]);
@@ -332,7 +299,7 @@ const App: React.FC = () => {
                                 asks={asks} 
                                 bids={bids} 
                                 checklist={CHECKLIST_ITEMS} 
-                                aiAnalysis={aiAnalysis}
+                                aiScanResult={aiScanResult}
                             />
                         )}
                         {activeTab === 'charting' && (
@@ -340,13 +307,16 @@ const App: React.FC = () => {
                                 candles={candles}
                                 signals={signals}
                                 levels={levels}
+                                aiScanResult={aiScanResult}
+                                onScan={handleAiScan}
+                                isScanning={isScanning}
                             />
                         )}
                         {activeTab === 'analytics' && <AnalyticsView />}
                         {activeTab === 'intel' && <IntelView />}
                     </main>
 
-                    {/* Circuit Breaker Overlay (Level 5: The Armor) */}
+                    {/* Circuit Breaker Overlay */}
                     {metrics.circuitBreakerTripped && (
                         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
                             <MotionDiv 
@@ -363,27 +333,10 @@ const App: React.FC = () => {
                                 <h1 className="text-3xl font-black text-white mb-2 tracking-tight">CIRCUIT BREAKER</h1>
                                 <p className="text-lg text-red-500 font-mono mb-8 font-bold">DAILY LOSS LIMIT EXCEEDED</p>
                                 
-                                <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-lg mb-8 text-left">
-                                    <div className="flex justify-between text-xs text-red-400 font-mono mb-1">
-                                        <span>CURRENT PNL</span>
-                                        <span>LIMIT</span>
-                                    </div>
-                                    <div className="flex justify-between font-mono font-bold">
-                                        <span className="text-white">-${Math.abs(metrics.dailyPnL || 0).toFixed(2)}</span>
-                                        <span className="text-red-500">-$5,000.00</span>
-                                    </div>
-                                    <div className="w-full bg-red-900/30 h-1.5 rounded-full mt-2">
-                                        <div className="bg-red-500 h-full rounded-full w-full animate-pulse"></div>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-3">
+                                <div className="space-y-3 mt-8">
                                     <button disabled className="w-full py-3 bg-zinc-800 text-zinc-500 rounded-lg font-bold text-sm cursor-not-allowed flex items-center justify-center gap-2">
                                         <RefreshCw size={14} /> EXECUTION PAUSED
                                     </button>
-                                    <p className="text-[10px] text-zinc-500 font-mono">
-                                        Contact Risk Desk to override: <span className="text-zinc-300">ext. 4049</span>
-                                    </p>
                                 </div>
                             </MotionDiv>
                         </div>

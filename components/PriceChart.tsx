@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle } from 'lightweight-charts';
-import { CandleData, TradeSignal, PriceLevel } from '../types';
-import { Zap, PanelRight } from 'lucide-react';
+import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine } from 'lightweight-charts';
+import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
+import { Zap, PanelRight, Rocket, Loader2 } from 'lucide-react';
 
 interface PriceChartProps {
   data: CandleData[];
   signals?: TradeSignal[];
   levels?: PriceLevel[];
+  aiScanResult?: AiScanResult;
+  onScan?: () => void;
+  isScanning?: boolean;
   showZScore?: boolean;
   showLevels?: boolean;
   showSignals?: boolean;
@@ -19,6 +22,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
     data, 
     signals = [], 
     levels = [],
+    aiScanResult,
+    onScan,
+    isScanning,
     showLevels = true,
     showSignals = true,
     children,
@@ -29,6 +35,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]); // Store price line objects
   const [hoveredData, setHoveredData] = useState<any>(null);
 
   // Initialize Chart
@@ -87,10 +94,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       priceFormat: {
         type: 'volume',
       },
-      priceScaleId: '', // Overlay on same scale
+      priceScaleId: '', 
     });
     
-    // Set volume to specific scale to position it at bottom
     volumeSeries.priceScale().applyOptions({
         scaleMargins: {
             top: 0.85, 
@@ -102,7 +108,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
 
-    // Crosshair Handler
     chart.subscribeCrosshairMove((param) => {
         if (
             param.point === undefined ||
@@ -126,7 +131,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
     });
 
-    // Resize Handler
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight });
@@ -137,6 +141,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
+      chartRef.current = null;
     };
   }, []);
 
@@ -144,7 +149,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     if (!candlestickSeriesRef.current || !volumeSeriesRef.current || data.length === 0) return;
 
-    // Separate data
     const candles = data.map(d => ({
         time: d.time as any,
         open: d.open,
@@ -161,14 +165,86 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     candlestickSeriesRef.current.setData(candles);
     volumeSeriesRef.current.setData(volumes);
-
   }, [data]);
 
-  // Handle Markers (Signals) & Levels
+  // Handle AI Scan Results & Manual Levels
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !chartRef.current) return;
+      if (!candlestickSeriesRef.current || !showLevels) return;
 
-    // 2. Signals (Markers)
+      // REMOVE OLD LINES
+      priceLinesRef.current.forEach(line => {
+          candlestickSeriesRef.current?.removePriceLine(line);
+      });
+      priceLinesRef.current = [];
+
+      // ADD NEW LINES
+      // 1. App Levels (from props)
+      levels.forEach(l => {
+           let color = '#71717a'; 
+           let lineStyle = LineStyle.Dashed;
+           let lineWidth: 1 | 2 | 3 | 4 = 1;
+
+           if (l.type === 'ENTRY') { color = '#3b82f6'; lineWidth = 2; lineStyle = LineStyle.Solid; }
+           else if (l.type === 'STOP_LOSS') { color = '#f43f5e'; lineWidth = 2; lineStyle = LineStyle.Solid; }
+           else if (l.type === 'TAKE_PROFIT') { color = '#10b981'; lineWidth = 2; lineStyle = LineStyle.Solid; }
+           
+           const line = candlestickSeriesRef.current?.createPriceLine({
+               price: l.price,
+               color: color,
+               lineWidth: lineWidth,
+               lineStyle: lineStyle,
+               axisLabelVisible: true,
+               title: l.label,
+           });
+           if(line) priceLinesRef.current.push(line);
+      });
+
+      // 2. AI Scan Results (if available)
+      if (aiScanResult) {
+          // Support (Green Dashed)
+          aiScanResult.support.forEach(price => {
+              const line = candlestickSeriesRef.current?.createPriceLine({
+                  price,
+                  color: '#10b981',
+                  lineWidth: 1,
+                  lineStyle: LineStyle.Dashed,
+                  axisLabelVisible: true,
+                  title: 'AI SUPPORT',
+              });
+              if(line) priceLinesRef.current.push(line);
+          });
+
+          // Resistance (Red Dashed)
+          aiScanResult.resistance.forEach(price => {
+              const line = candlestickSeriesRef.current?.createPriceLine({
+                  price,
+                  color: '#f43f5e',
+                  lineWidth: 1,
+                  lineStyle: LineStyle.Dashed,
+                  axisLabelVisible: true,
+                  title: 'AI RESIST',
+              });
+              if(line) priceLinesRef.current.push(line);
+          });
+
+          // Decision Line (Thick Solid)
+          const decisionColor = aiScanResult.verdict === 'ENTRY' ? '#3b82f6' : '#f97316';
+          const line = candlestickSeriesRef.current?.createPriceLine({
+              price: aiScanResult.decision_price,
+              color: decisionColor,
+              lineWidth: 3,
+              lineStyle: LineStyle.Solid,
+              axisLabelVisible: true,
+              title: `AI PIVOT (${aiScanResult.verdict})`,
+          });
+          if(line) priceLinesRef.current.push(line);
+      }
+
+  }, [levels, aiScanResult, showLevels]);
+
+  // Handle Signals
+  useEffect(() => {
+    if (!candlestickSeriesRef.current) return;
     if (showSignals) {
         const markers = signals.map(s => ({
             time: s.time as any,
@@ -181,44 +257,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     } else {
         candlestickSeriesRef.current.setMarkers([]);
     }
-
-    // Support/Resistance & Trade Levels
-    if (showLevels && levels.length > 0) {
-       levels.forEach(l => {
-           let color = '#71717a'; // Default Zinc
-           let lineStyle = LineStyle.Dashed;
-           let lineWidth: 1 | 2 | 3 | 4 = 1;
-
-           if (l.type === 'ENTRY') {
-               color = '#3b82f6'; // Blue
-               lineWidth = 2;
-               lineStyle = LineStyle.Solid;
-           } else if (l.type === 'STOP_LOSS') {
-               color = '#f43f5e'; // Red
-               lineWidth = 2;
-               lineStyle = LineStyle.Solid;
-           } else if (l.type === 'TAKE_PROFIT') {
-               color = '#10b981'; // Green
-               lineWidth = 2;
-               lineStyle = LineStyle.Solid;
-           } else if (l.type === 'RESISTANCE') {
-               color = '#f43f5e';
-           } else if (l.type === 'SUPPORT') {
-               color = '#10b981';
-           }
-
-           candlestickSeriesRef.current?.createPriceLine({
-               price: l.price,
-               color: color,
-               lineWidth: lineWidth,
-               lineStyle: lineStyle,
-               axisLabelVisible: true,
-               title: l.label,
-           });
-       });
-    }
-
-  }, [signals, levels, showSignals, showLevels]);
+  }, [signals, showSignals]);
 
 
   return (
@@ -232,7 +271,28 @@ const PriceChart: React.FC<PriceChartProps> = ({
                  <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT LIVE</span>
              </div>
 
-            {/* Center: Controls (Injected) */}
+            {/* AI Scan Button */}
+            {onScan && (
+                <button
+                    onClick={onScan}
+                    disabled={isScanning}
+                    className={`
+                        flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide transition-all
+                        ${isScanning 
+                            ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30 cursor-wait' 
+                            : 'bg-brand-accent text-white hover:bg-blue-600 shadow-[0_0_15px_rgba(59,130,246,0.4)] hover:shadow-[0_0_20px_rgba(59,130,246,0.6)]'}
+                    `}
+                >
+                    {isScanning ? (
+                        <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                        <Rocket size={12} />
+                    )}
+                    {isScanning ? 'Scanning...' : 'AI Market Scan'}
+                </button>
+            )}
+
+            {/* Center Controls */}
             <div className="hidden md:flex flex-1 justify-center">
                 {children}
             </div>
@@ -259,11 +319,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
                     </button>
                 )}
             </div>
-        </div>
-
-        {/* Mobile Controls Row */}
-        <div className="md:hidden flex justify-center p-2 border-b border-white/5 bg-white/[0.02]">
-             {children}
         </div>
 
       {/* Chart Container */}

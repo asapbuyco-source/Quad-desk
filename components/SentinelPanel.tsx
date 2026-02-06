@@ -1,13 +1,14 @@
 import React from 'react';
-import { SentinelChecklist, AiAnalysis } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, Wallet } from 'lucide-react';
+import { SentinelChecklist, AiAnalysis, AiScanResult } from '../types';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, Wallet, ScanSearch } from 'lucide-react';
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
   aiAnalysis?: AiAnalysis;
+  aiScanResult?: AiScanResult;
 }
 
-const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis }) => {
+const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, aiScanResult }) => {
   return (
     <div className="fintech-card h-full flex flex-col bg-slate-900/40">
       
@@ -25,8 +26,31 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis }) 
       {/* Checklist */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         
-        {/* AI Signal Card */}
-        {aiAnalysis ? (
+        {/* AI SCAN RESULT CARD (New Feature) */}
+        {aiScanResult && (
+             <div className="p-4 rounded-xl border mb-4 bg-purple-500/10 border-purple-500/30 relative overflow-hidden group">
+                 <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                        <ScanSearch size={16} className="text-purple-400" />
+                        <span className="text-xs font-bold text-white tracking-wide">AI VERDICT</span>
+                    </div>
+                 </div>
+                 <div className="flex items-baseline gap-2 mb-2">
+                    <h3 className={`text-2xl font-black tracking-tighter ${
+                         aiScanResult.verdict === 'ENTRY' ? 'text-emerald-400' : 
+                         aiScanResult.verdict === 'EXIT' ? 'text-rose-400' : 'text-amber-400'
+                    }`}>
+                        {aiScanResult.verdict}
+                    </h3>
+                 </div>
+                 <p className="text-[10px] text-slate-300 leading-relaxed font-medium">
+                     "{aiScanResult.analysis}"
+                 </p>
+             </div>
+        )}
+
+        {/* Existing AI Signal Card (Legacy Polling) */}
+        {aiAnalysis && !aiScanResult && (
             <div className={`p-4 rounded-xl border mb-4 relative overflow-hidden transition-all duration-500 ${
                 aiAnalysis.signal === 'BUY' ? 'bg-emerald-500/10 border-emerald-500/30' :
                 aiAnalysis.signal === 'SELL' ? 'bg-rose-500/10 border-rose-500/30' :
@@ -37,7 +61,6 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis }) 
                         <BrainCircuit size={16} className={aiAnalysis.signal === 'BUY' ? 'text-emerald-400' : aiAnalysis.signal === 'SELL' ? 'text-rose-400' : 'text-slate-400'} />
                         <span className="text-xs font-bold text-white tracking-wide">AI SIGNAL</span>
                     </div>
-                    <span className="text-[10px] font-mono opacity-70">GEMINI-PRO</span>
                  </div>
                  
                  <div className="flex items-baseline gap-2 mb-2 relative z-10">
@@ -54,45 +77,6 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis }) 
                  <p className="text-[10px] text-slate-300 leading-relaxed font-medium relative z-10">
                      "{aiAnalysis.reason}"
                  </p>
-
-                 {/* Trade Setup Details */}
-                 {aiAnalysis.signal !== 'WAIT' && aiAnalysis.entry && (
-                    <div className="mt-3 pt-3 border-t border-white/5 flex flex-col gap-2 relative z-10">
-                        <div className="flex justify-between text-[10px] font-mono">
-                            <span className="text-slate-500">ENTRY</span>
-                            <span className="text-white">{aiAnalysis.entry}</span>
-                        </div>
-                        <div className="flex justify-between text-[10px] font-mono">
-                            <span className="text-slate-500">STOP LOSS</span>
-                            <span className="text-rose-400">{aiAnalysis.stop_loss}</span>
-                        </div>
-                        <div className="flex justify-between text-[10px] font-mono">
-                            <span className="text-slate-500">TAKE PROFIT</span>
-                            <span className="text-emerald-400">{aiAnalysis.take_profit}</span>
-                        </div>
-                        <div className="flex justify-between text-[10px] font-mono mt-1">
-                            <span className="text-slate-500 font-bold">R:R RATIO</span>
-                            <span className="text-brand-accent font-bold">1:3.0</span>
-                        </div>
-                    </div>
-                 )}
-
-                 {aiAnalysis.metrics && (
-                     <div className="mt-3 pt-3 border-t border-white/5 grid grid-cols-2 gap-2 text-[9px] font-mono text-slate-500 z-10 relative">
-                         <div>Z-SCORE: <span className="text-slate-300">{aiAnalysis.metrics.z_score.toFixed(2)}</span></div>
-                         <div>VPIN: <span className="text-slate-300">{aiAnalysis.metrics.vpin.toFixed(2)}</span></div>
-                     </div>
-                 )}
-
-                 {/* Glow Effect */}
-                 <div className={`absolute -right-4 -bottom-4 w-24 h-24 rounded-full blur-[40px] opacity-20 ${
-                      aiAnalysis.signal === 'BUY' ? 'bg-emerald-500' : aiAnalysis.signal === 'SELL' ? 'bg-rose-500' : 'bg-slate-500'
-                 }`}></div>
-            </div>
-        ) : (
-            <div className="p-4 rounded-xl bg-slate-800/30 border border-white/5 mb-4 flex flex-col items-center justify-center text-center py-6">
-                <BrainCircuit size={24} className="text-slate-600 mb-2 animate-pulse" />
-                <span className="text-xs text-slate-500 font-mono">Initializing Neural Net...</span>
             </div>
         )}
 
@@ -115,24 +99,6 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis }) 
             </div>
           ))}
           
-          <div className="mt-4 p-4 rounded-xl bg-white/5 border border-white/5">
-            <div className="flex items-center justify-between mb-2">
-                 <div className="flex items-center gap-2">
-                    <Wallet size={14} className="text-slate-400" />
-                    <span className="text-xs font-bold text-slate-300">Daily PnL</span>
-                 </div>
-                 <span className="text-xs font-mono font-bold text-white">
-                    LIMIT: $5,000
-                 </span>
-            </div>
-            <div className="flex items-baseline gap-1">
-                 <span className="text-xl font-mono font-bold text-trade-bid">+$1,250.00</span>
-                 <span className="text-[10px] text-slate-500">USD</span>
-            </div>
-            <div className="w-full h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
-                <div className="h-full bg-trade-bid w-[25%] rounded-full"></div>
-            </div>
-          </div>
       </div>
     </div>
   );

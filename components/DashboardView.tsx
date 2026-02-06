@@ -2,7 +2,7 @@ import React from 'react';
 import OrderBook from './OrderBook';
 import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
-import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist, AiAnalysis } from '../types';
+import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist, AiAnalysis, AiScanResult } from '../types';
 import { motion } from 'framer-motion';
 import { Terminal } from 'lucide-react';
 
@@ -14,7 +14,8 @@ interface DashboardViewProps {
   asks: OrderBookLevel[];
   bids: OrderBookLevel[];
   checklist: SentinelChecklist[];
-  aiAnalysis?: AiAnalysis; // Optional AI Analysis prop
+  aiAnalysis?: AiAnalysis; 
+  aiScanResult?: AiScanResult;
 }
 
 const container = {
@@ -32,7 +33,7 @@ const item = {
   show: { opacity: 1, y: 0 }
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis, aiScanResult }) => {
   return (
     <MotionDiv 
       variants={container}
@@ -53,13 +54,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
       {/* Bottom Right: Sentinel & System Status */}
       <MotionDiv variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
         <div className="flex-1">
-             {/* We rely on App.tsx to fetch aiAnalysis. If it's not passed, it's handled internally by SentinelPanel or undefined */}
-             {/* Wait, I need to pass it down from App.tsx. I will update App.tsx to pass it to DashboardView */}
-             {/* But wait, DashboardView is being used in App.tsx. I must ensure I update App.tsx to pass it. */}
-             {/* I see I updated App.tsx but did I update the JSX usage of DashboardView? Yes, I haven't added the prop yet in App.tsx. */}
-             {/* Let's fix DashboardView props first here, then App.tsx update again or assume I did it? */}
-             {/* I will assume I need to pass it in App.tsx. */}
-             <SentinelPanel checklist={checklist} aiAnalysis={aiAnalysis} />
+             <SentinelPanel checklist={checklist} aiAnalysis={aiAnalysis} aiScanResult={aiScanResult} />
         </div>
         
         {/* Terminal/Logs */}
@@ -72,9 +67,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
                 <p>&gt; Connecting to institutional gateway...</p>
                 <p className="text-trade-bid">&gt; [SUCCESS] Feed active: 12ms latency</p>
                 <p>&gt; AI Model [SENTINEL-X] loaded.</p>
+                {aiScanResult && (
+                   <p className="text-brand-accent">&gt; [AI] Market Scan Complete: {aiScanResult.verdict}</p> 
+                )}
                 <p>&gt; Monitoring order flow for icebergs...</p>
-                <p className="text-trade-warn">&gt; [WARN] Volatility spike detected in Asian session.</p>
-                <p>&gt; Adjusting risk parameters...</p>
             </div>
         </div>
       </MotionDiv>
