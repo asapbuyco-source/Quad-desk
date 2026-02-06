@@ -44,6 +44,8 @@ export interface MarketMetrics {
   toxicity: number; // 0-100
   ofi: number;
   heatmap: HeatmapItem[];
+  dailyPnL?: number;
+  circuitBreakerTripped?: boolean;
 }
 
 export interface NewsItem {
@@ -66,7 +68,7 @@ export interface TradeSignal {
 
 export interface PriceLevel {
   price: number;
-  type: 'SUPPORT' | 'RESISTANCE';
+  type: 'SUPPORT' | 'RESISTANCE' | 'ENTRY' | 'STOP_LOSS' | 'TAKE_PROFIT';
   label: string;
 }
 
@@ -74,6 +76,9 @@ export interface AiAnalysis {
     signal: 'BUY' | 'SELL' | 'WAIT';
     confidence: number;
     reason: string;
+    entry?: number;
+    stop_loss?: number;
+    take_profit?: number;
     metrics?: {
         z_score: number;
         vpin: number;

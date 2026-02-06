@@ -121,23 +121,31 @@ async def analyze_market():
     z_score, vpin = calculate_metrics(df)
     
     # Prepare payload for AI
-    last_5 = list(candle_cache)[-5:]
+    # LEVEL 3 UPGRADE: Increased context window (30 candles) for better hybrid context analysis
+    context_candles = list(candle_cache)[-30:]
     
     prompt = f"""
-    You are an institutional trader. Analyze this market data for BTC/USDT.
+    You are an institutional execution trader. Analyze this market data for BTC/USDT.
     
     Technical Metrics:
     - Z-Score (20 period): {z_score:.4f} (High > 2.0 Overbought, Low < -2.0 Oversold)
     - VPIN (Whale Activity Proxy): {vpin:.4f} (High values > 0.3 indicate informed trading/whales)
     
-    Recent Price Action (Last 5 candles):
-    {last_5}
+    Recent Price Action (Last 30 candles):
+    {context_candles}
     
-    Task: Return a valid JSON object. Do not include markdown formatting like ```json.
+    Task: Return a valid JSON object.
+    1. Identify if there is a high-probability setup.
+    2. STRICT RULE: Only output 'BUY' or 'SELL' if the Risk/Reward ratio is at least 1:3. Otherwise 'WAIT'.
+    3. Define Entry, Stop Loss, and Take Profit levels that satisfy the 1:3 R:R.
+    
     Format:
     {{
         "signal": "BUY" | "SELL" | "WAIT",
         "confidence": <float between 0.0 and 1.0>,
+        "entry": <float price>,
+        "stop_loss": <float price>,
+        "take_profit": <float price>,
         "reason": "<short explanation, max 15 words>"
     }}
     """

@@ -1,14 +1,16 @@
 import React from 'react';
-import { ChevronDown, Bell } from 'lucide-react';
+import { ChevronDown, Bell, History, Radio } from 'lucide-react';
 import { MarketMetrics } from '../types';
 
 interface HeaderProps {
   metrics: MarketMetrics;
+  isBacktest: boolean;
+  onToggleBacktest: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ metrics }) => {
+const Header: React.FC<HeaderProps> = ({ metrics, isBacktest, onToggleBacktest }) => {
   return (
-    <header className="h-20 flex items-center justify-between px-2 lg:px-6 shrink-0">
+    <header className="h-20 flex items-center justify-between px-2 lg:px-6 shrink-0 bg-transparent relative z-40">
       
       {/* Left: Ticker & Price */}
       <div className="flex flex-col">
@@ -37,11 +39,36 @@ const Header: React.FC<HeaderProps> = ({ metrics }) => {
       {/* Right: Actions */}
       <div className="flex items-center gap-4">
         
+        {/* Backtest Toggle (Level 5 Requirement) */}
+        <button 
+          onClick={onToggleBacktest}
+          className={`
+            hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all
+            ${isBacktest 
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.2)]' 
+                : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'}
+          `}
+        >
+             {isBacktest ? (
+                 <>
+                    <History size={14} className="animate-spin-slow" />
+                    <span className="text-xs font-bold uppercase">Replay Mode</span>
+                 </>
+             ) : (
+                 <>
+                    <Radio size={14} />
+                    <span className="text-xs font-medium">Live Feed</span>
+                 </>
+             )}
+        </button>
+
         {/* Status Pill */}
-        <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5">
-             <div className="w-2 h-2 rounded-full bg-brand-accent animate-pulse"></div>
-             <span className="text-xs font-medium text-slate-300">Live Connection</span>
-        </div>
+        {!isBacktest && (
+            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5">
+                 <div className="w-2 h-2 rounded-full bg-brand-accent animate-pulse"></div>
+                 <span className="text-xs font-medium text-slate-300">Connected</span>
+            </div>
+        )}
 
         {/* Notifications */}
         <button className="relative p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300">

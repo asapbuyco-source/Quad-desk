@@ -169,13 +169,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     if (!candlestickSeriesRef.current || !chartRef.current) return;
 
-    // 1. Price Levels (Support/Resistance)
-    // Clear previous primitive lines not directly supported, but LWC uses CreatePriceLine
-    // Note: createPriceLine returns an object we should store to remove later.
-    // For simplicity in this React wrapper, we rely on LWC not duplicating if logic is clean,
-    // but proper way is to clear lines. LWC doesn't have clearPriceLines().
-    // We will assume 'levels' don't change frequently in this session.
-    
     // 2. Signals (Markers)
     if (showSignals) {
         const markers = signals.map(s => ({
@@ -190,19 +183,36 @@ const PriceChart: React.FC<PriceChartProps> = ({
         candlestickSeriesRef.current.setMarkers([]);
     }
 
-    // Support/Resistance Lines - simplified re-render logic
-    // In a real generic component, we'd track line references to remove them.
+    // Support/Resistance & Trade Levels
     if (showLevels && levels.length > 0) {
-       // Implementation note: Lightweight charts price lines are per-series.
-       // We'll iterate and add them. To clear, we'd need to track the objects.
-       // For this demo, we'll avoid spamming lines by clearing simulated "state" only if we had a way.
-       // Instead, we will assume levels are static for the "Mock" or we just let them persist.
        levels.forEach(l => {
+           let color = '#71717a'; // Default Zinc
+           let lineStyle = LineStyle.Dashed;
+           let lineWidth: 1 | 2 | 3 | 4 = 1;
+
+           if (l.type === 'ENTRY') {
+               color = '#3b82f6'; // Blue
+               lineWidth = 2;
+               lineStyle = LineStyle.Solid;
+           } else if (l.type === 'STOP_LOSS') {
+               color = '#f43f5e'; // Red
+               lineWidth = 2;
+               lineStyle = LineStyle.Solid;
+           } else if (l.type === 'TAKE_PROFIT') {
+               color = '#10b981'; // Green
+               lineWidth = 2;
+               lineStyle = LineStyle.Solid;
+           } else if (l.type === 'RESISTANCE') {
+               color = '#f43f5e';
+           } else if (l.type === 'SUPPORT') {
+               color = '#10b981';
+           }
+
            candlestickSeriesRef.current?.createPriceLine({
                price: l.price,
-               color: l.type === 'RESISTANCE' ? '#f43f5e' : '#10b981',
-               lineWidth: 1,
-               lineStyle: LineStyle.Dashed,
+               color: color,
+               lineWidth: lineWidth,
+               lineStyle: lineStyle,
                axisLabelVisible: true,
                title: l.label,
            });

@@ -1,6 +1,6 @@
 import React from 'react';
-import { SentinelChecklist, AiAnalysis } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit } from 'lucide-react';
+import { SentinelChecklist, AiAnalysis, MarketMetrics } from '../types';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, Wallet, Lock } from 'lucide-react';
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
@@ -55,8 +55,30 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis }) 
                      "{aiAnalysis.reason}"
                  </p>
 
+                 {/* Trade Setup Details */}
+                 {aiAnalysis.signal !== 'WAIT' && aiAnalysis.entry && (
+                    <div className="mt-3 pt-3 border-t border-white/5 flex flex-col gap-2 relative z-10">
+                        <div className="flex justify-between text-[10px] font-mono">
+                            <span className="text-slate-500">ENTRY</span>
+                            <span className="text-white">{aiAnalysis.entry}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] font-mono">
+                            <span className="text-slate-500">STOP LOSS</span>
+                            <span className="text-rose-400">{aiAnalysis.stop_loss}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] font-mono">
+                            <span className="text-slate-500">TAKE PROFIT</span>
+                            <span className="text-emerald-400">{aiAnalysis.take_profit}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] font-mono mt-1">
+                            <span className="text-slate-500 font-bold">R:R RATIO</span>
+                            <span className="text-brand-accent font-bold">1:3.0</span>
+                        </div>
+                    </div>
+                 )}
+
                  {aiAnalysis.metrics && (
-                     <div className="mt-3 pt-3 border-t border-white/5 grid grid-cols-2 gap-2 text-[9px] font-mono text-slate-500">
+                     <div className="mt-3 pt-3 border-t border-white/5 grid grid-cols-2 gap-2 text-[9px] font-mono text-slate-500 z-10 relative">
                          <div>Z-SCORE: <span className="text-slate-300">{aiAnalysis.metrics.z_score.toFixed(2)}</span></div>
                          <div>VPIN: <span className="text-slate-300">{aiAnalysis.metrics.vpin.toFixed(2)}</span></div>
                      </div>
@@ -93,15 +115,22 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis }) 
             </div>
           ))}
           
-          <div className="mt-4 p-4 rounded-xl bg-trade-ask/10 border border-trade-ask/20">
-            <div className="flex items-start gap-3">
-                <AlertTriangle size={16} className="text-trade-ask mt-0.5" />
-                <div>
-                    <h4 className="text-xs font-bold text-trade-ask mb-1">Execution Halted</h4>
-                    <p className="text-[11px] text-trade-ask/80 leading-relaxed">
-                        Risk models indicate high probability of adverse selection. Auto-execution suspended until volatility normalizes.
-                    </p>
-                </div>
+          <div className="mt-4 p-4 rounded-xl bg-white/5 border border-white/5">
+            <div className="flex items-center justify-between mb-2">
+                 <div className="flex items-center gap-2">
+                    <Wallet size={14} className="text-slate-400" />
+                    <span className="text-xs font-bold text-slate-300">Daily PnL</span>
+                 </div>
+                 <span className="text-xs font-mono font-bold text-white">
+                    LIMIT: $5,000
+                 </span>
+            </div>
+            <div className="flex items-baseline gap-1">
+                 <span className="text-xl font-mono font-bold text-trade-bid">+$1,250.00</span>
+                 <span className="text-[10px] text-slate-500">USD</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                <div className="h-full bg-trade-bid w-[25%] rounded-full"></div>
             </div>
           </div>
       </div>
