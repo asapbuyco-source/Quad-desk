@@ -30,6 +30,68 @@ interface MarketIntelResponse {
 const CACHE_KEY = 'market_intel_cache';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
+// Fallback Mock Data for when Backend/NewsAPI is unavailable
+const MOCK_INTEL_DATA: MarketIntelResponse = {
+    articles: [
+        {
+            source: { id: 'bloomberg', name: 'BLOOMBERG' },
+            author: 'Crypto Desk',
+            title: 'Institutional Order Flow Indicates Accumulation in $62k-$64k Zone',
+            description: 'Proprietary flow data suggests smart money is front-running expected volatility, with iceberg buy orders detected across major exchanges.',
+            url: '#',
+            urlToImage: null,
+            publishedAt: new Date().toISOString(),
+            content: ''
+        },
+        {
+            source: { id: 'reuters', name: 'REUTERS' },
+            author: 'Tech',
+            title: 'Global Liquidity cycle turns positive for Risk Assets',
+            description: 'Central bank balance sheet expansion in Asia is correlating with renewed bid in crypto markets, despite Fed hawkishness.',
+            url: '#',
+            urlToImage: null,
+            publishedAt: new Date(Date.now() - 3600000).toISOString(),
+            content: ''
+        },
+        {
+            source: { id: 'glassnode', name: 'GLASSNODE' },
+            author: 'On-Chain',
+            title: 'Long-Term Holder Supply reaches all-time high',
+            description: 'Coins held for longer than 155 days have crossed 76% of total supply, signaling extreme supply shock potential.',
+            url: '#',
+            urlToImage: null,
+            publishedAt: new Date(Date.now() - 7200000).toISOString(),
+            content: ''
+        },
+        {
+            source: { id: 'deribit', name: 'DERIBIT' },
+            author: 'Options',
+            title: 'Call Open Interest clusters at $70k strike',
+            description: 'Options market dealers are short gamma above $68k, which could fuel a self-reinforcing rally if price breaks resistance.',
+            url: '#',
+            urlToImage: null,
+            publishedAt: new Date(Date.now() - 10800000).toISOString(),
+            content: ''
+        },
+        {
+             source: { id: 'coindesk', name: 'COINDESK' },
+             author: 'Market',
+             title: 'Layer 2 Volume flips Ethereum Mainnet',
+             description: 'Arbitrum and Optimism activity surges as DeFi yields attract capital rotation away from traditional staking.',
+             url: '#',
+             urlToImage: null,
+             publishedAt: new Date(Date.now() - 14400000).toISOString(),
+             content: ''
+        }
+    ],
+    intelligence: {
+        main_narrative: "Supply Shock meets Institutional Demand",
+        whale_impact: "High",
+        ai_sentiment_score: 0.85
+    },
+    timestamp: Date.now()
+};
+
 const IntelView: React.FC = () => {
   const [data, setData] = useState<MarketIntelResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,8 +117,9 @@ const IntelView: React.FC = () => {
 
       // 2. Fetch Live
       try {
+          // Check if we are in a browser environment that cant hit localhost backend easily
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for AI
+          const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
 
           const res = await fetch('http://localhost:8000/market-intelligence', {
               signal: controller.signal
@@ -76,14 +139,18 @@ const IntelView: React.FC = () => {
           localStorage.setItem(CACHE_KEY, JSON.stringify(result));
           setData(result);
       } catch (err: any) {
-          console.error(err);
-          // Fallback to cache if fetch fails, even if expired
+          console.warn("Intel fetch failed, switching to simulation:", err);
+          
+          // Fallback Strategy:
+          // 1. Try Cache (even if expired, better than mock)
+          // 2. Use Mock Data
           const cached = localStorage.getItem(CACHE_KEY);
-          if (cached) {
+          if (cached && !forceRefresh) {
                setData(JSON.parse(cached));
-               setError("Live update failed. Showing cached data.");
+               setError("Live uplink failed. Displaying cached intelligence.");
           } else {
-               setError("System offline. Unable to establish uplink with Gemini Intelligence.");
+               setData(MOCK_INTEL_DATA);
+               setError("Backend offline. Simulation Mode Active.");
           }
       } finally {
           setLoading(false);
@@ -221,10 +288,10 @@ const IntelView: React.FC = () => {
         </AnimatePresence>
       </div>
 
-      {/* Error Message */}
+      {/* Error / Status Message */}
       {error && (
-          <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-mono flex items-center gap-2">
-              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+          <div className="px-4 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-mono flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
               {error}
           </div>
       )}
