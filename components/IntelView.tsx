@@ -1,195 +1,290 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MOCK_NEWS } from '../constants';
-import { Newspaper, ExternalLink, Clock, X, Share2, Bookmark } from 'lucide-react';
-import { NewsItem } from '../types';
+import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit } from 'lucide-react';
 
 const MotionDiv = motion.div as any;
 
+interface NewsArticle {
+    source: { id: string | null; name: string };
+    author: string | null;
+    title: string;
+    description: string;
+    url: string;
+    urlToImage: string | null;
+    publishedAt: string;
+    content: string;
+}
+
+interface IntelligenceData {
+    main_narrative: string;
+    whale_impact: 'High' | 'Medium' | 'Low';
+    ai_sentiment_score: number;
+}
+
+interface MarketIntelResponse {
+    articles: NewsArticle[];
+    intelligence: IntelligenceData;
+    timestamp?: number;
+}
+
+const CACHE_KEY = 'market_intel_cache';
+const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+
 const IntelView: React.FC = () => {
-  const [sentimentFilter, setSentimentFilter] = useState<'all' | 'bullish' | 'bearish' | 'neutral'>('all');
-  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
+  const [data, setData] = useState<MarketIntelResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const filteredNews = MOCK_NEWS.filter(item => {
-    return sentimentFilter === 'all' || item.sentiment === sentimentFilter;
-  });
+  const fetchIntelligence = async (forceRefresh = false) => {
+      setLoading(true);
+      setError(null);
 
-  const FilterChip = ({ label, active, onClick }: { label: string, active: boolean, onClick: () => void }) => (
-    <button
-      onClick={onClick}
-      className={`
-        text-xs font-medium px-4 py-2 rounded-full transition-all border
-        ${active 
-          ? 'bg-brand-accent text-white border-brand-accent shadow-lg shadow-brand-accent/20' 
-          : 'bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:border-white/20'
-        }
-      `}
-    >
-      {label}
-    </button>
-  );
+      // 1. Check Cache
+      if (!forceRefresh) {
+          const cached = localStorage.getItem(CACHE_KEY);
+          if (cached) {
+              const parsed: MarketIntelResponse = JSON.parse(cached);
+              const now = Date.now();
+              if (parsed.timestamp && now - parsed.timestamp < CACHE_DURATION) {
+                  setData(parsed);
+                  setLoading(false);
+                  return;
+              }
+          }
+      }
+
+      // 2. Fetch Live
+      try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for AI
+
+          const res = await fetch('http://localhost:8000/market-intelligence', {
+              signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          
+          if (!res.ok) throw new Error("Backend connection failed");
+          
+          const json = await res.json();
+          if (json.error) throw new Error(json.error);
+
+          const result: MarketIntelResponse = {
+              ...json,
+              timestamp: Date.now()
+          };
+
+          localStorage.setItem(CACHE_KEY, JSON.stringify(result));
+          setData(result);
+      } catch (err: any) {
+          console.error(err);
+          // Fallback to cache if fetch fails, even if expired
+          const cached = localStorage.getItem(CACHE_KEY);
+          if (cached) {
+               setData(JSON.parse(cached));
+               setError("Live update failed. Showing cached data.");
+          } else {
+               setError("System offline. Unable to establish uplink with Gemini Intelligence.");
+          }
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  useEffect(() => {
+      fetchIntelligence();
+  }, []);
+
+  // Helper to format time
+  const formatTime = (isoString: string) => {
+      const date = new Date(isoString);
+      const now = new Date();
+      const diffMins = Math.floor((now.getTime() - date.getTime()) / 60000);
+      
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
+      return date.toLocaleDateString();
+  };
+
+  // Helper for Sentiment Badge
+  const getSentimentInfo = (score: number) => {
+      if (score > 0.2) return { label: 'BULLISH', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', icon: TrendingUp };
+      if (score < -0.2) return { label: 'BEARISH', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20', icon: TrendingDown };
+      return { label: 'NEUTRAL', color: 'text-zinc-400', bg: 'bg-zinc-500/10', border: 'border-zinc-500/20', icon: Minus };
+  };
 
   return (
-    <div className="h-full flex flex-col gap-6 max-w-5xl mx-auto px-4 lg:px-0 relative">
-      <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
-            <div className="p-2 bg-brand-accent/20 rounded-lg text-brand-accent">
-                <Newspaper size={24} />
-            </div>
-            Market Intelligence
-        </h1>
-
-        {/* Filters */}
-        <div className="flex flex-wrap gap-2">
-            <FilterChip label="All Intel" active={sentimentFilter === 'all'} onClick={() => setSentimentFilter('all')} />
-            <FilterChip label="Bullish" active={sentimentFilter === 'bullish'} onClick={() => setSentimentFilter('bullish')} />
-            <FilterChip label="Bearish" active={sentimentFilter === 'bearish'} onClick={() => setSentimentFilter('bearish')} />
-            <FilterChip label="Neutral" active={sentimentFilter === 'neutral'} onClick={() => setSentimentFilter('neutral')} />
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto pb-20 lg:pb-0">
-        <AnimatePresence mode='popLayout'>
-        {filteredNews.map((item, idx) => (
-            <MotionDiv 
-              key={item.id}
-              layoutId={`news-card-${item.id}`}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
-              onClick={() => setSelectedNews(item)}
-              className="fintech-card p-5 mb-4 group hover:border-brand-accent/50 transition-all cursor-pointer"
+    <div className="h-full flex flex-col gap-6 max-w-7xl mx-auto px-4 lg:px-0 relative">
+      
+      {/* Header Section */}
+      <div className="flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
+                <div className="p-2 bg-brand-accent/20 rounded-lg text-brand-accent">
+                    <BrainCircuit size={24} />
+                </div>
+                Market Intelligence
+            </h1>
+            <button 
+                onClick={() => fetchIntelligence(true)}
+                disabled={loading}
+                className={`
+                    flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border transition-all
+                    ${loading 
+                        ? 'bg-zinc-800 text-zinc-500 border-zinc-700 cursor-wait' 
+                        : 'bg-brand-accent/10 text-brand-accent border-brand-accent/30 hover:bg-brand-accent hover:text-white'}
+                `}
             >
-              <div className="flex justify-between items-start mb-3">
-                 <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-bold text-slate-400 uppercase">
-                        {item.source}
-                    </span>
-                    <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
-                        <Clock size={12} /> {item.time}
-                    </span>
-                 </div>
-                 <div className={`
-                    w-2 h-2 rounded-full
-                    ${item.sentiment === 'bullish' ? 'bg-trade-bid shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
-                      item.sentiment === 'bearish' ? 'bg-trade-ask shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-slate-500'}
-                 `} />
-              </div>
-              
-              <h3 className="text-lg font-medium text-slate-200 group-hover:text-white mb-4 leading-snug">
-                {item.title}
-              </h3>
-              
-              <div className="flex items-center justify-between border-t border-white/5 pt-4">
-                 <div className="flex gap-2">
-                    {item.impact === 'high' && (
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-trade-warn bg-trade-warn/10 px-2 py-1 rounded">
-                            HIGH IMPACT
-                        </span>
-                    )}
-                 </div>
-                 <span className="flex items-center gap-1 text-xs font-semibold text-brand-accent group-hover:underline">
-                    Read Report <ExternalLink size={12} />
-                 </span>
-              </div>
-            </MotionDiv>
-          ))}
-        </AnimatePresence>
-      </div>
+                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                {loading ? "ANALYZING..." : "REFRESH INTEL"}
+            </button>
+        </div>
 
-      {/* Modal Overlay */}
-      <AnimatePresence>
-        {selectedNews && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                {/* Backdrop */}
+        {/* AI Pulse Dashboard */}
+        <AnimatePresence mode='wait'>
+            {data && data.intelligence ? (
                 <MotionDiv 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    onClick={() => setSelectedNews(null)}
-                    className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-                />
-
-                {/* Modal Card */}
-                <MotionDiv 
-                    layoutId={`news-card-${selectedNews.id}`}
-                    initial={{ scale: 0.95, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.95, opacity: 0 }}
-                    className="relative w-full max-w-2xl bg-[#09090b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
-                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="grid grid-cols-1 md:grid-cols-12 gap-4"
                 >
-                    {/* Header Image/Banner Area */}
-                    <div className="h-32 bg-gradient-to-br from-brand-accent/20 to-purple-900/20 flex items-center justify-center relative p-6">
-                        <div className="absolute top-4 right-4 flex gap-2">
-                            <button className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white transition-colors">
-                                <Share2 size={16} />
-                            </button>
-                            <button className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white transition-colors">
-                                <Bookmark size={16} />
-                            </button>
-                            <button 
-                                onClick={() => setSelectedNews(null)}
-                                className="p-2 rounded-full bg-black/40 hover:bg-red-500/20 hover:text-red-500 text-white transition-colors"
-                            >
-                                <X size={16} />
-                            </button>
+                    {/* Main Narrative Card */}
+                    <div className="md:col-span-8 p-6 rounded-2xl bg-gradient-to-br from-zinc-900 to-black border border-white/10 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Newspaper size={120} />
                         </div>
-                        <Newspaper size={48} className="text-white/10 absolute bottom-[-10px] left-6" />
-                        <div className="w-full">
-                            <div className="flex items-center gap-3 mb-2">
-                                <span className="px-2 py-1 rounded bg-black/40 backdrop-blur text-[10px] font-bold text-white uppercase tracking-wider border border-white/10">
-                                    {selectedNews.source}
-                                </span>
-                                <span className="flex items-center gap-1 text-xs font-mono text-white/80">
-                                    <Clock size={12} /> {selectedNews.time}
-                                </span>
+                        <div className="relative z-10">
+                            <div className="flex items-center gap-2 mb-3">
+                                <Zap size={16} className="text-brand-accent fill-brand-accent" />
+                                <span className="text-xs font-bold text-brand-accent uppercase tracking-widest">Global Narrative</span>
                             </div>
+                            <h2 className="text-xl md:text-2xl font-medium text-white leading-relaxed font-light">
+                                "{data.intelligence.main_narrative}"
+                            </h2>
                         </div>
                     </div>
 
-                    {/* Content */}
-                    <div className="p-8 overflow-y-auto">
-                        <h2 className="text-2xl font-bold text-white mb-6 leading-tight">
-                            {selectedNews.title}
-                        </h2>
-
-                        <div className="flex gap-3 mb-8">
-                             <div className={`
-                                px-3 py-1.5 rounded-md border text-xs font-bold uppercase
-                                ${selectedNews.sentiment === 'bullish' ? 'border-trade-bid/30 bg-trade-bid/10 text-trade-bid' : 
-                                  selectedNews.sentiment === 'bearish' ? 'border-trade-ask/30 bg-trade-ask/10 text-trade-ask' : 'border-slate-500/30 bg-slate-500/10 text-slate-400'}
-                             `}>
-                                {selectedNews.sentiment} Sentiment
+                    {/* Metrics Cards */}
+                    <div className="md:col-span-4 flex flex-col gap-4">
+                        {/* Whale Impact */}
+                        <div className="flex-1 p-5 rounded-2xl bg-zinc-900/50 border border-white/5 flex items-center justify-between relative overflow-hidden">
+                             <div className="absolute inset-0 bg-blue-500/5" />
+                             <div>
+                                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1 mb-1">
+                                    <Anchor size={12} /> Whale Impact
+                                 </span>
+                                 <span className={`text-2xl font-black ${
+                                     data.intelligence.whale_impact === 'High' ? 'text-amber-400' : 'text-white'
+                                 }`}>
+                                     {data.intelligence.whale_impact}
+                                 </span>
                              </div>
-                             {selectedNews.impact === 'high' && (
-                                <div className="px-3 py-1.5 rounded-md border border-trade-warn/30 bg-trade-warn/10 text-trade-warn text-xs font-bold uppercase">
-                                    High Impact
-                                </div>
-                             )}
+                             <div className="h-full flex items-center">
+                                 <div className={`w-2 h-12 rounded-full ${
+                                     data.intelligence.whale_impact === 'High' ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]' : 
+                                     data.intelligence.whale_impact === 'Medium' ? 'bg-blue-500' : 'bg-zinc-700'
+                                 }`} />
+                             </div>
                         </div>
 
-                        <div className="prose prose-invert prose-sm max-w-none">
-                            <p className="text-lg text-slate-300 leading-relaxed font-light">
-                                {selectedNews.summary}
-                            </p>
-                            <br />
-                            <p className="text-slate-400 leading-relaxed">
-                                Market implications suggest a repricing of risk assets in the short term. Traders are advised to monitor key liquidity levels and adjust stop-losses accordingly. Algorithmic flow is currently skewed towards {selectedNews.sentiment === 'bullish' ? 'accumulation' : 'distribution'}.
-                            </p>
-                        </div>
-
-                        <div className="mt-8 pt-6 border-t border-white/5 flex justify-between items-center">
-                            <span className="text-xs text-slate-500 font-mono">ID: {selectedNews.id} • AI GEN SUMMARY</span>
-                            <button className="flex items-center gap-2 px-4 py-2 bg-brand-accent hover:bg-blue-600 text-white rounded-lg text-sm font-semibold transition-colors shadow-lg shadow-blue-500/20">
-                                Read Full Report <ExternalLink size={14} />
-                            </button>
+                        {/* Sentiment Score */}
+                        <div className="flex-1 p-5 rounded-2xl bg-zinc-900/50 border border-white/5 flex items-center justify-between relative overflow-hidden">
+                             <div className="absolute inset-0 bg-purple-500/5" />
+                             <div>
+                                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1 mb-1">
+                                    <BrainCircuit size={12} /> AI Sentiment
+                                 </span>
+                                 <div className="flex items-baseline gap-2">
+                                     <span className={`text-2xl font-black ${getSentimentInfo(data.intelligence.ai_sentiment_score).color}`}>
+                                         {data.intelligence.ai_sentiment_score > 0 ? '+' : ''}{data.intelligence.ai_sentiment_score}
+                                     </span>
+                                     <span className="text-xs font-mono text-zinc-500">/ 1.0</span>
+                                 </div>
+                             </div>
+                             {React.createElement(getSentimentInfo(data.intelligence.ai_sentiment_score).icon, { 
+                                 size: 32, 
+                                 className: getSentimentInfo(data.intelligence.ai_sentiment_score).color 
+                             })}
                         </div>
                     </div>
                 </MotionDiv>
-            </div>
-        )}
-      </AnimatePresence>
+            ) : (
+                // Loading Skeleton for Header
+                <div className="h-48 rounded-2xl bg-white/5 animate-pulse border border-white/5 flex items-center justify-center">
+                     <div className="flex flex-col items-center gap-3">
+                         <div className="w-8 h-8 rounded-full border-2 border-brand-accent border-t-transparent animate-spin" />
+                         <span className="text-xs font-mono text-zinc-500">
+                             {loading ? "GEMINI IS ANALYZING MARKET DATA..." : "WAITING FOR UPLINK"}
+                         </span>
+                     </div>
+                </div>
+            )}
+        </AnimatePresence>
+      </div>
+
+      {/* Error Message */}
+      {error && (
+          <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-mono flex items-center gap-2">
+              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              {error}
+          </div>
+      )}
+
+      {/* News Grid */}
+      <div className="flex-1 overflow-y-auto pb-20 lg:pb-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <AnimatePresence mode='popLayout'>
+            {data?.articles.map((article, idx) => {
+                const sentiment = data ? getSentimentInfo(data.intelligence.ai_sentiment_score) : getSentimentInfo(0);
+                
+                return (
+                    <MotionDiv 
+                        key={idx}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.05 }}
+                        className="fintech-card p-5 group hover:border-brand-accent/30 transition-all flex flex-col justify-between h-full"
+                    >
+                        <div>
+                            <div className="flex justify-between items-start mb-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="px-2 py-1 rounded bg-white/5 border border-white/10 text-[10px] font-bold text-zinc-400 uppercase tracking-wide truncate max-w-[100px]">
+                                        {article.source.name}
+                                    </span>
+                                    <span className="text-[10px] text-zinc-600 font-mono flex items-center gap-1">
+                                        <Clock size={10} /> {formatTime(article.publishedAt)}
+                                    </span>
+                                </div>
+                                
+                                {/* Sentiment Badge (Contextual) */}
+                                <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${sentiment.bg} ${sentiment.color} ${sentiment.border}`}>
+                                    {sentiment.label}
+                                </div>
+                            </div>
+                            
+                            <h3 className="text-sm font-medium text-zinc-200 group-hover:text-white mb-3 leading-relaxed line-clamp-3">
+                                {article.title}
+                            </h3>
+                            <p className="text-xs text-zinc-500 line-clamp-2 leading-relaxed font-light mb-4">
+                                {article.description}
+                            </p>
+                        </div>
+                        
+                        <div className="pt-4 border-t border-white/5 flex justify-between items-center">
+                            <a 
+                                href={article.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-[10px] font-bold text-brand-accent hover:underline decoration-brand-accent/50 underline-offset-4"
+                            >
+                                READ SOURCE <ExternalLink size={10} />
+                            </a>
+                        </div>
+                    </MotionDiv>
+                );
+            })}
+            </AnimatePresence>
+        </div>
+      </div>
     </div>
   );
 };

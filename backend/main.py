@@ -3,6 +3,7 @@ import json
 import asyncio
 import numpy as np
 import pandas as pd
+import httpx
 from collections import deque
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -121,6 +122,86 @@ async def analyze_market():
     except Exception as e:
         print(f"AI Error: {e}")
         return {"error": str(e)}
+
+@app.get("/market-intelligence")
+async def get_market_intelligence():
+    # 1. Fetch News from NewsAPI
+    api_key = os.getenv("NEWS_API_KEY")
+    if not api_key:
+         return {"error": "NEWS_API_KEY not configured"}
+
+    url = "https://newsapi.org/v2/everything"
+    params = {
+        "q": "bitcoin OR crypto OR ethereum",
+        "sortBy": "publishedAt",
+        "language": "en",
+        "pageSize": 12, # Fetch a few extra to filter
+        "apiKey": api_key
+    }
+    
+    articles = []
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params)
+            data = resp.json()
+            if data.get("status") == "ok":
+                articles = data.get("articles", [])
+            else:
+                print(f"NewsAPI Error: {data}")
+    except Exception as e:
+        print(f"News Fetch Error: {e}")
+        return {"error": "Failed to fetch news"}
+
+    if not articles:
+        return {"error": "No articles found"}
+
+    # 2. Prepare Context for Gemini
+    # Filter out articles with no description or removed content
+    valid_articles = [a for a in articles if a.get("description") and "[Removed]" not in a.get("title")]
+    top_articles = valid_articles[:10]
+    
+    headlines_text = "\n".join([f"- {a['title']}: {a['description']}" for a in top_articles])
+    
+    prompt = f"""
+    You are an analyst at Goldman Sachs. Summarize these crypto market headlines into an Executive Brief.
+    
+    Headlines:
+    {headlines_text}
+
+    Task:
+    Generate a market intelligence report with these specific metrics:
+    1. Main Narrative: The dominant story driving the market right now.
+    2. Whale Impact: Assessment of large holder activity based on the news (High/Medium/Low).
+    3. AI Sentiment Score: A float from -1.0 (Very Bearish) to 1.0 (Very Bullish).
+
+    Return EXACTLY this JSON structure:
+    {{
+        "main_narrative": "string",
+        "whale_impact": "High" | "Medium" | "Low",
+        "ai_sentiment_score": float
+    }}
+    """
+    
+    # 3. Call Gemini
+    ai_summary = {}
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        ai_summary = json.loads(response.text)
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        ai_summary = {
+            "main_narrative": "Market analysis temporarily unavailable.",
+            "whale_impact": "Unknown",
+            "ai_sentiment_score": 0
+        }
+
+    return {
+        "articles": top_articles,
+        "intelligence": ai_summary
+    }
 
 if __name__ == "__main__":
     import uvicorn
