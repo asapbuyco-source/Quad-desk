@@ -51,6 +51,7 @@ const App: React.FC = () => {
   const [hasEntered, setHasEntered] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isBacktest, setIsBacktest] = useState(false);
+  const [interval, setTimeframeInterval] = useState('1m'); // New State: Timeframe
   
   // Data State
   const [metrics, setMetrics] = useState<MarketMetrics>({
@@ -76,8 +77,9 @@ const App: React.FC = () => {
     if (isBacktest) return;
 
     const fetchHistory = async () => {
+        setCandles([]); // Clear old data on interval change
         try {
-            const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=1000');
+            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=1000`);
             const data = await res.json();
             const formattedCandles: CandleData[] = data.map((k: any) => ({
                 time: k[0] / 1000, // Unix timestamp in seconds
@@ -86,11 +88,11 @@ const App: React.FC = () => {
                 low: parseFloat(k[3]),
                 close: parseFloat(k[4]),
                 volume: parseFloat(k[5]),
-                // AI Bands (Simulated based on real data)
+                // AI Bands (Simulated based on real data for visual demo)
                 zScoreUpper1: parseFloat(k[4]) * 1.002,
                 zScoreLower1: parseFloat(k[4]) * 0.998,
-                zScoreUpper2: parseFloat(k[4]) * 1.004,
-                zScoreLower2: parseFloat(k[4]) * 0.996,
+                zScoreUpper2: parseFloat(k[4]) * 1.005,
+                zScoreLower2: parseFloat(k[4]) * 0.995,
             }));
             setCandles(formattedCandles);
 
@@ -105,13 +107,13 @@ const App: React.FC = () => {
     };
 
     fetchHistory();
-  }, [isBacktest]);
+  }, [isBacktest, interval]);
 
   // 2. Real-Time WebSocket Connection (Binance Direct) - LIVE MODE ONLY
   useEffect(() => {
       if (isBacktest) return;
 
-      const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_1m');
+      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`);
       
       ws.onmessage = (event) => {
           const message = JSON.parse(event.data);
@@ -126,8 +128,8 @@ const App: React.FC = () => {
               volume: parseFloat(k.v),
               zScoreUpper1: parseFloat(k.c) * 1.002,
               zScoreLower1: parseFloat(k.c) * 0.998,
-              zScoreUpper2: parseFloat(k.c) * 1.004,
-              zScoreLower2: parseFloat(k.c) * 0.996,
+              zScoreUpper2: parseFloat(k.c) * 1.005,
+              zScoreLower2: parseFloat(k.c) * 0.995,
           };
 
           // Update Metrics
@@ -149,7 +151,7 @@ const App: React.FC = () => {
       };
 
       return () => ws.close();
-  }, [isBacktest]);
+  }, [isBacktest, interval]);
 
   // 3. Manual AI Market Scan with Robust Fallback
   const handleAiScan = async () => {
@@ -327,6 +329,8 @@ const App: React.FC = () => {
                                 bids={bids} 
                                 checklist={CHECKLIST_ITEMS} 
                                 aiScanResult={aiScanResult}
+                                interval={interval}
+                                onIntervalChange={setTimeframeInterval}
                             />
                         )}
                         {activeTab === 'charting' && (
@@ -337,6 +341,8 @@ const App: React.FC = () => {
                                 aiScanResult={aiScanResult}
                                 onScan={handleAiScan}
                                 isScanning={isScanning}
+                                interval={interval}
+                                onIntervalChange={setTimeframeInterval}
                             />
                         )}
                         {activeTab === 'analytics' && <AnalyticsView />}

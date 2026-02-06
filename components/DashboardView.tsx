@@ -16,6 +16,8 @@ interface DashboardViewProps {
   checklist: SentinelChecklist[];
   aiAnalysis?: AiAnalysis; 
   aiScanResult?: AiScanResult;
+  interval?: string;
+  onIntervalChange?: (interval: string) => void;
 }
 
 const container = {
@@ -33,7 +35,7 @@ const item = {
   show: { opacity: 1, y: 0 }
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis, aiScanResult }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis, aiScanResult, interval, onIntervalChange }) => {
   return (
     <MotionDiv 
       variants={container}
@@ -71,6 +73,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
                    <p className="text-brand-accent">&gt; [AI] Market Scan Complete: {aiScanResult.verdict}</p> 
                 )}
                 <p>&gt; Monitoring order flow for icebergs...</p>
+                {interval && <p className="text-zinc-500">&gt; Timeframe set to {interval}</p>}
             </div>
         </div>
       </MotionDiv>

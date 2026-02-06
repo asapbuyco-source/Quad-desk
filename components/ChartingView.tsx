@@ -13,9 +13,20 @@ interface ChartingViewProps {
   aiScanResult?: AiScanResult;
   onScan?: () => void;
   isScanning?: boolean;
+  interval?: string;
+  onIntervalChange?: (interval: string) => void;
 }
 
-const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, aiScanResult, onScan, isScanning }) => {
+const ChartingView: React.FC<ChartingViewProps> = ({ 
+    candles, 
+    signals, 
+    levels, 
+    aiScanResult, 
+    onScan, 
+    isScanning,
+    interval,
+    onIntervalChange 
+}) => {
   const [layers, setLayers] = useState({
     zScore: true,
     levels: true,
@@ -49,6 +60,8 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
                 showSignals={layers.signals}
                 onToggleSidePanel={() => toggleLayer('volumeProfile')}
                 isSidePanelOpen={layers.volumeProfile}
+                interval={interval}
+                onIntervalChange={onIntervalChange}
             >
                 {/* Header Controls */}
                 <div className="flex gap-2 bg-zinc-900/50 p-1 rounded-full border border-white/5 items-center max-w-full overflow-x-auto scrollbar-hide">
@@ -98,7 +111,6 @@ const ChartingView: React.FC<ChartingViewProps> = ({ candles, signals, levels, a
         </div>
 
         {/* Side Panel: Volume Profile */}
-        {/* On Mobile: Absolute Overlay | On Desktop: Relative Sidebar */}
         <AnimatePresence>
             {layers.volumeProfile && (
                 <MotionDiv 

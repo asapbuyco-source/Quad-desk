@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { createChart, ColorType, IChartApi, ISeriesApi, CrosshairMode, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
-import { Zap, PanelRight, Rocket, Loader2 } from 'lucide-react';
+import { Zap, PanelRight, Rocket, Loader2, Clock } from 'lucide-react';
 
 interface PriceChartProps {
   data: CandleData[];
@@ -16,6 +16,8 @@ interface PriceChartProps {
   children?: React.ReactNode;
   onToggleSidePanel?: () => void;
   isSidePanelOpen?: boolean;
+  interval?: string;
+  onIntervalChange?: (interval: string) => void;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
@@ -27,15 +29,26 @@ const PriceChart: React.FC<PriceChartProps> = ({
     isScanning,
     showLevels = true,
     showSignals = true,
+    showZScore = true,
     children,
     onToggleSidePanel,
-    isSidePanelOpen
+    isSidePanelOpen,
+    interval = '1m',
+    onIntervalChange
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  // Using any to avoid strict type mismatches during version upgrades
+  
+  // Series Refs
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | any>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | any>(null);
+  
+  // Band Series Refs
+  const upper1SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
+  const lower1SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
+  const upper2SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
+  const lower2SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
+
   const priceLinesRef = useRef<IPriceLine[]>([]); 
   const [hoveredData, setHoveredData] = useState<any>(null);
 
@@ -43,8 +56,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Create Chart with auto-size behavior via ResizeObserver logic later, 
-    // but start with container dimensions if available.
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth || 600,
       height: chartContainerRef.current.clientHeight || 400,
@@ -86,7 +97,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
     });
 
-    // Add Series using v5 addSeries API
+    // Add Main Series
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#f43f5e',
@@ -97,22 +108,27 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
-      priceFormat: {
-        type: 'volume',
-      },
+      priceFormat: { type: 'volume' },
       priceScaleId: '', 
     });
     
     volumeSeries.priceScale().applyOptions({
-        scaleMargins: {
-            top: 0.85, 
-            bottom: 0,
-        },
+        scaleMargins: { top: 0.85, bottom: 0 },
     });
+
+    // Add AI Band Series
+    const upper2 = chart.addSeries(LineSeries, { color: 'rgba(244, 63, 94, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); // Red Outer
+    const upper1 = chart.addSeries(LineSeries, { color: 'rgba(249, 115, 22, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); // Orange Inner
+    const lower1 = chart.addSeries(LineSeries, { color: 'rgba(59, 130, 246, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); // Blue Inner
+    const lower2 = chart.addSeries(LineSeries, { color: 'rgba(16, 185, 129, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); // Green Outer
 
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
+    upper1SeriesRef.current = upper1;
+    lower1SeriesRef.current = lower1;
+    upper2SeriesRef.current = upper2;
+    lower2SeriesRef.current = lower2;
 
     // Crosshair Handler
     chart.subscribeCrosshairMove((param) => {
@@ -138,7 +154,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
     });
 
-    // Robust Resize Handler
     const resizeObserver = new ResizeObserver((entries) => {
         if (entries.length === 0 || !entries[0].contentRect) return;
         const { width, height } = entries[0].contentRect;
@@ -154,13 +169,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
           chartRef.current.remove();
           chartRef.current = null;
       }
-      // CRITICAL: Clear refs to prevent usage of destroyed series
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      upper1SeriesRef.current = null;
+      lower1SeriesRef.current = null;
+      upper2SeriesRef.current = null;
+      lower2SeriesRef.current = null;
     };
   }, []);
 
-  // Update Data
+  // Update Data & Bands
   useEffect(() => {
     if (!candlestickSeriesRef.current || !volumeSeriesRef.current || data.length === 0) return;
 
@@ -178,11 +196,33 @@ const PriceChart: React.FC<PriceChartProps> = ({
         color: d.close > d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'
     }));
 
+    // Band Data
+    const u1Data = data.map(d => ({ time: d.time as any, value: d.zScoreUpper1 }));
+    const l1Data = data.map(d => ({ time: d.time as any, value: d.zScoreLower1 }));
+    const u2Data = data.map(d => ({ time: d.time as any, value: d.zScoreUpper2 }));
+    const l2Data = data.map(d => ({ time: d.time as any, value: d.zScoreLower2 }));
+
     candlestickSeriesRef.current.setData(candles);
     volumeSeriesRef.current.setData(volumes);
+    
+    if(upper1SeriesRef.current) upper1SeriesRef.current.setData(u1Data);
+    if(lower1SeriesRef.current) lower1SeriesRef.current.setData(l1Data);
+    if(upper2SeriesRef.current) upper2SeriesRef.current.setData(u2Data);
+    if(lower2SeriesRef.current) lower2SeriesRef.current.setData(l2Data);
+
   }, [data]);
 
-  // Handle AI Scan Results & Manual Levels
+  // Handle Band Visibility
+  useEffect(() => {
+    if(!upper1SeriesRef.current) return;
+    const visibility = showZScore ? true : false;
+    upper1SeriesRef.current.applyOptions({ visible: visibility });
+    lower1SeriesRef.current.applyOptions({ visible: visibility });
+    upper2SeriesRef.current.applyOptions({ visible: visibility });
+    lower2SeriesRef.current.applyOptions({ visible: visibility });
+  }, [showZScore]);
+
+  // Handle Levels (Support/Resistance)
   useEffect(() => {
       if (!candlestickSeriesRef.current || !showLevels) return;
 
@@ -190,9 +230,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       priceLinesRef.current.forEach(line => {
           try {
              candlestickSeriesRef.current?.removePriceLine(line);
-          } catch(e) {
-             // Ignore if line already removed
-          }
+          } catch(e) {}
       });
       priceLinesRef.current = [];
 
@@ -288,35 +326,53 @@ const PriceChart: React.FC<PriceChartProps> = ({
                  <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT LIVE</span>
              </div>
 
-            {/* AI Scan Button */}
-            {onScan && (
-                <button
-                    onClick={onScan}
-                    disabled={isScanning}
-                    className={`
-                        flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide transition-all
-                        ${isScanning 
-                            ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30 cursor-wait' 
-                            : 'bg-brand-accent text-white hover:bg-blue-600 shadow-[0_0_15px_rgba(59,130,246,0.4)] hover:shadow-[0_0_20px_rgba(59,130,246,0.6)]'}
-                    `}
-                >
-                    {isScanning ? (
-                        <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                        <Rocket size={12} />
-                    )}
-                    {isScanning ? 'Scanning...' : 'AI Market Scan'}
-                </button>
-            )}
+             {/* Timeframe Selector */}
+             {onIntervalChange && (
+                 <div className="flex items-center gap-1 bg-black/20 p-1 rounded-lg border border-white/5">
+                     {['1m', '5m', '15m', '1h', '4h', '1d'].map(tf => (
+                         <button
+                            key={tf}
+                            onClick={() => onIntervalChange(tf)}
+                            className={`
+                                px-2 py-0.5 text-[9px] font-bold rounded-md transition-all uppercase
+                                ${interval === tf ? 'bg-brand-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                            `}
+                         >
+                             {tf}
+                         </button>
+                     ))}
+                 </div>
+             )}
 
             <div className="hidden md:flex flex-1 justify-center">
                 {children}
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
+                 {/* AI Scan Button */}
+                {onScan && (
+                    <button
+                        onClick={onScan}
+                        disabled={isScanning}
+                        className={`
+                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all
+                            ${isScanning 
+                                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30 cursor-wait' 
+                                : 'bg-brand-accent/10 text-brand-accent border border-brand-accent/20 hover:bg-brand-accent hover:text-white'}
+                        `}
+                    >
+                        {isScanning ? (
+                            <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                            <Rocket size={10} />
+                        )}
+                        {isScanning ? 'SCAN' : 'AI SCAN'}
+                    </button>
+                )}
+
                  <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-brand-accent/10 border border-brand-accent/20 rounded-full">
                     <Zap size={10} className="text-brand-accent" />
-                    <span className="text-[9px] font-bold text-brand-accent uppercase tracking-wide">Sentinel Active</span>
+                    <span className="text-[9px] font-bold text-brand-accent uppercase tracking-wide">Active</span>
                 </div>
                 
                 {onToggleSidePanel && (
@@ -344,6 +400,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         {hoveredData && (
              <div className="absolute top-2 left-2 z-50 pointer-events-none bg-[#09090b]/80 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl">
                  <div className="flex items-center gap-2 mb-1">
+                     <Clock size={10} className="text-zinc-500" />
                      <span className="text-xs font-mono text-zinc-400">
                         {new Date((hoveredData.time as number) * 1000).toLocaleTimeString()}
                      </span>
