@@ -6,7 +6,7 @@ export interface OrderBookLevel {
 }
 
 export interface CandleData {
-  time: string;
+  time: string | number;
   open: number;
   high: number;
   low: number;
@@ -60,7 +60,7 @@ export interface TradeSignal {
   id: string;
   type: 'ENTRY_LONG' | 'ENTRY_SHORT' | 'EXIT_PROFIT' | 'EXIT_LOSS';
   price: number;
-  time: string; // Should match a candle time
+  time: string | number; // Match CandleData time
   label: string;
 }
 
@@ -68,4 +68,14 @@ export interface PriceLevel {
   price: number;
   type: 'SUPPORT' | 'RESISTANCE';
   label: string;
+}
+
+export interface AiAnalysis {
+    signal: 'BUY' | 'SELL' | 'WAIT';
+    confidence: number;
+    reason: string;
+    metrics?: {
+        z_score: number;
+        vpin: number;
+    }
 }

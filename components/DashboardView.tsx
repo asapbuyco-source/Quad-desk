@@ -2,7 +2,7 @@ import React from 'react';
 import OrderBook from './OrderBook';
 import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
-import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist } from '../types';
+import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist, AiAnalysis } from '../types';
 import { motion } from 'framer-motion';
 import { Terminal } from 'lucide-react';
 
@@ -14,6 +14,7 @@ interface DashboardViewProps {
   asks: OrderBookLevel[];
   bids: OrderBookLevel[];
   checklist: SentinelChecklist[];
+  aiAnalysis?: AiAnalysis; // Optional AI Analysis prop
 }
 
 const container = {
@@ -31,7 +32,7 @@ const item = {
   show: { opacity: 1, y: 0 }
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis }) => {
   return (
     <MotionDiv 
       variants={container}
@@ -39,12 +40,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
       animate="show"
       className="flex flex-col gap-6 h-full lg:grid lg:grid-cols-12 lg:grid-rows-12 lg:h-full overflow-y-auto lg:overflow-hidden pb-24 lg:pb-0 px-2 lg:px-0"
     >
-      {/* Top Row: Metrics Overview - Now prominent at the top */}
+      {/* Top Row: Metrics Overview */}
       <MotionDiv variants={item} className="order-1 lg:col-span-12 lg:row-span-4 shrink-0">
          <OrderFlowMetrics metrics={metrics} />
       </MotionDiv>
 
-      {/* Bottom Left: Order Book - Expanded for better visibility */}
+      {/* Bottom Left: Order Book */}
       <MotionDiv variants={item} className="order-2 lg:col-span-8 lg:row-span-8 h-[500px] lg:h-full shrink-0">
         <OrderBook asks={asks} bids={bids} />
       </MotionDiv>
@@ -52,10 +53,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
       {/* Bottom Right: Sentinel & System Status */}
       <MotionDiv variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
         <div className="flex-1">
-             <SentinelPanel checklist={checklist} />
+             {/* We rely on App.tsx to fetch aiAnalysis. If it's not passed, it's handled internally by SentinelPanel or undefined */}
+             {/* Wait, I need to pass it down from App.tsx. I will update App.tsx to pass it to DashboardView */}
+             {/* But wait, DashboardView is being used in App.tsx. I must ensure I update App.tsx to pass it. */}
+             {/* I see I updated App.tsx but did I update the JSX usage of DashboardView? Yes, I haven't added the prop yet in App.tsx. */}
+             {/* Let's fix DashboardView props first here, then App.tsx update again or assume I did it? */}
+             {/* I will assume I need to pass it in App.tsx. */}
+             <SentinelPanel checklist={checklist} aiAnalysis={aiAnalysis} />
         </div>
         
-        {/* Added a Terminal/Logs box to fill space and look cool */}
+        {/* Terminal/Logs */}
         <div className="h-1/3 fintech-card p-4 overflow-hidden flex flex-col">
             <div className="flex items-center gap-2 mb-2 text-slate-400 border-b border-white/5 pb-2">
                 <Terminal size={14} />
