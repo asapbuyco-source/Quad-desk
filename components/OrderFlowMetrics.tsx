@@ -117,12 +117,18 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
 
       {/* Widget 2: Z-Score Heatmap Matrix */}
       <div className="fintech-card p-4 flex flex-col justify-between overflow-hidden">
-         <div className="flex justify-between items-center mb-3">
+         <div className="flex justify-between items-start mb-3">
              <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                     <TrendingUp size={12} className="text-brand-accent" />
                     Mean Reversion
                 </span>
+                <div className="flex items-baseline gap-1 mt-1">
+                    <span className={`text-2xl font-mono font-bold ${Math.abs(metrics.zScore) > 2 ? 'text-trade-warn' : 'text-white'}`}>
+                        {metrics.zScore > 0 ? '+' : ''}{metrics.zScore.toFixed(2)}σ
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-medium">Std Dev</span>
+                </div>
              </div>
              <div className="text-[9px] font-mono text-slate-600">H4 LOOKBACK</div>
          </div>

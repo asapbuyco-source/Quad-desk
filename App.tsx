@@ -170,6 +170,7 @@ const App: React.FC = () => {
             // Simulate OFI/Toxicity based on random noise + price movement
             ofi: Math.max(-500, Math.min(500, prev.ofi + Math.floor((Math.random() - 0.5) * 50))),
             toxicity: Math.min(100, Math.max(0, prev.toxicity + Math.floor((Math.random() - 0.5) * 5))),
+            zScore: Math.min(4, Math.max(-4, prev.zScore + (Math.random() - 0.5) * 0.1)),
             heatmap: newHeatmap,
           };
       });
