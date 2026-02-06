@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Shield, Activity, Terminal, BrainCircuit, ScanSearch, CandlestickChart, TrendingUp, Anchor, BookOpen } from 'lucide-react';
+import { Shield, Activity, Terminal, ScanSearch, CandlestickChart, Anchor, BookOpen } from 'lucide-react';
 
 const MotionDiv = motion.div as any;
 
