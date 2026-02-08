@@ -322,12 +322,17 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         </div>
                         
                         {/* Glass Overlay with CTA */}
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm group cursor-pointer hover:bg-black/50 transition-colors" onClick={handleEnter}>
-                             <div className="p-1 rounded-full border border-white/20 bg-black/50">
+                        {/* ACCESSIBILITY FIX: Changed to <button> for keyboard support */}
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm group transition-colors">
+                             <button 
+                                onClick={handleEnter}
+                                className="p-1 rounded-full border border-white/20 bg-black/50 hover:bg-black/60 focus:outline-none focus:ring-2 focus:ring-brand-accent transition-all"
+                                aria-label="Enter Terminal"
+                             >
                                 <div className="px-8 py-3 bg-white text-black rounded-full font-bold flex items-center gap-2 group-hover:scale-105 transition-transform">
                                     ENTER TERMINAL <ChevronRight size={16} />
                                 </div>
-                             </div>
+                             </button>
                         </div>
                     </div>
                 </motion.div>

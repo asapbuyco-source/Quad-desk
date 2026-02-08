@@ -24,15 +24,11 @@ logger = logging.getLogger("QuantDesk")
 load_dotenv()
 
 # Validate Environment on Startup
+# We no longer hard crash here to allow health checks to pass even if keys are missing
 REQUIRED_ENV_VARS = ["GEMINI_API_KEY"]
 missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
 if missing_vars:
-    logger.error(f"❌ Missing required environment variables: {missing_vars}")
-    logger.error("Set these in Railway or your .env file before running.")
-    # We don't exit here anymore to ensure the app runs in simulation mode if needed
-    logger.warning("⚠️ Running in SIMULATION MODE due to missing keys.")
-
-logger.info("✅ Environment variables validated")
+    logger.warning(f"⚠️ Missing environment variables: {missing_vars}")
 
 app = FastAPI()
 
@@ -47,15 +43,22 @@ app.add_middleware(
 
 # AI Configuration
 api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
-    # Pro: For complex reasoning, math, and chart analysis
-    pro_model = genai.GenerativeModel('gemini-3-pro-preview')
-    # Flash: For fast text generation and summarization
-    flash_model = genai.GenerativeModel('gemini-3-flash-preview')
-else:
+if not api_key:
+    logger.error("❌ GEMINI_API_KEY not set! AI features will not work.")
+    logger.error("Set it in Railway dashboard: Settings → Variables")
     pro_model = None
     flash_model = None
+else:
+    genai.configure(api_key=api_key)
+    try:
+        # Using Gemini 3 series as per architectural standards
+        pro_model = genai.GenerativeModel('gemini-3-pro-preview')
+        flash_model = genai.GenerativeModel('gemini-3-flash-preview')
+        logger.info("✅ Gemini models initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Gemini: {e}")
+        pro_model = None
+        flash_model = None
 
 # 2. In-Memory Data Store
 candle_cache = deque(maxlen=1000)
@@ -169,6 +172,15 @@ async def send_vantage_alert(data: MarketAnalysis, current_price: float, z_score
 
 # 6. API Endpoints
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Railway"""
+    return {
+        "status": "healthy",
+        "gemini_available": pro_model is not None,
+        "timestamp": datetime.now().isoformat()
+    }
+
 @app.get("/bands")
 async def get_volatility_bands():
     if len(candle_cache) < 20:
@@ -196,7 +208,7 @@ async def analyze_market():
 
     try:
         if not pro_model:
-            raise Exception("Gemini API Key missing")
+            raise Exception("Gemini API Key missing or model initialization failed")
 
         if len(candle_cache) < 30:
             raise Exception("Insufficient Data")
@@ -287,7 +299,7 @@ async def get_market_intelligence():
 
     try:
         if not flash_model:
-            raise Exception("Gemini API Key missing")
+            raise Exception("Gemini API Key missing or model initialization failed")
 
         prompt = f"""
         You are a senior financial data simulator.
@@ -370,4 +382,6 @@ async def get_market_intelligence():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Use PORT env var if available (Railway/Heroku), else default to 8000
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

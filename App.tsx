@@ -12,110 +12,7 @@ import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, CHECKLIST_ITEMS, MOCK_LEVELS, API_B
 import { CandleData, OrderBookLevel, MarketMetrics, TradeSignal, AiScanResult, PriceLevel } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lock, RefreshCw } from 'lucide-react';
-
-// --- OPTIMIZED ADX CALCULATION (O(N) Complexity) ---
-
-/**
- * Calculates the Average Directional Index (ADX) using Wilder's Smoothing technique.
- * 
- * The ADX is used to quantify trend strength regardless of direction.
- * - ADX < 25: Ranging / Accumulation
- * - ADX > 25: Trending
- * - ADX > 50: Strong Trend
- * 
- * @param data - Array of raw CandleData (Open, High, Low, Close)
- * @param period - Lookback period for smoothing (default: 14)
- * @returns A new array of CandleData with the 'adx' property populated.
- * 
- * Time Complexity: O(N) - Single pass calculation
- */
-const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
-    const length = data.length;
-    if (length < period * 2) return data;
-
-    // Pre-allocate arrays for performance
-    const trs = new Float64Array(length);
-    const plusDMs = new Float64Array(length);
-    const minusDMs = new Float64Array(length);
-    const adxValues = new Float64Array(length);
-
-    // 1. Calculate TR, +DM, -DM (Single Pass)
-    for (let i = 1; i < length; i++) {
-        const curr = data[i];
-        const prev = data[i - 1];
-
-        const high = curr.high;
-        const low = curr.low;
-        const prevClose = prev.close;
-
-        const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
-        trs[i] = tr;
-
-        const upMove = high - prev.high;
-        const downMove = prev.low - low;
-
-        if (upMove > downMove && upMove > 0) {
-            plusDMs[i] = upMove;
-        }
-        if (downMove > upMove && downMove > 0) {
-            minusDMs[i] = downMove;
-        }
-    }
-
-    // 2. Wilder's Smoothing & DX Calculation
-    let smoothTR = 0;
-    let smoothPlusDM = 0;
-    let smoothMinusDM = 0;
-
-    // Initial SMA for first 'period'
-    for (let i = 1; i <= period; i++) {
-        smoothTR += trs[i];
-        smoothPlusDM += plusDMs[i];
-        smoothMinusDM += minusDMs[i];
-    }
-
-    // Process the rest
-    const dxValues = new Float64Array(length);
-    for (let i = period; i < length; i++) {
-        if (i > period) {
-            smoothTR = smoothTR - (smoothTR / period) + trs[i];
-            smoothPlusDM = smoothPlusDM - (smoothPlusDM / period) + plusDMs[i];
-            smoothMinusDM = smoothMinusDM - (smoothMinusDM / period) + minusDMs[i];
-        }
-
-        // GUARD: Prevent division by zero if volatility is extremely low
-        const effectiveTR = Math.max(smoothTR, 0.0001);
-
-        const plusDI = (smoothPlusDM / effectiveTR) * 100;
-        const minusDI = (smoothMinusDM / effectiveTR) * 100;
-        const sum = plusDI + minusDI;
-        
-        dxValues[i] = sum === 0 ? 0 : (Math.abs(plusDI - minusDI) / sum) * 100;
-    }
-
-    // 3. Calculate ADX
-    let smoothDX = 0;
-    // First ADX is average of N DXs
-    for (let i = period; i < period * 2; i++) {
-        smoothDX += dxValues[i];
-    }
-    smoothDX /= period;
-
-    const adxStart = period * 2;
-    // Fill previous values to avoid holes if needed, or leave 0
-    adxValues[adxStart - 1] = smoothDX; 
-
-    for (let i = adxStart; i < length; i++) {
-        smoothDX = ((smoothDX * (period - 1)) + dxValues[i]) / period;
-        adxValues[i] = smoothDX;
-    }
-
-    // Merge back into objects (New Array creation is unavoidable here to maintain immutability)
-    return data.map((c, i) => ({
-        ...c,
-        adx: adxValues[i]
-    }));
-};
+import { calculateADX, generateSyntheticData } from './utils/analytics';
 
 // --- STATE MANAGEMENT ---
 
@@ -328,32 +225,8 @@ const appReducer = (state: AppState, action: Action): AppState => {
     }
 };
 
-// Synthetic Data Generator for Backtest Mode
-const generateBacktestData = (): CandleData[] => {
-    let price = 42000;
-    const data: CandleData[] = [];
-    for(let i=0; i<300; i++) {
-        let trend = 0;
-        if(i > 50 && i < 100) trend = 50; 
-        if(i > 100 && i < 150) trend = -80; 
-        if(i > 150) trend = 20; 
-        
-        const vol = Math.random() * 50;
-        const move = trend + (Math.random() - 0.5) * vol;
-        const close = price + move;
-        
-        data.push({
-            time: 1600000000 + (i * 60),
-            open: price, high: Math.max(price, close) + Math.random() * 20, low: Math.min(price, close) - Math.random() * 20, close,
-            volume: 500 + Math.abs(move) * 10,
-            zScoreUpper1: close * 1.01, zScoreLower1: close * 0.99, zScoreUpper2: close * 1.02, zScoreLower2: close * 0.98,
-        });
-        price = close;
-    }
-    return calculateADX(data);
-};
-
-const BACKTEST_DATA = generateBacktestData();
+// Backtest data source (Generated once on load to be consistent)
+const BACKTEST_DATA = generateSyntheticData(42000, 300);
 const SCAN_COOLDOWN = 60;
 
 const App: React.FC = () => {
@@ -374,7 +247,10 @@ const App: React.FC = () => {
 
     const fetchHistory = async () => {
         try {
+            // Attempt to fetch from Binance
             const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${state.config.activeSymbol}&interval=${state.config.interval}&limit=1000`);
+            if (!res.ok) throw new Error("Binance API Error");
+            
             const data = await res.json();
             const formattedCandles: CandleData[] = data.map((k: any) => ({
                 time: k[0] / 1000,
@@ -386,7 +262,17 @@ const App: React.FC = () => {
             // Dispatch single update with pre-calculated history
             dispatch({ type: 'MARKET_SET_HISTORY', payload: formattedCandles });
         } catch (e) {
-            console.error("Failed to fetch history", e);
+            console.warn("Failed to fetch live history (CORS/Network). Using Fallback.", e);
+            
+            // FALLBACK: Generate synthetic data if API fails (Critical for Resilience)
+            const fallbackPrice = state.config.activeSymbol.startsWith('BTC') ? 64000 : 3200;
+            const fallbackData = generateSyntheticData(fallbackPrice, 200);
+            
+            dispatch({ type: 'MARKET_SET_HISTORY', payload: fallbackData });
+            dispatch({
+                type: 'ADD_NOTIFICATION',
+                payload: { id: Date.now().toString(), type: 'warning', title: 'Data Stream Restricted', message: 'Binance API blocked. Running on synthetic data feed.' }
+            });
         }
     };
     fetchHistory();
@@ -511,28 +397,30 @@ const App: React.FC = () => {
 
   // 6. Simulation Engine (Metrics Jitter)
   useEffect(() => {
-    if (!state.market.metrics.price && !state.config.isBacktest) return; 
-    const i = setInterval(() => {
-      const price = state.market.metrics.price;
-      // Simulate Order Book & Flux
-      const spread = price * 0.0001; 
-      const generateLevel = (base: number, off: number) => ({ price: base + off, size: Math.floor(Math.random()*500)+10, total: 0 });
-      
-      dispatch({ 
-          type: 'MARKET_SIM_TICK', 
-          payload: {
-              asks: Array.from({length: 10}, (_, k) => generateLevel(price, spread + (k * spread))).reverse(),
-              bids: Array.from({length: 10}, (_, k) => generateLevel(price, -(spread + (k * spread)))),
-              metrics: {
-                  ofi: Math.max(-500, Math.min(500, state.market.metrics.ofi + Math.floor((Math.random() - 0.5) * 50))),
-                  toxicity: Math.min(100, Math.max(0, state.market.metrics.toxicity + Math.floor((Math.random() - 0.5) * 5))),
-                  zScore: Math.min(4, Math.max(-4, state.market.metrics.zScore + (Math.random() - 0.5) * 0.1)),
-                  heatmap: state.market.metrics.heatmap.map(item => ({ ...item, zScore: item.zScore + (Math.random() - 0.5) * 0.2 }))
-              }
-          }
-      });
-    }, 1000);
-    return () => clearInterval(i);
+    // Run even if price is 0 (will use fallback logic in dispatch)
+    if (!state.config.isBacktest) { 
+        const i = setInterval(() => {
+        const price = state.market.metrics.price || 42000;
+        // Simulate Order Book & Flux
+        const spread = price * 0.0001; 
+        const generateLevel = (base: number, off: number) => ({ price: base + off, size: Math.floor(Math.random()*500)+10, total: 0 });
+        
+        dispatch({ 
+            type: 'MARKET_SIM_TICK', 
+            payload: {
+                asks: Array.from({length: 10}, (_, k) => generateLevel(price, spread + (k * spread))).reverse(),
+                bids: Array.from({length: 10}, (_, k) => generateLevel(price, -(spread + (k * spread)))),
+                metrics: {
+                    ofi: Math.max(-500, Math.min(500, state.market.metrics.ofi + Math.floor((Math.random() - 0.5) * 50))),
+                    toxicity: Math.min(100, Math.max(0, state.market.metrics.toxicity + Math.floor((Math.random() - 0.5) * 5))),
+                    zScore: Math.min(4, Math.max(-4, state.market.metrics.zScore + (Math.random() - 0.5) * 0.1)),
+                    heatmap: state.market.metrics.heatmap.map(item => ({ ...item, zScore: item.zScore + (Math.random() - 0.5) * 0.2 }))
+                }
+            }
+        });
+        }, 1000);
+        return () => clearInterval(i);
+    }
   }, [state.market.metrics.price, state.config.isBacktest]);
 
   // 7. Backtest Loop

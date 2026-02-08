@@ -1,7 +1,8 @@
 import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem, TradeSignal, PriceLevel } from './types';
 
 export const APP_NAME = "QUANT DESK";
-export const API_BASE_URL = "http://localhost:8000";
+// Use Vite's import.meta.env for production builds, fallback to localhost for dev
+export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || "http://localhost:8000";
 
 export const MOCK_METRICS: MarketMetrics = {
   pair: "XAU/USD",

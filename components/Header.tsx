@@ -94,7 +94,11 @@ const Header: React.FC<HeaderProps> = ({
             </span>
             <div className={`
                 flex items-center px-1.5 lg:px-2 py-0.5 rounded-full text-[10px] lg:text-xs font-bold font-mono
-                ${metrics.change >= 0 ? 'bg-trade-bid/20 text-trade-bid' : 'bg-trade-ask/20 text-trade-ask'}
+                ${metrics.change > 0 
+                    ? 'bg-trade-bid/20 text-trade-bid' 
+                    : metrics.change < 0 
+                        ? 'bg-trade-ask/20 text-trade-ask' 
+                        : 'bg-zinc-500/20 text-zinc-400'}
             `}>
                 {metrics.change > 0 ? '+' : ''}{metrics.change}%
             </div>
