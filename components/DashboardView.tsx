@@ -40,7 +40,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
       variants={container}
       initial="hidden"
       animate="show"
-      className="flex flex-col gap-6 h-full lg:grid lg:grid-cols-12 lg:grid-rows-12 lg:h-full overflow-y-auto lg:overflow-hidden pb-24 lg:pb-0 px-2 lg:px-0"
+      className="flex flex-col gap-6 h-full lg:grid lg:grid-cols-12 lg:grid-rows-12 lg:h-full overflow-y-auto lg:overflow-hidden pb-24 lg:pb-0 px-4 lg:px-0"
     >
       {/* Top Row: Metrics Overview */}
       <MotionDiv variants={item} className="order-1 lg:col-span-12 lg:row-span-4 shrink-0">
@@ -55,11 +55,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
       {/* Bottom Right: Sentinel & System Status */}
       <MotionDiv variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
         <div className="flex-1">
-             <SentinelPanel checklist={checklist} aiAnalysis={aiAnalysis} aiScanResult={aiScanResult} />
+             <SentinelPanel 
+                checklist={checklist} 
+                aiAnalysis={aiAnalysis} 
+                aiScanResult={aiScanResult} 
+                heatmap={metrics.heatmap}
+             />
         </div>
         
         {/* Terminal/Logs */}
-        <div className="h-1/3 fintech-card p-4 overflow-hidden flex flex-col">
+        <div className="h-64 lg:h-1/3 fintech-card p-4 overflow-hidden flex flex-col">
             <div className="flex items-center gap-2 mb-2 text-slate-400 border-b border-white/5 pb-2">
                 <Terminal size={14} />
                 <span className="text-xs font-bold uppercase">System Logs</span>

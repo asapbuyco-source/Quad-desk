@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit } from 'lucide-react';
+import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle } from 'lucide-react';
 
 const MotionDiv = motion.div as any;
 
@@ -25,6 +25,8 @@ interface MarketIntelResponse {
     articles: NewsArticle[];
     intelligence: IntelligenceData;
     timestamp?: number;
+    is_simulated?: boolean; // Backend flag
+    isSimulated?: boolean; // Frontend cache/fallback flag
 }
 
 const CACHE_KEY = 'market_intel_cache';
@@ -89,7 +91,8 @@ const MOCK_INTEL_DATA: MarketIntelResponse = {
         whale_impact: "High",
         ai_sentiment_score: 0.85
     },
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    isSimulated: true
 };
 
 const IntelView: React.FC = () => {
@@ -179,8 +182,11 @@ const IntelView: React.FC = () => {
       return { label: 'NEUTRAL', color: 'text-zinc-400', bg: 'bg-zinc-500/10', border: 'border-zinc-500/20', icon: Minus };
   };
 
+  const isSimulated = data?.isSimulated || data?.is_simulated || !!error;
+
   return (
-    <div className="h-full flex flex-col gap-6 max-w-7xl mx-auto px-4 lg:px-0 relative w-full">
+    <div className="h-full w-full overflow-y-auto">
+        <div className="flex flex-col gap-6 max-w-7xl mx-auto px-4 lg:px-0 relative w-full pb-24 lg:pb-12 pt-2">
       
       {/* Header Section */}
       <div className="flex flex-col gap-6">
@@ -191,19 +197,29 @@ const IntelView: React.FC = () => {
                 </div>
                 Market Intelligence
             </h1>
-            <button 
-                onClick={() => fetchIntelligence(true)}
-                disabled={loading}
-                className={`
-                    flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border transition-all
-                    ${loading 
-                        ? 'bg-zinc-800 text-zinc-500 border-zinc-700 cursor-wait' 
-                        : 'bg-brand-accent/10 text-brand-accent border-brand-accent/30 hover:bg-brand-accent hover:text-white'}
-                `}
-            >
-                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-                {loading ? "ANALYZING..." : "REFRESH INTEL"}
-            </button>
+            <div className="flex items-center gap-3">
+                {isSimulated && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/30">
+                        <AlertTriangle size={14} className="text-amber-500" />
+                        <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest hidden md:inline">
+                            SIMULATED DATA
+                        </span>
+                    </div>
+                )}
+                <button 
+                    onClick={() => fetchIntelligence(true)}
+                    disabled={loading}
+                    className={`
+                        flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border transition-all
+                        ${loading 
+                            ? 'bg-zinc-800 text-zinc-500 border-zinc-700 cursor-wait' 
+                            : 'bg-brand-accent/10 text-brand-accent border-brand-accent/30 hover:bg-brand-accent hover:text-white'}
+                    `}
+                >
+                    <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                    {loading ? "ANALYZING..." : "REFRESH INTEL"}
+                </button>
+            </div>
         </div>
 
         {/* AI Pulse Dashboard */}
@@ -297,7 +313,7 @@ const IntelView: React.FC = () => {
       )}
 
       {/* News Grid */}
-      <div className="flex-1 overflow-y-auto pb-20 lg:pb-0">
+      <div className="flex-1">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence mode='popLayout'>
             {data?.articles.map((article, idx) => {
@@ -339,11 +355,12 @@ const IntelView: React.FC = () => {
                         <div className="pt-4 border-t border-white/5 flex justify-between items-center">
                             <a 
                                 href={article.url} 
-                                target="_blank" 
+                                target={article.url === '#' ? '_self' : '_blank'} 
+                                onClick={(e) => article.url === '#' && e.preventDefault()}
                                 rel="noopener noreferrer"
-                                className="flex items-center gap-1 text-[10px] font-bold text-brand-accent hover:underline decoration-brand-accent/50 underline-offset-4"
+                                className={`flex items-center gap-1 text-[10px] font-bold ${article.url === '#' ? 'text-zinc-600 cursor-not-allowed' : 'text-brand-accent hover:underline decoration-brand-accent/50 underline-offset-4'}`}
                             >
-                                READ SOURCE <ExternalLink size={10} />
+                                {article.url === '#' ? 'SOURCE RESTRICTED' : 'READ SOURCE'} <ExternalLink size={10} />
                             </a>
                         </div>
                     </MotionDiv>
@@ -352,6 +369,7 @@ const IntelView: React.FC = () => {
             </AnimatePresence>
         </div>
       </div>
+    </div>
     </div>
   );
 };

@@ -20,11 +20,30 @@ export interface CandleData {
   adx?: number; // Average Directional Index
 }
 
+export interface CalculationVariable {
+    label: string;
+    value: string | number;
+    unit?: string;
+    description: string;
+}
+
+export interface CalculationDetails {
+    formula: string;
+    variables: CalculationVariable[];
+    explanation: string;
+    thresholds: {
+        pass: string;
+        warning: string;
+        fail: string;
+    };
+}
+
 export interface SentinelChecklist {
   id: string;
   label: string;
   status: 'pass' | 'fail' | 'warning';
   value: string;
+  details?: CalculationDetails; // Enhanced details object
 }
 
 export interface HeatmapItem {
@@ -85,6 +104,7 @@ export interface AiScanResult {
   entry_price?: number;
   stop_loss?: number;
   take_profit?: number;
+  isSimulated?: boolean; // New Flag
 }
 
 export interface AiAnalysis {

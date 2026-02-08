@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useLayoutEffect, useMemo } from 'react';
+import React, { useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { createChart, IChartApi, ChartOptions, DeepPartial, ColorType, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { CandleData } from '../types';
 
@@ -8,7 +8,11 @@ export const useLightweightChart = (
     containerRef: React.RefObject<HTMLElement>,
     options: DeepPartial<ChartOptions> = {}
 ) => {
-    const chartRef = useRef<IChartApi | null>(null);
+    const [chartInstance, setChartInstance] = useState<IChartApi | null>(null);
+    
+    // Store options in ref to avoid re-triggering effect on every render if options object is new
+    const optionsRef = useRef(options);
+    optionsRef.current = options;
 
     // Default Options
     const defaultOptions: DeepPartial<ChartOptions> = {
@@ -40,6 +44,7 @@ export const useLightweightChart = (
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: false,
+            rightOffset: 5,
         },
         rightPriceScale: {
             borderColor: 'rgba(255, 255, 255, 0.1)',
@@ -49,42 +54,82 @@ export const useLightweightChart = (
             },
             visible: true,
         },
+        // Enhanced Interactivity
+        handleScale: {
+            axisPressedMouseMove: true,
+            mouseWheel: true,
+            pinch: true,
+        },
+        handleScroll: {
+            vertTouchDrag: false,
+            pressedMouseMove: true,
+            mouseWheel: true,
+            horzTouchDrag: true,
+        },
+        kineticScroll: {
+            touch: true,
+            mouse: true,
+        },
     };
 
     useLayoutEffect(() => {
         if (!containerRef.current) return;
 
+        // Track disposal state to prevent race conditions with ResizeObserver/RAF
+        let isDisposed = false;
+
         // Initialize Chart
+        const { clientWidth, clientHeight } = containerRef.current;
+        
         const chart = createChart(containerRef.current, {
-            width: containerRef.current.clientWidth,
-            height: containerRef.current.clientHeight,
+            width: clientWidth || 300,
+            height: clientHeight || 300,
             ...defaultOptions,
-            ...options,
+            ...optionsRef.current,
         });
 
-        chartRef.current = chart;
+        setChartInstance(chart);
 
         // Handle Resizing
         const handleResize = () => {
-            if (containerRef.current && chartRef.current) {
-                chartRef.current.applyOptions({
-                    width: containerRef.current.clientWidth,
-                    height: containerRef.current.clientHeight,
-                });
-            }
+            // Use requestAnimationFrame to ensure we are resizing in sync with browser paint cycle
+            // and prevent "disappearing" chart issues on mobile scroll/resize events
+            window.requestAnimationFrame(() => {
+                if (isDisposed) return;
+                
+                if (containerRef.current && chart) {
+                    const width = containerRef.current.clientWidth;
+                    const height = containerRef.current.clientHeight;
+                    
+                    // Only resize if dimensions are valid to prevent 0-height collapse
+                    if (width > 0 && height > 0) {
+                        try {
+                            chart.applyOptions({ width, height });
+                        } catch (e) {
+                            // Ignore resize errors on disposed chart
+                            console.warn("Chart resize failed:", e);
+                        }
+                    }
+                }
+            });
         };
 
         const resizeObserver = new ResizeObserver(handleResize);
         resizeObserver.observe(containerRef.current);
 
         return () => {
+            isDisposed = true;
             resizeObserver.disconnect();
-            chart.remove();
-            chartRef.current = null;
+            try {
+                chart.remove();
+            } catch (e) {
+                console.warn("Chart remove failed:", e);
+            }
+            setChartInstance(null);
         };
     }, []);
 
-    return chartRef;
+    return chartInstance;
 };
 
 // --- Volume Profile Logic Hook ---
@@ -99,10 +144,18 @@ export interface VolumeBucket {
 
 export const useVolumeProfileData = (data: CandleData[], steps: number = 40) => {
     return useMemo(() => {
-        if (!data.length) return [];
+        if (!data || data.length === 0) return [];
         
-        const minPrice = Math.min(...data.map(d => d.low));
-        const maxPrice = Math.max(...data.map(d => d.high));
+        const lows = data.map(d => d.low).filter(v => typeof v === 'number' && !isNaN(v));
+        const highs = data.map(d => d.high).filter(v => typeof v === 'number' && !isNaN(v));
+
+        if (lows.length === 0 || highs.length === 0) return [];
+
+        const minPrice = Math.min(...lows);
+        const maxPrice = Math.max(...highs);
+        
+        if (minPrice === Infinity || maxPrice === -Infinity || minPrice === maxPrice) return [];
+
         const range = maxPrice - minPrice;
         const stepSize = range / steps;
     
@@ -117,20 +170,21 @@ export const useVolumeProfileData = (data: CandleData[], steps: number = 40) => 
     
         // Distribute volume (using close price approximation for performance)
         data.forEach(candle => {
+          if (!candle || typeof candle.close !== 'number' || typeof candle.volume !== 'number') return;
           const index = Math.min(steps - 1, Math.floor((candle.close - minPrice) / stepSize));
-          if (index >= 0) buckets[index].vol += candle.volume;
+          if (index >= 0 && index < buckets.length) buckets[index].vol += candle.volume;
         });
     
         // Calculate Stats
         const maxVol = Math.max(...buckets.map(b => b.vol));
         const volumes = buckets.map(b => b.vol).filter(v => v > 0);
-        const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+        const avgVol = volumes.length > 0 ? volumes.reduce((a, b) => a + b, 0) / volumes.length : 0;
     
         // Assign Types
         return buckets.map(b => {
           let type = 'Normal';
-          if (b.vol === maxVol) type = 'POC'; // Point of Control
-          else if (b.vol > maxVol * 0.6) type = 'HVN'; // High Volume Node
+          if (b.vol === maxVol && maxVol > 0) type = 'POC'; // Point of Control
+          else if (b.vol > maxVol * 0.6 && maxVol > 0) type = 'HVN'; // High Volume Node
           else if (b.vol < avgVol * 0.5) type = 'LVN'; // Liquidity Hole
           
           return { ...b, type };

@@ -42,12 +42,12 @@ const ChartingView: React.FC<ChartingViewProps> = ({
     <MotionDiv 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="h-full w-full p-0 lg:p-2 flex flex-col"
+      className="h-full w-full flex flex-col p-0 pb-20 lg:p-2 lg:pb-0"
     >
       <div className="flex-1 w-full h-full relative overflow-hidden flex gap-2">
         
         {/* Main Chart Area */}
-        <div className="flex-1 min-w-0 h-full fintech-card overflow-hidden relative z-10">
+        <div className="flex-1 min-w-0 h-full fintech-card overflow-hidden relative z-10 border-x-0 lg:border-x border-t-0 lg:border-t rounded-none lg:rounded-xl">
              <PriceChart 
                 data={candles} 
                 signals={signals} 
@@ -64,11 +64,11 @@ const ChartingView: React.FC<ChartingViewProps> = ({
                 onIntervalChange={onIntervalChange}
             >
                 {/* Header Controls */}
-                <div className="flex gap-2 bg-zinc-900/50 p-1 rounded-full border border-white/5 items-center max-w-full overflow-x-auto scrollbar-hide">
+                <div className="flex gap-2 bg-zinc-900/50 p-1 rounded-full border border-white/5 items-center">
                     <button
                         onClick={() => toggleLayer('zScore')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
+                            flex items-center gap-2 px-2 lg:px-3 py-1 lg:py-1.5 rounded-full text-[9px] lg:text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
                             ${layers.zScore 
                                 ? 'bg-brand-accent/20 text-brand-accent border-brand-accent/30 shadow-[0_0_10px_rgba(59,130,246,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -82,7 +82,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({
                     <button
                         onClick={() => toggleLayer('levels')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
+                            flex items-center gap-2 px-2 lg:px-3 py-1 lg:py-1.5 rounded-full text-[9px] lg:text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
                             ${layers.levels 
                                 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -96,7 +96,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({
                     <button
                         onClick={() => toggleLayer('signals')}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
+                            flex items-center gap-2 px-2 lg:px-3 py-1 lg:py-1.5 rounded-full text-[9px] lg:text-[10px] font-bold transition-all border whitespace-nowrap min-w-fit
                             ${layers.signals 
                                 ? 'bg-amber-500/20 text-amber-400 border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]' 
                                 : 'bg-transparent text-slate-500 border-transparent hover:bg-white/5'}
@@ -115,10 +115,11 @@ const ChartingView: React.FC<ChartingViewProps> = ({
             {layers.volumeProfile && (
                 <MotionDiv 
                     initial={{ width: 0, opacity: 0 }}
-                    animate={{ width: 280, opacity: 1 }}
+                    animate={{ width: "280px", opacity: 1 }}
                     exit={{ width: 0, opacity: 0 }}
+                    style={{ maxWidth: '85vw' }}
                     transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                    className="h-full shrink-0 absolute right-0 top-0 bottom-0 z-20 md:static"
+                    className="h-full shrink-0 absolute right-0 top-0 bottom-0 z-20 md:static bg-[#09090b] md:bg-transparent shadow-2xl md:shadow-none border-l border-white/10 md:border-none"
                 >
                      <VolumeProfile data={candles} />
                 </MotionDiv>

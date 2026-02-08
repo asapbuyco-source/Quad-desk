@@ -46,23 +46,8 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
             </div>
         </div>
 
+        {/* Chart Area */}
         <div className="flex-1 w-full min-h-0 relative p-1">
-            {/* Legend Overlay */}
-            <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-1 pointer-events-none">
-                <div className="flex items-center gap-2 justify-end">
-                    <span className="text-[9px] text-slate-500 uppercase font-bold">POC</span>
-                    <div className="w-2 h-2 bg-amber-500 rounded-sm"></div>
-                </div>
-                <div className="flex items-center gap-2 justify-end">
-                    <span className="text-[9px] text-slate-500 uppercase font-bold">HVN</span>
-                    <div className="w-2 h-2 bg-blue-500 rounded-sm"></div>
-                </div>
-                 <div className="flex items-center gap-2 justify-end">
-                    <span className="text-[9px] text-slate-500 uppercase font-bold">Low Liq</span>
-                    <div className="w-2 h-2 bg-zinc-800 rounded-sm border border-zinc-700"></div>
-                </div>
-            </div>
-
             <ResponsiveContainer width="100%" height="100%">
                 <BarChart 
                     layout="vertical" 
@@ -73,11 +58,12 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
                 >
                     <Tooltip 
                         cursor={{fill: 'rgba(255,255,255,0.05)'}}
+                        wrapperStyle={{ outline: 'none', zIndex: 1000 }} 
                         content={({ active, payload }) => {
                             if (active && payload && payload.length) {
                                 const d = payload[0].payload;
                                 return (
-                                    <div className="bg-[#09090b]/95 backdrop-blur-xl border border-zinc-800 p-2.5 rounded-lg shadow-xl z-50 min-w-[120px]">
+                                    <div className="bg-[#09090b]/95 backdrop-blur-xl border border-zinc-800 p-2.5 rounded-lg shadow-xl z-[1000] min-w-[120px]">
                                         <p className="text-zinc-500 mb-1 font-mono text-[9px] uppercase tracking-wider">Price Level</p>
                                         <p className="text-white font-mono text-xs font-bold mb-2">{d.rangeLabel}</p>
                                         
@@ -110,6 +96,26 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
                     </Bar>
                 </BarChart>
             </ResponsiveContainer>
+        </div>
+
+        {/* Footer / Legend */}
+        <div className="px-3 py-2 border-t border-white/5 bg-white/[0.02] flex flex-wrap gap-x-4 gap-y-2 justify-center shrink-0">
+             <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-amber-500 rounded-sm"></div>
+                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">POC</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-blue-500 rounded-sm"></div>
+                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">HVN</span>
+            </div>
+             <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-zinc-600 rounded-sm"></div>
+                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">VOL</span>
+            </div>
+             <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-zinc-800 rounded-sm border border-zinc-700"></div>
+                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">LOW LIQ</span>
+            </div>
         </div>
     </div>
   );

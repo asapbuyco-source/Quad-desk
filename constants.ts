@@ -22,11 +22,105 @@ export const MOCK_METRICS: MarketMetrics = {
 };
 
 export const CHECKLIST_ITEMS: SentinelChecklist[] = [
-  { id: '1', label: 'Dislocation (Z-Score)', status: 'pass', value: '-2.6σ' },
-  { id: '2', label: 'Bayesian Posterior', status: 'warning', value: '0.42' },
-  { id: '3', label: 'Sentiment Washout', status: 'fail', value: '78% Long' },
-  { id: '4', label: 'Skewness Audit', status: 'pass', value: 'Valid' },
-  { id: '5', label: 'E[X] Math (2.5:1)', status: 'fail', value: '0.8:1' },
+  { 
+      id: '1', 
+      label: 'Dislocation (Z-Score)', 
+      status: 'pass', 
+      value: '-2.6σ',
+      details: {
+          formula: "Z = (P - μ) / σ",
+          explanation: "The Z-Score measures how many standard deviations the current price (P) is from the mean (μ). A score beyond ±2.0 indicates a statistically significant deviation, suggesting potential mean reversion.",
+          variables: [
+              { label: "P (Price)", value: "2342.50", unit: "USD", description: "Current execution price" },
+              { label: "μ (VWAP)", value: "2358.10", unit: "USD", description: "Volume Weighted Average Price (Session)" },
+              { label: "σ (Std Dev)", value: "6.0", unit: "USD", description: "Volatility of the last 20 periods" }
+          ],
+          thresholds: {
+              pass: "|Z| > 2.0 (Significant Dislocation)",
+              warning: "1.5 < |Z| < 2.0 (Developing)",
+              fail: "|Z| < 1.5 (Noise / Range Bound)"
+          }
+      }
+  },
+  { 
+      id: '2', 
+      label: 'Bayesian Posterior', 
+      status: 'warning', 
+      value: '0.42',
+      details: {
+          formula: "P(A|B) = [P(B|A) * P(A)] / P(B)",
+          explanation: "Updates the probability of a 'Trend Continuation' (Hypothesis A) given new 'Order Flow Data' (Evidence B). A low value suggests the prior thesis is degrading.",
+          variables: [
+              { label: "P(A) Prior", value: "0.65", unit: "", description: "Initial belief in trend continuation" },
+              { label: "P(B|A) Likelihood", value: "0.30", unit: "", description: "Prob. of seeing this order flow if trend was strong" },
+              { label: "P(B) Evidence", value: "0.46", unit: "", description: "Total probability of observed order flow" }
+          ],
+          thresholds: {
+              pass: "P(A|B) > 0.60",
+              warning: "0.40 < P(A|B) < 0.60",
+              fail: "P(A|B) < 0.40"
+          }
+      }
+  },
+  { 
+      id: '3', 
+      label: 'Sentiment Washout', 
+      status: 'fail', 
+      value: '78% Long',
+      details: {
+          formula: "S = L / (L + S)",
+          explanation: "Contrarian indicator measuring the percentage of retail traders positioned Long. Extreme readings (>70% or <30%) often precede liquidity flushes in the opposite direction.",
+          variables: [
+              { label: "L (Longs)", value: "15,420", unit: "Lots", description: "Retail Open Interest (Long)" },
+              { label: "S (Shorts)", value: "4,350", unit: "Lots", description: "Retail Open Interest (Short)" },
+              { label: "Total OI", value: "19,770", unit: "Lots", description: "Total Market Participation" }
+          ],
+          thresholds: {
+              pass: "S < 30% (Oversold) or S > 70% (Overbought)",
+              warning: "30% < S < 40% or 60% < S < 70%",
+              fail: "40% < S < 60% (Neutral/No Edge)"
+          }
+      }
+  },
+  { 
+      id: '4', 
+      label: 'Skewness Audit', 
+      status: 'pass', 
+      value: 'Valid',
+      details: {
+          formula: "γ = E[(X - μ)/σ]^3",
+          explanation: "Measures the asymmetry of the return distribution. Negative skew implies frequent small gains but rare, large losses (Tail Risk). We strictly filter for positive or neutral skew.",
+          variables: [
+              { label: "Moment 3", value: "0.12", unit: "", description: "Third standardized moment" },
+              { label: "Kurtosis", value: "3.4", unit: "", description: "Fat-tailedness of distribution" }
+          ],
+          thresholds: {
+              pass: "γ > -0.5",
+              warning: "-1.0 < γ < -0.5",
+              fail: "γ < -1.0 (High Tail Risk)"
+          }
+      }
+  },
+  { 
+      id: '5', 
+      label: 'E[X] Math (2.5:1)', 
+      status: 'fail', 
+      value: '0.8:1',
+      details: {
+          formula: "E[X] = (P_win * $Win) - (P_loss * $Loss)",
+          explanation: "Expected Value (Expectancy) of the trade setup. We require a Risk:Reward ratio where the potential upside significantly outweighs the downside, adjusted for probability.",
+          variables: [
+              { label: "P_win", value: "0.45", unit: "%", description: "Estimated Win Probability" },
+              { label: "$Win (Target)", value: "$200", unit: "USD", description: "Distance to Take Profit" },
+              { label: "$Loss (Stop)", value: "$250", unit: "USD", description: "Distance to Stop Loss" }
+          ],
+          thresholds: {
+              pass: "E[X] > 2.0 R",
+              warning: "1.5 R < E[X] < 2.0 R",
+              fail: "E[X] < 1.5 R"
+          }
+      }
+  },
 ];
 
 export const MOCK_NEWS: NewsItem[] = [

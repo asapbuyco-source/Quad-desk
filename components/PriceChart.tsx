@@ -39,8 +39,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   
-  // Use Shared Hook
-  const chartRef = useLightweightChart(chartContainerRef, {
+  // Use Shared Hook - returns instance directly
+  const chart = useLightweightChart(chartContainerRef, {
       leftPriceScale: {
           visible: true,
           borderColor: 'rgba(255, 255, 255, 0.1)',
@@ -52,15 +52,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
   });
   
   // Series Refs
-  const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | any>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | any>(null);
-  const adxSeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
+  const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const adxSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   
   // Band Series Refs
-  const upper1SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
-  const lower1SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
-  const upper2SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
-  const lower2SeriesRef = useRef<ISeriesApi<"Line"> | any>(null);
+  const upper1SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const lower1SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const upper2SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const lower2SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const priceLinesRef = useRef<IPriceLine[]>([]); 
   const [hoveredData, setHoveredData] = useState<any>(null);
@@ -71,319 +71,387 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   // Initialize Series
   useEffect(() => {
-      if (!chartRef.current) return;
+      if (!chart) return;
 
-      // Only initialize series if they don't exist
-      if (!candlestickSeriesRef.current) {
-        const chart = chartRef.current;
+      try {
+          // Always create new series when chart instance changes/initializes
+          const candlestickSeries = chart.addSeries(CandlestickSeries, {
+              upColor: '#10b981',
+              downColor: '#f43f5e',
+              borderVisible: false,
+              wickUpColor: '#10b981',
+              wickDownColor: '#f43f5e',
+          });
 
-        const candlestickSeries = chart.addSeries(CandlestickSeries, {
-            upColor: '#10b981',
-            downColor: '#f43f5e',
-            borderVisible: false,
-            wickUpColor: '#10b981',
-            wickDownColor: '#f43f5e',
-        });
+          const volumeSeries = chart.addSeries(HistogramSeries, {
+              color: '#26a69a',
+              priceFormat: { type: 'volume' },
+              priceScaleId: '', // Overlay
+          });
+          
+          volumeSeries.priceScale().applyOptions({
+              scaleMargins: { top: 0.85, bottom: 0 },
+          });
 
-        const volumeSeries = chart.addSeries(HistogramSeries, {
-            color: '#26a69a',
-            priceFormat: { type: 'volume' },
-            priceScaleId: '', // Overlay
-        });
-        
-        volumeSeries.priceScale().applyOptions({
-            scaleMargins: { top: 0.85, bottom: 0 },
-        });
+          // Add ADX Series (Left Scale)
+          const adxSeries = chart.addSeries(LineSeries, {
+              color: '#a855f7', // Purple
+              lineWidth: 2,
+              priceScaleId: 'left',
+              crosshairMarkerVisible: false,
+              lastValueVisible: false,
+          });
 
-        // Add ADX Series (Left Scale)
-        const adxSeries = chart.addSeries(LineSeries, {
-            color: '#a855f7', // Purple
-            lineWidth: 2,
-            priceScaleId: 'left',
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-        });
+          // Add AI Band Series with initial visibility state
+          const upper2 = chart.addSeries(LineSeries, { 
+              color: 'rgba(244, 63, 94, 0.6)', 
+              lineWidth: 1, 
+              lineStyle: LineStyle.Solid, 
+              crosshairMarkerVisible: false,
+              visible: !!showZScore 
+          }); 
+          const upper1 = chart.addSeries(LineSeries, { 
+              color: 'rgba(249, 115, 22, 0.5)', 
+              lineWidth: 1, 
+              lineStyle: LineStyle.Dashed, 
+              crosshairMarkerVisible: false,
+              visible: !!showZScore 
+          }); 
+          const lower1 = chart.addSeries(LineSeries, { 
+              color: 'rgba(59, 130, 246, 0.5)', 
+              lineWidth: 1, 
+              lineStyle: LineStyle.Dashed, 
+              crosshairMarkerVisible: false,
+              visible: !!showZScore 
+          }); 
+          const lower2 = chart.addSeries(LineSeries, { 
+              color: 'rgba(16, 185, 129, 0.6)', 
+              lineWidth: 1, 
+              lineStyle: LineStyle.Solid, 
+              crosshairMarkerVisible: false,
+              visible: !!showZScore 
+          }); 
 
-        // Add AI Band Series
-        const upper2 = chart.addSeries(LineSeries, { color: 'rgba(244, 63, 94, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); 
-        const upper1 = chart.addSeries(LineSeries, { color: 'rgba(249, 115, 22, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); 
-        const lower1 = chart.addSeries(LineSeries, { color: 'rgba(59, 130, 246, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, crosshairMarkerVisible: false }); 
-        const lower2 = chart.addSeries(LineSeries, { color: 'rgba(16, 185, 129, 0.6)', lineWidth: 1, lineStyle: LineStyle.Solid, crosshairMarkerVisible: false }); 
+          candlestickSeriesRef.current = candlestickSeries;
+          volumeSeriesRef.current = volumeSeries;
+          adxSeriesRef.current = adxSeries;
+          upper1SeriesRef.current = upper1;
+          lower1SeriesRef.current = lower1;
+          upper2SeriesRef.current = upper2;
+          lower2SeriesRef.current = lower2;
 
-        candlestickSeriesRef.current = candlestickSeries;
-        volumeSeriesRef.current = volumeSeries;
-        adxSeriesRef.current = adxSeries;
-        upper1SeriesRef.current = upper1;
-        lower1SeriesRef.current = lower1;
-        upper2SeriesRef.current = upper2;
-        lower2SeriesRef.current = lower2;
-
-        // Crosshair Handler
-        chart.subscribeCrosshairMove((param) => {
-            if (
-                param.point === undefined ||
-                !param.time ||
-                !chartContainerRef.current ||
-                param.point.x < 0 ||
-                param.point.x > chartContainerRef.current.clientWidth ||
-                param.point.y < 0 ||
-                param.point.y > chartContainerRef.current.clientHeight
-            ) {
-                setHoveredData(null);
-            } else {
-                const candle = param.seriesData.get(candlestickSeries);
-                const volume = param.seriesData.get(volumeSeries);
-                const adx = param.seriesData.get(adxSeries);
-                
-                if (candle) {
-                    setHoveredData({
-                        ...candle,
-                        volume: volume ? (volume as any).value : 0,
-                        adx: adx ? (adx as any).value : 0,
-                        time: param.time
-                    });
-                }
-            }
-        });
+          // Crosshair Handler
+          chart.subscribeCrosshairMove((param) => {
+              if (
+                  param.point === undefined ||
+                  !param.time ||
+                  !chartContainerRef.current ||
+                  param.point.x < 0 ||
+                  param.point.x > chartContainerRef.current.clientWidth ||
+                  param.point.y < 0 ||
+                  param.point.y > chartContainerRef.current.clientHeight
+              ) {
+                  setHoveredData(null);
+              } else {
+                  const candle = param.seriesData.get(candlestickSeries);
+                  const volume = param.seriesData.get(volumeSeries);
+                  const adx = param.seriesData.get(adxSeries);
+                  
+                  if (candle) {
+                      // Ensure we have valid OHLC data before setting state
+                      const c = candle as any;
+                      if (isValid(c.open) && isValid(c.close)) {
+                          setHoveredData({
+                              ...c,
+                              volume: volume ? (volume as any).value : 0,
+                              adx: adx ? (adx as any).value : 0,
+                              time: param.time
+                          });
+                      }
+                  }
+              }
+          });
+      } catch (e) {
+          console.error("Failed to initialize chart series:", e);
       }
-  }, [chartRef.current]);
+
+      // Cleanup refs when chart instance changes or component unmounts
+      return () => {
+          candlestickSeriesRef.current = null;
+          volumeSeriesRef.current = null;
+          adxSeriesRef.current = null;
+          upper1SeriesRef.current = null;
+          lower1SeriesRef.current = null;
+          upper2SeriesRef.current = null;
+          lower2SeriesRef.current = null;
+          priceLinesRef.current = [];
+          setHoveredData(null);
+      };
+
+  }, [chart]); 
 
   // Update Data & Bands & ADX
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !volumeSeriesRef.current || data.length === 0) return;
+    if (!chart || !candlestickSeriesRef.current) return;
 
-    // Filter and map valid data only
-    const validData = data.filter(d => 
-        d.time && isValid(d.open) && isValid(d.high) && isValid(d.low) && isValid(d.close)
-    );
+    // Wrap in RAF to prevent update-loop crashes and ensure sync with paint
+    const rafId = requestAnimationFrame(() => {
+        if (!candlestickSeriesRef.current) return; // double check inside RAF
 
-    const candles = validData.map(d => ({
-        time: d.time as Time,
-        open: d.open,
-        high: d.high,
-        low: d.low,
-        close: d.close
-    }));
+        try {
+            if (data.length === 0) {
+                // Clear chart if data is empty
+                candlestickSeriesRef.current.setData([]);
+                volumeSeriesRef.current?.setData([]);
+                adxSeriesRef.current?.setData([]);
+                upper1SeriesRef.current?.setData([]);
+                lower1SeriesRef.current?.setData([]);
+                upper2SeriesRef.current?.setData([]);
+                lower2SeriesRef.current?.setData([]);
+                return;
+            }
 
-    const volumes = validData.map(d => ({
-        time: d.time as Time,
-        value: isValid(d.volume) ? d.volume : 0,
-        color: d.close > d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'
-    }));
+            // Filter and map valid data only
+            const validData = data.filter(d => 
+                d.time && isValid(d.open) && isValid(d.high) && isValid(d.low) && isValid(d.close)
+            );
 
-    const adxData = validData.map(d => ({
-        time: d.time as Time,
-        value: isValid(d.adx) ? (d.adx || 0) : 0
-    }));
-    
-    if (validData.length > 0) {
-        const lastAdx = validData[validData.length - 1].adx;
-        setCurrentAdx(isValid(lastAdx) ? (lastAdx || 0) : 0);
-    }
+            const candles = validData.map(d => ({
+                time: d.time as Time,
+                open: d.open,
+                high: d.high,
+                low: d.low,
+                close: d.close
+            }));
 
-    try {
-        candlestickSeriesRef.current.setData(candles);
-        volumeSeriesRef.current.setData(volumes);
-        if(adxSeriesRef.current) adxSeriesRef.current.setData(adxData);
-        
-        // Band Data
-        const u1Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreUpper1) ? d.zScoreUpper1 : 0 }));
-        const l1Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreLower1) ? d.zScoreLower1 : 0 }));
-        const u2Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreUpper2) ? d.zScoreUpper2 : 0 }));
-        const l2Data = validData.map(d => ({ time: d.time as Time, value: isValid(d.zScoreLower2) ? d.zScoreLower2 : 0 }));
-        
-        if(upper1SeriesRef.current) upper1SeriesRef.current.setData(u1Data);
-        if(lower1SeriesRef.current) lower1SeriesRef.current.setData(l1Data);
-        if(upper2SeriesRef.current) upper2SeriesRef.current.setData(u2Data);
-        if(lower2SeriesRef.current) lower2SeriesRef.current.setData(l2Data);
-    } catch (err) {
-        console.error("Chart Data Update Error:", err);
-    }
+            const volumes = validData.map(d => ({
+                time: d.time as Time,
+                value: isValid(d.volume) ? d.volume : 0,
+                color: d.close > d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'
+            }));
 
-  }, [data]);
+            const adxData = validData.map(d => ({
+                time: d.time as Time,
+                value: isValid(d.adx) ? (d.adx || 0) : 0
+            }));
+            
+            if (validData.length > 0) {
+                const lastAdx = validData[validData.length - 1].adx;
+                setCurrentAdx(isValid(lastAdx) ? (lastAdx || 0) : 0);
+            }
+
+            candlestickSeriesRef.current.setData(candles);
+            volumeSeriesRef.current?.setData(volumes);
+            adxSeriesRef.current?.setData(adxData);
+            
+            // Band Data
+            const u1Data = validData.filter(d => isValid(d.zScoreUpper1)).map(d => ({ time: d.time as Time, value: d.zScoreUpper1 }));
+            const l1Data = validData.filter(d => isValid(d.zScoreLower1)).map(d => ({ time: d.time as Time, value: d.zScoreLower1 }));
+            const u2Data = validData.filter(d => isValid(d.zScoreUpper2)).map(d => ({ time: d.time as Time, value: d.zScoreUpper2 }));
+            const l2Data = validData.filter(d => isValid(d.zScoreLower2)).map(d => ({ time: d.time as Time, value: d.zScoreLower2 }));
+            
+            upper1SeriesRef.current?.setData(u1Data);
+            lower1SeriesRef.current?.setData(l1Data);
+            upper2SeriesRef.current?.setData(u2Data);
+            lower2SeriesRef.current?.setData(l2Data);
+        } catch (err) {
+            console.warn("Chart Data Update Error:", err);
+        }
+    });
+
+    return () => cancelAnimationFrame(rafId);
+
+  }, [data, chart]);
 
   // Handle Band Visibility
   useEffect(() => {
-    if(!upper1SeriesRef.current) return;
-    const visibility = !!showZScore; // Ensure boolean
+    if(!upper1SeriesRef.current || !chart) return;
+    const visibility = !!showZScore; 
     try {
-        upper1SeriesRef.current.applyOptions({ visible: visibility });
-        lower1SeriesRef.current.applyOptions({ visible: visibility });
-        upper2SeriesRef.current.applyOptions({ visible: visibility });
-        lower2SeriesRef.current.applyOptions({ visible: visibility });
+        upper1SeriesRef.current?.applyOptions({ visible: visibility });
+        lower1SeriesRef.current?.applyOptions({ visible: visibility });
+        upper2SeriesRef.current?.applyOptions({ visible: visibility });
+        lower2SeriesRef.current?.applyOptions({ visible: visibility });
     } catch(e) {
-        console.error("Band visibility error", e);
+        console.warn("Band visibility error", e);
     }
-  }, [showZScore]);
+  }, [showZScore, chart]);
 
   // Handle Levels (Support/Resistance)
   useEffect(() => {
-      if (!candlestickSeriesRef.current || !showLevels) return;
+      if (!candlestickSeriesRef.current || !showLevels || !chart) return;
 
-      // REMOVE OLD LINES
-      priceLinesRef.current.forEach(line => {
-          try {
-             candlestickSeriesRef.current?.removePriceLine(line);
-          } catch(e) {}
-      });
-      priceLinesRef.current = [];
-
-      // ADD NEW LINES
-      levels.forEach(l => {
-           // Skip invalid levels
-           if (!isValid(l.price)) return;
-
-           let color = '#71717a'; 
-           let lineStyle = LineStyle.Dashed;
-           let lineWidth: 1 | 2 | 3 | 4 = 1;
-
-           if (l.type === 'ENTRY') { color = '#3b82f6'; lineWidth = 2; lineStyle = LineStyle.Solid; }
-           else if (l.type === 'STOP_LOSS') { color = '#f43f5e'; lineWidth = 2; lineStyle = LineStyle.Solid; }
-           else if (l.type === 'TAKE_PROFIT') { color = '#10b981'; lineWidth = 2; lineStyle = LineStyle.Solid; }
-           
-           try {
-               const line = candlestickSeriesRef.current?.createPriceLine({
-                   price: l.price,
-                   color: color,
-                   lineWidth: lineWidth,
-                   lineStyle: lineStyle,
-                   axisLabelVisible: true,
-                   title: l.label,
-               });
-               if(line) priceLinesRef.current.push(line);
-           } catch(e) {
-               console.error("Failed to create price line", e);
-           }
-      });
-
-      if (aiScanResult) {
-          aiScanResult.support.forEach(price => {
-              if (!isValid(price)) return;
+      try {
+          // REMOVE OLD LINES
+          priceLinesRef.current.forEach(line => {
               try {
-                const line = candlestickSeriesRef.current?.createPriceLine({
-                    price,
-                    color: '#10b981',
-                    lineWidth: 1,
-                    lineStyle: LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: 'AI SUPPORT',
-                });
-                if(line) priceLinesRef.current.push(line);
+                 candlestickSeriesRef.current?.removePriceLine(line);
               } catch(e) {}
           });
+          priceLinesRef.current = [];
 
-          aiScanResult.resistance.forEach(price => {
-              if (!isValid(price)) return;
-              try {
-                const line = candlestickSeriesRef.current?.createPriceLine({
-                    price,
-                    color: '#f43f5e',
-                    lineWidth: 1,
-                    lineStyle: LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: 'AI RESIST',
-                });
-                if(line) priceLinesRef.current.push(line);
-              } catch(e) {}
+          // ADD NEW LINES
+          levels.forEach(l => {
+               // Skip invalid levels
+               if (!isValid(l.price)) return;
+
+               let color = '#71717a'; 
+               let lineStyle = LineStyle.Dashed;
+               let lineWidth: 1 | 2 | 3 | 4 = 1;
+
+               if (l.type === 'ENTRY') { color = '#3b82f6'; lineWidth = 2; lineStyle = LineStyle.Solid; }
+               else if (l.type === 'STOP_LOSS') { color = '#f43f5e'; lineWidth = 2; lineStyle = LineStyle.Solid; }
+               else if (l.type === 'TAKE_PROFIT') { color = '#10b981'; lineWidth = 2; lineStyle = LineStyle.Solid; }
+               
+               try {
+                   const line = candlestickSeriesRef.current?.createPriceLine({
+                       price: l.price,
+                       color: color,
+                       lineWidth: lineWidth,
+                       lineStyle: lineStyle,
+                       axisLabelVisible: true,
+                       title: l.label,
+                   });
+                   if(line) priceLinesRef.current.push(line);
+               } catch(e) {}
           });
 
-          if (isValid(aiScanResult.decision_price)) {
-              const decisionColor = aiScanResult.verdict === 'ENTRY' ? '#3b82f6' : '#f97316';
-              try {
-                const line = candlestickSeriesRef.current?.createPriceLine({
-                    price: aiScanResult.decision_price,
-                    color: decisionColor,
-                    lineWidth: 3,
-                    lineStyle: LineStyle.Solid,
-                    axisLabelVisible: true,
-                    title: `AI PIVOT (${aiScanResult.verdict})`,
-                });
-                if(line) priceLinesRef.current.push(line);
-              } catch(e) {}
+          if (aiScanResult) {
+              aiScanResult.support.forEach(price => {
+                  if (!isValid(price)) return;
+                  try {
+                    const line = candlestickSeriesRef.current?.createPriceLine({
+                        price,
+                        color: '#10b981',
+                        lineWidth: 1,
+                        lineStyle: LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'AI SUPPORT',
+                    });
+                    if(line) priceLinesRef.current.push(line);
+                  } catch(e) {}
+              });
+
+              aiScanResult.resistance.forEach(price => {
+                  if (!isValid(price)) return;
+                  try {
+                    const line = candlestickSeriesRef.current?.createPriceLine({
+                        price,
+                        color: '#f43f5e',
+                        lineWidth: 1,
+                        lineStyle: LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'AI RESIST',
+                    });
+                    if(line) priceLinesRef.current.push(line);
+                  } catch(e) {}
+              });
+
+              if (isValid(aiScanResult.decision_price)) {
+                  const decisionColor = aiScanResult.verdict === 'ENTRY' ? '#3b82f6' : '#f97316';
+                  try {
+                    const line = candlestickSeriesRef.current?.createPriceLine({
+                        price: aiScanResult.decision_price,
+                        color: decisionColor,
+                        lineWidth: 3,
+                        lineStyle: LineStyle.Solid,
+                        axisLabelVisible: true,
+                        title: `AI PIVOT (${aiScanResult.verdict})`,
+                    });
+                    if(line) priceLinesRef.current.push(line);
+                  } catch(e) {}
+              }
           }
+      } catch(e) {
+          console.warn("Price lines error", e);
       }
 
-  }, [levels, aiScanResult, showLevels]);
+  }, [levels, aiScanResult, showLevels, chart]);
 
   // Handle Signals
   useEffect(() => {
-    if (!candlestickSeriesRef.current) return;
+    if (!candlestickSeriesRef.current || !chart) return;
     
+    // Safety check for method existence (in case of type mismatch or version issues)
     if (typeof candlestickSeriesRef.current.setMarkers !== 'function') return;
 
-    if (showSignals) {
-        const markers = signals
-            .filter(s => s.time && isValid(s.price))
-            .map(s => ({
-                time: s.time as Time,
-                position: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'aboveBar' : 'belowBar',
-                color: s.type.includes('ENTRY') ? '#3b82f6' : '#f59e0b',
-                shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' : 'arrowUp',
-                text: s.label,
-            }));
-        try {
+    try {
+        if (showSignals) {
+            const markers = signals
+                .filter(s => s.time && isValid(s.price))
+                .map(s => ({
+                    time: s.time as Time,
+                    position: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'aboveBar' as const : 'belowBar' as const,
+                    color: s.type.includes('ENTRY') ? '#3b82f6' : '#f59e0b',
+                    shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' as const : 'arrowUp' as const,
+                    text: s.label,
+                }));
             candlestickSeriesRef.current.setMarkers(markers);
-        } catch(e) {
-            console.error("Signal markers error", e);
-        }
-    } else {
-        try {
+        } else {
             candlestickSeriesRef.current.setMarkers([]);
-        } catch(e) {}
+        }
+    } catch(e) {
+        console.warn("Signal markers error", e);
     }
-  }, [signals, showSignals]);
+  }, [signals, showSignals, chart]);
 
 
   return (
     <div className="w-full h-full flex flex-col relative rounded-xl overflow-hidden bg-[#18181b]/50 select-none group">
         
-        {/* Header Bar */}
-        <div className="h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 gap-4">
-             <div className="flex items-center gap-2">
-                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                 <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT LIVE</span>
-             </div>
+        {/* Header Bar - Scrollable on Mobile */}
+        <div className="h-auto min-h-[3rem] py-1 flex items-center gap-2 px-2 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 overflow-x-auto scrollbar-hide">
+             {/* Left Group */}
+             <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT</span>
+                </div>
 
-             {/* ADX Trend Indicator */}
-             <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-white/5">
-                {currentAdx > 25 ? (
-                    <TrendingUp size={12} className={currentAdx > 50 ? "text-rose-500" : "text-emerald-500"} />
-                ) : (
-                    <Minus size={12} className="text-zinc-500" />
+                {/* ADX Trend Indicator */}
+                <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-white/5">
+                    {currentAdx > 25 ? (
+                        <TrendingUp size={12} className={currentAdx > 50 ? "text-rose-500" : "text-emerald-500"} />
+                    ) : (
+                        <Minus size={12} className="text-zinc-500" />
+                    )}
+                    <span className={`text-[10px] font-bold uppercase ${
+                        currentAdx > 50 ? "text-rose-500" : 
+                        currentAdx > 25 ? "text-emerald-500" : 
+                        "text-zinc-500"
+                    }`}>
+                        {currentAdx > 50 ? "TRENDING" : currentAdx > 25 ? "ACTIVE" : "RANGE"}
+                    </span>
+                </div>
+
+                {/* Timeframe Selector */}
+                {onIntervalChange && (
+                    <div className="flex items-center gap-1 bg-black/20 p-1 rounded-lg border border-white/5 shrink-0">
+                        {['1m', '5m', '15m', '1h', '4h', '1d'].map(tf => (
+                            <button
+                                key={tf}
+                                onClick={() => onIntervalChange(tf)}
+                                className={`
+                                    px-1.5 lg:px-2 py-0.5 text-[9px] font-bold rounded-md transition-all uppercase
+                                    ${interval === tf ? 'bg-brand-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                                `}
+                            >
+                                {tf}
+                            </button>
+                        ))}
+                    </div>
                 )}
-                <span className={`text-[10px] font-bold uppercase ${
-                    currentAdx > 50 ? "text-rose-500" : 
-                    currentAdx > 25 ? "text-emerald-500" : 
-                    "text-zinc-500"
-                }`}>
-                    {currentAdx > 50 ? "STRONG TREND" : currentAdx > 25 ? "TRENDING" : "RANGING"}
-                </span>
-                <span className="text-[9px] font-mono text-zinc-600">ADX {currentAdx.toFixed(1)}</span>
              </div>
 
-             {/* Timeframe Selector */}
-             {onIntervalChange && (
-                 <div className="flex items-center gap-1 bg-black/20 p-1 rounded-lg border border-white/5">
-                     {['1m', '5m', '15m', '1h', '4h', '1d'].map(tf => (
-                         <button
-                            key={tf}
-                            onClick={() => onIntervalChange(tf)}
-                            className={`
-                                px-2 py-0.5 text-[9px] font-bold rounded-md transition-all uppercase
-                                ${interval === tf ? 'bg-brand-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
-                            `}
-                         >
-                             {tf}
-                         </button>
-                     ))}
-                 </div>
-             )}
-
-            <div className="hidden md:flex flex-1 justify-center">
+            {/* Middle Group - Controls */}
+            <div className="flex items-center shrink-0">
                 {children}
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex-1"></div>
+
+            {/* Right Group - Sticky Actions */}
+            <div className="flex items-center gap-2 shrink-0 ml-auto sticky right-0 bg-[#18181b]/80 backdrop-blur-sm pl-2 shadow-[-10px_0_10px_rgba(0,0,0,0.5)] md:shadow-none md:bg-transparent">
                  {/* AI Scan Button */}
                 {onScan && (
                     <button
@@ -401,7 +469,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
                         ) : (
                             <Rocket size={10} />
                         )}
-                        {isScanning ? 'SCAN' : 'AI SCAN'}
+                        <span className="hidden sm:inline">{isScanning ? 'SCAN' : 'AI SCAN'}</span>
                     </button>
                 )}
                 

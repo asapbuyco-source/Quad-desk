@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
 import DashboardView from './components/DashboardView';
@@ -75,18 +75,10 @@ const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
              smoothTR += trs[i];
              smoothPlusDM += plusDMs[i];
              smoothMinusDM += minusDMs[i];
-             
-             // At index period-1, we have enough for the first smoothed value (Sum)
-             // But Wilder's usually starts processing after. 
-             // Simplified: standard algo often sums first N, then smooths.
-             // We will stick to the iterative approach for i >= period.
         }
         
         if (i === period) {
-            // First smoothed value is just the sum (some variations use sum/period, Wilder uses Sum)
-            // But to make DX valid immediately after period, let's treat the sum as the starting previous value
-            // Actually, Wilder's technique: First TR14 = Sum(TR, 14).
-            // Next TR14 = Previous TR14 - (Previous TR14 / 14) + Current TR
+            // First smoothed value
         }
 
         if (i >= period) {
@@ -175,7 +167,14 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isBacktest, setIsBacktest] = useState(false);
   const [interval, setTimeframeInterval] = useState('1m'); // State for Timeframe
+  const [activeSymbol, setActiveSymbol] = useState('BTCUSDT'); // New State for Asset Switching
   
+  // Backtest Controls State
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [backtestDate, setBacktestDate] = useState(new Date().toISOString().split('T')[0]);
+  const backtestStepRef = useRef(0);
+  const isBacktestRef = useRef(isBacktest);
+
   // Data State
   const [metrics, setMetrics] = useState<MarketMetrics>({
       ...MOCK_METRICS,
@@ -200,6 +199,16 @@ const App: React.FC = () => {
   const [asks, setAsks] = useState<OrderBookLevel[]>(MOCK_ASKS);
   const [bids, setBids] = useState<OrderBookLevel[]>(MOCK_BIDS);
 
+  const handleSymbolChange = (symbol: string) => {
+      setActiveSymbol(symbol);
+      setCandles([]); // Clear chart data
+      setSignals([]); // Clear signals
+      setBands(null); // Clear bands to prevent mismatch
+      
+      const displayPair = symbol.replace('USDT', '/USDT');
+      setMetrics(prev => ({ ...prev, pair: displayPair }));
+  };
+
   // 1. Fetch Historical Data from Binance (LIVE MODE ONLY)
   useEffect(() => {
     if (isBacktest) return;
@@ -207,7 +216,7 @@ const App: React.FC = () => {
     const fetchHistory = async () => {
         setCandles([]); // Clear data on interval change to prevent visual glitches
         try {
-            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=1000`);
+            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${activeSymbol}&interval=${interval}&limit=1000`);
             const data = await res.json();
             const formattedCandles: CandleData[] = data.map((k: any) => ({
                 time: k[0] / 1000, // Unix timestamp in seconds
@@ -240,11 +249,18 @@ const App: React.FC = () => {
     };
 
     fetchHistory();
-  }, [isBacktest, interval]);
+  }, [isBacktest, interval, activeSymbol]);
 
   // 2. Polling for Bands from Backend
   useEffect(() => {
       if (isBacktest) return;
+
+      // Only fetch backend bands for BTC, as backend is hardcoded to BTCUSDT
+      if (activeSymbol !== 'BTCUSDT') {
+          setBands(null);
+          return;
+      }
+
       const fetchBands = async () => {
           try {
               const res = await fetch('http://localhost:8000/bands');
@@ -260,7 +276,7 @@ const App: React.FC = () => {
       fetchBands();
       const i = setInterval(fetchBands, 60000); // Poll every minute
       return () => clearInterval(i);
-  }, [isBacktest]);
+  }, [isBacktest, activeSymbol]);
 
   // 3. Real-Time WebSocket Connection (Binance Direct) - LIVE MODE ONLY
   useEffect(() => {
@@ -270,10 +286,10 @@ const App: React.FC = () => {
       let reconnectTimer: any = null;
 
       const connect = () => {
-          ws = new WebSocket(`wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`);
+          ws = new WebSocket(`wss://stream.binance.com:9443/ws/${activeSymbol.toLowerCase()}@kline_${interval}`);
           
           ws.onopen = () => {
-              console.log("WS Connected");
+              console.log(`WS Connected: ${activeSymbol}`);
           };
 
           ws.onmessage = (event) => {
@@ -287,7 +303,7 @@ const App: React.FC = () => {
                   low: parseFloat(k.l),
                   close: parseFloat(k.c),
                   volume: parseFloat(k.v),
-                  // Use real bands if available, else simulated
+                  // Use real bands if available (BTC only), else simulated
                   zScoreUpper1: bands ? bands.upper_1 : parseFloat(k.c) * 1.002,
                   zScoreLower1: bands ? bands.lower_1 : parseFloat(k.c) * 0.998,
                   zScoreUpper2: bands ? bands.upper_2 : parseFloat(k.c) * 1.005,
@@ -337,7 +353,7 @@ const App: React.FC = () => {
           if (ws) ws.close();
           if (reconnectTimer) clearTimeout(reconnectTimer);
       };
-  }, [isBacktest, interval, bands]); // Re-bind if bands change to update realtime calc
+  }, [isBacktest, interval, bands, activeSymbol]); // Re-bind if bands or symbol change
 
   // Cooldown Timer
   useEffect(() => {
@@ -368,6 +384,10 @@ const App: React.FC = () => {
       setCooldownRemaining(SCAN_COOLDOWN);
       
       try {
+          // If we are not on BTC, backend might not support it fully or return fallback, 
+          // but we can still try hitting it or use fallback directly if we want to be safe.
+          // For now, let's assume backend might handle it or fallback.
+          
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
           
@@ -382,13 +402,12 @@ const App: React.FC = () => {
               setAiScanResult(data);
               updateLevelsFromScan(data);
           } else {
-              if (data.message) alert(`AI Error: ${data.message}`);
               throw new Error(data.error || "Invalid response");
           }
       } catch (e) {
           console.warn("Backend unavailable. Engaging Sentinel Simulation Protocol.", e);
           
-          // Simulation Fallback
+          // Simulation Fallback - Frontend Side (if backend is completely down)
           await new Promise(r => setTimeout(r, 2000)); // Simulate processing
           
           const currentPrice = metrics.price || 43000;
@@ -399,8 +418,9 @@ const App: React.FC = () => {
               resistance: [currentPrice * 1.015, currentPrice * 1.04],
               decision_price: currentPrice * (isBullish ? 0.99 : 1.01),
               verdict: isBullish ? 'ENTRY' : 'WAIT',
-              analysis: `[SIMULATION] Volatility contraction detected near key Fibonacci levels. Order flow suggests ${isBullish ? 'institutional accumulation' : 'distribution'} with hidden iceberg orders.`,
-              risk_reward_ratio: 2.5
+              analysis: `[SIMULATION] Network Unreachable. Volatility contraction detected near key levels. Order flow suggests ${isBullish ? 'institutional accumulation' : 'distribution'}.`,
+              risk_reward_ratio: 2.5,
+              isSimulated: true // FLAG SET
           };
           
           setAiScanResult(simResult);
@@ -464,7 +484,8 @@ const App: React.FC = () => {
           total: 0
       });
 
-      const spread = 0.05;
+      // Adjust spread based on price magnitude
+      const spread = currentPrice * 0.0001; 
       const newAsks = Array.from({length: 10}, (_, i) => generateLevel(currentPrice, spread + (i * spread))).reverse();
       const newBids = Array.from({length: 10}, (_, i) => generateLevel(currentPrice, -(spread + (i * spread))));
 
@@ -476,40 +497,49 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [metrics.price, isBacktest]);
 
-  // 6. BACKTEST REPLAY ENGINE
+  // 6. BACKTEST REPLAY ENGINE (REFACTORED for State & Ref management)
+  // Handle Initialization / Reset
+  useEffect(() => {
+    if (isBacktest && !isBacktestRef.current) {
+        // Entered Backtest Mode
+        backtestStepRef.current = 0;
+        setCandles([]);
+        setSignals([]);
+    }
+    isBacktestRef.current = isBacktest;
+  }, [isBacktest]);
+
+  // Handle Playback Loop
   useEffect(() => {
       if (!isBacktest) return;
 
-      // Reset
-      setCandles([]);
-      setSignals([]);
-      
-      let step = 0;
+      const intervalMs = 100 / playbackSpeed;
+
       const interval = setInterval(() => {
-          if (step >= BACKTEST_DATA.length) {
-              step = 0; // Loop or Stop
+          if (backtestStepRef.current >= BACKTEST_DATA.length) {
+              backtestStepRef.current = 0; // Loop or Stop
               setCandles([]);
               setSignals([]);
           }
 
-          const candle = BACKTEST_DATA[step];
-          setCandles(prev => {
-              const newC = [...prev, candle];
-              // Ensure we maintain enough history for ADX, but slice for performance if needed
-              // However, calculateADX expects contiguous data. 
-              // Since BACKTEST_DATA is already fully calculated, we can just slice.
-              return newC.slice(-100); 
-          });
-          setMetrics(prev => ({ ...prev, price: candle.close }));
+          const candle = BACKTEST_DATA[backtestStepRef.current];
+          if (candle) {
+            setCandles(prev => {
+                const newC = [...prev, candle];
+                // Maintain window size for performance, but ensure continuity for indicators
+                return newC.slice(-100); 
+            });
+            setMetrics(prev => ({ ...prev, price: candle.close }));
+          }
 
-          step++;
-      }, 100); 
+          backtestStepRef.current++;
+      }, intervalMs); 
 
       return () => clearInterval(interval);
-  }, [isBacktest]);
+  }, [isBacktest, playbackSpeed]);
 
   return (
-    <div className={`h-screen w-screen bg-transparent text-slate-200 font-sans overflow-hidden ${metrics.circuitBreakerTripped ? 'grayscale opacity-80' : ''}`}>
+    <div className={`h-screen h-[100dvh] w-screen bg-transparent text-slate-200 font-sans overflow-hidden ${metrics.circuitBreakerTripped ? 'grayscale opacity-80' : ''}`}>
       <AnimatePresence mode='wait'>
         {!hasEntered ? (
             <MotionDiv
@@ -530,7 +560,17 @@ const App: React.FC = () => {
                 <NavBar activeTab={activeTab} setActiveTab={setActiveTab} />
 
                 <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-                    <Header metrics={metrics} isBacktest={isBacktest} onToggleBacktest={() => setIsBacktest(!isBacktest)} />
+                    <Header 
+                        metrics={metrics} 
+                        isBacktest={isBacktest} 
+                        onToggleBacktest={() => setIsBacktest(!isBacktest)} 
+                        activeSymbol={activeSymbol}
+                        onSymbolChange={handleSymbolChange}
+                        playbackSpeed={playbackSpeed}
+                        onPlaybackSpeedChange={setPlaybackSpeed}
+                        backtestDate={backtestDate}
+                        onBacktestDateChange={setBacktestDate}
+                    />
 
                     <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
                         {isBacktest && (
