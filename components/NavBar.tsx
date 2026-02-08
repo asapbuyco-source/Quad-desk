@@ -30,6 +30,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
+                aria-label={`Switch to ${tab.label} tab`}
                 className={`
                   relative flex flex-col items-center justify-center gap-1 w-full aspect-square rounded-xl transition-all duration-300 group
                   ${isActive ? 'bg-brand-accent shadow-[0_0_20px_rgba(59,130,246,0.4)]' : 'hover:bg-white/5 text-slate-400'}
@@ -51,10 +52,10 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
         </div>
 
         <div className="mt-auto flex flex-col gap-4 w-full px-2">
-           <button className="w-full aspect-square flex items-center justify-center rounded-xl hover:bg-white/5 text-slate-400 transition-colors">
+           <button aria-label="Wallet" className="w-full aspect-square flex items-center justify-center rounded-xl hover:bg-white/5 text-slate-400 transition-colors">
               <Wallet size={20} />
            </button>
-           <button className="w-full aspect-square flex items-center justify-center rounded-xl hover:bg-white/5 text-slate-400 transition-colors">
+           <button aria-label="Settings" className="w-full aspect-square flex items-center justify-center rounded-xl hover:bg-white/5 text-slate-400 transition-colors">
               <Settings size={20} />
            </button>
         </div>
@@ -68,6 +69,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
              <button 
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
+                aria-label={`Switch to ${tab.label} tab`}
                 className={`
                     relative flex items-center justify-center w-12 h-12 rounded-full transition-all
                     ${isActive ? 'bg-brand-accent text-white shadow-lg shadow-brand-accent/30' : 'text-slate-400'}

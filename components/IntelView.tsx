@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle } from 'lucide-react';
-
-const MotionDiv = motion.div as any;
+import { API_BASE_URL } from '../constants';
 
 interface NewsArticle {
     source: { id: string | null; name: string };
@@ -124,7 +123,7 @@ const IntelView: React.FC = () => {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
 
-          const res = await fetch('http://localhost:8000/market-intelligence', {
+          const res = await fetch(`${API_BASE_URL}/market-intelligence`, {
               signal: controller.signal
           });
           clearTimeout(timeoutId);
@@ -225,7 +224,7 @@ const IntelView: React.FC = () => {
         {/* AI Pulse Dashboard */}
         <AnimatePresence mode='wait'>
             {data && data.intelligence ? (
-                <MotionDiv 
+                <motion.div 
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="grid grid-cols-1 md:grid-cols-12 gap-4"
@@ -289,7 +288,7 @@ const IntelView: React.FC = () => {
                              })}
                         </div>
                     </div>
-                </MotionDiv>
+                </motion.div>
             ) : (
                 // Loading Skeleton for Header
                 <div className="h-48 rounded-2xl bg-white/5 animate-pulse border border-white/5 flex items-center justify-center">
@@ -320,7 +319,7 @@ const IntelView: React.FC = () => {
                 const sentiment = data ? getSentimentInfo(data.intelligence.ai_sentiment_score) : getSentimentInfo(0);
                 
                 return (
-                    <MotionDiv 
+                    <motion.div 
                         key={idx}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -363,7 +362,7 @@ const IntelView: React.FC = () => {
                                 {article.url === '#' ? 'SOURCE RESTRICTED' : 'READ SOURCE'} <ExternalLink size={10} />
                             </a>
                         </div>
-                    </MotionDiv>
+                    </motion.div>
                 );
             })}
             </AnimatePresence>

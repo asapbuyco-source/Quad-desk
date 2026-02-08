@@ -3,8 +3,6 @@ import { OrderBookLevel } from '../types';
 import { ArrowDownUp, Magnet } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 
-const MotionDiv = motion.div as any;
-
 interface OrderBookProps {
   asks: OrderBookLevel[];
   bids: OrderBookLevel[];
@@ -16,7 +14,7 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; isMagnet:
 
   return (
     <div className={`
-        relative flex justify-between items-center text-xs font-mono py-1.5 px-4 transition-all cursor-pointer group
+        relative flex justify-between items-center text-xs font-mono py-1.5 px-4 transition-all group
         ${isMagnet
             ? (isBid
                 ? 'bg-emerald-500/10 border-y border-emerald-500/30 my-1 shadow-[0_0_15px_rgba(16,185,129,0.1)] z-10 scale-[1.02]'
@@ -46,7 +44,7 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; isMagnet:
       {/* Magnet Indicator */}
       {isMagnet && (
         <div className="absolute left-1/2 -translate-x-1/2 z-20">
-             <MotionDiv 
+             <motion.div 
                 initial={{ scale: 0.8 }} animate={{ scale: 1 }}
                 className={`
                 flex items-center gap-1.5 px-3 py-0.5 rounded text-[9px] font-black tracking-[0.2em] uppercase border backdrop-blur-md shadow-xl
@@ -57,7 +55,7 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; isMagnet:
              `}>
                 <Magnet size={10} className="animate-bounce" strokeWidth={3} />
                 MAGNET
-             </MotionDiv>
+             </motion.div>
         </div>
       )}
 
@@ -102,8 +100,8 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
         {/* Asks */}
         <div className="flex flex-col-reverse">
             <AnimatePresence>
-            {asks.map((ask, i) => (
-                <OrderRow key={`ask-${i}`} level={ask} type="ask" isMagnet={ask.size > avgVol * 3} maxVol={maxVol} />
+            {asks.map((ask) => (
+                <OrderRow key={ask.price} level={ask} type="ask" isMagnet={ask.size > avgVol * 3} maxVol={maxVol} />
             ))}
             </AnimatePresence>
         </div>
@@ -117,8 +115,8 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
         {/* Bids */}
         <div>
             <AnimatePresence>
-            {bids.map((bid, i) => (
-                <OrderRow key={`bid-${i}`} level={bid} type="bid" isMagnet={bid.size > avgVol * 3} maxVol={maxVol} />
+            {bids.map((bid) => (
+                <OrderRow key={bid.price} level={bid} type="bid" isMagnet={bid.size > avgVol * 3} maxVol={maxVol} />
             ))}
             </AnimatePresence>
         </div>

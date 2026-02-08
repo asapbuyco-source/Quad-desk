@@ -6,8 +6,6 @@ import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist, AiAnalysi
 import { motion } from 'framer-motion';
 import { Terminal } from 'lucide-react';
 
-const MotionDiv = motion.div as any;
-
 interface DashboardViewProps {
   metrics: MarketMetrics;
   candles: CandleData[];
@@ -36,28 +34,27 @@ const item = {
 
 const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis, aiScanResult, interval }) => {
   return (
-    <MotionDiv 
+    <motion.div 
       variants={container}
       initial="hidden"
       animate="show"
       className="flex flex-col gap-6 h-full lg:grid lg:grid-cols-12 lg:grid-rows-12 lg:h-full overflow-y-auto lg:overflow-hidden pb-24 lg:pb-0 px-4 lg:px-0"
     >
       {/* Top Row: Metrics Overview */}
-      <MotionDiv variants={item} className="order-1 lg:col-span-12 lg:row-span-4 shrink-0">
+      <motion.div variants={item} className="order-1 lg:col-span-12 lg:row-span-4 shrink-0">
          <OrderFlowMetrics metrics={metrics} />
-      </MotionDiv>
+      </motion.div>
 
       {/* Bottom Left: Order Book */}
-      <MotionDiv variants={item} className="order-2 lg:col-span-8 lg:row-span-8 h-[500px] lg:h-full shrink-0">
+      <motion.div variants={item} className="order-2 lg:col-span-8 lg:row-span-8 h-[500px] lg:h-full shrink-0">
         <OrderBook asks={asks} bids={bids} />
-      </MotionDiv>
+      </motion.div>
 
       {/* Bottom Right: Sentinel & System Status */}
-      <MotionDiv variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
+      <motion.div variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
         <div className="flex-1">
              <SentinelPanel 
                 checklist={checklist} 
-                aiAnalysis={aiAnalysis} 
                 aiScanResult={aiScanResult} 
                 heatmap={metrics.heatmap}
              />
@@ -80,8 +77,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, chec
                 {interval && <p className="text-zinc-500">&gt; Timeframe set to {interval}</p>}
             </div>
         </div>
-      </MotionDiv>
-    </MotionDiv>
+      </motion.div>
+    </motion.div>
   );
 };
 

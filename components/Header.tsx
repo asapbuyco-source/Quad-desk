@@ -3,8 +3,6 @@ import { ChevronDown, Bell, History, Radio, Check, Calendar, Play } from 'lucide
 import { MarketMetrics } from '../types';
 import { AnimatePresence, motion } from 'framer-motion';
 
-const MotionDiv = motion.div as any;
-
 interface HeaderProps {
   metrics: MarketMetrics;
   isBacktest: boolean;
@@ -54,7 +52,7 @@ const Header: React.FC<HeaderProps> = ({
             {isDropdownOpen && (
                 <>
                     <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)} />
-                    <MotionDiv
+                    <motion.div
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
@@ -81,7 +79,7 @@ const Header: React.FC<HeaderProps> = ({
                                 {activeSymbol === asset.id && <Check size={14} className="text-brand-accent" />}
                             </button>
                         ))}
-                    </MotionDiv>
+                    </motion.div>
                 </>
             )}
         </AnimatePresence>
@@ -106,7 +104,7 @@ const Header: React.FC<HeaderProps> = ({
 
       {/* Center: Backtest Controls (Only Visible in Backtest Mode) */}
       {isBacktest && (
-        <MotionDiv 
+        <motion.div 
             initial={{ opacity: 0, y: -20, x: "-50%" }}
             animate={{ opacity: 1, y: 0, x: "-50%" }}
             exit={{ opacity: 0, y: -20, x: "-50%" }}
@@ -148,7 +146,7 @@ const Header: React.FC<HeaderProps> = ({
                     ))}
                 </div>
             </div>
-        </MotionDiv>
+        </motion.div>
       )}
 
       {/* Right: Actions */}

@@ -4,6 +4,14 @@ import { CandleData } from '../types';
 
 // --- Lightweight Charts Hook ---
 
+/**
+ * Custom hook to initialize and manage a Lightweight Chart instance.
+ * Handles resizing (with debounce) and cleanup to prevent memory leaks.
+ * 
+ * @param containerRef - React Ref to the DOM element container for the chart
+ * @param options - DeepPartial<ChartOptions> for configuration (colors, layout, grid)
+ * @returns IChartApi instance or null if not yet initialized
+ */
 export const useLightweightChart = (
     containerRef: React.RefObject<HTMLElement>,
     options: DeepPartial<ChartOptions> = {}
@@ -75,8 +83,9 @@ export const useLightweightChart = (
     useLayoutEffect(() => {
         if (!containerRef.current) return;
 
-        // Track disposal state to prevent race conditions with ResizeObserver/RAF
+        // Track disposal state to prevent race conditions
         let isDisposed = false;
+        let resizeTimeout: ReturnType<typeof setTimeout>;
 
         // Initialize Chart
         const { clientWidth, clientHeight } = containerRef.current;
@@ -90,11 +99,13 @@ export const useLightweightChart = (
 
         setChartInstance(chart);
 
-        // Handle Resizing
+        // Handle Resizing with Debounce
+        // Fix for iOS Safari race condition between ResizeObserver and Render cycle
         const handleResize = () => {
-            // Use requestAnimationFrame to ensure we are resizing in sync with browser paint cycle
-            // and prevent "disappearing" chart issues on mobile scroll/resize events
-            window.requestAnimationFrame(() => {
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            
+            // 75ms debounce to allow layout to settle
+            resizeTimeout = setTimeout(() => {
                 if (isDisposed) return;
                 
                 if (containerRef.current && chart) {
@@ -111,7 +122,7 @@ export const useLightweightChart = (
                         }
                     }
                 }
-            });
+            }, 75);
         };
 
         const resizeObserver = new ResizeObserver(handleResize);
@@ -120,6 +131,7 @@ export const useLightweightChart = (
         return () => {
             isDisposed = true;
             resizeObserver.disconnect();
+            if (resizeTimeout) clearTimeout(resizeTimeout);
             try {
                 chart.remove();
             } catch (e) {
@@ -142,6 +154,14 @@ export interface VolumeBucket {
     type: string; // 'POC' | 'HVN' | 'LVN' | 'Normal'
 }
 
+/**
+ * Calculates Volume Profile (Price-by-Volume) data from candles.
+ * Distributes volume into price buckets to identify high-interest levels (POC, HVN).
+ * 
+ * @param data - CandleData array
+ * @param steps - Number of vertical buckets (resolution)
+ * @returns Array of VolumeBucket
+ */
 export const useVolumeProfileData = (data: CandleData[], steps: number = 40) => {
     return useMemo(() => {
         if (!data || data.length === 0) return [];

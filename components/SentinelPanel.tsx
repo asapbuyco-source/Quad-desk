@@ -1,13 +1,10 @@
 import React, { useState } from 'react';
-import { SentinelChecklist, AiAnalysis, AiScanResult, HeatmapItem } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, BrainCircuit, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info } from 'lucide-react';
+import { SentinelChecklist, AiScanResult, HeatmapItem } from '../types';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-
-const MotionDiv = motion.div as any;
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
-  aiAnalysis?: AiAnalysis;
   aiScanResult?: AiScanResult;
   heatmap?: HeatmapItem[];
 }
@@ -33,8 +30,15 @@ const ZScoreCell: React.FC<{ item: HeatmapItem }> = ({ item }) => {
     );
 };
 
-const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, aiScanResult, heatmap }) => {
+const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, heatmap }) => {
   const [selectedItem, setSelectedItem] = useState<SentinelChecklist | null>(null);
+
+  const handleKeyDown = (e: React.KeyboardEvent, item: SentinelChecklist) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      setSelectedItem(item);
+    }
+  };
 
   return (
     <>
@@ -125,8 +129,11 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, ai
             {checklist.map((item) => (
                 <div 
                     key={item.id} 
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedItem(item)}
-                    className="group flex flex-col p-3 rounded-xl transition-all border cursor-pointer bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10 hover:shadow-lg relative overflow-hidden"
+                    onKeyDown={(e) => handleKeyDown(e, item)}
+                    className="group flex flex-col p-3 rounded-xl transition-all border cursor-pointer bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10 hover:shadow-lg relative overflow-hidden focus:outline-none focus:ring-1 focus:ring-brand-accent"
                 >
                     <div className="flex items-center justify-between w-full relative z-10">
                         <div className="flex items-center gap-3">
@@ -157,7 +164,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, ai
         <AnimatePresence>
             {selectedItem && selectedItem.details && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                    <MotionDiv
+                    <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
@@ -165,7 +172,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, ai
                         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
                     />
                     
-                    <MotionDiv
+                    <motion.div
                         layoutId={`card-${selectedItem.id}`}
                         initial={{ opacity: 0, scale: 0.9, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -257,7 +264,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiAnalysis, ai
                             </div>
 
                         </div>
-                    </MotionDiv>
+                    </motion.div>
                 </div>
             )}
         </AnimatePresence>

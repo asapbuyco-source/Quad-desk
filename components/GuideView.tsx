@@ -2,8 +2,6 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Shield, Activity, Terminal, ScanSearch, CandlestickChart, Anchor, BookOpen } from 'lucide-react';
 
-const MotionDiv = motion.div as any;
-
 const GuideCard: React.FC<{ 
     icon: React.ElementType, 
     title: string, 
@@ -25,7 +23,7 @@ const GuideCard: React.FC<{
 
 const GuideView: React.FC = () => {
   return (
-    <MotionDiv 
+    <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 max-w-7xl mx-auto"
@@ -147,7 +145,7 @@ const GuideView: React.FC = () => {
                 </div>
             </div>
         </div>
-    </MotionDiv>
+    </motion.div>
   );
 };
 

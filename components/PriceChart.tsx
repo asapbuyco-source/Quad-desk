@@ -1,26 +1,52 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time } from 'lightweight-charts';
+import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time, MouseEventHandler } from 'lightweight-charts';
 import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
 import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus } from 'lucide-react';
 import { useLightweightChart } from '../hooks/useChart';
 
+/**
+ * Props for the PriceChart component.
+ */
 interface PriceChartProps {
+  /** Array of candlestick data points (OHLCV) */
   data: CandleData[];
+  /** Array of trade signal markers (Entry/Exit) */
   signals?: TradeSignal[];
+  /** Key price levels to display as horizontal lines */
   levels?: PriceLevel[];
+  /** Result from AI analysis containing support/resistance/pivot */
   aiScanResult?: AiScanResult;
+  /** Callback to trigger AI analysis */
   onScan?: () => void;
+  /** Loading state for AI analysis */
   isScanning?: boolean;
+  /** Toggle visibility of Z-Score bands */
   showZScore?: boolean;
+  /** Toggle visibility of Price Levels */
   showLevels?: boolean;
+  /** Toggle visibility of Signal Markers */
   showSignals?: boolean;
+  /** Optional children for header controls */
   children?: React.ReactNode;
+  /** Callback to toggle side panel */
   onToggleSidePanel?: () => void;
+  /** Side panel state */
   isSidePanelOpen?: boolean;
+  /** Current timeframe interval */
   interval?: string;
+  /** Callback to change timeframe */
   onIntervalChange?: (interval: string) => void;
 }
 
+/**
+ * PriceChart
+ * 
+ * A high-performance financial charting component based on TradingView's lightweight-charts.
+ * Handles rendering of candles, volume, technical indicators (ADX, Z-Score Bands), 
+ * and overlay primitives (Signal markers, Price lines).
+ * 
+ * Uses 'useLightweightChart' hook for lifecycle management.
+ */
 const PriceChart: React.FC<PriceChartProps> = ({ 
     data, 
     signals = [], 
@@ -73,9 +99,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
       if (!chart) return;
 
+      let candlestickSeries: ISeriesApi<"Candlestick">;
+      let volumeSeries: ISeriesApi<"Histogram">;
+      let adxSeries: ISeriesApi<"Line">;
+      let upper1: ISeriesApi<"Line">;
+      let lower1: ISeriesApi<"Line">;
+      let upper2: ISeriesApi<"Line">;
+      let lower2: ISeriesApi<"Line">;
+      let crosshairHandler: MouseEventHandler<Time>;
+
       try {
-          // Always create new series when chart instance changes/initializes
-          const candlestickSeries = chart.addSeries(CandlestickSeries, {
+          candlestickSeries = chart.addSeries(CandlestickSeries, {
               upColor: '#10b981',
               downColor: '#f43f5e',
               borderVisible: false,
@@ -83,7 +117,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
               wickDownColor: '#f43f5e',
           });
 
-          const volumeSeries = chart.addSeries(HistogramSeries, {
+          volumeSeries = chart.addSeries(HistogramSeries, {
               color: '#26a69a',
               priceFormat: { type: 'volume' },
               priceScaleId: '', // Overlay
@@ -93,8 +127,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
               scaleMargins: { top: 0.85, bottom: 0 },
           });
 
-          // Add ADX Series (Left Scale)
-          const adxSeries = chart.addSeries(LineSeries, {
+          adxSeries = chart.addSeries(LineSeries, {
               color: '#a855f7', // Purple
               lineWidth: 2,
               priceScaleId: 'left',
@@ -102,29 +135,28 @@ const PriceChart: React.FC<PriceChartProps> = ({
               lastValueVisible: false,
           });
 
-          // Add AI Band Series with initial visibility state
-          const upper2 = chart.addSeries(LineSeries, { 
+          upper2 = chart.addSeries(LineSeries, { 
               color: 'rgba(244, 63, 94, 0.6)', 
               lineWidth: 1, 
               lineStyle: LineStyle.Solid, 
               crosshairMarkerVisible: false,
               visible: !!showZScore 
           }); 
-          const upper1 = chart.addSeries(LineSeries, { 
+          upper1 = chart.addSeries(LineSeries, { 
               color: 'rgba(249, 115, 22, 0.5)', 
               lineWidth: 1, 
               lineStyle: LineStyle.Dashed, 
               crosshairMarkerVisible: false,
               visible: !!showZScore 
           }); 
-          const lower1 = chart.addSeries(LineSeries, { 
+          lower1 = chart.addSeries(LineSeries, { 
               color: 'rgba(59, 130, 246, 0.5)', 
               lineWidth: 1, 
               lineStyle: LineStyle.Dashed, 
               crosshairMarkerVisible: false,
               visible: !!showZScore 
           }); 
-          const lower2 = chart.addSeries(LineSeries, { 
+          lower2 = chart.addSeries(LineSeries, { 
               color: 'rgba(16, 185, 129, 0.6)', 
               lineWidth: 1, 
               lineStyle: LineStyle.Solid, 
@@ -140,8 +172,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
           upper2SeriesRef.current = upper2;
           lower2SeriesRef.current = lower2;
 
-          // Crosshair Handler
-          chart.subscribeCrosshairMove((param) => {
+          crosshairHandler = (param) => {
               if (
                   param.point === undefined ||
                   !param.time ||
@@ -158,7 +189,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
                   const adx = param.seriesData.get(adxSeries);
                   
                   if (candle) {
-                      // Ensure we have valid OHLC data before setting state
                       const c = candle as any;
                       if (isValid(c.open) && isValid(c.close)) {
                           setHoveredData({
@@ -170,13 +200,29 @@ const PriceChart: React.FC<PriceChartProps> = ({
                       }
                   }
               }
-          });
+          };
+
+          chart.subscribeCrosshairMove(crosshairHandler);
+
       } catch (e) {
           console.error("Failed to initialize chart series:", e);
       }
 
-      // Cleanup refs when chart instance changes or component unmounts
       return () => {
+          if (chart) {
+              try {
+                  if (crosshairHandler) chart.unsubscribeCrosshairMove(crosshairHandler);
+                  if (candlestickSeries) chart.removeSeries(candlestickSeries);
+                  if (volumeSeries) chart.removeSeries(volumeSeries);
+                  if (adxSeries) chart.removeSeries(adxSeries);
+                  if (upper1) chart.removeSeries(upper1);
+                  if (lower1) chart.removeSeries(lower1);
+                  if (upper2) chart.removeSeries(upper2);
+                  if (lower2) chart.removeSeries(lower2);
+              } catch (e) {
+                  console.warn("Error cleaning up chart series:", e);
+              }
+          }
           candlestickSeriesRef.current = null;
           volumeSeriesRef.current = null;
           adxSeriesRef.current = null;
@@ -194,13 +240,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     if (!chart || !candlestickSeriesRef.current) return;
 
-    // Wrap in RAF to prevent update-loop crashes and ensure sync with paint
     const rafId = requestAnimationFrame(() => {
-        if (!candlestickSeriesRef.current) return; // double check inside RAF
+        if (!chart || !candlestickSeriesRef.current) return;
 
         try {
             if (data.length === 0) {
-                // Clear chart if data is empty
                 candlestickSeriesRef.current.setData([]);
                 volumeSeriesRef.current?.setData([]);
                 adxSeriesRef.current?.setData([]);
@@ -211,7 +255,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 return;
             }
 
-            // Filter and map valid data only
             const validData = data.filter(d => 
                 d.time && isValid(d.open) && isValid(d.high) && isValid(d.low) && isValid(d.close)
             );
@@ -244,7 +287,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
             volumeSeriesRef.current?.setData(volumes);
             adxSeriesRef.current?.setData(adxData);
             
-            // Band Data
             const u1Data = validData.filter(d => isValid(d.zScoreUpper1)).map(d => ({ time: d.time as Time, value: d.zScoreUpper1 }));
             const l1Data = validData.filter(d => isValid(d.zScoreLower1)).map(d => ({ time: d.time as Time, value: d.zScoreLower1 }));
             const u2Data = validData.filter(d => isValid(d.zScoreUpper2)).map(d => ({ time: d.time as Time, value: d.zScoreUpper2 }));
@@ -263,7 +305,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   }, [data, chart]);
 
-  // Handle Band Visibility
   useEffect(() => {
     if(!upper1SeriesRef.current || !chart) return;
     const visibility = !!showZScore; 
@@ -277,12 +318,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [showZScore, chart]);
 
-  // Handle Levels (Support/Resistance)
   useEffect(() => {
       if (!candlestickSeriesRef.current || !showLevels || !chart) return;
 
       try {
-          // REMOVE OLD LINES
           priceLinesRef.current.forEach(line => {
               try {
                  candlestickSeriesRef.current?.removePriceLine(line);
@@ -290,11 +329,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
           });
           priceLinesRef.current = [];
 
-          // ADD NEW LINES
           levels.forEach(l => {
-               // Skip invalid levels
                if (!isValid(l.price)) return;
-
                let color = '#71717a'; 
                let lineStyle = LineStyle.Dashed;
                let lineWidth: 1 | 2 | 3 | 4 = 1;
@@ -368,12 +404,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   }, [levels, aiScanResult, showLevels, chart]);
 
-  // Handle Signals
   useEffect(() => {
     if (!candlestickSeriesRef.current || !chart) return;
     
-    // Safety check for method existence (in case of type mismatch or version issues)
-    if (typeof candlestickSeriesRef.current.setMarkers !== 'function') return;
+    const series = candlestickSeriesRef.current as any;
+    if (typeof series.setMarkers !== 'function') return;
 
     try {
         if (showSignals) {
@@ -386,9 +421,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
                     shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' as const : 'arrowUp' as const,
                     text: s.label,
                 }));
-            candlestickSeriesRef.current.setMarkers(markers);
+            series.setMarkers(markers);
         } else {
-            candlestickSeriesRef.current.setMarkers([]);
+            series.setMarkers([]);
         }
     } catch(e) {
         console.warn("Signal markers error", e);
@@ -400,68 +435,68 @@ const PriceChart: React.FC<PriceChartProps> = ({
     <div className="w-full h-full flex flex-col relative rounded-xl overflow-hidden bg-[#18181b]/50 select-none group">
         
         {/* Header Bar - Scrollable on Mobile */}
-        <div className="h-auto min-h-[3rem] py-1 flex items-center gap-2 px-2 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 overflow-x-auto scrollbar-hide">
-             {/* Left Group */}
-             <div className="flex items-center gap-2 shrink-0">
-                <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT</span>
-                </div>
-
-                {/* ADX Trend Indicator */}
-                <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-white/5">
-                    {currentAdx > 25 ? (
-                        <TrendingUp size={12} className={currentAdx > 50 ? "text-rose-500" : "text-emerald-500"} />
-                    ) : (
-                        <Minus size={12} className="text-zinc-500" />
-                    )}
-                    <span className={`text-[10px] font-bold uppercase ${
-                        currentAdx > 50 ? "text-rose-500" : 
-                        currentAdx > 25 ? "text-emerald-500" : 
-                        "text-zinc-500"
-                    }`}>
-                        {currentAdx > 50 ? "TRENDING" : currentAdx > 25 ? "ACTIVE" : "RANGE"}
-                    </span>
-                </div>
-
-                {/* Timeframe Selector */}
-                {onIntervalChange && (
-                    <div className="flex items-center gap-1 bg-black/20 p-1 rounded-lg border border-white/5 shrink-0">
-                        {['1m', '5m', '15m', '1h', '4h', '1d'].map(tf => (
-                            <button
-                                key={tf}
-                                onClick={() => onIntervalChange(tf)}
-                                className={`
-                                    px-1.5 lg:px-2 py-0.5 text-[9px] font-bold rounded-md transition-all uppercase
-                                    ${interval === tf ? 'bg-brand-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
-                                `}
-                            >
-                                {tf}
-                            </button>
-                        ))}
+        <div className="h-10 lg:h-12 flex items-center gap-2 px-2 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 w-full">
+             <div className="flex-1 overflow-x-auto scrollbar-hide flex items-center gap-2 pr-4">
+                 {/* Left Group */}
+                 <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                        <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT</span>
                     </div>
-                )}
+
+                    {/* ADX Trend Indicator - Compact on Mobile */}
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 rounded-full border border-white/5 shrink-0">
+                        {currentAdx > 25 ? (
+                            <TrendingUp size={10} className={currentAdx > 50 ? "text-rose-500" : "text-emerald-500"} />
+                        ) : (
+                            <Minus size={10} className="text-zinc-500" />
+                        )}
+                        <span className={`text-[9px] font-bold uppercase hidden sm:inline ${
+                            currentAdx > 50 ? "text-rose-500" : 
+                            currentAdx > 25 ? "text-emerald-500" : 
+                            "text-zinc-500"
+                        }`}>
+                            {currentAdx > 50 ? "TREND" : "RNG"}
+                        </span>
+                    </div>
+
+                    {/* Timeframe Selector */}
+                    {onIntervalChange && (
+                        <div className="flex items-center gap-0.5 bg-black/20 p-0.5 rounded-lg border border-white/5 shrink-0">
+                            {['1m', '5m', '15m', '1h', '4h'].map(tf => (
+                                <button
+                                    key={tf}
+                                    onClick={() => onIntervalChange(tf)}
+                                    className={`
+                                        px-1.5 py-0.5 text-[9px] font-bold rounded-md transition-all uppercase
+                                        ${interval === tf ? 'bg-brand-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                                    `}
+                                >
+                                    {tf}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                 </div>
+
+                 {/* Middle Group - Controls */}
+                 <div className="flex items-center gap-2 shrink-0">
+                    {children}
+                 </div>
              </div>
 
-            {/* Middle Group - Controls */}
-            <div className="flex items-center shrink-0">
-                {children}
-            </div>
-
-            <div className="flex-1"></div>
-
             {/* Right Group - Sticky Actions */}
-            <div className="flex items-center gap-2 shrink-0 ml-auto sticky right-0 bg-[#18181b]/80 backdrop-blur-sm pl-2 shadow-[-10px_0_10px_rgba(0,0,0,0.5)] md:shadow-none md:bg-transparent">
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto bg-[#18181b]/80 backdrop-blur-sm pl-2 shadow-[-10px_0_10px_rgba(0,0,0,0.5)] md:shadow-none md:bg-transparent">
                  {/* AI Scan Button */}
                 {onScan && (
                     <button
                         onClick={onScan}
                         disabled={isScanning}
                         className={`
-                            flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all
+                            flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide transition-all border
                             ${isScanning 
-                                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30 cursor-wait' 
-                                : 'bg-brand-accent/10 text-brand-accent border border-brand-accent/20 hover:bg-brand-accent hover:text-white'}
+                                ? 'bg-purple-500/20 text-purple-400 border-purple-500/30 cursor-wait' 
+                                : 'bg-brand-accent/10 text-brand-accent border-brand-accent/20 hover:bg-brand-accent hover:text-white'}
                         `}
                     >
                         {isScanning ? (
@@ -494,39 +529,37 @@ const PriceChart: React.FC<PriceChartProps> = ({
       <div className="flex-1 w-full min-h-0 relative">
         <div ref={chartContainerRef} className="w-full h-full" />
 
-        {/* Floating Tooltip */}
+        {/* Floating Tooltip - Responsive Position */}
         {hoveredData && (
-             <div className="absolute top-2 left-2 z-50 pointer-events-none bg-[#09090b]/80 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl">
-                 <div className="flex items-center gap-2 mb-1">
+             <div className="absolute top-2 left-2 z-50 pointer-events-none bg-[#09090b]/90 backdrop-blur-md border border-white/10 p-2 rounded-lg shadow-xl max-w-[140px] sm:max-w-none">
+                 <div className="flex items-center gap-2 mb-1 border-b border-white/5 pb-1">
                      <Clock size={10} className="text-zinc-500" />
-                     <span className="text-xs font-mono text-zinc-400">
-                        {new Date((hoveredData.time as number) * 1000).toLocaleTimeString()}
+                     <span className="text-[10px] font-mono text-zinc-400">
+                        {new Date((hoveredData.time as number) * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                      </span>
                  </div>
-                 <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono">
-                     <span className="text-zinc-500">O</span>
+                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono">
+                     <span className="text-zinc-600">O</span>
                      <span className={hoveredData.close >= hoveredData.open ? "text-emerald-400" : "text-rose-400"}>
-                         {isValid(hoveredData.open) ? hoveredData.open.toFixed(2) : '-'}
+                         {isValid(hoveredData.open) ? hoveredData.open.toFixed(1) : '-'}
                      </span>
-                     <span className="text-zinc-500">H</span>
-                     <span className="text-zinc-300">{isValid(hoveredData.high) ? hoveredData.high.toFixed(2) : '-'}</span>
-                     <span className="text-zinc-500">L</span>
-                     <span className="text-zinc-300">{isValid(hoveredData.low) ? hoveredData.low.toFixed(2) : '-'}</span>
-                     <span className="text-zinc-500">C</span>
+                     <span className="text-zinc-600">H</span>
+                     <span className="text-zinc-400">{isValid(hoveredData.high) ? hoveredData.high.toFixed(1) : '-'}</span>
+                     <span className="text-zinc-600">L</span>
+                     <span className="text-zinc-400">{isValid(hoveredData.low) ? hoveredData.low.toFixed(1) : '-'}</span>
+                     <span className="text-zinc-600">C</span>
                      <span className={hoveredData.close >= hoveredData.open ? "text-emerald-400" : "text-rose-400"}>
-                         {isValid(hoveredData.close) ? hoveredData.close.toFixed(2) : '-'}
+                         {isValid(hoveredData.close) ? hoveredData.close.toFixed(1) : '-'}
                      </span>
-                     <span className="text-zinc-500">Vol</span>
-                     <span className="text-zinc-300">{hoveredData.volume ? hoveredData.volume.toLocaleString() : '-'}</span>
-                     <span className="text-zinc-500">ADX</span>
-                     <span className="text-purple-400">{hoveredData.adx ? hoveredData.adx.toFixed(2) : '-'}</span>
+                     <span className="text-zinc-600">V</span>
+                     <span className="text-zinc-400">{hoveredData.volume ? (hoveredData.volume/1000).toFixed(1) + 'K' : '-'}</span>
                  </div>
              </div>
         )}
         
         {/* Watermark */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-[0.03]">
-            <span className="text-9xl font-black text-white tracking-tighter">BTC</span>
+            <span className="text-7xl lg:text-9xl font-black text-white tracking-tighter">BTC</span>
         </div>
       </div>
     </div>
