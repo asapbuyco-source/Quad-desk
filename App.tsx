@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useRef, useMemo, useCallback } from 'react';
+import React, { useEffect, useReducer, useRef, useCallback } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
 import DashboardView from './components/DashboardView';

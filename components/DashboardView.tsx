@@ -2,7 +2,7 @@ import React from 'react';
 import OrderBook from './OrderBook';
 import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
-import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist, AiAnalysis, AiScanResult } from '../types';
+import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist, AiScanResult } from '../types';
 import { motion } from 'framer-motion';
 import { Terminal } from 'lucide-react';
 
@@ -12,7 +12,6 @@ interface DashboardViewProps {
   asks: OrderBookLevel[];
   bids: OrderBookLevel[];
   checklist: SentinelChecklist[];
-  aiAnalysis?: AiAnalysis; 
   aiScanResult?: AiScanResult;
   interval?: string;
 }
@@ -32,7 +31,7 @@ const item = {
   show: { opacity: 1, y: 0 }
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiAnalysis, aiScanResult, interval }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, checklist, aiScanResult, interval }) => {
   return (
     <motion.div 
       variants={container}
