@@ -49,7 +49,7 @@ class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    return this.props.children || null;
+    return this.props.children;
   }
 }
 

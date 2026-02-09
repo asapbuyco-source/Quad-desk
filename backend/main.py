@@ -34,14 +34,20 @@ flash_model = None
 
 if not api_key:
     logger.error("❌ GEMINI_API_KEY not set! AI features will not work.")
+    logger.error("Set it in Railway dashboard: Settings → Variables")
+    pro_model = None
+    flash_model = None
 else:
     genai.configure(api_key=api_key)
     try:
-        pro_model = genai.GenerativeModel('gemini-1.5-pro-latest') # Updated to stable latest
+        # Use actual available models
+        pro_model = genai.GenerativeModel('gemini-1.5-pro-latest')
         flash_model = genai.GenerativeModel('gemini-1.5-flash-latest')
         logger.info("✅ Gemini models initialized successfully")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Gemini: {e}")
+        pro_model = None
+        flash_model = None
 
 # 2. In-Memory Data Store
 candle_cache = deque(maxlen=1000)

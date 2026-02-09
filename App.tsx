@@ -330,15 +330,10 @@ const SCAN_COOLDOWN = 60;
 const App: React.FC = () => {
   const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
   
-  const bandsRef = useRef(state.market.bands);
-  const isBacktestRef = useRef(state.config.isBacktest);
+  // Removed unused refs: bandsRef, isBacktestRef, lastPriceRef
   const backtestStepRef = useRef(0);
   const simulatedAsksRef = useRef<OrderBookLevel[]>([]);
   const simulatedBidsRef = useRef<OrderBookLevel[]>([]);
-  const lastPriceRef = useRef<number>(42000);
-
-  useEffect(() => { bandsRef.current = state.market.bands; }, [state.market.bands]);
-  useEffect(() => { isBacktestRef.current = state.config.isBacktest; }, [state.config.isBacktest]);
 
   // 1. Fetch Historical Data
   useEffect(() => {
@@ -530,7 +525,7 @@ const App: React.FC = () => {
     if (!state.config.isBacktest) { 
         const i = setInterval(() => {
             const currentPrice = state.market.metrics.price || 42000;
-            lastPriceRef.current = currentPrice;
+            // Removed assignment to unused ref: lastPriceRef.current = currentPrice;
             const spread = currentPrice * 0.0001; 
 
             const generateLevel = (price: number): OrderBookLevel => {
