@@ -330,7 +330,6 @@ const SCAN_COOLDOWN = 60;
 const App: React.FC = () => {
   const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
   
-  // Removed unused refs: bandsRef, isBacktestRef, lastPriceRef
   const backtestStepRef = useRef(0);
   const simulatedAsksRef = useRef<OrderBookLevel[]>([]);
   const simulatedBidsRef = useRef<OrderBookLevel[]>([]);
@@ -385,13 +384,13 @@ const App: React.FC = () => {
 
   // 2. Fetch Bands
   useEffect(() => {
-      if (state.config.isBacktest || state.config.activeSymbol !== 'BTCUSDT') {
+      if (state.config.isBacktest) {
           dispatch({ type: 'MARKET_SET_BANDS', payload: null });
           return;
       }
       const fetchBands = async () => {
           try {
-              const res = await fetch(`${API_BASE_URL}/bands`);
+              const res = await fetch(`${API_BASE_URL}/bands?symbol=${state.config.activeSymbol}`);
               if (res.ok) {
                   const data = await res.json();
                   if (!data.error) dispatch({ type: 'MARKET_SET_BANDS', payload: data });
@@ -483,7 +482,7 @@ const App: React.FC = () => {
       try {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 10000);
-          const response = await fetch(`${API_BASE_URL}/analyze`, { signal: controller.signal });
+          const response = await fetch(`${API_BASE_URL}/analyze?symbol=${state.config.activeSymbol}`, { signal: controller.signal });
           clearTimeout(timeoutId);
           const data = await response.json();
           
@@ -525,7 +524,6 @@ const App: React.FC = () => {
     if (!state.config.isBacktest) { 
         const i = setInterval(() => {
             const currentPrice = state.market.metrics.price || 42000;
-            // Removed assignment to unused ref: lastPriceRef.current = currentPrice;
             const spread = currentPrice * 0.0001; 
 
             const generateLevel = (price: number): OrderBookLevel => {
