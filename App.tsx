@@ -107,32 +107,12 @@ const calculateCVDAnalysis = (candles: CandleData[], currentCVD: number) => {
     let divergence: 'NONE' | 'BULLISH_ABSORPTION' | 'BEARISH_DISTRIBUTION' = 'NONE';
     let trend: 'UP' | 'DOWN' | 'FLAT' = Math.abs(cvdChange) < 100 ? 'FLAT' : (cvdChange > 0 ? 'UP' : 'DOWN');
 
-    // 1. REAL STRENGTH: Price UP + CVD UP
     if (priceChange > 0 && cvdChange > 0) interpretation = 'REAL STRENGTH';
-    
-    // 2. REAL WEAKNESS: Price DOWN + CVD DOWN
     else if (priceChange < 0 && cvdChange < 0) interpretation = 'REAL WEAKNESS';
-
-    // 3. ABSORPTION (BULLISH): Price FLAT/DOWN + CVD UP (Limit Buyers absorbing market sells? No, wait.)
-    // CVD = Aggressive Buy - Aggressive Sell. 
-    // If CVD is UP, Aggressive Buyers are active.
-    // If Price is DOWN despite Aggressive Buying -> Limit Sellers are absorbing the aggressive buys (Passive Selling Strength).
-    // This is actually BEARISH Absorption (Limit Sellers > Aggressive Buyers).
-    // Let's stick to standard CVD Divergence defs:
-    // Price Highs ascending, CVD Highs descending -> Bearish Divergence (Lack of participation).
-    // Simple slope analysis:
-    
-    // Bearish Divergence / Distribution: Price UP, CVD DOWN (Price rising on selling pressure/lack of buying)
     else if (priceChange > 0 && cvdChange < 0) {
         interpretation = 'DISTRIBUTION';
         divergence = 'BEARISH_DISTRIBUTION';
     }
-
-    // Bullish Divergence / Absorption: Price DOWN, CVD UP (Price falling but aggressive buyers stepping in? Or price falling despite buying?)
-    // Actually: Price making new lows, CVD making higher lows (Waning sell pressure).
-    // Simplified: Price Down, CVD Up -> Aggressive Buying absorbing Limit Sells but price dropping?
-    // Often interpreted as: Aggressive buyers are present but limit sellers are capping it. Pending breakout or exhaustion.
-    // Let's interpret Price DOWN + CVD UP as ABSORPTION (someone is aggressively buying into the drop).
     else if (priceChange < 0 && cvdChange > 0) {
         interpretation = 'ABSORPTION';
         divergence = 'BULLISH_ABSORPTION';
@@ -174,14 +154,8 @@ const appReducer = (state: AppState, action: Action): AppState => {
             return { ...state, config: { ...state.config, backtestDate: action.payload } };
 
         case 'MARKET_SET_HISTORY':
-            // Calculate ADX once on history load
-            // Payload now includes calculated CVD history
             const candlesWithAdx = calculateADX(action.payload.candles);
-            
-            // Initial analysis based on history
             const initialCvdAnalysis = calculateCVDAnalysis(candlesWithAdx, action.payload.initialCVD);
-            
-            // Detect Initial Regime
             const initialRegime = detectMarketRegime(candlesWithAdx);
 
             return { 
@@ -207,17 +181,9 @@ const appReducer = (state: AppState, action: Action): AppState => {
             const newTime = k.t / 1000;
             const bands = state.market.bands;
 
-            // --- CVD CALCULATION START ---
-            // Binance: v = Total Vol, V = Taker Buy Vol
-            // Buy Vol = V
-            // Sell Vol = v - V
-            // Delta = Buy - Sell = V - (v - V) = 2V - v
             const totalVol = parseFloat(k.v);
             const takerBuyVol = parseFloat(k.V);
             const delta = (2 * takerBuyVol) - totalVol;
-            
-            // NOTE: WS sends updates for the SAME candle repeatedly until it closes.
-            // We need to differentiate between an update to the current candle vs a new candle.
             
             let updatedCandles = [...state.market.candles];
             let newRunningCVD = state.market.runningCVD;
@@ -226,7 +192,6 @@ const appReducer = (state: AppState, action: Action): AppState => {
                 const lastCandle = updatedCandles[updatedCandles.length - 1];
                 if (lastCandle.time === newTime) {
                     const currentCVDValue = (updatedCandles.length > 1 ? updatedCandles[updatedCandles.length - 2].cvd || 0 : 0) + delta;
-                    
                     updatedCandles[updatedCandles.length - 1] = {
                         ...lastCandle,
                         close: newPrice,
@@ -236,12 +201,10 @@ const appReducer = (state: AppState, action: Action): AppState => {
                         delta: delta,
                         cvd: currentCVDValue
                     };
-                    
                     newRunningCVD = currentCVDValue; 
                 } else {
                     const prevCVD = updatedCandles[updatedCandles.length - 1].cvd || 0;
                     const currentCVDValue = prevCVD + delta;
-
                     updatedCandles.push({
                         time: newTime,
                         open: parseFloat(k.o),
@@ -256,7 +219,6 @@ const appReducer = (state: AppState, action: Action): AppState => {
                         zScoreUpper2: bands ? bands.upper_2 : newPrice * 1.005,
                         zScoreLower2: bands ? bands.lower_2 : newPrice * 0.995,
                     });
-                    
                     newRunningCVD = currentCVDValue;
                 }
             } else {
@@ -276,16 +238,11 @@ const appReducer = (state: AppState, action: Action): AppState => {
                 });
                 newRunningCVD = delta;
             }
-            // --- CVD CALCULATION END ---
 
-            // OFI (Tick based)
             const takerSellVol = totalVol - takerBuyVol;
-            const ofi = takerBuyVol - takerSellVol; // Same as Delta actually, OFI is usually order book, but here we use Trade Flow
-
+            const ofi = takerBuyVol - takerSellVol;
             const candlesWithAdx = calculateADX(updatedCandles);
             const cvdContext = calculateCVDAnalysis(candlesWithAdx, newRunningCVD);
-            
-            // --- REGIME DETECTION ---
             const currentRegime = detectMarketRegime(candlesWithAdx);
 
             return {
@@ -307,23 +264,14 @@ const appReducer = (state: AppState, action: Action): AppState => {
         }
 
         case 'MARKET_TRADE_TICK':
-            // Prepend new trade, keep list size manageable (e.g., 50)
             const updatedTrades = [action.payload, ...state.market.recentTrades].slice(0, 50);
-            return {
-                ...state,
-                market: {
-                    ...state.market,
-                    recentTrades: updatedTrades
-                }
-            };
+            return { ...state, market: { ...state.market, recentTrades: updatedTrades } };
 
         case 'MARKET_SIM_TICK':
-            // Simulation tick can now optionally include a new trade
             let simTrades = state.market.recentTrades;
             if (action.payload.trade) {
                 simTrades = [action.payload.trade, ...simTrades].slice(0, 50);
             }
-
             return {
                 ...state,
                 market: {
@@ -339,7 +287,6 @@ const appReducer = (state: AppState, action: Action): AppState => {
             return { ...state, ai: { ...state.ai, isScanning: true, lastScanTime: Date.now(), cooldownRemaining: 60 } };
         
         case 'AI_SCAN_COMPLETE': {
-            // Merge new levels
             const newLevels: PriceLevel[] = [];
             const result = action.payload;
             result.support.forEach((p: number) => newLevels.push({ price: p, type: 'SUPPORT', label: 'AI SUP' }));
@@ -377,41 +324,37 @@ const appReducer = (state: AppState, action: Action): AppState => {
     }
 };
 
-// Backtest data source (Generated once on load to be consistent)
 const BACKTEST_DATA = generateSyntheticData(42000, 300);
 const SCAN_COOLDOWN = 60;
 
 const App: React.FC = () => {
   const [state, dispatch] = useReducer(appReducer, INITIAL_STATE);
   
-  // Refs for effects to access latest state without dependency loops
   const bandsRef = useRef(state.market.bands);
   const isBacktestRef = useRef(state.config.isBacktest);
   const backtestStepRef = useRef(0);
-
-  // Persistence Refs for Order Book Simulation
   const simulatedAsksRef = useRef<OrderBookLevel[]>([]);
   const simulatedBidsRef = useRef<OrderBookLevel[]>([]);
   const lastPriceRef = useRef<number>(42000);
 
-  // Sync refs
   useEffect(() => { bandsRef.current = state.market.bands; }, [state.market.bands]);
   useEffect(() => { isBacktestRef.current = state.config.isBacktest; }, [state.config.isBacktest]);
 
-  // 1. Fetch Historical Data (LIVE)
+  // 1. Fetch Historical Data
   useEffect(() => {
     if (state.config.isBacktest) return;
 
     const fetchHistory = async () => {
         try {
-            // Attempt to fetch from Binance
-            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${state.config.activeSymbol}&interval=${state.config.interval}&limit=1000`);
-            if (!res.ok) throw new Error("Binance API Error");
+            // PROXY REQUEST TO BACKEND TO AVOID CORS
+            const res = await fetch(`${API_BASE_URL}/history?symbol=${state.config.activeSymbol}&interval=${state.config.interval}`);
+            if (!res.ok) throw new Error("API Error");
             
             const data = await res.json();
+            if (data.error) throw new Error(data.error);
+
             let runningCVD = 0;
             const formattedCandles: CandleData[] = data.map((k: any) => {
-                // k[9] = Taker buy base asset volume
                 const vol = parseFloat(k[5]);
                 const takerBuyVol = parseFloat(k[9]); 
                 const delta = (2 * takerBuyVol) - vol;
@@ -427,12 +370,10 @@ const App: React.FC = () => {
                 };
             }).filter((c: CandleData) => !isNaN(c.close));
             
-            // Dispatch single update with pre-calculated history
             dispatch({ type: 'MARKET_SET_HISTORY', payload: { candles: formattedCandles, initialCVD: runningCVD } });
         } catch (e) {
-            console.warn("Failed to fetch live history (CORS/Network). Using Fallback.", e);
+            console.warn("History fetch failed. Engaging Fallback.", e);
             
-            // FALLBACK: Generate synthetic data if API fails (Critical for Resilience)
             const fallbackPrice = state.config.activeSymbol.startsWith('BTC') ? 64000 : 3200;
             const fallbackData = generateSyntheticData(fallbackPrice, 200);
             const fallbackCVD = fallbackData.length > 0 ? (fallbackData[fallbackData.length-1].cvd || 0) : 0;
@@ -440,7 +381,7 @@ const App: React.FC = () => {
             dispatch({ type: 'MARKET_SET_HISTORY', payload: { candles: fallbackData, initialCVD: fallbackCVD } });
             dispatch({
                 type: 'ADD_NOTIFICATION',
-                payload: { id: Date.now().toString(), type: 'warning', title: 'Data Stream Restricted', message: 'Binance API blocked. Running on synthetic data feed.' }
+                payload: { id: Date.now().toString(), type: 'warning', title: 'Data Feed Restricted', message: 'Using synthetic data stream due to connection issues.' }
             });
         }
     };
@@ -467,7 +408,7 @@ const App: React.FC = () => {
       return () => clearInterval(i);
   }, [state.config.isBacktest, state.config.activeSymbol]);
 
-  // 3. WebSocket (Live) - UPDATED FOR DUAL STREAMS
+  // 3. WebSocket (Live)
   useEffect(() => {
       if (state.config.isBacktest) return;
 
@@ -478,7 +419,6 @@ const App: React.FC = () => {
       const BASE_DELAY = 1000;
 
       const connect = () => {
-          // Combined stream for kline AND aggTrade
           const symbol = state.config.activeSymbol.toLowerCase();
           const streams = `${symbol}@kline_${state.config.interval}/${symbol}@aggTrade`;
           ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
@@ -487,17 +427,11 @@ const App: React.FC = () => {
           
           ws.onmessage = (event) => {
               const message = JSON.parse(event.data);
-              
-              // Binance combined stream payload: { stream: "...", data: {...} }
               if (message.data) {
-                  // Handle Kline Update
                   if (message.data.e === 'kline') {
                       dispatch({ type: 'MARKET_WS_TICK', payload: message.data.k });
                   } 
-                  // Handle Trade Update
                   else if (message.data.e === 'aggTrade') {
-                      // m: true if buyer is maker (so it's a SELL)
-                      // m: false if seller is maker (so it's a BUY)
                       const isSell = message.data.m; 
                       const trade: RecentTrade = {
                           id: message.data.a.toString(),
@@ -505,7 +439,7 @@ const App: React.FC = () => {
                           size: parseFloat(message.data.q),
                           side: isSell ? 'SELL' : 'BUY',
                           time: message.data.T,
-                          isWhale: (parseFloat(message.data.p) * parseFloat(message.data.q)) > 50000 // > $50k is whale
+                          isWhale: (parseFloat(message.data.p) * parseFloat(message.data.q)) > 50000
                       };
                       dispatch({ type: 'MARKET_TRADE_TICK', payload: trade });
                   }
@@ -591,16 +525,14 @@ const App: React.FC = () => {
       }
   }, [state.ai.isScanning, state.ai.cooldownRemaining, state.config.isBacktest, state.market.metrics.price, state.config.activeSymbol]);
 
-  // 6. Stateful Simulation Engine (Delta Tracking)
+  // 6. Stateful Simulation Engine
   useEffect(() => {
-    // Run even if price is 0 (will use fallback logic in dispatch)
     if (!state.config.isBacktest) { 
         const i = setInterval(() => {
             const currentPrice = state.market.metrics.price || 42000;
             lastPriceRef.current = currentPrice;
             const spread = currentPrice * 0.0001; 
 
-            // Helper to generate initial level if missing
             const generateLevel = (price: number): OrderBookLevel => {
                  const isWhale = Math.random() > 0.92;
                  const size = isWhale 
@@ -609,56 +541,42 @@ const App: React.FC = () => {
                  return { price, size, total: 0, delta: 0, classification: 'NORMAL' };
             };
 
-            // Update Logic:
-            // 1. Shift prices based on market price
-            // 2. For existing prices, change size randomly (add noise)
-            // 3. Occasionally "Spoof" (remove large liquidity)
-            // 4. Calculate Delta
-
             const updateBook = (prevLevels: OrderBookLevel[], isAsk: boolean): OrderBookLevel[] => {
                 const newLevels: OrderBookLevel[] = [];
                 const basePrice = currentPrice;
                 
-                // 1. Create target price set
                 for(let k=0; k<15; k++) {
                      const offset = spread + (k * spread * 1.5);
                      const p = isAsk ? basePrice + offset : basePrice - offset;
                      
-                     // Find existing level for this price (fuzzy match)
                      const existing = prevLevels.find(l => Math.abs(l.price - p) < spread * 0.5);
                      
                      if (existing) {
-                         // Apply noise
                          let change = Math.floor((Math.random() - 0.5) * 50);
-                         
-                         // Spoofing Event (5% chance)
                          if (Math.random() > 0.95 && existing.size > 1000) {
-                             change = -Math.floor(existing.size * 0.8); // Pull 80%
+                             change = -Math.floor(existing.size * 0.8);
                          }
 
                          const newSize = Math.max(1, existing.size + change);
                          newLevels.push({
                              ...existing,
-                             price: p, // Update price slightly to track market
+                             price: p,
                              size: newSize,
                              delta: change
                          });
                      } else {
-                         // New Level
                          newLevels.push({
                              ...generateLevel(p),
-                             delta: 100 // Arbitrary positive delta for new level
+                             delta: 100
                          });
                      }
                 }
                 return isAsk ? newLevels.reverse() : newLevels;
             };
 
-            // Update Refs
             simulatedAsksRef.current = updateBook(simulatedAsksRef.current, true);
             simulatedBidsRef.current = updateBook(simulatedBidsRef.current, false);
 
-            // Classification Logic
             const avgSize = [...simulatedAsksRef.current, ...simulatedBidsRef.current].reduce((acc, l) => acc + l.size, 0) / 30;
             const classify = (l: OrderBookLevel) => {
                 let type: LiquidityType = 'NORMAL';
@@ -671,7 +589,6 @@ const App: React.FC = () => {
             const asks = simulatedAsksRef.current.map(classify);
             const bids = simulatedBidsRef.current.map(classify);
 
-            // Generate Simulated Trades
             let simTrade: RecentTrade | undefined;
             if (Math.random() > 0.3) {
                  const isBuy = Math.random() > 0.5;
@@ -682,7 +599,7 @@ const App: React.FC = () => {
                      size: size,
                      side: isBuy ? 'BUY' : 'SELL',
                      time: Date.now(),
-                     isWhale: size > 1.5 // Arbitrary simulation threshold
+                     isWhale: size > 1.5
                  };
             }
             
@@ -700,7 +617,7 @@ const App: React.FC = () => {
                     }
                 }
             });
-        }, 1000); // Ticking 1s (Simulate latency)
+        }, 1000);
         return () => clearInterval(i);
     }
   }, [state.market.metrics.price, state.config.isBacktest]);
@@ -711,27 +628,20 @@ const App: React.FC = () => {
           backtestStepRef.current = 0;
           return;
       }
-      
-      // Guard against empty data to prevent infinite loops
       if (!BACKTEST_DATA || BACKTEST_DATA.length === 0) return;
 
       const intervalMs = 100 / state.config.playbackSpeed;
       const i = setInterval(() => {
           if (backtestStepRef.current >= BACKTEST_DATA.length) backtestStepRef.current = 0;
           const candle = BACKTEST_DATA[backtestStepRef.current];
-          // We cheat here a bit by just overwriting candles for backtest to avoid complex reducer logic for replay
-          // In a real app, this would dispatch TICK events.
           if (candle) {
-              // Manual dispatch to update price and show chart moving
               dispatch({ 
                   type: 'MARKET_WS_TICK', 
                   payload: { 
                       t: candle.time as number * 1000, o: candle.open, h: candle.high, l: candle.low, c: candle.close, v: candle.volume, P: 0, 
-                      V: (candle.volume * 0.6) // Mock taker buy volume
+                      V: (candle.volume * 0.6)
                   } 
               });
-              
-              // Generate fake trades for backtest visualization
               if (Math.random() > 0.5) {
                    dispatch({
                        type: 'MARKET_TRADE_TICK',
@@ -751,7 +661,6 @@ const App: React.FC = () => {
       return () => clearInterval(i);
   }, [state.config.isBacktest, state.config.playbackSpeed]);
 
-  // --- RENDER ---
   return (
     <div className={`h-screen h-[100dvh] w-screen bg-transparent text-slate-200 font-sans overflow-hidden ${state.market.metrics.circuitBreakerTripped ? 'grayscale opacity-80' : ''}`}>
       <AnimatePresence mode='wait'>
