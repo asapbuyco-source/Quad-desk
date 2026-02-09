@@ -3,7 +3,6 @@ import sys
 import json
 import asyncio
 import numpy as np
-import pandas as pd
 import httpx
 from datetime import datetime
 from collections import deque
