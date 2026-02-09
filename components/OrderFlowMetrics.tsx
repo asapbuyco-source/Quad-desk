@@ -1,6 +1,5 @@
-
 import React from 'react';
-import { MarketMetrics, HeatmapItem } from '../types';
+import { MarketMetrics } from '../types';
 import { Activity, Skull, TrendingUp, Anchor, BarChart2, ArrowRight, TrendingDown, Waves, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 

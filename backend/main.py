@@ -393,6 +393,6 @@ async def get_market_intelligence():
 
 if __name__ == "__main__":
     import uvicorn
-    # Use PORT env var if available (Railway/Heroku), else default to 8000
-    port = int(os.environ.get("PORT", 8000))
+    # Use PORT env var if available (Railway/Heroku), else default to 8080
+    port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)

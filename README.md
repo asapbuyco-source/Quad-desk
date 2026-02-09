@@ -1,3 +1,4 @@
+
 # Quant Desk Terminal
 
 **Next-gen institutional market terminal with sentinel logic and real-time order flow analytics.**
@@ -64,7 +65,7 @@ Custom hooks for chart lifecycle management.
 
 ## API Documentation
 
-The frontend expects a backend running on `http://localhost:8000`.
+The frontend expects a backend running on `http://localhost:8080`.
 
 ### `GET /analyze`
 Triggers a Gemini 3 Pro analysis of the current market structure based on recent candle history.

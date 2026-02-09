@@ -225,7 +225,6 @@ const appReducer = (state: AppState, action: Action): AppState => {
             if (updatedCandles.length > 0) {
                 const lastCandle = updatedCandles[updatedCandles.length - 1];
                 if (lastCandle.time === newTime) {
-                    const prevDelta = lastCandle.delta || 0;
                     const currentCVDValue = (updatedCandles.length > 1 ? updatedCandles[updatedCandles.length - 2].cvd || 0 : 0) + delta;
                     
                     updatedCandles[updatedCandles.length - 1] = {
