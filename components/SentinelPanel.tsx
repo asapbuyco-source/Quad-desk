@@ -1,12 +1,14 @@
+
 import React, { useState } from 'react';
-import { SentinelChecklist, AiScanResult, HeatmapItem } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info } from 'lucide-react';
+import { SentinelChecklist, AiScanResult, HeatmapItem, MarketMetrics } from '../types';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
   aiScanResult?: AiScanResult;
   heatmap?: HeatmapItem[];
+  currentRegime?: MarketMetrics['regime'];
 }
 
 const ZScoreCell: React.FC<{ item: HeatmapItem }> = ({ item }) => {
@@ -30,7 +32,7 @@ const ZScoreCell: React.FC<{ item: HeatmapItem }> = ({ item }) => {
     );
 };
 
-const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, heatmap }) => {
+const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, heatmap, currentRegime = 'MEAN_REVERTING' }) => {
   const [selectedItem, setSelectedItem] = useState<SentinelChecklist | null>(null);
 
   const handleKeyDown = (e: React.KeyboardEvent, item: SentinelChecklist) => {
@@ -45,14 +47,21 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
         <div className="fintech-card h-full flex flex-col bg-slate-900/40 relative">
         
         {/* Header */}
-        <div className="p-5 border-b border-white/5 flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
-                <Shield size={18} />
+        <div className="p-5 border-b border-white/5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
+                    <Shield size={18} />
+                </div>
+                <div>
+                    <h2 className="text-sm font-bold text-white">Sentinel System</h2>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wider">Risk Parameters</p>
+                </div>
             </div>
-            <div>
-                <h2 className="text-sm font-bold text-white">Sentinel System</h2>
-                <p className="text-[10px] text-slate-400 uppercase tracking-wider">Risk Parameters</p>
-            </div>
+            {currentRegime && (
+                <div className="px-2 py-1 rounded bg-white/5 border border-white/5 text-[9px] font-mono text-slate-400">
+                    REGIME: <span className="text-white font-bold">{currentRegime}</span>
+                </div>
+            )}
         </div>
 
         {/* Checklist */}
@@ -126,36 +135,57 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
             )}
 
             {/* Checklist Items */}
-            {checklist.map((item) => (
-                <div 
-                    key={item.id} 
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedItem(item)}
-                    onKeyDown={(e) => handleKeyDown(e, item)}
-                    className="group flex flex-col p-3 rounded-xl transition-all border cursor-pointer bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10 hover:shadow-lg relative overflow-hidden focus:outline-none focus:ring-1 focus:ring-brand-accent"
-                >
-                    <div className="flex items-center justify-between w-full relative z-10">
-                        <div className="flex items-center gap-3">
-                            {item.status === 'pass' && <CheckCircle2 size={16} className="text-trade-bid shrink-0" />}
-                            {item.status === 'fail' && <XCircle size={16} className="text-trade-ask shrink-0" />}
-                            {item.status === 'warning' && <AlertTriangle size={16} className="text-trade-warn shrink-0" />}
-                            <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors">
-                                {item.label}
-                            </span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <span className={`text-xs font-mono font-bold ${
-                                item.status === 'pass' ? 'text-trade-bid' : 
-                                item.status === 'fail' ? 'text-trade-ask' : 'text-trade-warn'
-                            }`}>
-                                {item.value}
-                            </span>
-                            <ChevronRight size={14} className="text-slate-600 group-hover:text-white transition-colors" />
+            {checklist.map((item) => {
+                // Determine if this item is locked for the current regime
+                const isLocked = item.requiredRegime && !item.requiredRegime.includes(currentRegime);
+
+                return (
+                    <div 
+                        key={item.id} 
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => !isLocked && setSelectedItem(item)}
+                        onKeyDown={(e) => !isLocked && handleKeyDown(e, item)}
+                        className={`
+                            group flex flex-col p-3 rounded-xl transition-all border relative overflow-hidden focus:outline-none 
+                            ${isLocked 
+                                ? 'bg-zinc-900/50 border-white/5 cursor-not-allowed opacity-60' 
+                                : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10 hover:shadow-lg cursor-pointer focus:ring-1 focus:ring-brand-accent'
+                            }
+                        `}
+                    >
+                        <div className="flex items-center justify-between w-full relative z-10">
+                            <div className="flex items-center gap-3">
+                                {isLocked ? (
+                                    <Lock size={16} className="text-slate-600 shrink-0" />
+                                ) : (
+                                    <>
+                                        {item.status === 'pass' && <CheckCircle2 size={16} className="text-trade-bid shrink-0" />}
+                                        {item.status === 'fail' && <XCircle size={16} className="text-trade-ask shrink-0" />}
+                                        {item.status === 'warning' && <AlertTriangle size={16} className="text-trade-warn shrink-0" />}
+                                    </>
+                                )}
+                                <span className={`text-sm font-medium transition-colors ${isLocked ? 'text-slate-500 line-through decoration-slate-600' : 'text-slate-300 group-hover:text-white'}`}>
+                                    {item.label}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                {isLocked ? (
+                                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">REGIME LOCK</span>
+                                ) : (
+                                    <span className={`text-xs font-mono font-bold ${
+                                        item.status === 'pass' ? 'text-trade-bid' : 
+                                        item.status === 'fail' ? 'text-trade-ask' : 'text-trade-warn'
+                                    }`}>
+                                        {item.value}
+                                    </span>
+                                )}
+                                {!isLocked && <ChevronRight size={14} className="text-slate-600 group-hover:text-white transition-colors" />}
+                            </div>
                         </div>
                     </div>
-                </div>
-            ))}
+                );
+            })}
             
         </div>
         </div>

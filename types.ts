@@ -1,9 +1,23 @@
 
+export type LiquidityType = 'WALL' | 'HOLE' | 'CLUSTER' | 'NORMAL';
+export type RegimeType = 'TRENDING' | 'MEAN_REVERTING' | 'HIGH_VOLATILITY';
+
 export interface OrderBookLevel {
   price: number;
   size: number;
   total: number;
-  isLiquidityWall?: boolean; // Legacy, we will calculate dynamic magnets now
+  delta?: number; // Change in size since last tick
+  classification?: LiquidityType;
+  isLiquidityWall?: boolean; // Legacy support
+}
+
+export interface RecentTrade {
+    id: string;
+    price: number;
+    size: number;
+    side: 'BUY' | 'SELL';
+    time: number;
+    isWhale: boolean;
 }
 
 export interface CandleData {
@@ -18,6 +32,8 @@ export interface CandleData {
   zScoreUpper2: number; // +2.5 sigma
   zScoreLower2: number; // -2.5 sigma
   adx?: number; // Average Directional Index
+  delta?: number; // Net Buy - Sell Volume for this candle
+  cvd?: number; // Cumulative Volume Delta running total
 }
 
 export interface CalculationVariable {
@@ -44,6 +60,7 @@ export interface SentinelChecklist {
   status: 'pass' | 'fail' | 'warning';
   value: string;
   details?: CalculationDetails; // Enhanced details object
+  requiredRegime?: RegimeType[]; // New: strategies valid only in specific regimes
 }
 
 export interface HeatmapItem {
@@ -58,7 +75,7 @@ export interface MarketMetrics {
   change: number;
   session: string;
   safetyStatus: string;
-  regime: string;
+  regime: RegimeType; // Updated to strict type
   retailSentiment: number; // 0-100 (Long %)
   institutionalCVD: number; // Normalized -100 to 100
   zScore: number;
@@ -67,6 +84,12 @@ export interface MarketMetrics {
   heatmap: HeatmapItem[];
   dailyPnL?: number;
   circuitBreakerTripped?: boolean;
+  cvdContext?: {
+      trend: 'UP' | 'DOWN' | 'FLAT';
+      divergence: 'NONE' | 'BULLISH_ABSORPTION' | 'BEARISH_DISTRIBUTION';
+      interpretation: 'REAL STRENGTH' | 'REAL WEAKNESS' | 'ABSORPTION' | 'DISTRIBUTION' | 'NEUTRAL';
+      value: number;
+  };
 }
 
 export interface NewsItem {

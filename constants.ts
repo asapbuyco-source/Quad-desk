@@ -1,3 +1,4 @@
+
 import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem, TradeSignal, PriceLevel } from './types';
 
 export const APP_NAME = "QUANT DESK";
@@ -10,7 +11,7 @@ export const MOCK_METRICS: MarketMetrics = {
   change: -1.24,
   session: "PRE-LONDON",
   safetyStatus: "CB: ACTIVE",
-  regime: "FAT-TAIL",
+  regime: "MEAN_REVERTING", // Default
   retailSentiment: 78,
   institutionalCVD: 65, // Positive means buying
   zScore: -2.6,
@@ -29,6 +30,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       label: 'Dislocation (Z-Score)', 
       status: 'pass', 
       value: '-2.6σ',
+      requiredRegime: ['MEAN_REVERTING', 'HIGH_VOLATILITY'], // Don't fade Z-Score in a strong trend
       details: {
           formula: "Z = (P - μ) / σ",
           explanation: "The Z-Score measures how many standard deviations the current price (P) is from the mean (μ). A score beyond ±2.0 indicates a statistically significant deviation, suggesting potential mean reversion.",
@@ -49,6 +51,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       label: 'Bayesian Posterior', 
       status: 'warning', 
       value: '0.42',
+      requiredRegime: ['TRENDING'], // Trend following logic
       details: {
           formula: "P(A|B) = [P(B|A) * P(A)] / P(B)",
           explanation: "Updates the probability of a 'Trend Continuation' (Hypothesis A) given new 'Order Flow Data' (Evidence B). A low value suggests the prior thesis is degrading.",
@@ -89,6 +92,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       label: 'Skewness Audit', 
       status: 'pass', 
       value: 'Valid',
+      requiredRegime: ['HIGH_VOLATILITY', 'TRENDING'],
       details: {
           formula: "γ = E[(X - μ)/σ]^3",
           explanation: "Measures the asymmetry of the return distribution. Negative skew implies frequent small gains but rare, large losses (Tail Risk). We strictly filter for positive or neutral skew.",

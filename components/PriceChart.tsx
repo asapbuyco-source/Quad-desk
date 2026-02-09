@@ -190,11 +190,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
                   
                   if (candle) {
                       const c = candle as any;
-                      if (isValid(c.open) && isValid(c.close)) {
+                      // Defensive check for candle data
+                      if (c && isValid(c.open) && isValid(c.close)) {
+                          const volVal = volume && (volume as any).value ? (volume as any).value : 0;
+                          const adxVal = adx && (adx as any).value ? (adx as any).value : 0;
+                          
                           setHoveredData({
                               ...c,
-                              volume: volume ? (volume as any).value : 0,
-                              adx: adx ? (adx as any).value : 0,
+                              volume: volVal,
+                              adx: adxVal,
                               time: param.time
                           });
                       }
@@ -255,9 +259,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 return;
             }
 
-            const validData = data.filter(d => 
-                d.time && isValid(d.open) && isValid(d.high) && isValid(d.low) && isValid(d.close)
-            );
+            // Ensure data is sorted by time and valid
+            const validData = [...data]
+                .filter(d => d.time && isValid(d.open) && isValid(d.high) && isValid(d.low) && isValid(d.close))
+                .sort((a, b) => {
+                    if (typeof a.time === 'number' && typeof b.time === 'number') {
+                        return a.time - b.time;
+                    }
+                    return String(a.time).localeCompare(String(b.time));
+                });
 
             const candles = validData.map(d => ({
                 time: d.time as Time,
@@ -535,7 +545,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
                  <div className="flex items-center gap-2 mb-1 border-b border-white/5 pb-1">
                      <Clock size={10} className="text-zinc-500" />
                      <span className="text-[10px] font-mono text-zinc-400">
-                        {new Date((hoveredData.time as number) * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        {hoveredData.time && typeof hoveredData.time === 'number' 
+                          ? new Date(hoveredData.time * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                          : '-'}
                      </span>
                  </div>
                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono">

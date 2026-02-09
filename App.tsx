@@ -9,10 +9,10 @@ import GuideView from './components/GuideView';
 import LandingPage from './components/LandingPage';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, CHECKLIST_ITEMS, MOCK_LEVELS, API_BASE_URL } from './constants';
-import { CandleData, OrderBookLevel, MarketMetrics, TradeSignal, AiScanResult, PriceLevel } from './types';
+import { CandleData, OrderBookLevel, MarketMetrics, TradeSignal, AiScanResult, PriceLevel, LiquidityType, RecentTrade } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lock, RefreshCw } from 'lucide-react';
-import { calculateADX, generateSyntheticData } from './utils/analytics';
+import { calculateADX, generateSyntheticData, detectMarketRegime } from './utils/analytics';
 
 // --- STATE MANAGEMENT ---
 
@@ -36,6 +36,8 @@ interface AppState {
         signals: TradeSignal[];
         levels: PriceLevel[];
         bands: any | null;
+        runningCVD: number; // Persistent CVD counter
+        recentTrades: RecentTrade[];
     };
     ai: {
         scanResult: AiScanResult | undefined;
@@ -62,7 +64,9 @@ const INITIAL_STATE: AppState = {
         bids: MOCK_BIDS,
         signals: [],
         levels: MOCK_LEVELS,
-        bands: null
+        bands: null,
+        runningCVD: 0,
+        recentTrades: []
     },
     ai: { scanResult: undefined, isScanning: false, lastScanTime: 0, cooldownRemaining: 0 },
     notifications: []
@@ -76,16 +80,66 @@ type Action =
     | { type: 'CONFIG_SET_INTERVAL'; payload: string }
     | { type: 'CONFIG_SET_PLAYBACK'; payload: number }
     | { type: 'CONFIG_SET_DATE'; payload: string }
-    | { type: 'MARKET_SET_HISTORY'; payload: CandleData[] }
+    | { type: 'MARKET_SET_HISTORY'; payload: { candles: CandleData[], initialCVD: number } }
     | { type: 'MARKET_SET_BANDS'; payload: any }
     | { type: 'MARKET_WS_TICK'; payload: any } // Raw kline from WS
-    | { type: 'MARKET_SIM_TICK'; payload: { asks: OrderBookLevel[]; bids: OrderBookLevel[]; metrics: Partial<MarketMetrics> } }
+    | { type: 'MARKET_TRADE_TICK'; payload: RecentTrade } // Individual trade execution
+    | { type: 'MARKET_SIM_TICK'; payload: { asks: OrderBookLevel[]; bids: OrderBookLevel[]; metrics: Partial<MarketMetrics>; trade?: RecentTrade } }
     | { type: 'AI_START_SCAN' }
     | { type: 'AI_SCAN_COMPLETE'; payload: AiScanResult }
     | { type: 'AI_SCAN_ERROR' }
     | { type: 'AI_UPDATE_COOLDOWN'; payload: number }
     | { type: 'ADD_NOTIFICATION'; payload: ToastMessage }
     | { type: 'REMOVE_NOTIFICATION'; payload: string };
+
+const calculateCVDAnalysis = (candles: CandleData[], currentCVD: number) => {
+    if (candles.length < 10) return { trend: 'FLAT' as const, divergence: 'NONE' as const, interpretation: 'NEUTRAL' as const, value: currentCVD };
+
+    const lookback = 10;
+    const subset = candles.slice(-lookback);
+    const first = subset[0];
+    const last = subset[subset.length - 1];
+
+    const priceChange = last.close - first.close;
+    const cvdChange = (last.cvd || 0) - (first.cvd || 0);
+
+    let interpretation: 'REAL STRENGTH' | 'REAL WEAKNESS' | 'ABSORPTION' | 'DISTRIBUTION' | 'NEUTRAL' = 'NEUTRAL';
+    let divergence: 'NONE' | 'BULLISH_ABSORPTION' | 'BEARISH_DISTRIBUTION' = 'NONE';
+    let trend: 'UP' | 'DOWN' | 'FLAT' = Math.abs(cvdChange) < 100 ? 'FLAT' : (cvdChange > 0 ? 'UP' : 'DOWN');
+
+    // 1. REAL STRENGTH: Price UP + CVD UP
+    if (priceChange > 0 && cvdChange > 0) interpretation = 'REAL STRENGTH';
+    
+    // 2. REAL WEAKNESS: Price DOWN + CVD DOWN
+    else if (priceChange < 0 && cvdChange < 0) interpretation = 'REAL WEAKNESS';
+
+    // 3. ABSORPTION (BULLISH): Price FLAT/DOWN + CVD UP (Limit Buyers absorbing market sells? No, wait.)
+    // CVD = Aggressive Buy - Aggressive Sell. 
+    // If CVD is UP, Aggressive Buyers are active.
+    // If Price is DOWN despite Aggressive Buying -> Limit Sellers are absorbing the aggressive buys (Passive Selling Strength).
+    // This is actually BEARISH Absorption (Limit Sellers > Aggressive Buyers).
+    // Let's stick to standard CVD Divergence defs:
+    // Price Highs ascending, CVD Highs descending -> Bearish Divergence (Lack of participation).
+    // Simple slope analysis:
+    
+    // Bearish Divergence / Distribution: Price UP, CVD DOWN (Price rising on selling pressure/lack of buying)
+    else if (priceChange > 0 && cvdChange < 0) {
+        interpretation = 'DISTRIBUTION';
+        divergence = 'BEARISH_DISTRIBUTION';
+    }
+
+    // Bullish Divergence / Absorption: Price DOWN, CVD UP (Price falling but aggressive buyers stepping in? Or price falling despite buying?)
+    // Actually: Price making new lows, CVD making higher lows (Waning sell pressure).
+    // Simplified: Price Down, CVD Up -> Aggressive Buying absorbing Limit Sells but price dropping?
+    // Often interpreted as: Aggressive buyers are present but limit sellers are capping it. Pending breakout or exhaustion.
+    // Let's interpret Price DOWN + CVD UP as ABSORPTION (someone is aggressively buying into the drop).
+    else if (priceChange < 0 && cvdChange > 0) {
+        interpretation = 'ABSORPTION';
+        divergence = 'BULLISH_ABSORPTION';
+    }
+
+    return { trend, divergence, interpretation, value: currentCVD };
+};
 
 const appReducer = (state: AppState, action: Action): AppState => {
     switch (action.type) {
@@ -97,7 +151,7 @@ const appReducer = (state: AppState, action: Action): AppState => {
             return { 
                 ...state, 
                 config: { ...state.config, isBacktest: !state.config.isBacktest },
-                market: { ...state.market, candles: [], signals: [] } // Reset data on toggle
+                market: { ...state.market, candles: [], signals: [], runningCVD: 0, recentTrades: [] } // Reset data on toggle
             };
         case 'CONFIG_SET_SYMBOL':
             return {
@@ -107,6 +161,8 @@ const appReducer = (state: AppState, action: Action): AppState => {
                     ...state.market, 
                     candles: [], 
                     bands: null,
+                    runningCVD: 0,
+                    recentTrades: [],
                     metrics: { ...state.market.metrics, pair: action.payload.replace('USDT', '/USDT') }
                 }
             };
@@ -119,7 +175,28 @@ const appReducer = (state: AppState, action: Action): AppState => {
 
         case 'MARKET_SET_HISTORY':
             // Calculate ADX once on history load
-            return { ...state, market: { ...state.market, candles: calculateADX(action.payload) } };
+            // Payload now includes calculated CVD history
+            const candlesWithAdx = calculateADX(action.payload.candles);
+            
+            // Initial analysis based on history
+            const initialCvdAnalysis = calculateCVDAnalysis(candlesWithAdx, action.payload.initialCVD);
+            
+            // Detect Initial Regime
+            const initialRegime = detectMarketRegime(candlesWithAdx);
+
+            return { 
+                ...state, 
+                market: { 
+                    ...state.market, 
+                    candles: candlesWithAdx, 
+                    runningCVD: action.payload.initialCVD,
+                    metrics: {
+                        ...state.market.metrics,
+                        cvdContext: initialCvdAnalysis,
+                        regime: initialRegime
+                    }
+                } 
+            };
         
         case 'MARKET_SET_BANDS':
             return { ...state, market: { ...state.market, bands: action.payload } };
@@ -130,55 +207,131 @@ const appReducer = (state: AppState, action: Action): AppState => {
             const newTime = k.t / 1000;
             const bands = state.market.bands;
 
-            const newCandle: CandleData = {
-                time: newTime,
-                open: parseFloat(k.o),
-                high: parseFloat(k.h),
-                low: parseFloat(k.l),
-                close: newPrice,
-                volume: parseFloat(k.v),
-                zScoreUpper1: bands ? bands.upper_1 : newPrice * 1.002,
-                zScoreLower1: bands ? bands.lower_1 : newPrice * 0.998,
-                zScoreUpper2: bands ? bands.upper_2 : newPrice * 1.005,
-                zScoreLower2: bands ? bands.lower_2 : newPrice * 0.995,
-            };
+            // --- CVD CALCULATION START ---
+            // Binance: v = Total Vol, V = Taker Buy Vol
+            // Buy Vol = V
+            // Sell Vol = v - V
+            // Delta = Buy - Sell = V - (v - V) = 2V - v
+            const totalVol = parseFloat(k.v);
+            const takerBuyVol = parseFloat(k.V);
+            const delta = (2 * takerBuyVol) - totalVol;
+            
+            // NOTE: WS sends updates for the SAME candle repeatedly until it closes.
+            // We need to differentiate between an update to the current candle vs a new candle.
+            
+            let updatedCandles = [...state.market.candles];
+            let newRunningCVD = state.market.runningCVD;
+            
+            if (updatedCandles.length > 0) {
+                const lastCandle = updatedCandles[updatedCandles.length - 1];
+                if (lastCandle.time === newTime) {
+                    const prevDelta = lastCandle.delta || 0;
+                    const currentCVDValue = (updatedCandles.length > 1 ? updatedCandles[updatedCandles.length - 2].cvd || 0 : 0) + delta;
+                    
+                    updatedCandles[updatedCandles.length - 1] = {
+                        ...lastCandle,
+                        close: newPrice,
+                        high: Math.max(lastCandle.high, newPrice),
+                        low: Math.min(lastCandle.low, newPrice),
+                        volume: totalVol,
+                        delta: delta,
+                        cvd: currentCVDValue
+                    };
+                    
+                    newRunningCVD = currentCVDValue; 
+                } else {
+                    const prevCVD = updatedCandles[updatedCandles.length - 1].cvd || 0;
+                    const currentCVDValue = prevCVD + delta;
 
-            // Optimization: Only update candles array if essential
-            let updatedCandles = state.market.candles;
-            const lastCandle = updatedCandles[updatedCandles.length - 1];
-
-            if (lastCandle && lastCandle.time === newCandle.time) {
-                // Update existing candle (mutation is faster here for temp array but let's stick to immutability for safety)
-                updatedCandles = [...updatedCandles.slice(0, -1), newCandle];
+                    updatedCandles.push({
+                        time: newTime,
+                        open: parseFloat(k.o),
+                        high: parseFloat(k.h),
+                        low: parseFloat(k.l),
+                        close: newPrice,
+                        volume: totalVol,
+                        delta: delta,
+                        cvd: currentCVDValue,
+                        zScoreUpper1: bands ? bands.upper_1 : newPrice * 1.002,
+                        zScoreLower1: bands ? bands.lower_1 : newPrice * 0.998,
+                        zScoreUpper2: bands ? bands.upper_2 : newPrice * 1.005,
+                        zScoreLower2: bands ? bands.lower_2 : newPrice * 0.995,
+                    });
+                    
+                    newRunningCVD = currentCVDValue;
+                }
             } else {
-                updatedCandles = [...updatedCandles, newCandle];
+                 updatedCandles.push({
+                    time: newTime,
+                    open: parseFloat(k.o),
+                    high: parseFloat(k.h),
+                    low: parseFloat(k.l),
+                    close: newPrice,
+                    volume: totalVol,
+                    delta: delta,
+                    cvd: delta,
+                    zScoreUpper1: newPrice * 1.002,
+                    zScoreLower1: newPrice * 0.998,
+                    zScoreUpper2: newPrice * 1.005,
+                    zScoreLower2: newPrice * 0.995,
+                });
+                newRunningCVD = delta;
             }
+            // --- CVD CALCULATION END ---
 
-            // Recalculate ADX: In a real high-freq scenario, we'd optimize this to incremental.
-            // For React, passing it through our O(N) optimized function is acceptable for <2000 items.
+            // OFI (Tick based)
+            const takerSellVol = totalVol - takerBuyVol;
+            const ofi = takerBuyVol - takerSellVol; // Same as Delta actually, OFI is usually order book, but here we use Trade Flow
+
             const candlesWithAdx = calculateADX(updatedCandles);
+            const cvdContext = calculateCVDAnalysis(candlesWithAdx, newRunningCVD);
+            
+            // --- REGIME DETECTION ---
+            const currentRegime = detectMarketRegime(candlesWithAdx);
 
             return {
                 ...state,
                 market: {
                     ...state.market,
                     candles: candlesWithAdx,
+                    runningCVD: newRunningCVD,
                     metrics: {
                         ...state.market.metrics,
                         price: newPrice,
-                        change: parseFloat(k.P) || 0
+                        change: parseFloat(k.P) || 0,
+                        ofi: ofi,
+                        cvdContext: cvdContext,
+                        regime: currentRegime
                     }
                 }
             };
         }
 
+        case 'MARKET_TRADE_TICK':
+            // Prepend new trade, keep list size manageable (e.g., 50)
+            const updatedTrades = [action.payload, ...state.market.recentTrades].slice(0, 50);
+            return {
+                ...state,
+                market: {
+                    ...state.market,
+                    recentTrades: updatedTrades
+                }
+            };
+
         case 'MARKET_SIM_TICK':
+            // Simulation tick can now optionally include a new trade
+            let simTrades = state.market.recentTrades;
+            if (action.payload.trade) {
+                simTrades = [action.payload.trade, ...simTrades].slice(0, 50);
+            }
+
             return {
                 ...state,
                 market: {
                     ...state.market,
                     asks: action.payload.asks,
                     bids: action.payload.bids,
+                    recentTrades: simTrades,
                     metrics: { ...state.market.metrics, ...action.payload.metrics }
                 }
             };
@@ -237,6 +390,11 @@ const App: React.FC = () => {
   const isBacktestRef = useRef(state.config.isBacktest);
   const backtestStepRef = useRef(0);
 
+  // Persistence Refs for Order Book Simulation
+  const simulatedAsksRef = useRef<OrderBookLevel[]>([]);
+  const simulatedBidsRef = useRef<OrderBookLevel[]>([]);
+  const lastPriceRef = useRef<number>(42000);
+
   // Sync refs
   useEffect(() => { bandsRef.current = state.market.bands; }, [state.market.bands]);
   useEffect(() => { isBacktestRef.current = state.config.isBacktest; }, [state.config.isBacktest]);
@@ -252,23 +410,35 @@ const App: React.FC = () => {
             if (!res.ok) throw new Error("Binance API Error");
             
             const data = await res.json();
-            const formattedCandles: CandleData[] = data.map((k: any) => ({
-                time: k[0] / 1000,
-                open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]), volume: parseFloat(k[5]),
-                zScoreUpper1: parseFloat(k[4]) * 1.002, zScoreLower1: parseFloat(k[4]) * 0.998,
-                zScoreUpper2: parseFloat(k[4]) * 1.005, zScoreLower2: parseFloat(k[4]) * 0.995,
-            })).filter((c: CandleData) => !isNaN(c.close));
+            let runningCVD = 0;
+            const formattedCandles: CandleData[] = data.map((k: any) => {
+                // k[9] = Taker buy base asset volume
+                const vol = parseFloat(k[5]);
+                const takerBuyVol = parseFloat(k[9]); 
+                const delta = (2 * takerBuyVol) - vol;
+                runningCVD += delta;
+
+                return {
+                    time: k[0] / 1000,
+                    open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]), volume: vol,
+                    delta: delta,
+                    cvd: runningCVD,
+                    zScoreUpper1: parseFloat(k[4]) * 1.002, zScoreLower1: parseFloat(k[4]) * 0.998,
+                    zScoreUpper2: parseFloat(k[4]) * 1.005, zScoreLower2: parseFloat(k[4]) * 0.995,
+                };
+            }).filter((c: CandleData) => !isNaN(c.close));
             
             // Dispatch single update with pre-calculated history
-            dispatch({ type: 'MARKET_SET_HISTORY', payload: formattedCandles });
+            dispatch({ type: 'MARKET_SET_HISTORY', payload: { candles: formattedCandles, initialCVD: runningCVD } });
         } catch (e) {
             console.warn("Failed to fetch live history (CORS/Network). Using Fallback.", e);
             
             // FALLBACK: Generate synthetic data if API fails (Critical for Resilience)
             const fallbackPrice = state.config.activeSymbol.startsWith('BTC') ? 64000 : 3200;
             const fallbackData = generateSyntheticData(fallbackPrice, 200);
+            const fallbackCVD = fallbackData.length > 0 ? (fallbackData[fallbackData.length-1].cvd || 0) : 0;
             
-            dispatch({ type: 'MARKET_SET_HISTORY', payload: fallbackData });
+            dispatch({ type: 'MARKET_SET_HISTORY', payload: { candles: fallbackData, initialCVD: fallbackCVD } });
             dispatch({
                 type: 'ADD_NOTIFICATION',
                 payload: { id: Date.now().toString(), type: 'warning', title: 'Data Stream Restricted', message: 'Binance API blocked. Running on synthetic data feed.' }
@@ -298,7 +468,7 @@ const App: React.FC = () => {
       return () => clearInterval(i);
   }, [state.config.isBacktest, state.config.activeSymbol]);
 
-  // 3. WebSocket (Live)
+  // 3. WebSocket (Live) - UPDATED FOR DUAL STREAMS
   useEffect(() => {
       if (state.config.isBacktest) return;
 
@@ -309,13 +479,40 @@ const App: React.FC = () => {
       const BASE_DELAY = 1000;
 
       const connect = () => {
-          ws = new WebSocket(`wss://stream.binance.com:9443/ws/${state.config.activeSymbol.toLowerCase()}@kline_${state.config.interval}`);
+          // Combined stream for kline AND aggTrade
+          const symbol = state.config.activeSymbol.toLowerCase();
+          const streams = `${symbol}@kline_${state.config.interval}/${symbol}@aggTrade`;
+          ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
           
           ws.onopen = () => { retryCount = 0; };
+          
           ws.onmessage = (event) => {
               const message = JSON.parse(event.data);
-              dispatch({ type: 'MARKET_WS_TICK', payload: message.k });
+              
+              // Binance combined stream payload: { stream: "...", data: {...} }
+              if (message.data) {
+                  // Handle Kline Update
+                  if (message.data.e === 'kline') {
+                      dispatch({ type: 'MARKET_WS_TICK', payload: message.data.k });
+                  } 
+                  // Handle Trade Update
+                  else if (message.data.e === 'aggTrade') {
+                      // m: true if buyer is maker (so it's a SELL)
+                      // m: false if seller is maker (so it's a BUY)
+                      const isSell = message.data.m; 
+                      const trade: RecentTrade = {
+                          id: message.data.a.toString(),
+                          price: parseFloat(message.data.p),
+                          size: parseFloat(message.data.q),
+                          side: isSell ? 'SELL' : 'BUY',
+                          time: message.data.T,
+                          isWhale: (parseFloat(message.data.p) * parseFloat(message.data.q)) > 50000 // > $50k is whale
+                      };
+                      dispatch({ type: 'MARKET_TRADE_TICK', payload: trade });
+                  }
+              }
           };
+          
           ws.onclose = () => {
               if (retryCount < MAX_RETRIES) {
                    const delay = Math.min(BASE_DELAY * Math.pow(1.5, retryCount), 30000);
@@ -395,30 +592,116 @@ const App: React.FC = () => {
       }
   }, [state.ai.isScanning, state.ai.cooldownRemaining, state.config.isBacktest, state.market.metrics.price, state.config.activeSymbol]);
 
-  // 6. Simulation Engine (Metrics Jitter)
+  // 6. Stateful Simulation Engine (Delta Tracking)
   useEffect(() => {
     // Run even if price is 0 (will use fallback logic in dispatch)
     if (!state.config.isBacktest) { 
         const i = setInterval(() => {
-        const price = state.market.metrics.price || 42000;
-        // Simulate Order Book & Flux
-        const spread = price * 0.0001; 
-        const generateLevel = (base: number, off: number) => ({ price: base + off, size: Math.floor(Math.random()*500)+10, total: 0 });
-        
-        dispatch({ 
-            type: 'MARKET_SIM_TICK', 
-            payload: {
-                asks: Array.from({length: 10}, (_, k) => generateLevel(price, spread + (k * spread))).reverse(),
-                bids: Array.from({length: 10}, (_, k) => generateLevel(price, -(spread + (k * spread)))),
-                metrics: {
-                    ofi: Math.max(-500, Math.min(500, state.market.metrics.ofi + Math.floor((Math.random() - 0.5) * 50))),
-                    toxicity: Math.min(100, Math.max(0, state.market.metrics.toxicity + Math.floor((Math.random() - 0.5) * 5))),
-                    zScore: Math.min(4, Math.max(-4, state.market.metrics.zScore + (Math.random() - 0.5) * 0.1)),
-                    heatmap: state.market.metrics.heatmap.map(item => ({ ...item, zScore: item.zScore + (Math.random() - 0.5) * 0.2 }))
+            const currentPrice = state.market.metrics.price || 42000;
+            lastPriceRef.current = currentPrice;
+            const spread = currentPrice * 0.0001; 
+
+            // Helper to generate initial level if missing
+            const generateLevel = (price: number): OrderBookLevel => {
+                 const isWhale = Math.random() > 0.92;
+                 const size = isWhale 
+                    ? Math.floor(Math.random() * 2500) + 1000 
+                    : Math.floor(Math.random() * 300) + 20;
+                 return { price, size, total: 0, delta: 0, classification: 'NORMAL' };
+            };
+
+            // Update Logic:
+            // 1. Shift prices based on market price
+            // 2. For existing prices, change size randomly (add noise)
+            // 3. Occasionally "Spoof" (remove large liquidity)
+            // 4. Calculate Delta
+
+            const updateBook = (prevLevels: OrderBookLevel[], isAsk: boolean): OrderBookLevel[] => {
+                const newLevels: OrderBookLevel[] = [];
+                const basePrice = currentPrice;
+                
+                // 1. Create target price set
+                for(let k=0; k<15; k++) {
+                     const offset = spread + (k * spread * 1.5);
+                     const p = isAsk ? basePrice + offset : basePrice - offset;
+                     
+                     // Find existing level for this price (fuzzy match)
+                     const existing = prevLevels.find(l => Math.abs(l.price - p) < spread * 0.5);
+                     
+                     if (existing) {
+                         // Apply noise
+                         let change = Math.floor((Math.random() - 0.5) * 50);
+                         
+                         // Spoofing Event (5% chance)
+                         if (Math.random() > 0.95 && existing.size > 1000) {
+                             change = -Math.floor(existing.size * 0.8); // Pull 80%
+                         }
+
+                         const newSize = Math.max(1, existing.size + change);
+                         newLevels.push({
+                             ...existing,
+                             price: p, // Update price slightly to track market
+                             size: newSize,
+                             delta: change
+                         });
+                     } else {
+                         // New Level
+                         newLevels.push({
+                             ...generateLevel(p),
+                             delta: 100 // Arbitrary positive delta for new level
+                         });
+                     }
                 }
+                return isAsk ? newLevels.reverse() : newLevels;
+            };
+
+            // Update Refs
+            simulatedAsksRef.current = updateBook(simulatedAsksRef.current, true);
+            simulatedBidsRef.current = updateBook(simulatedBidsRef.current, false);
+
+            // Classification Logic
+            const avgSize = [...simulatedAsksRef.current, ...simulatedBidsRef.current].reduce((acc, l) => acc + l.size, 0) / 30;
+            const classify = (l: OrderBookLevel) => {
+                let type: LiquidityType = 'NORMAL';
+                if (l.size > avgSize * 2.5) type = 'WALL';
+                else if (l.size < avgSize * 0.25) type = 'HOLE';
+                else if (l.size > avgSize * 1.5 && Math.random() > 0.85) type = 'CLUSTER';
+                return { ...l, classification: type };
+            };
+
+            const asks = simulatedAsksRef.current.map(classify);
+            const bids = simulatedBidsRef.current.map(classify);
+
+            // Generate Simulated Trades
+            let simTrade: RecentTrade | undefined;
+            if (Math.random() > 0.3) {
+                 const isBuy = Math.random() > 0.5;
+                 const size = Math.random() * 2;
+                 simTrade = {
+                     id: Date.now().toString(),
+                     price: currentPrice + (Math.random() - 0.5) * 10,
+                     size: size,
+                     side: isBuy ? 'BUY' : 'SELL',
+                     time: Date.now(),
+                     isWhale: size > 1.5 // Arbitrary simulation threshold
+                 };
             }
-        });
-        }, 1000);
+            
+            dispatch({ 
+                type: 'MARKET_SIM_TICK', 
+                payload: {
+                    asks,
+                    bids,
+                    trade: simTrade,
+                    metrics: {
+                        ofi: Math.max(-500, Math.min(500, state.market.metrics.ofi + Math.floor((Math.random() - 0.5) * 50))),
+                        toxicity: Math.min(100, Math.max(0, state.market.metrics.toxicity + Math.floor((Math.random() - 0.5) * 5))),
+                        zScore: Math.min(4, Math.max(-4, state.market.metrics.zScore + (Math.random() - 0.5) * 0.1)),
+                        heatmap: state.market.metrics.heatmap.map(item => ({ ...item, zScore: item.zScore + (Math.random() - 0.5) * 0.2 }))
+                    }
+                }
+            });
+        }, 1000); // Ticking 1s (Simulate latency)
         return () => clearInterval(i);
     }
   }, [state.market.metrics.price, state.config.isBacktest]);
@@ -444,9 +727,25 @@ const App: React.FC = () => {
               dispatch({ 
                   type: 'MARKET_WS_TICK', 
                   payload: { 
-                      t: candle.time as number * 1000, o: candle.open, h: candle.high, l: candle.low, c: candle.close, v: candle.volume, P: 0 
+                      t: candle.time as number * 1000, o: candle.open, h: candle.high, l: candle.low, c: candle.close, v: candle.volume, P: 0, 
+                      V: (candle.volume * 0.6) // Mock taker buy volume
                   } 
               });
+              
+              // Generate fake trades for backtest visualization
+              if (Math.random() > 0.5) {
+                   dispatch({
+                       type: 'MARKET_TRADE_TICK',
+                       payload: {
+                           id: Date.now().toString(),
+                           price: candle.close,
+                           size: Math.random(),
+                           side: Math.random() > 0.5 ? 'BUY' : 'SELL',
+                           time: Date.now(),
+                           isWhale: false
+                       }
+                   });
+              }
           }
           backtestStepRef.current++;
       }, intervalMs);
@@ -499,6 +798,7 @@ const App: React.FC = () => {
                                 candles={state.market.candles} 
                                 asks={state.market.asks} 
                                 bids={state.market.bids} 
+                                recentTrades={state.market.recentTrades}
                                 checklist={CHECKLIST_ITEMS} 
                                 aiScanResult={state.ai.scanResult}
                                 interval={state.config.interval}

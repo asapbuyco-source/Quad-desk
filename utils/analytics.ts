@@ -1,4 +1,4 @@
-import { CandleData } from '../types';
+import { CandleData, RegimeType } from '../types';
 
 /**
  * Calculates the Average Directional Index (ADX) using Wilder's Smoothing technique.
@@ -93,10 +93,45 @@ export const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
 };
 
 /**
+ * Detects the current market regime based on ADX, Volume, and Z-Score behavior.
+ */
+export const detectMarketRegime = (data: CandleData[]): RegimeType => {
+    if (data.length < 20) return 'MEAN_REVERTING';
+
+    const last = data[data.length - 1];
+    const adx = last.adx || 0;
+    const currentVol = last.volume;
+
+    // Calculate Average Volume (last 20)
+    let volSum = 0;
+    for(let i = data.length - 20; i < data.length; i++) {
+        volSum += data[i].volume;
+    }
+    const avgVol = volSum / 20;
+
+    // 1. Check for High Volatility (Volume Explosion)
+    // If volume is > 1.8x average, we are in a shock/volatile event
+    if (currentVol > avgVol * 1.8) {
+        return 'HIGH_VOLATILITY';
+    }
+
+    // 2. Check for Trending
+    // Standard ADX threshold for trend is 25
+    if (adx > 25) {
+        return 'TRENDING';
+    }
+
+    // 3. Default to Mean Reverting (Ranging)
+    return 'MEAN_REVERTING';
+};
+
+/**
  * Generates synthetic candlestick data for simulation or fallback scenarios.
+ * Now includes CVD (Cumulative Volume Delta) simulation.
  */
 export const generateSyntheticData = (startPrice = 42000, count = 300): CandleData[] => {
     let price = startPrice;
+    let runningCVD = 0;
     const data: CandleData[] = [];
     const now = Math.floor(Date.now() / 1000);
     
@@ -120,13 +155,30 @@ export const generateSyntheticData = (startPrice = 42000, count = 300): CandleDa
         // Reverse time calculation so index 0 is oldest
         const time = now - ((count - i) * 60);
 
+        // Simulate Delta based on price move direction mostly, with some noise for divergence
+        const totalVolume = 500 + Math.abs(move) * 10;
+        const isUp = close > price;
+        // Directional bias for delta
+        let deltaBias = isUp ? 0.6 : 0.4;
+        
+        // Create Divergence occasionally
+        if (i > 250 && i < 280) { // Fake absorption at end
+             deltaBias = isUp ? 0.3 : 0.7; // Price moves opposite to volume pressure
+        }
+
+        const takerBuyVol = totalVolume * (deltaBias + (Math.random() * 0.1 - 0.05));
+        const delta = (2 * takerBuyVol) - totalVolume; // Approximation
+        runningCVD += delta;
+
         data.push({
             time: time,
             open: price,
             high: finalHigh,
             low: finalLow,
             close: close,
-            volume: 500 + Math.abs(move) * 10,
+            volume: totalVolume,
+            delta: delta,
+            cvd: runningCVD,
             zScoreUpper1: close * 1.01,
             zScoreLower1: close * 0.99,
             zScoreUpper2: close * 1.02,

@@ -24,7 +24,6 @@ logger = logging.getLogger("QuantDesk")
 load_dotenv()
 
 # Validate Environment on Startup
-# We no longer hard crash here to allow health checks to pass even if keys are missing
 REQUIRED_ENV_VARS = ["GEMINI_API_KEY"]
 missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
 if missing_vars:
@@ -79,33 +78,43 @@ class MarketAnalysis(BaseModel):
 
 # 4. Background Data Ingestion
 async def binance_listener():
-    # client = await AsyncClient.create(api_key, api_secret)
-    client = await AsyncClient.create()
-    bm = BinanceSocketManager(client)
-    ts = bm.kline_socket('BTCUSDT', interval=AsyncClient.KLINE_INTERVAL_1MINUTE)
+    retry_count = 0
+    while True:
+        try:
+            logger.info("🔌 Connecting to Binance WebSocket...")
+            client = await AsyncClient.create()
+            bm = BinanceSocketManager(client)
+            ts = bm.kline_socket('BTCUSDT', interval=AsyncClient.KLINE_INTERVAL_1MINUTE)
 
-    async with ts as tscm:
-        while True:
+            async with ts as tscm:
+                logger.info("✅ Binance WebSocket Connected")
+                retry_count = 0
+                while True:
+                    res = await tscm.recv()
+                    if res:
+                        k = res['k']
+                        candle = {
+                            'time': k['t'],
+                            'open': float(k['o']),
+                            'high': float(k['h']),
+                            'low': float(k['l']),
+                            'close': float(k['c']),
+                            'volume': float(k['v'])
+                        }
+                        
+                        if len(candle_cache) > 0 and candle_cache[-1]['time'] == candle['time']:
+                            candle_cache[-1] = candle
+                        else:
+                            candle_cache.append(candle)
+        except Exception as e:
+            logger.error(f"⚠️ WebSocket Error: {e}")
+            retry_count += 1
+            await asyncio.sleep(min(5 * retry_count, 60)) # Exponential backoff
+        finally:
             try:
-                res = await tscm.recv()
-                if res:
-                    k = res['k']
-                    candle = {
-                        'time': k['t'],
-                        'open': float(k['o']),
-                        'high': float(k['h']),
-                        'low': float(k['l']),
-                        'close': float(k['c']),
-                        'volume': float(k['v'])
-                    }
-                    
-                    if len(candle_cache) > 0 and candle_cache[-1]['time'] == candle['time']:
-                        candle_cache[-1] = candle
-                    else:
-                        candle_cache.append(candle)
-            except Exception as e:
-                logger.error(f"WebSocket Error: {e}")
-                await asyncio.sleep(5) # Reconnect delay
+                await client.close_connection()
+            except:
+                pass
 
 @app.on_event("startup")
 async def startup_event():
@@ -244,7 +253,8 @@ async def analyze_market():
         }}
         """
         
-        response = pro_model.generate_content(
+        # Use async generate_content to avoid blocking the event loop
+        response = await pro_model.generate_content_async(
             prompt,
             generation_config={"response_mime_type": "application/json"}
         )
@@ -271,7 +281,7 @@ async def analyze_market():
             "decision_price": current_price * (0.99 if is_bullish else 1.01),
             "verdict": "ENTRY" if is_bullish else "WAIT",
             "confidence": 0.85,
-            "analysis": f"[SIMULATION MODE] Gemini API unavailable. System detected volatility contraction near key levels. { 'Bullish' if is_bullish else 'Bearish' } divergence on CVD indicates potential move.",
+            "analysis": f"[SIMULATION MODE] Gemini API unavailable or errored. System detected volatility contraction near key levels. { 'Bullish' if is_bullish else 'Bearish' } divergence on CVD indicates potential move.",
             "entry_price": current_price,
             "stop_loss": current_price * 0.98,
             "take_profit": current_price * 1.05,
@@ -336,7 +346,8 @@ async def get_market_intelligence():
         }}
         """
 
-        response = flash_model.generate_content(
+        # Use async generate_content to avoid blocking the event loop
+        response = await flash_model.generate_content_async(
             prompt,
             generation_config={"response_mime_type": "application/json"}
         )
