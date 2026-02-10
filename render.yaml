@@ -10,7 +10,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: FRONTEND_URL
-        value: https://quanddesk.netlify.app
+        value: https://quandt-desk.netlify.app
       - key: PORT
         value: 10000
       - key: GEMINI_API_KEY

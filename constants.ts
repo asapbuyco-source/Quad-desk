@@ -1,12 +1,11 @@
-
 import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem, TradeSignal, PriceLevel } from './types';
 
 export const APP_NAME = "QUANT DESK";
 
-// Backend API URL - Priority: LocalStorage > Env Var > Localhost Fallback
+// Backend API URL - Priority: LocalStorage > Env Var > Production URL > Localhost Fallback
 // This allows runtime configuration for deployed environments
 const STORED_URL = typeof window !== 'undefined' ? localStorage.getItem('VITE_API_URL') : null;
-export const API_BASE_URL = STORED_URL || (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080';
+export const API_BASE_URL = STORED_URL || (import.meta as any).env?.VITE_API_URL || 'https://quad-desk.onrender.com';
 
 console.log('🔗 API Base URL:', API_BASE_URL);
 

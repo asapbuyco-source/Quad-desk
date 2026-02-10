@@ -69,9 +69,10 @@ class MarketAnalysis(BaseModel):
 app = FastAPI()
 
 # Frontend URL configuration
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quanddesk.netlify.app")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quandt-desk.netlify.app")
 ALLOWED_ORIGINS = [
     FRONTEND_URL,
+    "https://quandt-desk.netlify.app", # Explicit add for robustness
     "http://localhost:5173", # Local development
     "http://localhost:3000", # Alternative local port
 ]

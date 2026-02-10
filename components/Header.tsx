@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -233,13 +232,13 @@ const Header: React.FC = () => {
                                       type="text" 
                                       value={apiUrl}
                                       onChange={(e) => setApiUrl(e.target.value)}
-                                      placeholder="http://localhost:8080"
+                                      placeholder="https://quad-desk.onrender.com"
                                       className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-accent"
                                   />
                               </div>
                               <p className="text-[10px] text-zinc-500">
-                                  Default: <code className="bg-white/5 px-1 rounded">http://localhost:8080</code>. 
-                                  For Render deployments, use <code className="bg-white/5 px-1 rounded">https://[your-app].onrender.com</code>.
+                                  Default: <code className="bg-white/5 px-1 rounded">https://quad-desk.onrender.com</code>. 
+                                  For Render deployments, use <code className="bg-white/5 px-1 rounded">https://quad-desk.onrender.com</code>.
                               </p>
                           </div>
                       </div>
