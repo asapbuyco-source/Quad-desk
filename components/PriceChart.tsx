@@ -332,6 +332,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       if (!candlestickSeriesRef.current || !showLevels || !chart) return;
 
       try {
+          // Clear existing price lines
           priceLinesRef.current.forEach(line => {
               try {
                  candlestickSeriesRef.current?.removePriceLine(line);
@@ -339,15 +340,38 @@ const PriceChart: React.FC<PriceChartProps> = ({
           });
           priceLinesRef.current = [];
 
+          // Render levels (includes AI levels from store)
           levels.forEach(l => {
                if (!isValid(l.price)) return;
+               
                let color = '#71717a'; 
                let lineStyle = LineStyle.Dashed;
                let lineWidth: 1 | 2 | 3 | 4 = 1;
 
-               if (l.type === 'ENTRY') { color = '#3b82f6'; lineWidth = 2; lineStyle = LineStyle.Solid; }
-               else if (l.type === 'STOP_LOSS') { color = '#f43f5e'; lineWidth = 2; lineStyle = LineStyle.Solid; }
-               else if (l.type === 'TAKE_PROFIT') { color = '#10b981'; lineWidth = 2; lineStyle = LineStyle.Solid; }
+               // Apply visual archetypes based on Level Type
+               if (l.type === 'ENTRY') { 
+                   color = '#3b82f6'; // Blue
+                   lineWidth = 2; 
+                   lineStyle = LineStyle.Solid; 
+               }
+               else if (l.type === 'STOP_LOSS') { 
+                   color = '#f43f5e'; // Rose
+                   lineWidth = 2; 
+                   lineStyle = LineStyle.Solid; 
+               }
+               else if (l.type === 'TAKE_PROFIT') { 
+                   color = '#10b981'; // Emerald
+                   lineWidth = 2; 
+                   lineStyle = LineStyle.Solid; 
+               }
+               else if (l.type === 'SUPPORT') {
+                   color = '#10b981'; // Emerald (Support)
+                   lineStyle = LineStyle.Dashed;
+               }
+               else if (l.type === 'RESISTANCE') {
+                   color = '#f43f5e'; // Rose (Resistance)
+                   lineStyle = LineStyle.Dashed;
+               }
                
                try {
                    const line = candlestickSeriesRef.current?.createPriceLine({
@@ -359,60 +383,19 @@ const PriceChart: React.FC<PriceChartProps> = ({
                        title: l.label,
                    });
                    if(line) priceLinesRef.current.push(line);
-               } catch(e) {}
+               } catch(e) {
+                   console.warn("Failed to create price line", e);
+               }
           });
 
-          if (aiScanResult) {
-              aiScanResult.support.forEach(price => {
-                  if (!isValid(price)) return;
-                  try {
-                    const line = candlestickSeriesRef.current?.createPriceLine({
-                        price,
-                        color: '#10b981',
-                        lineWidth: 1,
-                        lineStyle: LineStyle.Dashed,
-                        axisLabelVisible: true,
-                        title: 'AI SUPPORT',
-                    });
-                    if(line) priceLinesRef.current.push(line);
-                  } catch(e) {}
-              });
+          // NOTE: AI levels are now merged into 'levels' by the store. 
+          // We no longer render aiScanResult separately to avoid duplicate lines.
 
-              aiScanResult.resistance.forEach(price => {
-                  if (!isValid(price)) return;
-                  try {
-                    const line = candlestickSeriesRef.current?.createPriceLine({
-                        price,
-                        color: '#f43f5e',
-                        lineWidth: 1,
-                        lineStyle: LineStyle.Dashed,
-                        axisLabelVisible: true,
-                        title: 'AI RESIST',
-                    });
-                    if(line) priceLinesRef.current.push(line);
-                  } catch(e) {}
-              });
-
-              if (isValid(aiScanResult.decision_price)) {
-                  const decisionColor = aiScanResult.verdict === 'ENTRY' ? '#3b82f6' : '#f97316';
-                  try {
-                    const line = candlestickSeriesRef.current?.createPriceLine({
-                        price: aiScanResult.decision_price,
-                        color: decisionColor,
-                        lineWidth: 3,
-                        lineStyle: LineStyle.Solid,
-                        axisLabelVisible: true,
-                        title: `AI PIVOT (${aiScanResult.verdict})`,
-                    });
-                    if(line) priceLinesRef.current.push(line);
-                  } catch(e) {}
-              }
-          }
       } catch(e) {
           console.warn("Price lines error", e);
       }
 
-  }, [levels, aiScanResult, showLevels, chart]);
+  }, [levels, showLevels, chart]); // Depend on levels (which updates when AI Scan completes)
 
   useEffect(() => {
     if (!candlestickSeriesRef.current || !chart) return;
