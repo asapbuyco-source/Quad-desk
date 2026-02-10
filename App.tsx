@@ -7,6 +7,7 @@ import IntelView from './components/IntelView';
 import ChartingView from './components/ChartingView';
 import GuideView from './components/GuideView';
 import LandingPage from './components/LandingPage';
+import AuthOverlay from './components/AuthOverlay';
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import { CandleData, OrderBookLevel, RecentTrade, LiquidityType } from './types';
@@ -14,6 +15,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Lock, RefreshCw } from 'lucide-react';
 import { generateSyntheticData } from './utils/analytics';
 import { useStore } from './store';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './lib/firebase';
 
 const BACKTEST_DATA = generateSyntheticData(42000, 300);
 const SCAN_COOLDOWN = 60;
@@ -24,6 +27,7 @@ const App: React.FC = () => {
   const config = useStore(state => state.config);
   const market = useStore(state => state.market);
   const ai = useStore(state => state.ai);
+  const authState = useStore(state => state.auth);
   const notifications = useStore(state => state.notifications);
   
   const {
@@ -35,12 +39,31 @@ const App: React.FC = () => {
       processTradeTick,
       updateAiCooldown,
       addNotification,
-      removeNotification
+      removeNotification,
+      setUser
   } = useStore();
 
   const backtestStepRef = useRef(0);
   const simulatedAsksRef = useRef<OrderBookLevel[]>([]);
   const simulatedBidsRef = useRef<OrderBookLevel[]>([]);
+
+  // 0. Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+        if (user) {
+            setUser(user);
+            addNotification({
+                id: 'auth-success',
+                type: 'success',
+                title: 'Identity Verified',
+                message: `Welcome back, ${user.displayName?.split(' ')[0] || 'Operator'}. Uplink established.`
+            });
+        } else {
+            setUser(null);
+        }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // 1. Fetch Historical Data
   useEffect(() => {
@@ -278,7 +301,7 @@ const App: React.FC = () => {
         }, 1000);
         return () => clearInterval(i);
     }
-  }, [config.isBacktest]); // Only re-run when backtest mode changes
+  }, [config.isBacktest]);
 
   // 6. Backtest Loop
   useEffect(() => {
@@ -323,6 +346,16 @@ const App: React.FC = () => {
                 className="absolute inset-0 z-50"
             >
                 <LandingPage onEnter={() => setHasEntered(true)} />
+            </motion.div>
+        ) : !authState.user ? (
+            <motion.div
+                key="auth"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-50"
+            >
+                <AuthOverlay />
             </motion.div>
         ) : (
             <motion.div 

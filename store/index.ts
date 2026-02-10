@@ -2,11 +2,18 @@ import { create } from 'zustand';
 import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage } from '../types';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS } from '../constants';
 import { calculateADX, detectMarketRegime } from '../utils/analytics';
+import { User, signInWithPopup, signOut } from 'firebase/auth';
+import { auth, googleProvider } from '../lib/firebase';
 
 interface AppState {
     ui: {
         hasEntered: boolean;
         activeTab: string;
+    };
+    auth: {
+        user: User | null;
+        isAuthLoading: boolean;
+        isAuthModalOpen: boolean;
     };
     config: {
         isBacktest: boolean;
@@ -14,7 +21,7 @@ interface AppState {
         activeSymbol: string;
         playbackSpeed: number;
         backtestDate: string;
-        aiModel: string; // New: Selected AI Model
+        aiModel: string;
     };
     market: {
         metrics: MarketMetrics;
@@ -39,13 +46,19 @@ interface AppState {
     setHasEntered: (hasEntered: boolean) => void;
     setActiveTab: (tab: string) => void;
     
+    // Auth Actions
+    setUser: (user: User | null) => void;
+    setAuthLoading: (isLoading: boolean) => void;
+    signIn: () => Promise<void>;
+    logout: () => Promise<void>;
+
     // Config Actions
     toggleBacktest: () => void;
     setSymbol: (symbol: string) => void;
     setInterval: (interval: string) => void;
     setPlaybackSpeed: (speed: number) => void;
     setBacktestDate: (date: string) => void;
-    setAiModel: (model: string) => void; // New Action
+    setAiModel: (model: string) => void;
     
     // Market Actions
     setMarketHistory: (payload: { candles: CandleData[], initialCVD: number }) => void;
@@ -95,15 +108,16 @@ const calculateCVDAnalysis = (candles: CandleData[], currentCVD: number) => {
     return { trend, divergence, interpretation, value: currentCVD };
 };
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>((set, get) => ({
     ui: { hasEntered: false, activeTab: 'dashboard' },
+    auth: { user: null, isAuthLoading: true, isAuthModalOpen: false },
     config: { 
         isBacktest: false, 
         interval: '1m', 
         activeSymbol: 'BTCUSDT', 
         playbackSpeed: 1, 
         backtestDate: new Date().toISOString().split('T')[0],
-        aiModel: 'gemini-3-pro-preview' // Default to Gemini 3 Pro
+        aiModel: 'gemini-3-pro-preview'
     },
     market: {
         metrics: { ...MOCK_METRICS, pair: "BTC/USDT", price: 0, dailyPnL: 1250.00, circuitBreakerTripped: false },
@@ -122,6 +136,36 @@ export const useStore = create<AppState>((set) => ({
     setHasEntered: (hasEntered) => set((state) => ({ ui: { ...state.ui, hasEntered } })),
     setActiveTab: (activeTab) => set((state) => ({ ui: { ...state.ui, activeTab } })),
     
+    // Auth Actions
+    setUser: (user) => set((state) => ({ auth: { ...state.auth, user, isAuthLoading: false } })),
+    setAuthLoading: (isLoading) => set((state) => ({ auth: { ...state.auth, isAuthLoading: isLoading } })),
+    signIn: async () => {
+        try {
+            await signInWithPopup(auth, googleProvider);
+            // State update handled by onAuthStateChanged in App.tsx
+        } catch (error: any) {
+            get().addNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                title: 'Authentication Failed',
+                message: error.message
+            });
+        }
+    },
+    logout: async () => {
+        try {
+            await signOut(auth);
+            get().addNotification({
+                id: Date.now().toString(),
+                type: 'info',
+                title: 'Session Ended',
+                message: 'You have been logged out securely.'
+            });
+        } catch (error: any) {
+            console.error(error);
+        }
+    },
+
     toggleBacktest: () => set((state) => ({ 
         config: { ...state.config, isBacktest: !state.config.isBacktest },
         market: { ...state.market, candles: [], signals: [], runningCVD: 0, recentTrades: [] }

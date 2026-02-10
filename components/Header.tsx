@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X, BrainCircuit, Cpu } from 'lucide-react';
+import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X, BrainCircuit, Cpu, LogOut, User as UserIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
@@ -23,7 +23,8 @@ const Header: React.FC = () => {
   
   const { metrics } = useStore(state => state.market);
   const { isBacktest, activeSymbol, playbackSpeed, backtestDate, aiModel } = useStore(state => state.config);
-  const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setAiModel } = useStore();
+  const { user } = useStore(state => state.auth);
+  const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setAiModel, logout } = useStore();
 
   const handleSaveSettings = () => {
       localStorage.setItem('VITE_API_URL', apiUrl);
@@ -198,8 +199,34 @@ const Header: React.FC = () => {
             <Settings size={20} className="w-5 h-5 lg:w-5 lg:h-5" />
         </button>
 
-        {/* Profile Avatar */}
-        <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 border border-white/20"></div>
+        {/* Profile Avatar / Logout */}
+        <div className="relative group">
+            {user ? (
+                <button className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 border border-white/20 overflow-hidden relative">
+                    {user.photoURL ? (
+                        <img src={user.photoURL} alt={user.displayName || "User"} className="w-full h-full object-cover" />
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center text-white font-bold">
+                            {user.displayName?.charAt(0) || <UserIcon size={14} />}
+                        </div>
+                    )}
+                </button>
+            ) : (
+                <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-zinc-800 border border-white/10"></div>
+            )}
+            
+            {/* Logout Tooltip */}
+            {user && (
+                <div className="absolute top-full right-0 mt-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+                    <button 
+                        onClick={() => logout()}
+                        className="flex items-center gap-2 bg-[#09090b] border border-white/10 px-4 py-2 rounded-lg text-xs font-bold text-rose-500 whitespace-nowrap shadow-xl hover:bg-white/5"
+                    >
+                        <LogOut size={12} /> LOGOUT
+                    </button>
+                </div>
+            )}
+        </div>
       </div>
       
       {/* Settings Modal */}
