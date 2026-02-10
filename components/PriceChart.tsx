@@ -51,7 +51,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     data, 
     signals = [], 
     levels = [],
-    aiScanResult,
     onScan,
     isScanning,
     showLevels = true,

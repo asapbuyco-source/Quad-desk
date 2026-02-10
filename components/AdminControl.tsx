@@ -10,7 +10,7 @@ const AdminControl: React.FC = () => {
     // Hardcoded Admin Check based on prompt requirements
     const isAdmin = user?.email?.toLowerCase() === 'abrackly@gmail.com';
 
-    if (!isAdmin) return null;
+    if (!isAdmin || !user) return null;
 
     return (
         <>
