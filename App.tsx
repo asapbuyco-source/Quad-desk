@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
@@ -57,6 +56,7 @@ const App: React.FC = () => {
             
             const data = await res.json();
             if (data.error) throw new Error(data.error);
+            if (!Array.isArray(data)) throw new Error("Invalid data format received from backend");
 
             let runningCVD = 0;
             const formattedCandles: CandleData[] = data.map((k: any) => {

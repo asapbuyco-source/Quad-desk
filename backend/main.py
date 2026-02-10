@@ -232,7 +232,7 @@ async def get_volatility_bands(symbol: str = Query("BTCUSDT", min_length=3)):
 async def analyze_market(
     background_tasks: BackgroundTasks, 
     symbol: str = Query("BTCUSDT", min_length=3),
-    model: str = Query("gemini-1.5-pro-latest")
+    model: str = Query("gemini-3-pro-preview")
 ):
     # Fetch fresh data on demand
     context_candles = await fetch_binance_candles(symbol, limit=30)
@@ -253,8 +253,8 @@ async def analyze_market(
         try:
             ai_model = genai.GenerativeModel(model)
         except Exception:
-            logger.warning(f"Invalid model {model}, falling back to gemini-1.5-pro-latest")
-            ai_model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            logger.warning(f"Invalid model {model}, falling back to gemini-3-pro-preview")
+            ai_model = genai.GenerativeModel('gemini-3-pro-preview')
 
         prompt = f"""
         Act as a high-frequency trading algorithm. Analyze these candles for {symbol}.
@@ -320,7 +320,7 @@ async def analyze_market(
         }
 
 @app.get("/market-intelligence")
-async def get_market_intelligence(model: str = Query("gemini-1.5-flash-latest")):
+async def get_market_intelligence(model: str = Query("gemini-3-flash-preview")):
     current_time = datetime.now().isoformat()
     try:
         if not GEMINI_API_KEY:
@@ -330,8 +330,8 @@ async def get_market_intelligence(model: str = Query("gemini-1.5-flash-latest"))
         try:
             ai_model = genai.GenerativeModel(model)
         except Exception:
-            logger.warning(f"Invalid model {model}, falling back to gemini-1.5-flash-latest")
-            ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            logger.warning(f"Invalid model {model}, falling back to gemini-3-flash-preview")
+            ai_model = genai.GenerativeModel('gemini-3-flash-preview')
 
         # 1. Try to fetch real news
         real_articles = await fetch_real_news()

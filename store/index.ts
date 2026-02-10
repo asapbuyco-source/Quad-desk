@@ -103,7 +103,7 @@ export const useStore = create<AppState>((set) => ({
         activeSymbol: 'BTCUSDT', 
         playbackSpeed: 1, 
         backtestDate: new Date().toISOString().split('T')[0],
-        aiModel: 'gemini-1.5-pro-latest' // Default to Pro
+        aiModel: 'gemini-3-pro-preview' // Default to Gemini 3 Pro
     },
     market: {
         metrics: { ...MOCK_METRICS, pair: "BTC/USDT", price: 0, dailyPnL: 1250.00, circuitBreakerTripped: false },

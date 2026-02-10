@@ -11,9 +11,9 @@ const ASSETS = [
 ];
 
 const AI_MODELS = [
-    { id: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro', desc: 'High Reasoning (Slower)' },
-    { id: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash', desc: 'Low Latency (Faster)' },
-    { id: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (Exp)', desc: 'Next Gen (Experimental)' },
+    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'High Reasoning (Complex Tasks)' },
+    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', desc: 'Low Latency (Fast)' },
+    { id: 'gemini-flash-latest', label: 'Gemini Flash', desc: 'Standard Flash' },
 ];
 
 const Header: React.FC = () => {
