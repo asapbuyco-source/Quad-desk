@@ -81,38 +81,44 @@ app.add_middleware(
 # 5. Helper Functions
 async def fetch_binance_candles(symbol: str, limit: int = 50):
     """
-    Fetches recent kline data from Binance REST API.
+    Fetches recent kline data with fallback logic for restricted regions.
     """
-    # Standardize symbol format
     clean_symbol = symbol.replace("/", "").upper()
-    url = f"https://api.binance.com/api/v3/klines"
-    params = {
-        "symbol": clean_symbol,
-        "interval": "1m",
-        "limit": limit
-    }
+    endpoints = [
+        "https://api.binance.com",
+        "https://api.binance.us"
+    ]
     
     async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            
-            # Format to dict list
-            candles = []
-            for k in data:
-                candles.append({
-                    'time': k[0],
-                    'open': float(k[1]),
-                    'high': float(k[2]),
-                    'low': float(k[3]),
-                    'close': float(k[4]),
-                    'volume': float(k[5])
-                })
-            return candles
-        except Exception as e:
-            logger.error(f"Binance Fetch Error for {clean_symbol}: {e}")
-            return []
+        for base_url in endpoints:
+            url = f"{base_url}/api/v3/klines"
+            params = {
+                "symbol": clean_symbol,
+                "interval": "1m",
+                "limit": limit
+            }
+            try:
+                resp = await client.get(url, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # Format to dict list
+                    candles = []
+                    for k in data:
+                        candles.append({
+                            'time': k[0],
+                            'open': float(k[1]),
+                            'high': float(k[2]),
+                            'low': float(k[3]),
+                            'close': float(k[4]),
+                            'volume': float(k[5])
+                        })
+                    return candles
+            except Exception as e:
+                logger.warning(f"Fetch failed for {base_url}: {e}")
+                continue
+    
+    logger.error(f"All providers failed for {clean_symbol}")
+    return []
 
 def calculate_z_score_bands(candles):
     if not candles:
@@ -193,7 +199,7 @@ async def fetch_real_news():
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "Quant Desk Terminal Backend", "version": "1.0.0"}
+    return {"status": "ok", "service": "Quant Desk Terminal Backend", "version": "1.1.0 (Geo-Fix)"}
 
 @app.get("/health")
 async def health_check():
@@ -207,33 +213,41 @@ async def health_check():
 @app.get("/history")
 async def proxy_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000):
     """
-    Proxies historical data fetching to avoid CORS issues on the frontend.
-    Handles upstream errors gracefully to prevent invalid format errors in frontend.
+    Proxies historical data fetching with automated fallback for Geo-Restricted regions (US).
+    Attempts Global Binance first, then Binance US.
     """
     clean_symbol = symbol.replace("/", "").upper()
-    url = f"https://api.binance.com/api/v3/klines?symbol={clean_symbol}&interval={interval}&limit={limit}"
+    endpoints = [
+        "https://api.binance.com", 
+        "https://api.binance.us"
+    ]
     
     async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.get(url)
-            data = resp.json()
-            
-            # 1. Success Case: Binance returns a list of klines
-            if isinstance(data, list):
-                return data
-            
-            # 2. Error Case: Binance returns a dict (e.g., {'code': -1121, 'msg': 'Invalid symbol'})
-            if isinstance(data, dict):
-                error_msg = data.get("msg", "Unknown upstream error")
-                logger.warning(f"Upstream Binance Error: {error_msg}")
-                return {"error": f"Upstream: {error_msg}"}
-            
-            # 3. Fallback: Unexpected format
-            return {"error": "Invalid format received from upstream provider"}
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch history: {e}")
-            return {"error": f"Failed to fetch upstream data: {str(e)}"}
+        for base_url in endpoints:
+            url = f"{base_url}/api/v3/klines?symbol={clean_symbol}&interval={interval}&limit={limit}"
+            try:
+                resp = await client.get(url)
+                data = resp.json()
+                
+                # Success: List of klines
+                if isinstance(data, list):
+                    return data
+                
+                # Check for Restriction Error in Dict response
+                if isinstance(data, dict):
+                    msg = data.get("msg", "")
+                    if "restricted" in msg.lower() or "unavailable" in msg.lower():
+                        logger.warning(f"Geo-Blocking detected at {base_url}. Switching to fallback.")
+                        continue # Try next endpoint
+                    
+                    # Return actual API errors that aren't geo-blocks
+                    return {"error": f"Upstream ({base_url}): {msg}"}
+
+            except Exception as e:
+                logger.error(f"Failed to fetch from {base_url}: {e}")
+                continue
+
+    return {"error": "Data unavailable. Service is restricted in your region and fallback failed."}
 
 @app.get("/bands")
 async def get_volatility_bands(symbol: str = Query("BTCUSDT", min_length=3)):

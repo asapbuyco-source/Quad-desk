@@ -162,13 +162,20 @@ const App: React.FC = () => {
       let ws: WebSocket | null = null;
       let reconnectTimer: any = null;
       let retryCount = 0;
+      let useUsEndpoint = false; // Toggle for US endpoint fallback
       const MAX_RETRIES = 10;
       const BASE_DELAY = 1000;
 
       const connect = () => {
           const symbol = config.activeSymbol.toLowerCase();
           const streams = `${symbol}@kline_${config.interval}/${symbol}@aggTrade`;
-          ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+          
+          // Fallback logic for US users
+          const baseUrl = useUsEndpoint 
+              ? 'wss://stream.binance.us:9443' 
+              : 'wss://stream.binance.com:9443';
+
+          ws = new WebSocket(`${baseUrl}/stream?streams=${streams}`);
           
           ws.onopen = () => { retryCount = 0; };
           
@@ -195,6 +202,13 @@ const App: React.FC = () => {
           
           ws.onclose = () => {
               if (retryCount < MAX_RETRIES) {
+                   // Failover Logic: If connection fails instantly, try US Endpoint
+                   if (!useUsEndpoint && retryCount >= 1) {
+                       console.log("⚠️ Geo-Restriction Detected. Switching to Binance.US WebSocket stream.");
+                       useUsEndpoint = true; 
+                       retryCount = 0;
+                   }
+
                    const delay = Math.min(BASE_DELAY * Math.pow(1.5, retryCount), 30000);
                    retryCount++;
                    reconnectTimer = setTimeout(connect, delay);
