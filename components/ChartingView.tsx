@@ -1,30 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
-import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
+import { AiScanResult } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useStore } from '../store';
+import { API_BASE_URL } from '../constants';
 
-interface ChartingViewProps {
-  candles: CandleData[];
-  signals: TradeSignal[];
-  levels: PriceLevel[];
-  aiScanResult?: AiScanResult;
-  onScan?: () => void;
-  isScanning?: boolean;
-  interval?: string;
-  onIntervalChange?: (interval: string) => void;
-}
+const ChartingView: React.FC = () => {
+  const { candles, signals, levels, metrics } = useStore(state => state.market);
+  const { scanResult, isScanning, cooldownRemaining } = useStore(state => state.ai);
+  const { interval, activeSymbol, isBacktest } = useStore(state => state.config);
+  
+  const { 
+      setInterval, 
+      startAiScan, 
+      completeAiScan, 
+      failAiScan, 
+      addNotification 
+  } = useStore();
 
-const ChartingView: React.FC<ChartingViewProps> = ({ 
-    candles, 
-    signals, 
-    levels, 
-    aiScanResult, 
-    onScan, 
-    isScanning,
-    interval,
-    onIntervalChange 
-}) => {
   const [layers, setLayers] = useState({
     zScore: true,
     levels: true,
@@ -46,6 +40,64 @@ const ChartingView: React.FC<ChartingViewProps> = ({
     setLayers(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const handleAiScan = useCallback(async () => {
+      if (isScanning || isBacktest) return;
+      if (cooldownRemaining > 0) {
+          addNotification({ 
+              id: Date.now().toString(), 
+              type: 'warning', 
+              title: 'Cooldown Active', 
+              message: `System cooling down. Wait ${cooldownRemaining}s.` 
+          });
+          return;
+      }
+
+      startAiScan();
+      
+      try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+          const response = await fetch(`${API_BASE_URL}/analyze?symbol=${activeSymbol}`, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          const data = await response.json();
+          
+          if (data && !data.error) {
+              completeAiScan(data);
+              addNotification({ 
+                  id: Date.now().toString(), 
+                  type: 'success', 
+                  title: 'Scan Complete', 
+                  message: `Analysis received for ${activeSymbol}.` 
+              });
+          } else {
+              throw new Error("Invalid response");
+          }
+      } catch (e) {
+          console.warn("Backend unavailable. Simulation fallback.");
+          addNotification({ 
+              id: Date.now().toString(), 
+              type: 'error', 
+              title: 'Network Fault', 
+              message: 'Backend unreachable. Engaging simulation protocols.' 
+          });
+          
+          await new Promise(r => setTimeout(r, 2000));
+          
+          const currentPrice = metrics.price || 43000;
+          const isBullish = Math.random() > 0.4;
+          const simResult: AiScanResult = {
+              support: [currentPrice * 0.985, currentPrice * 0.96],
+              resistance: [currentPrice * 1.015, currentPrice * 1.04],
+              decision_price: currentPrice * (isBullish ? 0.99 : 1.01),
+              verdict: isBullish ? 'ENTRY' : 'WAIT',
+              analysis: `[SIMULATION] Network Unreachable. Volatility contraction detected.`,
+              risk_reward_ratio: 2.5,
+              isSimulated: true
+          };
+          completeAiScan(simResult);
+      }
+  }, [isScanning, cooldownRemaining, isBacktest, activeSymbol, metrics.price, startAiScan, completeAiScan, addNotification]);
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -60,16 +112,16 @@ const ChartingView: React.FC<ChartingViewProps> = ({
                 data={candles} 
                 signals={signals} 
                 levels={levels}
-                aiScanResult={aiScanResult}
-                onScan={onScan}
-                isScanning={isScanning}
+                aiScanResult={scanResult}
+                onScan={handleAiScan}
+                isScanning={isScanning || cooldownRemaining > 0}
                 showZScore={layers.zScore}
                 showLevels={layers.levels}
                 showSignals={layers.signals}
                 onToggleSidePanel={() => toggleLayer('volumeProfile')}
                 isSidePanelOpen={layers.volumeProfile}
                 interval={interval}
-                onIntervalChange={onIntervalChange}
+                onIntervalChange={setInterval}
             >
                 {/* Header Controls */}
                 <div className="flex gap-1.5 bg-zinc-900/50 p-0.5 rounded-full border border-white/5 items-center">

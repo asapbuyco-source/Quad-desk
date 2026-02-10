@@ -1,23 +1,12 @@
-
 import React from 'react';
 import OrderBook from './OrderBook';
 import TradeTape from './TradeTape';
 import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
-import { MarketMetrics, CandleData, OrderBookLevel, SentinelChecklist, AiScanResult, RecentTrade } from '../types';
+import { CHECKLIST_ITEMS } from '../constants';
 import { motion } from 'framer-motion';
 import { Terminal } from 'lucide-react';
-
-interface DashboardViewProps {
-  metrics: MarketMetrics;
-  candles: CandleData[];
-  asks: OrderBookLevel[];
-  bids: OrderBookLevel[];
-  recentTrades: RecentTrade[];
-  checklist: SentinelChecklist[];
-  aiScanResult?: AiScanResult;
-  interval?: string;
-}
+import { useStore } from '../store';
 
 const container = {
   hidden: { opacity: 0 },
@@ -34,7 +23,11 @@ const item = {
   show: { opacity: 1, y: 0 }
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, recentTrades, checklist, aiScanResult, interval }) => {
+const DashboardView: React.FC = () => {
+  const { metrics, asks, bids, recentTrades } = useStore(state => state.market);
+  const { scanResult } = useStore(state => state.ai);
+  const { interval } = useStore(state => state.config);
+
   return (
     <motion.div 
       variants={container}
@@ -61,8 +54,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, rece
       <motion.div variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
         <div className="flex-1 min-h-0">
              <SentinelPanel 
-                checklist={checklist} 
-                aiScanResult={aiScanResult} 
+                checklist={CHECKLIST_ITEMS} 
+                aiScanResult={scanResult} 
                 heatmap={metrics.heatmap}
                 currentRegime={metrics.regime}
              />
@@ -78,8 +71,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ metrics, asks, bids, rece
                 <p>&gt; Connecting to institutional gateway...</p>
                 <p className="text-trade-bid">&gt; [SUCCESS] Feed active: 12ms latency</p>
                 <p>&gt; AI Model [SENTINEL-X] loaded.</p>
-                {aiScanResult && (
-                   <p className="text-brand-accent">&gt; [AI] Market Scan Complete: {aiScanResult.verdict}</p> 
+                {scanResult && (
+                   <p className="text-brand-accent">&gt; [AI] Market Scan Complete: {scanResult.verdict}</p> 
                 )}
                 {metrics.regime && (
                     <p className="text-amber-500">&gt; Regime Update: {metrics.regime}</p>

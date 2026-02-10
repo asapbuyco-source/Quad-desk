@@ -1,13 +1,8 @@
+
 import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
-
-export interface ToastMessage {
-  id: string;
-  type: 'success' | 'error' | 'info' | 'warning';
-  title: string;
-  message: string;
-}
+import { ToastMessage } from '../types';
 
 interface ToastProps {
   toasts: ToastMessage[];

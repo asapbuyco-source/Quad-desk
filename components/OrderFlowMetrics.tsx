@@ -123,7 +123,7 @@ const RegimeWidget: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
     return (
         <div className="fintech-card p-4 flex flex-col justify-between overflow-hidden relative">
             <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-                {React.cloneElement(icon as React.ReactElement, { size: 64 })}
+                {React.cloneElement(icon as React.ReactElement<any>, { size: 64 })}
             </div>
             
             <div className="flex flex-col">

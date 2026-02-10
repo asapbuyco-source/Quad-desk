@@ -1,19 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, Bell, History, Radio, Check, Calendar, Play } from 'lucide-react';
-import { MarketMetrics } from '../types';
 import { AnimatePresence, motion } from 'framer-motion';
-
-interface HeaderProps {
-  metrics: MarketMetrics;
-  isBacktest: boolean;
-  onToggleBacktest: () => void;
-  activeSymbol: string;
-  onSymbolChange: (symbol: string) => void;
-  playbackSpeed?: number;
-  onPlaybackSpeedChange?: (speed: number) => void;
-  backtestDate?: string;
-  onBacktestDateChange?: (date: string) => void;
-}
+import { useStore } from '../store';
 
 const ASSETS = [
     { id: 'BTCUSDT', label: 'BTC/USDT', name: 'Bitcoin' },
@@ -21,18 +9,12 @@ const ASSETS = [
     { id: 'SOLUSDT', label: 'SOL/USDT', name: 'Solana' },
 ];
 
-const Header: React.FC<HeaderProps> = ({ 
-    metrics, 
-    isBacktest, 
-    onToggleBacktest, 
-    activeSymbol, 
-    onSymbolChange,
-    playbackSpeed = 1,
-    onPlaybackSpeedChange,
-    backtestDate,
-    onBacktestDateChange
-}) => {
+const Header: React.FC = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  
+  const { metrics } = useStore(state => state.market);
+  const { isBacktest, activeSymbol, playbackSpeed, backtestDate } = useStore(state => state.config);
+  const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate } = useStore();
 
   return (
     <header className="h-16 lg:h-20 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-transparent relative z-40 border-b border-white/5 lg:border-none">
@@ -65,7 +47,7 @@ const Header: React.FC<HeaderProps> = ({
                             <button
                                 key={asset.id}
                                 onClick={() => {
-                                    onSymbolChange(asset.id);
+                                    setSymbol(asset.id);
                                     setIsDropdownOpen(false);
                                 }}
                                 className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors group"
@@ -122,7 +104,7 @@ const Header: React.FC<HeaderProps> = ({
                     <input 
                         type="date" 
                         value={backtestDate}
-                        onChange={(e) => onBacktestDateChange?.(e.target.value)}
+                        onChange={(e) => setBacktestDate(e.target.value)}
                         className="bg-transparent text-xs font-mono text-zinc-200 focus:outline-none [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-50 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
                     />
                 </div>
@@ -137,7 +119,7 @@ const Header: React.FC<HeaderProps> = ({
                     {[0.5, 1, 5, 10].map(speed => (
                         <button
                             key={speed}
-                            onClick={() => onPlaybackSpeedChange?.(speed)}
+                            onClick={() => setPlaybackSpeed(speed)}
                             className={`
                                 px-2 py-1 text-[10px] font-bold rounded-md transition-all
                                 ${playbackSpeed === speed 
@@ -158,7 +140,7 @@ const Header: React.FC<HeaderProps> = ({
         
         {/* Backtest Toggle */}
         <button 
-          onClick={onToggleBacktest}
+          onClick={toggleBacktest}
           className={`
             flex items-center gap-2 px-2 lg:px-3 py-1.5 rounded-full border transition-all relative z-10
             ${isBacktest 
