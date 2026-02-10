@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
@@ -48,9 +49,11 @@ const App: React.FC = () => {
 
     const fetchHistory = async () => {
         try {
+            console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
             // PROXY REQUEST TO BACKEND TO AVOID CORS
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
-            if (!res.ok) throw new Error("API Error");
+            
+            if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             
             const data = await res.json();
             if (data.error) throw new Error(data.error);
@@ -73,15 +76,24 @@ const App: React.FC = () => {
             }).filter((c: CandleData) => !isNaN(c.close));
             
             setMarketHistory({ candles: formattedCandles, initialCVD: runningCVD });
-        } catch (e) {
-            console.warn("History fetch failed. Engaging Fallback.", e);
+        } catch (e: any) {
+            console.warn(`⚠️ History fetch failed [${API_BASE_URL}]. Engaging Fallback. Reason: ${e.message}`);
             
             const fallbackPrice = config.activeSymbol.startsWith('BTC') ? 64000 : 3200;
             const fallbackData = generateSyntheticData(fallbackPrice, 200);
             const fallbackCVD = fallbackData.length > 0 ? (fallbackData[fallbackData.length-1].cvd || 0) : 0;
             
             setMarketHistory({ candles: fallbackData, initialCVD: fallbackCVD });
-            addNotification({ id: Date.now().toString(), type: 'warning', title: 'Data Feed Restricted', message: 'Using synthetic data stream due to connection issues.' });
+            
+            // Only notify if we were expecting a live connection
+            if (API_BASE_URL.includes('localhost') || API_BASE_URL.includes('render')) {
+                addNotification({ 
+                    id: Date.now().toString(), 
+                    type: 'warning', 
+                    title: 'Data Feed Restricted', 
+                    message: `Using synthetic data. Backend unreachable (${e.message}).` 
+                });
+            }
         }
     };
     fetchHistory();

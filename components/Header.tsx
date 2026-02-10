@@ -1,7 +1,9 @@
+
 import React, { useState } from 'react';
-import { ChevronDown, Bell, History, Radio, Check, Calendar, Play } from 'lucide-react';
+import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Save, Server, RefreshCw, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../store';
+import { API_BASE_URL } from '../constants';
 
 const ASSETS = [
     { id: 'BTCUSDT', label: 'BTC/USDT', name: 'Bitcoin' },
@@ -11,10 +13,17 @@ const ASSETS = [
 
 const Header: React.FC = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [apiUrl, setApiUrl] = useState(API_BASE_URL);
   
   const { metrics } = useStore(state => state.market);
   const { isBacktest, activeSymbol, playbackSpeed, backtestDate } = useStore(state => state.config);
   const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate } = useStore();
+
+  const handleSaveSettings = () => {
+      localStorage.setItem('VITE_API_URL', apiUrl);
+      window.location.reload();
+  };
 
   return (
     <header className="h-16 lg:h-20 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-transparent relative z-40 border-b border-white/5 lg:border-none">
@@ -174,10 +183,85 @@ const Header: React.FC = () => {
             <Bell size={20} className="w-5 h-5 lg:w-5 lg:h-5" />
             <span className="absolute top-2 right-2 w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full bg-trade-ask border-2 border-[#0B101B]"></span>
         </button>
+        
+        {/* Settings Toggle */}
+        <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300"
+        >
+            <Settings size={20} className="w-5 h-5 lg:w-5 lg:h-5" />
+        </button>
 
         {/* Profile Avatar */}
         <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 border border-white/20"></div>
       </div>
+      
+      {/* Settings Modal */}
+      <AnimatePresence>
+          {isSettingsOpen && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                  <motion.div 
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      onClick={() => setIsSettingsOpen(false)}
+                      className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                  />
+                  <motion.div 
+                       initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                       animate={{ opacity: 1, scale: 1, y: 0 }}
+                       exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                       className="relative z-10 w-full max-w-md bg-[#18181b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+                  >
+                      <div className="p-5 border-b border-white/5 flex items-center justify-between">
+                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                              <Settings size={18} className="text-zinc-400" />
+                              System Configuration
+                          </h3>
+                          <button onClick={() => setIsSettingsOpen(false)} className="text-zinc-500 hover:text-white">
+                              <X size={18} />
+                          </button>
+                      </div>
+                      
+                      <div className="p-6 space-y-4">
+                          <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                  <Server size={12} /> Backend API Endpoint
+                              </label>
+                              <div className="flex gap-2">
+                                  <input 
+                                      type="text" 
+                                      value={apiUrl}
+                                      onChange={(e) => setApiUrl(e.target.value)}
+                                      placeholder="http://localhost:8080"
+                                      className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-accent"
+                                  />
+                              </div>
+                              <p className="text-[10px] text-zinc-500">
+                                  Default: <code className="bg-white/5 px-1 rounded">http://localhost:8080</code>. 
+                                  For Render deployments, use <code className="bg-white/5 px-1 rounded">https://[your-app].onrender.com</code>.
+                              </p>
+                          </div>
+                      </div>
+                      
+                      <div className="p-5 border-t border-white/5 bg-white/[0.02] flex justify-end gap-3">
+                          <button 
+                              onClick={() => setIsSettingsOpen(false)}
+                              className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white transition-colors"
+                          >
+                              CANCEL
+                          </button>
+                          <button 
+                              onClick={handleSaveSettings}
+                              className="px-4 py-2 bg-brand-accent hover:bg-brand-accent/90 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition-colors"
+                          >
+                              <RefreshCw size={14} /> SAVE & RELOAD
+                          </button>
+                      </div>
+                  </motion.div>
+              </div>
+          )}
+      </AnimatePresence>
     </header>
   );
 };

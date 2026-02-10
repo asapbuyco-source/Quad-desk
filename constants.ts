@@ -3,9 +3,11 @@ import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem,
 
 export const APP_NAME = "QUANT DESK";
 
-// Backend API URL - Use environment variable or fallback for local dev
-// Cast import.meta to any to bypass missing type definitions for Vite env
-export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080';
+// Backend API URL - Priority: LocalStorage > Env Var > Localhost Fallback
+// This allows runtime configuration for deployed environments
+const STORED_URL = typeof window !== 'undefined' ? localStorage.getItem('VITE_API_URL') : null;
+export const API_BASE_URL = STORED_URL || (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080';
+
 console.log('🔗 API Base URL:', API_BASE_URL);
 
 export const MOCK_METRICS: MarketMetrics = {

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle } from 'lucide-react';
@@ -119,16 +120,16 @@ const IntelView: React.FC = () => {
 
       // 2. Fetch Live
       try {
-          // Check if we are in a browser environment that cant hit localhost backend easily
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+          // Increased timeout to 60s for Render cold starts
+          const timeoutId = setTimeout(() => controller.abort(), 60000);
 
           const res = await fetch(`${API_BASE_URL}/market-intelligence`, {
               signal: controller.signal
           });
           clearTimeout(timeoutId);
           
-          if (!res.ok) throw new Error("Backend connection failed");
+          if (!res.ok) throw new Error(`Backend Error ${res.status}`);
           
           const json = await res.json();
           if (json.error) throw new Error(json.error);
@@ -144,15 +145,13 @@ const IntelView: React.FC = () => {
           console.warn("Intel fetch failed, switching to simulation:", err);
           
           // Fallback Strategy:
-          // 1. Try Cache (even if expired, better than mock)
-          // 2. Use Mock Data
           const cached = localStorage.getItem(CACHE_KEY);
           if (cached && !forceRefresh) {
                setData(JSON.parse(cached));
-               setError("Live uplink failed. Displaying cached intelligence.");
+               setError(`Connection failed (${err.name}). Using cached data.`);
           } else {
                setData(MOCK_INTEL_DATA);
-               setError("Backend offline. Simulation Mode Active.");
+               setError(`Backend Offline (${err.name}). Simulation Mode Active.`);
           }
       } finally {
           setLoading(false);
