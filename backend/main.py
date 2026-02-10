@@ -26,13 +26,13 @@ logger = logging.getLogger("QuantDesk")
 load_dotenv()
 
 # API Keys with provided fallbacks
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAm0ClHA2jRLk53m53GVwqVQHBcFDr4EEY")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY", "ddd54f78ffa8407597d9cfb6d4f72027")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8510816299:AAH2m3XKfQCMiH7ceXjlwZaoiMT5JQ94rN8")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8078378739")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # Binance keys (Optional for public data, but good to have ready)
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "hWXChMsrNZ7UsjYCHvbYqIIs2wZ1qWbZGVfCv2vLp6DXBBGmsVzu241uavuGtYMY")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "H6VGtEcVfqXF9eD9ACIbG2fJI6rmStlHdjkp8xSSgohfUKJZHdRaqRRFFx0Z4P2z")
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 
 # Initialize AI Client
 if GEMINI_API_KEY:
@@ -68,13 +68,21 @@ class MarketAnalysis(BaseModel):
 
 app = FastAPI()
 
-# Enable CORS
+# Frontend URL configuration
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quanddesk.netlify.app")
+ALLOWED_ORIGINS = [
+    FRONTEND_URL,
+    "http://localhost:5173", # Local development
+    "http://localhost:3000", # Alternative local port
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["*"],
 )
 
 # 5. Helper Functions
@@ -274,6 +282,18 @@ async def analyze_market(background_tasks: BackgroundTasks, symbol: str = Query(
         
         return validated.dict()
         
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON Parse Error: {e}")
+        return {
+            "support": [current_price * 0.98, current_price * 0.96],
+            "resistance": [current_price * 1.02, current_price * 1.04],
+            "decision_price": current_price,
+            "verdict": "WAIT",
+            "confidence": 0.5,
+            "analysis": f"[ERROR] AI response parsing failed. Using fallback analysis.",
+            "risk_reward_ratio": 1.5,
+            "is_simulated": True
+        }
     except Exception as e:
         logger.error(f"AI Analysis Error: {e}")
         # Fallback Simulation
@@ -286,7 +306,7 @@ async def analyze_market(background_tasks: BackgroundTasks, symbol: str = Query(
             "decision_price": base_price * (0.99 if is_bullish else 1.01),
             "verdict": "ENTRY" if is_bullish else "WAIT",
             "confidence": 0.85,
-            "analysis": f"[SIMULATION] AI Connection Issue. Analyzed {symbol} locally.",
+            "analysis": f"[SIMULATION] AI Connection Issue: {str(e)}. Analyzed {symbol} locally.",
             "risk_reward_ratio": 2.5,
             "is_simulated": True
         }
@@ -329,7 +349,11 @@ async def get_market_intelligence():
         if not response.text:
              raise Exception("Empty response from AI")
 
-        result = json.loads(response.text)
+        try:
+            result = json.loads(response.text)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON from Gemini Intelligence: {e}")
+            raise Exception("AI returned invalid JSON")
         
         # If we had real articles, merge them into the result structure
         if real_articles:
@@ -343,7 +367,7 @@ async def get_market_intelligence():
         return {
             "articles": [],
             "intelligence": {
-                "main_narrative": "SIMULATION MODE: AI Uplink Interrupted.",
+                "main_narrative": f"SIMULATION MODE: {str(e)}",
                 "whale_impact": "Low",
                 "ai_sentiment_score": 0.0
             },

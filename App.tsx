@@ -179,7 +179,11 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!config.isBacktest) { 
         const i = setInterval(() => {
+            // Use getState() to avoid stale closures
             const currentPrice = useStore.getState().market.metrics.price || 42000;
+            const currentMetrics = useStore.getState().market.metrics;
+            const { processSimTick } = useStore.getState();
+
             const spread = currentPrice * 0.0001; 
 
             const generateLevel = (price: number): OrderBookLevel => {
@@ -252,9 +256,6 @@ const App: React.FC = () => {
                  };
             }
             
-            // Access current metrics via getState to avoid dependency loops
-            const currentMetrics = useStore.getState().market.metrics;
-
             processSimTick({
                 asks,
                 bids,
@@ -269,7 +270,7 @@ const App: React.FC = () => {
         }, 1000);
         return () => clearInterval(i);
     }
-  }, [config.isBacktest]);
+  }, [config.isBacktest]); // Only re-run when backtest mode changes
 
   // 6. Backtest Loop
   useEffect(() => {

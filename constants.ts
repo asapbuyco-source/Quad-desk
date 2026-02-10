@@ -2,8 +2,11 @@
 import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem, TradeSignal, PriceLevel } from './types';
 
 export const APP_NAME = "QUANT DESK";
-// Use Vite's import.meta.env for production builds, fallback to the live Render backend
-export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || "https://quad-desk.onrender.com";
+
+// Backend API URL - Use environment variable or fallback for local dev
+// Cast import.meta to any to bypass missing type definitions for Vite env
+export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080';
+console.log('🔗 API Base URL:', API_BASE_URL);
 
 export const MOCK_METRICS: MarketMetrics = {
   pair: "XAU/USD",
