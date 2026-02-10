@@ -316,6 +316,40 @@ const App: React.FC = () => {
     }
   }, [config.isBacktest]);
 
+  // 6. Backtest Loop
+  useEffect(() => {
+      if (!config.isBacktest) {
+          backtestStepRef.current = 0;
+          return;
+      }
+      if (!BACKTEST_DATA || BACKTEST_DATA.length === 0) return;
+
+      const intervalMs = 100 / config.playbackSpeed;
+      const i = setInterval(() => {
+          if (backtestStepRef.current >= BACKTEST_DATA.length) backtestStepRef.current = 0;
+          const candle = BACKTEST_DATA[backtestStepRef.current];
+          if (candle) {
+              processWsTick({ 
+                  t: typeof candle.time === 'number' ? candle.time * 1000 : 0, 
+                  o: candle.open, h: candle.high, l: candle.low, c: candle.close, v: candle.volume, P: 0, 
+                  V: (candle.volume * 0.6)
+              });
+              if (Math.random() > 0.5) {
+                   processTradeTick({
+                       id: Date.now().toString(),
+                       price: candle.close,
+                       size: Math.random(),
+                       side: Math.random() > 0.5 ? 'BUY' : 'SELL',
+                       time: Date.now(),
+                       isWhale: false
+                   });
+              }
+          }
+          backtestStepRef.current++;
+      }, intervalMs);
+      return () => clearInterval(i);
+  }, [config.isBacktest, config.playbackSpeed]);
+
   return (
     <div className={`h-screen h-[100dvh] w-screen bg-transparent text-slate-200 font-sans overflow-hidden ${market.metrics.circuitBreakerTripped ? 'grayscale opacity-80' : ''}`}>
       <AnimatePresence mode='wait'>
