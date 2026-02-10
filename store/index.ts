@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage } from '../types';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS } from '../constants';
 import { calculateADX, detectMarketRegime } from '../utils/analytics';
-import { User, signInWithPopup, signOut } from 'firebase/auth';
-import { auth, googleProvider } from '../lib/firebase';
+import { User, signInWithPopup, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { auth, googleProvider, db } from '../lib/firebase';
 
 interface AppState {
     ui: {
@@ -14,6 +15,7 @@ interface AppState {
         user: User | null;
         isAuthLoading: boolean;
         isAuthModalOpen: boolean;
+        registrationOpen: boolean;
     };
     config: {
         isBacktest: boolean;
@@ -49,8 +51,14 @@ interface AppState {
     // Auth Actions
     setUser: (user: User | null) => void;
     setAuthLoading: (isLoading: boolean) => void;
-    signIn: () => Promise<void>;
+    signInGoogle: () => Promise<void>;
+    registerEmail: (email: string, pass: string, name: string) => Promise<void>;
+    loginEmail: (email: string, pass: string) => Promise<void>;
     logout: () => Promise<void>;
+    
+    // Admin Actions
+    initSystemConfig: () => void;
+    toggleRegistration: (isOpen: boolean) => Promise<void>;
 
     // Config Actions
     toggleBacktest: () => void;
@@ -110,7 +118,7 @@ const calculateCVDAnalysis = (candles: CandleData[], currentCVD: number) => {
 
 export const useStore = create<AppState>((set, get) => ({
     ui: { hasEntered: false, activeTab: 'dashboard' },
-    auth: { user: null, isAuthLoading: true, isAuthModalOpen: false },
+    auth: { user: null, isAuthLoading: true, isAuthModalOpen: false, registrationOpen: true },
     config: { 
         isBacktest: false, 
         interval: '1m', 
@@ -139,10 +147,45 @@ export const useStore = create<AppState>((set, get) => ({
     // Auth Actions
     setUser: (user) => set((state) => ({ auth: { ...state.auth, user, isAuthLoading: false } })),
     setAuthLoading: (isLoading) => set((state) => ({ auth: { ...state.auth, isAuthLoading: isLoading } })),
-    signIn: async () => {
+    
+    initSystemConfig: () => {
+        // Listen to system config in Firestore
+        const docRef = doc(db, "system", "config");
+        onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                set((state) => ({ auth: { ...state.auth, registrationOpen: data.registrationOpen !== false } }));
+            } else {
+                // If doc doesn't exist, assume open and create it
+                setDoc(docRef, { registrationOpen: true }, { merge: true });
+            }
+        });
+    },
+
+    toggleRegistration: async (isOpen: boolean) => {
+        try {
+             await setDoc(doc(db, "system", "config"), { registrationOpen: isOpen }, { merge: true });
+             get().addNotification({
+                id: Date.now().toString(),
+                type: 'success',
+                title: 'System Updated',
+                message: `New user registration is now ${isOpen ? 'OPEN' : 'CLOSED'}.`
+            });
+        } catch (error: any) {
+            console.error("Failed to update config", error);
+        }
+    },
+
+    signInGoogle: async () => {
+        if (!get().auth.registrationOpen) {
+            // Note: Google sign in usually creates an account if one doesn't exist.
+            // Strict enforcement would require checking if user exists before signIn, 
+            // or deleting the user immediately if they are new and reg is closed.
+            // For this implementation, we will allow Google Login for simplicity 
+            // but show warning if reg is closed.
+        }
         try {
             await signInWithPopup(auth, googleProvider);
-            // State update handled by onAuthStateChanged in App.tsx
         } catch (error: any) {
             get().addNotification({
                 id: Date.now().toString(),
@@ -152,6 +195,40 @@ export const useStore = create<AppState>((set, get) => ({
             });
         }
     },
+
+    registerEmail: async (email, pass, name) => {
+        const { registrationOpen } = get().auth;
+        
+        // ADMIN BACKDOOR: abrackly@gmail.com can always register even if closed
+        const isAdmin = email.toLowerCase() === 'abrackly@gmail.com';
+
+        if (!registrationOpen && !isAdmin) {
+             get().addNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                title: 'Access Denied',
+                message: 'New registrations are currently halted by the administrator.'
+            });
+            throw new Error("Registration is closed.");
+        }
+
+        try {
+            const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+            await updateProfile(userCredential.user, { displayName: name });
+            // User state updated by listener
+        } catch (error: any) {
+             throw error;
+        }
+    },
+
+    loginEmail: async (email, pass) => {
+        try {
+            await signInWithEmailAndPassword(auth, email, pass);
+        } catch (error: any) {
+            throw error;
+        }
+    },
+
     logout: async () => {
         try {
             await signOut(auth);

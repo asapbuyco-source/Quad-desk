@@ -8,6 +8,7 @@ import ChartingView from './components/ChartingView';
 import GuideView from './components/GuideView';
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
+import AdminControl from './components/AdminControl'; // Import Admin Panel
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import { CandleData, OrderBookLevel, RecentTrade, LiquidityType } from './types';
@@ -40,15 +41,19 @@ const App: React.FC = () => {
       updateAiCooldown,
       addNotification,
       removeNotification,
-      setUser
+      setUser,
+      initSystemConfig // Config Action
   } = useStore();
 
   const backtestStepRef = useRef(0);
   const simulatedAsksRef = useRef<OrderBookLevel[]>([]);
   const simulatedBidsRef = useRef<OrderBookLevel[]>([]);
 
-  // 0. Auth Listener
+  // 0. Auth Listener & System Config
   useEffect(() => {
+    // Initialize system listener (e.g., registration status)
+    initSystemConfig();
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
         if (user) {
             setUser(user);
@@ -366,6 +371,9 @@ const App: React.FC = () => {
                 className="flex h-full w-full"
             >
                 <NavBar activeTab={ui.activeTab} setActiveTab={setActiveTab} />
+                
+                {/* Admin Control Panel - Injected at App Root Level */}
+                <AdminControl />
 
                 <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                     <Header />
