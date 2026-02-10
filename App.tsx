@@ -160,7 +160,7 @@ const App: React.FC = () => {
       if (config.isBacktest) return;
 
       let ws: WebSocket | null = null;
-      let reconnectTimer: any = null;
+      let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
       let retryCount = 0;
       let useUsEndpoint = false; // Toggle for US endpoint fallback
       const MAX_RETRIES = 10;
@@ -182,6 +182,9 @@ const App: React.FC = () => {
           ws.onmessage = (event) => {
               const message = JSON.parse(event.data);
               if (message.data) {
+                  // Use getState() to avoid stale closures
+                  const { processWsTick, processTradeTick } = useStore.getState();
+
                   if (message.data.e === 'kline') {
                       processWsTick(message.data.k);
                   } 
@@ -215,12 +218,20 @@ const App: React.FC = () => {
                }
           };
       };
+      
       connect();
+      
       return () => {
-          if (ws) ws.close();
-          if (reconnectTimer) clearTimeout(reconnectTimer);
+          if (ws) {
+              ws.close();
+              ws = null;
+          }
+          if (reconnectTimer) {
+              clearTimeout(reconnectTimer);
+              reconnectTimer = null;
+          }
       };
-  }, [config.isBacktest, config.interval, config.activeSymbol]);
+  }, [config.isBacktest, config.interval, config.activeSymbol]); // Correct dependencies
 
   // 4. Cooldown Timer
   useEffect(() => {
@@ -236,11 +247,12 @@ const App: React.FC = () => {
   // 5. Stateful Simulation Engine
   useEffect(() => {
     if (!config.isBacktest) { 
-        const i = setInterval(() => {
-            // Use getState() to avoid stale closures
-            const currentPrice = useStore.getState().market.metrics.price || 42000;
-            const currentMetrics = useStore.getState().market.metrics;
-            const { processSimTick } = useStore.getState();
+        const intervalId = setInterval(() => {
+            // Always get fresh state
+            const { market, processSimTick } = useStore.getState();
+            
+            const currentPrice = market.metrics.price || 42000;
+            const currentMetrics = market.metrics;
 
             const spread = currentPrice * 0.0001; 
 
@@ -326,9 +338,9 @@ const App: React.FC = () => {
                 }
             });
         }, 1000);
-        return () => clearInterval(i);
+        return () => clearInterval(intervalId);
     }
-  }, [config.isBacktest]);
+  }, [config.isBacktest]); // Dependencies correct, uses getState() internally
 
   // 6. Backtest Loop
   useEffect(() => {

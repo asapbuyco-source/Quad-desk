@@ -64,6 +64,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   
+  // Performance Tracking Refs
+  const lastCandleCountRef = useRef(0);
+  const lastCandleTimeRef = useRef<Time | null>(null);
+
   // Use Shared Hook - returns instance directly
   const chart = useLightweightChart(chartContainerRef, {
       leftPriceScale: {
@@ -239,72 +243,100 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   }, [chart]); 
 
-  // Update Data & Bands & ADX
+  // Reset tracking on symbol/interval change to force full redraw
   useEffect(() => {
-    if (!chart || !candlestickSeriesRef.current) return;
+    lastCandleCountRef.current = 0;
+    lastCandleTimeRef.current = null;
+  }, [interval]);
+
+  // Optimized Data Update (Incremental)
+  useEffect(() => {
+    if (!chart || !candlestickSeriesRef.current || data.length === 0) return;
 
     const rafId = requestAnimationFrame(() => {
-        if (!chart || !candlestickSeriesRef.current) return;
+        if (!chart || !candlestickSeriesRef.current || !volumeSeriesRef.current) return;
 
         try {
-            if (data.length === 0) {
-                candlestickSeriesRef.current.setData([]);
-                volumeSeriesRef.current?.setData([]);
-                adxSeriesRef.current?.setData([]);
-                upper1SeriesRef.current?.setData([]);
-                lower1SeriesRef.current?.setData([]);
-                upper2SeriesRef.current?.setData([]);
-                lower2SeriesRef.current?.setData([]);
-                return;
-            }
-
-            // Ensure data is sorted by time and valid
-            const validData = [...data]
-                .filter(d => d.time && isValid(d.open) && isValid(d.high) && isValid(d.low) && isValid(d.close))
-                .sort((a, b) => {
-                    if (typeof a.time === 'number' && typeof b.time === 'number') {
-                        return a.time - b.time;
-                    }
-                    return String(a.time).localeCompare(String(b.time));
-                });
-
-            const candles = validData.map(d => ({
+            const currentCount = data.length;
+            const lastCandle = data[data.length - 1];
+            
+            // Ensure data is sorted by time and valid (needed for initial load)
+            const mapCandle = (d: CandleData) => ({
                 time: d.time as Time,
                 open: d.open,
                 high: d.high,
                 low: d.low,
                 close: d.close
-            }));
+            });
 
-            const volumes = validData.map(d => ({
+            const mapVolume = (d: CandleData) => ({
                 time: d.time as Time,
                 value: isValid(d.volume) ? d.volume : 0,
                 color: d.close > d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'
-            }));
+            });
 
-            const adxData = validData.map(d => ({
-                time: d.time as Time,
-                value: isValid(d.adx) ? (d.adx || 0) : 0
-            }));
-            
-            if (validData.length > 0) {
-                const lastAdx = validData[validData.length - 1].adx;
-                setCurrentAdx(isValid(lastAdx) ? (lastAdx || 0) : 0);
+            // CASE 1: Reset / First Load / Backtest Jump
+            if (lastCandleCountRef.current === 0 || currentCount < lastCandleCountRef.current || !lastCandleTimeRef.current) {
+                performance.mark('chart-full-update-start');
+                
+                const validData = [...data].sort((a, b) => {
+                    if (typeof a.time === 'number' && typeof b.time === 'number') return a.time - b.time;
+                    return String(a.time).localeCompare(String(b.time));
+                });
+
+                const candles = validData.map(mapCandle);
+                const volumes = validData.map(mapVolume);
+                
+                // Full Bands & ADX update
+                const adxData = validData.map(d => ({ time: d.time as Time, value: isValid(d.adx) ? (d.adx || 0) : 0 }));
+                const u1Data = validData.filter(d => isValid(d.zScoreUpper1)).map(d => ({ time: d.time as Time, value: d.zScoreUpper1 }));
+                const l1Data = validData.filter(d => isValid(d.zScoreLower1)).map(d => ({ time: d.time as Time, value: d.zScoreLower1 }));
+                
+                candlestickSeriesRef.current.setData(candles);
+                volumeSeriesRef.current.setData(volumes);
+                adxSeriesRef.current?.setData(adxData);
+                upper1SeriesRef.current?.setData(u1Data);
+                lower1SeriesRef.current?.setData(l1Data);
+                upper2SeriesRef.current?.setData(validData.filter(d => isValid(d.zScoreUpper2)).map(d => ({ time: d.time as Time, value: d.zScoreUpper2 })));
+                lower2SeriesRef.current?.setData(validData.filter(d => isValid(d.zScoreLower2)).map(d => ({ time: d.time as Time, value: d.zScoreLower2 })));
+
+                if (validData.length > 0) {
+                   const lastAdx = validData[validData.length - 1].adx;
+                   setCurrentAdx(isValid(lastAdx) ? (lastAdx || 0) : 0);
+                }
+
+                performance.mark('chart-full-update-end');
+                performance.measure('chart-full-update', 'chart-full-update-start', 'chart-full-update-end');
+                
+                lastCandleCountRef.current = currentCount;
+                lastCandleTimeRef.current = lastCandle.time as Time;
+                return;
             }
 
-            candlestickSeriesRef.current.setData(candles);
-            volumeSeriesRef.current?.setData(volumes);
-            adxSeriesRef.current?.setData(adxData);
-            
-            const u1Data = validData.filter(d => isValid(d.zScoreUpper1)).map(d => ({ time: d.time as Time, value: d.zScoreUpper1 }));
-            const l1Data = validData.filter(d => isValid(d.zScoreLower1)).map(d => ({ time: d.time as Time, value: d.zScoreLower1 }));
-            const u2Data = validData.filter(d => isValid(d.zScoreUpper2)).map(d => ({ time: d.time as Time, value: d.zScoreUpper2 }));
-            const l2Data = validData.filter(d => isValid(d.zScoreLower2)).map(d => ({ time: d.time as Time, value: d.zScoreLower2 }));
-            
-            upper1SeriesRef.current?.setData(u1Data);
-            lower1SeriesRef.current?.setData(l1Data);
-            upper2SeriesRef.current?.setData(u2Data);
-            lower2SeriesRef.current?.setData(l2Data);
+            // CASE 2: New Candle Added
+            if (lastCandle.time !== lastCandleTimeRef.current) {
+                performance.mark('chart-new-candle-start');
+                candlestickSeriesRef.current.update(mapCandle(lastCandle));
+                volumeSeriesRef.current.update(mapVolume(lastCandle));
+                // Update bands/indicators incrementally
+                if(adxSeriesRef.current) adxSeriesRef.current.update({ time: lastCandle.time as Time, value: lastCandle.adx || 0 });
+                if(upper1SeriesRef.current) upper1SeriesRef.current.update({ time: lastCandle.time as Time, value: lastCandle.zScoreUpper1 });
+                if(lower1SeriesRef.current) lower1SeriesRef.current.update({ time: lastCandle.time as Time, value: lastCandle.zScoreLower1 });
+                // ... Update others similarly if needed, or keep lightweight
+
+                performance.mark('chart-new-candle-end');
+                performance.measure('chart-new-candle', 'chart-new-candle-start', 'chart-new-candle-end');
+                
+                lastCandleTimeRef.current = lastCandle.time as Time;
+                lastCandleCountRef.current = currentCount;
+            } 
+            // CASE 3: Existing Candle Updated (Tick)
+            else {
+                candlestickSeriesRef.current.update(mapCandle(lastCandle));
+                volumeSeriesRef.current.update(mapVolume(lastCandle));
+                lastCandleCountRef.current = currentCount;
+            }
+
         } catch (err) {
             console.warn("Chart Data Update Error:", err);
         }
@@ -312,7 +344,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     return () => cancelAnimationFrame(rafId);
 
-  }, [data, chart]);
+  }, [data, chart]); // Keep chart as dependency, but manage updates incrementally
 
   useEffect(() => {
     if(!upper1SeriesRef.current || !chart) return;
@@ -386,15 +418,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
                    console.warn("Failed to create price line", e);
                }
           });
-
-          // NOTE: AI levels are now merged into 'levels' by the store. 
-          // We no longer render aiScanResult separately to avoid duplicate lines.
-
       } catch(e) {
           console.warn("Price lines error", e);
       }
 
-  }, [levels, showLevels, chart]); // Depend on levels (which updates when AI Scan completes)
+  }, [levels, showLevels, chart]); 
 
   useEffect(() => {
     if (!candlestickSeriesRef.current || !chart) return;

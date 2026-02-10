@@ -6,6 +6,10 @@ import { User, signInWithPopup, signOut, createUserWithEmailAndPassword, signInW
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
 
+// Debounced Calculation Scheduler
+let analyticsTimeout: ReturnType<typeof setTimeout> | null = null;
+const ANALYTICS_DEBOUNCE_MS = 1000; // 1 second
+
 interface AppState {
     ui: {
         hasEntered: boolean;
@@ -41,6 +45,10 @@ interface AppState {
         isScanning: boolean;
         lastScanTime: number;
         cooldownRemaining: number;
+    };
+    analytics: {
+        lastCalculation: number;
+        isCalculating: boolean;
     };
     notifications: ToastMessage[];
 
@@ -139,6 +147,7 @@ export const useStore = create<AppState>((set, get) => ({
         recentTrades: []
     },
     ai: { scanResult: undefined, isScanning: false, lastScanTime: 0, cooldownRemaining: 0 },
+    analytics: { lastCalculation: 0, isCalculating: false },
     notifications: [],
 
     setHasEntered: (hasEntered) => set((state) => ({ ui: { ...state.ui, hasEntered } })),
@@ -179,10 +188,6 @@ export const useStore = create<AppState>((set, get) => ({
     signInGoogle: async () => {
         if (!get().auth.registrationOpen) {
             // Note: Google sign in usually creates an account if one doesn't exist.
-            // Strict enforcement would require checking if user exists before signIn, 
-            // or deleting the user immediately if they are new and reg is closed.
-            // For this implementation, we will allow Google Login for simplicity 
-            // but show warning if reg is closed.
         }
         try {
             await signInWithPopup(auth, googleProvider);
@@ -287,21 +292,27 @@ export const useStore = create<AppState>((set, get) => ({
     setMarketBands: (bands) => set((state) => ({ market: { ...state.market, bands } })),
 
     processWsTick: (k) => set((state) => {
+        // PHASE 1: Immediate price update (Hot Path)
         const newPrice = parseFloat(k.c);
         const newTime = k.t / 1000;
-        const bands = state.market.bands;
-
         const totalVol = parseFloat(k.v);
         const takerBuyVol = parseFloat(k.V);
         const delta = (2 * takerBuyVol) - totalVol;
         
+        const takerSellVol = totalVol - takerBuyVol;
+        const ofi = takerBuyVol - takerSellVol;
+
         let updatedCandles = [...state.market.candles];
         let newRunningCVD = state.market.runningCVD;
-        
+        const bands = state.market.bands;
+
+        // Update or append candle logic
         if (updatedCandles.length > 0) {
             const lastCandle = updatedCandles[updatedCandles.length - 1];
+            
             if (lastCandle.time === newTime) {
-                const currentCVDValue = (updatedCandles.length > 1 ? updatedCandles[updatedCandles.length - 2].cvd || 0 : 0) + delta;
+                // Update existing
+                const currentCVD = (updatedCandles.length > 1 ? updatedCandles[updatedCandles.length - 2].cvd || 0 : 0) + delta;
                 updatedCandles[updatedCandles.length - 1] = {
                     ...lastCandle,
                     close: newPrice,
@@ -309,12 +320,13 @@ export const useStore = create<AppState>((set, get) => ({
                     low: Math.min(lastCandle.low, newPrice),
                     volume: totalVol,
                     delta: delta,
-                    cvd: currentCVDValue
+                    cvd: currentCVD
                 };
-                newRunningCVD = currentCVDValue; 
+                newRunningCVD = currentCVD; 
             } else {
-                const prevCVD = updatedCandles[updatedCandles.length - 1].cvd || 0;
-                const currentCVDValue = prevCVD + delta;
+                // Append new
+                const prevCVD = lastCandle.cvd || 0;
+                const currentCVD = prevCVD + delta;
                 updatedCandles.push({
                     time: newTime,
                     open: parseFloat(k.o),
@@ -323,15 +335,18 @@ export const useStore = create<AppState>((set, get) => ({
                     close: newPrice,
                     volume: totalVol,
                     delta: delta,
-                    cvd: currentCVDValue,
-                    zScoreUpper1: bands ? bands.upper_1 : newPrice * 1.002,
-                    zScoreLower1: bands ? bands.lower_1 : newPrice * 0.998,
-                    zScoreUpper2: bands ? bands.upper_2 : newPrice * 1.005,
-                    zScoreLower2: bands ? bands.lower_2 : newPrice * 0.995,
+                    cvd: currentCVD,
+                    // Carry forward previous ADX/Bands until recalculated
+                    adx: lastCandle.adx, 
+                    zScoreUpper1: bands ? bands.upper_1 : lastCandle.zScoreUpper1,
+                    zScoreLower1: bands ? bands.lower_1 : lastCandle.zScoreLower1,
+                    zScoreUpper2: bands ? bands.upper_2 : lastCandle.zScoreUpper2,
+                    zScoreLower2: bands ? bands.lower_2 : lastCandle.zScoreLower2,
                 });
-                newRunningCVD = currentCVDValue;
+                newRunningCVD = currentCVD;
             }
         } else {
+             // First candle
              updatedCandles.push({
                 time: newTime,
                 open: parseFloat(k.o),
@@ -349,24 +364,58 @@ export const useStore = create<AppState>((set, get) => ({
             newRunningCVD = delta;
         }
 
-        const takerSellVol = totalVol - takerBuyVol;
-        const ofi = takerBuyVol - takerSellVol;
-        const candlesWithAdx = calculateADX(updatedCandles);
-        const cvdContext = calculateCVDAnalysis(candlesWithAdx, newRunningCVD);
-        const currentRegime = detectMarketRegime(candlesWithAdx);
+        // PHASE 2: Schedule deferred analytics (Cold Path)
+        if (analyticsTimeout) clearTimeout(analyticsTimeout);
 
+        analyticsTimeout = setTimeout(() => {
+            const currentState = get();
+            if (currentState.analytics.isCalculating) return;
+
+            set((s) => ({ analytics: { ...s.analytics, isCalculating: true } }));
+            
+            performance.mark('analytics-start');
+            const candlesWithAdx = calculateADX(currentState.market.candles);
+            const cvdContext = calculateCVDAnalysis(candlesWithAdx, currentState.market.runningCVD);
+            const currentRegime = detectMarketRegime(candlesWithAdx);
+            performance.mark('analytics-end');
+            
+            // Log performance occasionally
+            if (Math.random() > 0.95) {
+                const duration = performance.measure('analytics', 'analytics-start', 'analytics-end').duration;
+                if (duration > 20) console.log(`Analytics took ${duration.toFixed(2)}ms`);
+            }
+
+            set((s) => ({
+                market: {
+                    ...s.market,
+                    candles: candlesWithAdx,
+                    metrics: {
+                        ...s.market.metrics,
+                        cvdContext,
+                        regime: currentRegime
+                    }
+                },
+                analytics: {
+                    lastCalculation: Date.now(),
+                    isCalculating: false
+                }
+            }));
+            
+            analyticsTimeout = null;
+        }, ANALYTICS_DEBOUNCE_MS);
+
+        // Return immediate update (UI Responsiveness)
         return {
             market: {
                 ...state.market,
-                candles: candlesWithAdx,
+                candles: updatedCandles,
                 runningCVD: newRunningCVD,
                 metrics: {
                     ...state.market.metrics,
                     price: newPrice,
                     change: parseFloat(k.P) || 0,
                     ofi: ofi,
-                    cvdContext: cvdContext,
-                    regime: currentRegime
+                    // Keep previous analytics until cold path runs
                 }
             }
         };
