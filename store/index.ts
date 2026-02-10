@@ -14,6 +14,7 @@ interface AppState {
         activeSymbol: string;
         playbackSpeed: number;
         backtestDate: string;
+        aiModel: string; // New: Selected AI Model
     };
     market: {
         metrics: MarketMetrics;
@@ -44,6 +45,7 @@ interface AppState {
     setInterval: (interval: string) => void;
     setPlaybackSpeed: (speed: number) => void;
     setBacktestDate: (date: string) => void;
+    setAiModel: (model: string) => void; // New Action
     
     // Market Actions
     setMarketHistory: (payload: { candles: CandleData[], initialCVD: number }) => void;
@@ -100,7 +102,8 @@ export const useStore = create<AppState>((set) => ({
         interval: '1m', 
         activeSymbol: 'BTCUSDT', 
         playbackSpeed: 1, 
-        backtestDate: new Date().toISOString().split('T')[0] 
+        backtestDate: new Date().toISOString().split('T')[0],
+        aiModel: 'gemini-1.5-pro-latest' // Default to Pro
     },
     market: {
         metrics: { ...MOCK_METRICS, pair: "BTC/USDT", price: 0, dailyPnL: 1250.00, circuitBreakerTripped: false },
@@ -139,6 +142,7 @@ export const useStore = create<AppState>((set) => ({
     setInterval: (interval) => set((state) => ({ config: { ...state.config, interval } })),
     setPlaybackSpeed: (playbackSpeed) => set((state) => ({ config: { ...state.config, playbackSpeed } })),
     setBacktestDate: (backtestDate) => set((state) => ({ config: { ...state.config, backtestDate } })),
+    setAiModel: (aiModel) => set((state) => ({ config: { ...state.config, aiModel } })),
 
     setMarketHistory: ({ candles, initialCVD }) => set((state) => {
         const candlesWithAdx = calculateADX(candles);

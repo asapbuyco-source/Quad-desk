@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle } from 'lucide-react';
 import { API_BASE_URL } from '../constants';
+import { useStore } from '../store';
 
 interface NewsArticle {
     source: { id: string | null; name: string };
@@ -99,12 +99,14 @@ const IntelView: React.FC = () => {
   const [data, setData] = useState<MarketIntelResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const { aiModel } = useStore(state => state.config);
 
   const fetchIntelligence = async (forceRefresh = false) => {
       setLoading(true);
       setError(null);
 
-      // 1. Check Cache
+      // 1. Check Cache (Skip if force refresh)
       if (!forceRefresh) {
           const cached = localStorage.getItem(CACHE_KEY);
           if (cached) {
@@ -124,7 +126,7 @@ const IntelView: React.FC = () => {
           // Increased timeout to 60s for Render cold starts
           const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-          const res = await fetch(`${API_BASE_URL}/market-intelligence`, {
+          const res = await fetch(`${API_BASE_URL}/market-intelligence?model=${aiModel}`, {
               signal: controller.signal
           });
           clearTimeout(timeoutId);

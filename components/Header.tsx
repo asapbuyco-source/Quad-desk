@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X, BrainCircuit, Cpu } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
@@ -10,14 +10,20 @@ const ASSETS = [
     { id: 'SOLUSDT', label: 'SOL/USDT', name: 'Solana' },
 ];
 
+const AI_MODELS = [
+    { id: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro', desc: 'High Reasoning (Slower)' },
+    { id: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash', desc: 'Low Latency (Faster)' },
+    { id: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (Exp)', desc: 'Next Gen (Experimental)' },
+];
+
 const Header: React.FC = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [apiUrl, setApiUrl] = useState(API_BASE_URL);
   
   const { metrics } = useStore(state => state.market);
-  const { isBacktest, activeSymbol, playbackSpeed, backtestDate } = useStore(state => state.config);
-  const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate } = useStore();
+  const { isBacktest, activeSymbol, playbackSpeed, backtestDate, aiModel } = useStore(state => state.config);
+  const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setAiModel } = useStore();
 
   const handleSaveSettings = () => {
       localStorage.setItem('VITE_API_URL', apiUrl);
@@ -28,13 +34,14 @@ const Header: React.FC = () => {
     <header className="h-16 lg:h-20 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-transparent relative z-40 border-b border-white/5 lg:border-none">
       
       {/* Left: Ticker & Price */}
-      <div className="flex flex-col justify-center relative">
+      <div className="flex flex-col justify-center relative min-w-0">
         <button 
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="flex items-center gap-2 text-slate-400 text-[10px] lg:text-xs font-semibold tracking-wider uppercase mb-0.5 lg:mb-1 hover:text-white transition-colors"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors group mb-0.5"
         >
-            <span>Market Overview</span>
-            <ChevronDown size={12} className={`w-3 h-3 lg:w-auto lg:h-auto transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+            <span className="text-[10px] lg:text-xs font-semibold tracking-wider uppercase hidden sm:inline">Market Overview</span>
+            <span className="text-[10px] font-semibold tracking-wider uppercase sm:hidden">Market</span>
+            <ChevronDown size={12} className={`w-3 h-3 transition-transform text-slate-500 group-hover:text-white ${isDropdownOpen ? 'rotate-180' : ''}`} />
         </button>
 
         {/* Asset Dropdown */}
@@ -74,8 +81,8 @@ const Header: React.FC = () => {
             )}
         </AnimatePresence>
 
-        <div className="flex items-baseline gap-2 lg:gap-4">
-          <h1 className="text-xl lg:text-3xl font-bold text-white tracking-tight font-sans">
+        <div className="flex items-baseline gap-3 lg:gap-4 overflow-hidden">
+          <h1 className="text-xl lg:text-3xl font-bold text-white tracking-tight font-sans truncate">
             {metrics.pair}
           </h1>
           <div className="flex items-center gap-2 lg:gap-3">
@@ -144,7 +151,7 @@ const Header: React.FC = () => {
       )}
 
       {/* Right: Actions */}
-      <div className="flex items-center gap-2 lg:gap-4">
+      <div className="flex items-center gap-2 lg:gap-4 shrink-0">
         
         {/* Backtest Toggle */}
         <button 
@@ -159,12 +166,12 @@ const Header: React.FC = () => {
              {isBacktest ? (
                  <>
                     <History size={14} className="animate-spin-slow" />
-                    <span className="hidden lg:inline text-xs font-bold uppercase">Replay Mode</span>
+                    <span className="hidden lg:inline text-xs font-bold uppercase">Replay</span>
                  </>
              ) : (
                  <>
                     <Radio size={14} />
-                    <span className="hidden lg:inline text-xs font-medium">Live Feed</span>
+                    <span className="hidden lg:inline text-xs font-medium">Live</span>
                  </>
              )}
         </button>
@@ -222,8 +229,37 @@ const Header: React.FC = () => {
                           </button>
                       </div>
                       
-                      <div className="p-6 space-y-4">
-                          <div className="space-y-2">
+                      <div className="p-6 space-y-6">
+                          {/* AI Model Settings */}
+                          <div className="space-y-3">
+                              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                  <BrainCircuit size={12} className="text-brand-accent" /> AI Inference Engine
+                              </label>
+                              <div className="space-y-1">
+                                  {AI_MODELS.map((model) => (
+                                      <button
+                                          key={model.id}
+                                          onClick={() => setAiModel(model.id)}
+                                          className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-all text-left group
+                                              ${aiModel === model.id 
+                                                  ? 'bg-brand-accent/10 border-brand-accent/50' 
+                                                  : 'bg-black/20 border-white/5 hover:bg-white/5'}
+                                          `}
+                                      >
+                                          <div>
+                                              <div className={`text-sm font-bold ${aiModel === model.id ? 'text-brand-accent' : 'text-zinc-300'}`}>
+                                                  {model.label}
+                                              </div>
+                                              <div className="text-[10px] text-zinc-500">{model.desc}</div>
+                                          </div>
+                                          {aiModel === model.id && <Cpu size={14} className="text-brand-accent" />}
+                                      </button>
+                                  ))}
+                              </div>
+                          </div>
+
+                          {/* API Endpoint Settings */}
+                          <div className="space-y-2 pt-4 border-t border-white/5">
                               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                                   <Server size={12} /> Backend API Endpoint
                               </label>
@@ -237,8 +273,7 @@ const Header: React.FC = () => {
                                   />
                               </div>
                               <p className="text-[10px] text-zinc-500">
-                                  Default: <code className="bg-white/5 px-1 rounded">https://quad-desk.onrender.com</code>. 
-                                  For Render deployments, use <code className="bg-white/5 px-1 rounded">https://quad-desk.onrender.com</code>.
+                                  Default: <code className="bg-white/5 px-1 rounded">https://quad-desk.onrender.com</code>
                               </p>
                           </div>
                       </div>

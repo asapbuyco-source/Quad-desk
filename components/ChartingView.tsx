@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
@@ -10,7 +9,7 @@ import { API_BASE_URL } from '../constants';
 const ChartingView: React.FC = () => {
   const { candles, signals, levels, metrics } = useStore(state => state.market);
   const { scanResult, isScanning, cooldownRemaining } = useStore(state => state.ai);
-  const { interval, activeSymbol, isBacktest } = useStore(state => state.config);
+  const { interval, activeSymbol, isBacktest, aiModel } = useStore(state => state.config);
   
   const { 
       setInterval, 
@@ -59,7 +58,7 @@ const ChartingView: React.FC = () => {
           // Increased timeout to 60s to handle Render backend cold starts (sleeping instances)
           const timeoutId = setTimeout(() => controller.abort(), 60000);
           
-          const response = await fetch(`${API_BASE_URL}/analyze?symbol=${activeSymbol}`, { signal: controller.signal });
+          const response = await fetch(`${API_BASE_URL}/analyze?symbol=${activeSymbol}&model=${aiModel}`, { signal: controller.signal });
           clearTimeout(timeoutId);
           
           if (!response.ok) {
@@ -74,7 +73,7 @@ const ChartingView: React.FC = () => {
                   id: Date.now().toString(), 
                   type: 'success', 
                   title: 'Scan Complete', 
-                  message: `Analysis received for ${activeSymbol}.` 
+                  message: `Analysis received for ${activeSymbol} using ${aiModel}.` 
               });
           } else {
               throw new Error("Invalid response");
@@ -105,13 +104,13 @@ const ChartingView: React.FC = () => {
           };
           completeAiScan(simResult);
       }
-  }, [isScanning, cooldownRemaining, isBacktest, activeSymbol, metrics.price, startAiScan, completeAiScan, addNotification]);
+  }, [isScanning, cooldownRemaining, isBacktest, activeSymbol, metrics.price, aiModel, startAiScan, completeAiScan, addNotification]);
 
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="h-full w-full flex flex-col p-0 pb-20 lg:p-2 lg:pb-0"
+      className="h-full w-full flex flex-col p-0 pb-24 lg:p-2 lg:pb-0"
     >
       <div className="flex-1 w-full h-full relative overflow-hidden flex gap-2">
         

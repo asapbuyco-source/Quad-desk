@@ -446,7 +446,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         
         {/* Header Bar - Scrollable on Mobile */}
         <div className="h-10 lg:h-12 flex items-center gap-2 px-2 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 w-full">
-             <div className="flex-1 overflow-x-auto scrollbar-hide flex items-center gap-2 pr-4">
+             <div className="flex-1 overflow-x-auto scrollbar-hide flex items-center gap-2 pr-4 min-w-0">
                  {/* Left Group */}
                  <div className="flex items-center gap-2 shrink-0">
                     <div className="flex items-center gap-2">
@@ -496,7 +496,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
              </div>
 
             {/* Right Group - Sticky Actions */}
-            <div className="flex items-center gap-1.5 shrink-0 ml-auto bg-[#18181b]/80 backdrop-blur-sm pl-2 shadow-[-10px_0_10px_rgba(0,0,0,0.5)] md:shadow-none md:bg-transparent">
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto bg-[#18181b] backdrop-blur-md pl-2 shadow-[-10px_0_10px_rgba(0,0,0,0.5)] md:shadow-none md:bg-transparent md:backdrop-blur-none border-l md:border-l-0 border-white/5 md:border-transparent">
                  {/* AI Scan Button */}
                 {onScan && (
                     <button
@@ -514,7 +514,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
                         ) : (
                             <Rocket size={10} />
                         )}
-                        <span className="hidden sm:inline">{isScanning ? 'SCAN' : 'AI SCAN'}</span>
+                        <span className="hidden sm:inline">{isScanning ? 'SCAN' : 'AI'}</span>
                     </button>
                 )}
                 

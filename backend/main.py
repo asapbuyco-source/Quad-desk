@@ -38,19 +38,11 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        # Initialize models
-        # Using gemini-1.5-pro for analysis and 1.5-flash for speed/news
-        model_pro = genai.GenerativeModel('gemini-1.5-pro-latest')
-        model_flash = genai.GenerativeModel('gemini-1.5-flash-latest')
         logger.info("✅ Google Gemini initialized successfully")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Google Gemini: {e}")
-        model_pro = None
-        model_flash = None
 else:
     logger.error("❌ GEMINI_API_KEY not set! AI features will not work.")
-    model_pro = None
-    model_flash = None
 
 # 3. Pydantic Models
 class MarketAnalysis(BaseModel):
@@ -207,7 +199,7 @@ async def root():
 async def health_check():
     return {
         "status": "healthy",
-        "gemini_available": model_pro is not None,
+        "gemini_api_key_set": bool(GEMINI_API_KEY),
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
         "timestamp": datetime.now().isoformat()
     }
@@ -237,7 +229,11 @@ async def get_volatility_bands(symbol: str = Query("BTCUSDT", min_length=3)):
     return bands
 
 @app.get("/analyze")
-async def analyze_market(background_tasks: BackgroundTasks, symbol: str = Query("BTCUSDT", min_length=3)):
+async def analyze_market(
+    background_tasks: BackgroundTasks, 
+    symbol: str = Query("BTCUSDT", min_length=3),
+    model: str = Query("gemini-1.5-pro-latest")
+):
     # Fetch fresh data on demand
     context_candles = await fetch_binance_candles(symbol, limit=30)
     
@@ -247,11 +243,18 @@ async def analyze_market(background_tasks: BackgroundTasks, symbol: str = Query(
         current_price = 0.0
 
     try:
-        if not model_pro:
-            raise Exception("Gemini Not Initialized")
+        if not GEMINI_API_KEY:
+            raise Exception("Gemini API Key Missing")
 
         if len(context_candles) < 20:
             raise Exception("Insufficient Data")
+            
+        # Initialize selected model dynamically
+        try:
+            ai_model = genai.GenerativeModel(model)
+        except Exception:
+            logger.warning(f"Invalid model {model}, falling back to gemini-1.5-pro-latest")
+            ai_model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
         prompt = f"""
         Act as a high-frequency trading algorithm. Analyze these candles for {symbol}.
@@ -271,7 +274,7 @@ async def analyze_market(background_tasks: BackgroundTasks, symbol: str = Query(
         - take_profit (float)
         """
         
-        response = await model_pro.generate_content_async(
+        response = await ai_model.generate_content_async(
             prompt,
             generation_config={"response_mime_type": "application/json"}
         )
@@ -317,11 +320,18 @@ async def analyze_market(background_tasks: BackgroundTasks, symbol: str = Query(
         }
 
 @app.get("/market-intelligence")
-async def get_market_intelligence():
+async def get_market_intelligence(model: str = Query("gemini-1.5-flash-latest")):
     current_time = datetime.now().isoformat()
     try:
-        if not model_flash:
-            raise Exception("Gemini Not Initialized")
+        if not GEMINI_API_KEY:
+             raise Exception("Gemini API Key Missing")
+
+        # Initialize selected model dynamically
+        try:
+            ai_model = genai.GenerativeModel(model)
+        except Exception:
+            logger.warning(f"Invalid model {model}, falling back to gemini-1.5-flash-latest")
+            ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
         # 1. Try to fetch real news
         real_articles = await fetch_real_news()
@@ -346,7 +356,7 @@ async def get_market_intelligence():
             2. 'intelligence': {{ main_narrative, whale_impact (High/Med/Low), ai_sentiment_score (-1 to 1) }}
             """
 
-        response = await model_flash.generate_content_async(
+        response = await ai_model.generate_content_async(
             prompt,
             generation_config={"response_mime_type": "application/json"}
         )
