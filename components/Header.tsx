@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Save, Server, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
