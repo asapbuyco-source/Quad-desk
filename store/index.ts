@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage, LiquidityType } from '../types';
+import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage } from '../types';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS } from '../constants';
 import { calculateADX, detectMarketRegime } from '../utils/analytics';
 

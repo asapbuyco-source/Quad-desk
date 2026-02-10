@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
 import DashboardView from './components/DashboardView';
@@ -9,7 +9,7 @@ import GuideView from './components/GuideView';
 import LandingPage from './components/LandingPage';
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
-import { CandleData, OrderBookLevel, RecentTrade, AiScanResult, LiquidityType } from './types';
+import { CandleData, OrderBookLevel, RecentTrade, LiquidityType } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lock, RefreshCw } from 'lucide-react';
 import { generateSyntheticData } from './utils/analytics';
@@ -33,10 +33,6 @@ const App: React.FC = () => {
       setMarketBands,
       processWsTick,
       processTradeTick,
-      processSimTick,
-      startAiScan,
-      completeAiScan,
-      failAiScan,
       updateAiCooldown,
       addNotification,
       removeNotification

@@ -15,7 +15,6 @@ const ChartingView: React.FC = () => {
       setInterval, 
       startAiScan, 
       completeAiScan, 
-      failAiScan, 
       addNotification 
   } = useStore();
 
