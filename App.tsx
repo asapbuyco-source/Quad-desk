@@ -83,8 +83,16 @@ const App: React.FC = () => {
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             
             const data = await res.json();
+            
+            // Check for error responses from backend or upstream proxies
             if (data.error) throw new Error(data.error);
-            if (!Array.isArray(data)) throw new Error("Invalid data format received from backend");
+            if (data.msg) throw new Error(`Upstream Error: ${data.msg}`);
+            if (data.code && data.msg) throw new Error(`Exchange Error: ${data.msg}`);
+
+            if (!Array.isArray(data)) {
+                console.error("Invalid Data Format Received:", data);
+                throw new Error("Invalid data format received from backend");
+            }
 
             let runningCVD = 0;
             const formattedCandles: CandleData[] = data.map((k: any) => {
@@ -307,39 +315,6 @@ const App: React.FC = () => {
         return () => clearInterval(i);
     }
   }, [config.isBacktest]);
-
-  // 6. Backtest Loop
-  useEffect(() => {
-      if (!config.isBacktest) {
-          backtestStepRef.current = 0;
-          return;
-      }
-      if (!BACKTEST_DATA || BACKTEST_DATA.length === 0) return;
-
-      const intervalMs = 100 / config.playbackSpeed;
-      const i = setInterval(() => {
-          if (backtestStepRef.current >= BACKTEST_DATA.length) backtestStepRef.current = 0;
-          const candle = BACKTEST_DATA[backtestStepRef.current];
-          if (candle) {
-              processWsTick({ 
-                  t: candle.time as number * 1000, o: candle.open, h: candle.high, l: candle.low, c: candle.close, v: candle.volume, P: 0, 
-                  V: (candle.volume * 0.6)
-              });
-              if (Math.random() > 0.5) {
-                   processTradeTick({
-                       id: Date.now().toString(),
-                       price: candle.close,
-                       size: Math.random(),
-                       side: Math.random() > 0.5 ? 'BUY' : 'SELL',
-                       time: Date.now(),
-                       isWhale: false
-                   });
-              }
-          }
-          backtestStepRef.current++;
-      }, intervalMs);
-      return () => clearInterval(i);
-  }, [config.isBacktest, config.playbackSpeed]);
 
   return (
     <div className={`h-screen h-[100dvh] w-screen bg-transparent text-slate-200 font-sans overflow-hidden ${market.metrics.circuitBreakerTripped ? 'grayscale opacity-80' : ''}`}>

@@ -207,17 +207,33 @@ async def health_check():
 @app.get("/history")
 async def proxy_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000):
     """
-    Proxies historical data fetching to avoid CORS issues on the frontend
+    Proxies historical data fetching to avoid CORS issues on the frontend.
+    Handles upstream errors gracefully to prevent invalid format errors in frontend.
     """
     clean_symbol = symbol.replace("/", "").upper()
     url = f"https://api.binance.com/api/v3/klines?symbol={clean_symbol}&interval={interval}&limit={limit}"
+    
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.get(url)
-            return resp.json()
+            data = resp.json()
+            
+            # 1. Success Case: Binance returns a list of klines
+            if isinstance(data, list):
+                return data
+            
+            # 2. Error Case: Binance returns a dict (e.g., {'code': -1121, 'msg': 'Invalid symbol'})
+            if isinstance(data, dict):
+                error_msg = data.get("msg", "Unknown upstream error")
+                logger.warning(f"Upstream Binance Error: {error_msg}")
+                return {"error": f"Upstream: {error_msg}"}
+            
+            # 3. Fallback: Unexpected format
+            return {"error": "Invalid format received from upstream provider"}
+            
         except Exception as e:
             logger.error(f"Failed to fetch history: {e}")
-            return {"error": "Failed to fetch upstream data"}
+            return {"error": f"Failed to fetch upstream data: {str(e)}"}
 
 @app.get("/bands")
 async def get_volatility_bands(symbol: str = Query("BTCUSDT", min_length=3)):
