@@ -198,6 +198,10 @@ async def fetch_real_news():
 
 # 6. API Endpoints
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "Quant Desk Terminal Backend", "version": "1.0.0"}
+
 @app.get("/health")
 async def health_check():
     return {
