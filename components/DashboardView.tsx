@@ -7,7 +7,6 @@ import OrderFlowMetrics from './OrderFlowMetrics';
 import PositionPanel from './PositionPanel';
 import { CHECKLIST_ITEMS } from '../constants';
 import { motion } from 'framer-motion';
-import { Terminal } from 'lucide-react';
 import { useStore } from '../store';
 
 const container = {
@@ -28,7 +27,6 @@ const item = {
 const DashboardView: React.FC = () => {
   const { metrics, asks, bids, recentTrades } = useStore(state => state.market);
   const { scanResult } = useStore(state => state.ai);
-  const { interval } = useStore(state => state.config);
 
   return (
     <motion.div 

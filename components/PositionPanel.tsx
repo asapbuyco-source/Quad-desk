@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
-import { ArrowUpCircle, ArrowDownCircle, Target, Shield, Wallet, PlayCircle, StopCircle, RefreshCcw, TrendingUp, TrendingDown, DollarSign, Percent } from 'lucide-react';
+import { ArrowUpCircle, ArrowDownCircle, Target, Shield, Wallet, PlayCircle, StopCircle, Percent } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const PositionPanel: React.FC = () => {
@@ -10,9 +10,7 @@ const PositionPanel: React.FC = () => {
         market: { metrics },
         openPosition,
         closePosition,
-        setAccountSize,
         setRiskPercent,
-        resetDailyStats
     } = useStore();
 
     // Local State for Input Form

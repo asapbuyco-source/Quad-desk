@@ -1,7 +1,11 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
+import type { FirebaseApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import type { Auth } from "firebase/auth";
 import { getAnalytics, isSupported } from "firebase/analytics";
+import type { Analytics } from "firebase/analytics";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getFirestore } from "firebase/firestore";
+import type { Firestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD6eNi5OkV8mwvaV-hAyvNjOD_gLznNgtg",
@@ -14,8 +18,8 @@ const firebaseConfig = {
 };
 
 // Singleton pattern: Reuse existing app if available to prevent "Component auth not registered" error during hot-reload
-let app;
-let db;
+let app: FirebaseApp;
+let db: Firestore;
 
 if (!getApps().length) {
   // First initialization
@@ -33,11 +37,11 @@ if (!getApps().length) {
   db = getFirestore(app);
 }
 
-const auth = getAuth(app);
+const auth: Auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
 // Initialize Analytics (Async check for browser support)
-let analytics;
+let analytics: Analytics | undefined;
 if (typeof window !== 'undefined') {
   isSupported().then(yes => {
     if (yes) {

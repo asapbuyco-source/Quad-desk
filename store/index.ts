@@ -3,7 +3,8 @@ import { create } from 'zustand';
 import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage, ExpectedValueData, Position, ClosedTrade, DailyStats } from '../types';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS } from '../constants';
 import { calculateADX, detectMarketRegime, calculateSkewness, calculateKurtosis, calculateZScoreBands } from '../utils/analytics';
-import { User, signInWithPopup, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import type { User } from 'firebase/auth';
+import { signInWithPopup, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
 
@@ -699,7 +700,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     failAiScan: () => set((state) => ({ ai: { ...state.ai, isScanning: false } })),
     
-    updateAiCooldown: (cooldownRemaining) => set((state) => ({ ai: { ...state.ai, cooldownRemaining } })),
+    updateAiCooldown: (remaining) => set((state) => ({ ai: { ...state.ai, cooldownRemaining: remaining } })),
     
     // --- Trading Action Implementations ---
 

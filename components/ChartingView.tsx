@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
-import { AiScanResult, PriceLevel } from '../types';
+import { AiScanResult } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
