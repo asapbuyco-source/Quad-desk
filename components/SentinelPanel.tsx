@@ -14,14 +14,14 @@ interface SentinelPanelProps {
 
 const ZScoreCell: React.FC<{ item: HeatmapItem }> = ({ item }) => {
     let colorClass = "bg-zinc-800 text-zinc-500 border-zinc-700/50"; // Neutral
-    let status = "Norm";
+    let status = "NORMAL";
 
     if (item.zScore < -2.0) {
         colorClass = "bg-blue-600/20 text-blue-400 border-blue-500/50 shadow-[inset_0_0_10px_rgba(37,99,235,0.2)]"; // Cold
-        status = "OSOLD";
+        status = "COLD";
     } else if (item.zScore > 2.0) {
         colorClass = "bg-rose-600/20 text-rose-400 border-rose-500/50 shadow-[inset_0_0_10px_rgba(225,29,72,0.2)]"; // Hot
-        status = "OBGHT";
+        status = "HOT";
     }
 
     return (

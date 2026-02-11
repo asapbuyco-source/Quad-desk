@@ -4,7 +4,6 @@ import OrderBook from './OrderBook';
 import TradeTape from './TradeTape';
 import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
-import PositionPanel from './PositionPanel';
 import { CHECKLIST_ITEMS } from '../constants';
 import { motion } from 'framer-motion';
 import { useStore } from '../store';
@@ -52,18 +51,13 @@ const DashboardView: React.FC = () => {
 
       {/* Bottom Right: Sentinel & System Status */}
       <motion.div variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
-        <div className="flex-1 min-h-0 basis-1/2">
+        <div className="flex-1 min-h-0 h-full">
              <SentinelPanel 
                 checklist={CHECKLIST_ITEMS} 
                 aiScanResult={scanResult} 
                 heatmap={metrics.heatmap}
                 currentRegime={metrics.regime}
              />
-        </div>
-        
-        {/* Position & Risk Engine */}
-        <div className="h-96 lg:h-1/2 min-h-0 basis-1/2">
-            <PositionPanel />
         </div>
       </motion.div>
     </motion.div>
