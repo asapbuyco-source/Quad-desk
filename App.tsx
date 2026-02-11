@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
@@ -6,6 +7,10 @@ import AnalyticsView from './components/AnalyticsView';
 import IntelView from './components/IntelView';
 import ChartingView from './components/ChartingView';
 import GuideView from './components/GuideView';
+import BiasMatrixView from './components/BiasMatrixView';
+import LiquidityPage from './components/LiquidityPage';
+import RegimePage from './components/RegimePage';
+import AITacticalPage from './components/AITacticalPage'; // New Import
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl'; // Import Admin Panel
@@ -420,6 +425,10 @@ const App: React.FC = () => {
                         
                         {ui.activeTab === 'dashboard' && <DashboardView />}
                         {ui.activeTab === 'charting' && <ChartingView />}
+                        {ui.activeTab === 'bias' && <BiasMatrixView />}
+                        {ui.activeTab === 'liquidity' && <LiquidityPage />}
+                        {ui.activeTab === 'regime' && <RegimePage />}
+                        {ui.activeTab === 'ai-tactical' && <AITacticalPage />}
                         {ui.activeTab === 'analytics' && <AnalyticsView />}
                         {ui.activeTab === 'intel' && <IntelView />}
                         {ui.activeTab === 'guide' && <GuideView />}

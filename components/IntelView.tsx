@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle } from 'lucide-react';
+import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle, Database } from 'lucide-react';
 import { API_BASE_URL } from '../constants';
 import { useStore } from '../store';
 
@@ -32,7 +33,7 @@ interface MarketIntelResponse {
 const CACHE_KEY = 'market_intel_cache';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
-// Fallback Mock Data for when Backend/NewsAPI is unavailable
+// Fallback Mock Data for when Backend/NewsAPI is completely unreachable and no cache exists
 const MOCK_INTEL_DATA: MarketIntelResponse = {
     articles: [
         {
@@ -99,31 +100,39 @@ const IntelView: React.FC = () => {
   const [data, setData] = useState<MarketIntelResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdatedDisplay, setLastUpdatedDisplay] = useState<string>('');
   
   const { aiModel } = useStore(state => state.config);
 
   const fetchIntelligence = async (forceRefresh = false) => {
       setLoading(true);
-      setError(null);
+      if (forceRefresh) setError(null);
 
-      // 1. Check Cache (Skip if force refresh)
-      if (!forceRefresh) {
-          const cached = localStorage.getItem(CACHE_KEY);
-          if (cached) {
-              const parsed: MarketIntelResponse = JSON.parse(cached);
-              const now = Date.now();
-              if (parsed.timestamp && now - parsed.timestamp < CACHE_DURATION) {
-                  setData(parsed);
-                  setLoading(false);
-                  return;
+      try {
+          // 1. CACHE CHECK (Skip if forcing refresh)
+          if (!forceRefresh) {
+              const cached = localStorage.getItem(CACHE_KEY);
+              if (cached) {
+                  try {
+                      const parsed: MarketIntelResponse = JSON.parse(cached);
+                      const age = Date.now() - (parsed.timestamp || 0);
+                      
+                      // Use cache if valid (less than 10 mins old)
+                      if (age < CACHE_DURATION) {
+                          setData(parsed);
+                          setLoading(false);
+                          return;
+                      }
+                  } catch (e) {
+                      console.warn("Corrupt cache found, clearing.");
+                      localStorage.removeItem(CACHE_KEY);
+                  }
               }
           }
-      }
 
-      // 2. Fetch Live
-      try {
+          // 2. NETWORK REQUEST
           const controller = new AbortController();
-          // Increased timeout to 60s for Render cold starts
+          // Timeout increased to 60s for cold-start backends
           const timeoutId = setTimeout(() => controller.abort(), 60000);
 
           const res = await fetch(`${API_BASE_URL}/market-intelligence?model=${aiModel}`, {
@@ -131,29 +140,51 @@ const IntelView: React.FC = () => {
           });
           clearTimeout(timeoutId);
           
-          if (!res.ok) throw new Error(`Backend Error ${res.status}`);
+          if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
           
           const json = await res.json();
           if (json.error) throw new Error(json.error);
 
+          // 3. SUCCESS HANDLER
           const result: MarketIntelResponse = {
               ...json,
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              isSimulated: json.is_simulated || false
           };
 
+          // Update State & Cache
           localStorage.setItem(CACHE_KEY, JSON.stringify(result));
           setData(result);
+          setError(null); // Clear any previous errors
+
       } catch (err: any) {
-          console.warn("Intel fetch failed, switching to simulation:", err);
+          console.warn("Intel Fetch Error:", err);
           
-          // Fallback Strategy:
+          // 4. ROBUST FALLBACK LOGIC
           const cached = localStorage.getItem(CACHE_KEY);
-          if (cached && !forceRefresh) {
-               setData(JSON.parse(cached));
-               setError(`Connection failed (${err.name}). Using cached data.`);
-          } else {
-               setData(MOCK_INTEL_DATA);
-               setError(`Backend Offline (${err.name}). Simulation Mode Active.`);
+          
+          if (data) {
+              // Scenario A: We already have data on screen (e.g., user clicked refresh and it failed). 
+              // Keep showing current data, just show an error toast/banner.
+              setError(`Update Failed: ${err.message}. Showing existing data.`);
+          } 
+          else if (cached) {
+              // Scenario B: First load failed, but we have stale cache.
+              // Better to show stale real data than mock data.
+              try {
+                  const parsed = JSON.parse(cached);
+                  setData(parsed);
+                  setError(`Network Error (${err.name}). Showing cached data.`);
+              } catch {
+                  // Cache was corrupt
+                  setData(MOCK_INTEL_DATA);
+                  setError(`System Offline. Engaging Simulation Mode.`);
+              }
+          } 
+          else {
+              // Scenario C: No data, no cache. Total failure.
+              setData(MOCK_INTEL_DATA);
+              setError(`Connection Failed (${err.message}). Using Synthetic Data.`);
           }
       } finally {
           setLoading(false);
@@ -162,9 +193,26 @@ const IntelView: React.FC = () => {
 
   useEffect(() => {
       fetchIntelligence();
+      
+      // Auto-refresh interval (every 10 mins) to keep data fresh if tab is open
+      const interval = setInterval(() => fetchIntelligence(false), CACHE_DURATION);
+      return () => clearInterval(interval);
   }, []);
 
-  // Helper to format time
+  // Update "Last Updated" display every minute
+  useEffect(() => {
+      const updateTimer = () => {
+          if (data?.timestamp) {
+              const diff = Math.floor((Date.now() - data.timestamp) / 60000);
+              setLastUpdatedDisplay(diff < 1 ? 'Just now' : `${diff} min ago`);
+          }
+      };
+      updateTimer();
+      const i = setInterval(updateTimer, 60000);
+      return () => clearInterval(i);
+  }, [data?.timestamp]);
+
+  // Helper to format time relative
   const formatTime = (isoString: string) => {
       const date = new Date(isoString);
       const now = new Date();
@@ -182,7 +230,8 @@ const IntelView: React.FC = () => {
       return { label: 'NEUTRAL', color: 'text-zinc-400', bg: 'bg-zinc-500/10', border: 'border-zinc-500/20', icon: Minus };
   };
 
-  const isSimulated = data?.isSimulated || data?.is_simulated || !!error;
+  const isSimulated = data?.isSimulated || data?.is_simulated;
+  const isCached = !isSimulated && data?.timestamp && (Date.now() - data.timestamp > 5000); // Consider "Cached" if older than 5s
 
   return (
     <div className="h-full w-full overflow-y-auto">
@@ -190,22 +239,49 @@ const IntelView: React.FC = () => {
       
       {/* Header Section */}
       <div className="flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
-                <div className="p-2 bg-brand-accent/20 rounded-lg text-brand-accent">
-                    <BrainCircuit size={24} />
-                </div>
-                Market Intelligence
-            </h1>
-            <div className="flex items-center gap-3">
-                {isSimulated && (
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/30">
-                        <AlertTriangle size={14} className="text-amber-500" />
-                        <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest hidden md:inline">
-                            SIMULATED DATA
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+                <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
+                    <div className="p-2 bg-brand-accent/20 rounded-lg text-brand-accent">
+                        <BrainCircuit size={24} />
+                    </div>
+                    Market Intelligence
+                </h1>
+                <p className="text-xs text-zinc-400 mt-1 ml-1">
+                    AI-Synthesized Global Macro & Crypto Sentiment
+                </p>
+            </div>
+            
+            <div className="flex items-center gap-3 self-end md:self-auto">
+                {/* Data Source Badge */}
+                {isSimulated ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                        <AlertTriangle size={12} className="text-amber-500" />
+                        <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">
+                            SIMULATED
+                        </span>
+                    </div>
+                ) : isCached ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                        <Database size={12} className="text-blue-400" />
+                        <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+                            CACHED
+                        </span>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                        <Zap size={12} className="text-emerald-400" />
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">
+                            LIVE FEED
                         </span>
                     </div>
                 )}
+
+                <div className="flex flex-col items-end mr-2">
+                    <span className="text-[9px] text-zinc-500 uppercase font-bold">Last Update</span>
+                    <span className="text-xs font-mono text-zinc-300">{lastUpdatedDisplay || '--'}</span>
+                </div>
+
                 <button 
                     onClick={() => fetchIntelligence(true)}
                     disabled={loading}
@@ -217,7 +293,7 @@ const IntelView: React.FC = () => {
                     `}
                 >
                     <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-                    {loading ? "ANALYZING..." : "REFRESH INTEL"}
+                    {loading ? "SYNCING..." : "REFRESH"}
                 </button>
             </div>
         </div>
@@ -296,7 +372,7 @@ const IntelView: React.FC = () => {
                      <div className="flex flex-col items-center gap-3">
                          <div className="w-8 h-8 rounded-full border-2 border-brand-accent border-t-transparent animate-spin" />
                          <span className="text-xs font-mono text-zinc-500">
-                             {loading ? "GEMINI IS ANALYZING MARKET DATA..." : "WAITING FOR UPLINK"}
+                             {loading ? "GEMINI IS ANALYZING MARKET DATA..." : "INITIALIZING UPLINK..."}
                          </span>
                      </div>
                 </div>
@@ -305,12 +381,19 @@ const IntelView: React.FC = () => {
       </div>
 
       {/* Error / Status Message */}
-      {error && (
-          <div className="px-4 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-mono flex items-center gap-2">
-              <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
-              {error}
-          </div>
-      )}
+      <AnimatePresence>
+        {error && (
+            <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-mono flex items-center gap-3"
+            >
+                <AlertTriangle size={14} className="shrink-0" />
+                <span>{error}</span>
+            </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* News Grid */}
       <div className="flex-1">

@@ -1,7 +1,8 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time, MouseEventHandler } from 'lightweight-charts';
-import { CandleData, TradeSignal, PriceLevel, AiScanResult } from '../types';
-import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus } from 'lucide-react';
+import { CandleData, TradeSignal, PriceLevel, AiScanResult, LiquidityState, RegimeState } from '../types';
+import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus, Activity } from 'lucide-react';
 import { useLightweightChart } from '../hooks/useChart';
 
 /**
@@ -16,6 +17,10 @@ interface PriceChartProps {
   levels?: PriceLevel[];
   /** Result from AI analysis containing support/resistance/pivot */
   aiScanResult?: AiScanResult;
+  /** Liquidity Analysis State */
+  liquidity?: LiquidityState;
+  /** Regime Analysis State */
+  regime?: RegimeState;
   /** Callback to trigger AI analysis */
   onScan?: () => void;
   /** Loading state for AI analysis */
@@ -51,6 +56,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
     data, 
     signals = [], 
     levels = [],
+    aiScanResult,
+    liquidity,
+    regime,
     onScan,
     isScanning,
     showLevels = true,
@@ -92,6 +100,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const lower2SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const priceLinesRef = useRef<IPriceLine[]>([]); 
+  const liquidityLinesRef = useRef<IPriceLine[]>([]); // New Ref for BOS/FVG lines
+
   const [hoveredData, setHoveredData] = useState<any>(null);
   const [currentAdx, setCurrentAdx] = useState<number>(0);
 
@@ -238,6 +248,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
           upper2SeriesRef.current = null;
           lower2SeriesRef.current = null;
           priceLinesRef.current = [];
+          liquidityLinesRef.current = [];
           setHoveredData(null);
       };
 
@@ -403,6 +414,21 @@ const PriceChart: React.FC<PriceChartProps> = ({
                    color = '#f43f5e'; // Rose (Resistance)
                    lineStyle = LineStyle.Dashed;
                }
+               else if (l.type === 'TACTICAL_ENTRY') {
+                   color = '#f59e0b'; // Amber
+                   lineWidth = 2;
+                   lineStyle = LineStyle.Dotted;
+               }
+               else if (l.type === 'TACTICAL_STOP') {
+                   color = '#f43f5e'; // Rose
+                   lineWidth = 1;
+                   lineStyle = LineStyle.Dotted;
+               }
+               else if (l.type === 'TACTICAL_TARGET') {
+                   color = '#10b981'; // Emerald
+                   lineWidth = 1;
+                   lineStyle = LineStyle.Dotted;
+               }
                
                try {
                    const line = candlestickSeriesRef.current?.createPriceLine({
@@ -424,32 +450,119 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   }, [levels, showLevels, chart]); 
 
+  // --- Liquidity Integration: Sweeps & Lines ---
   useEffect(() => {
     if (!candlestickSeriesRef.current || !chart) return;
-    
     const series = candlestickSeriesRef.current as any;
-    if (typeof series.setMarkers !== 'function') return;
 
     try {
+        // 1. Clear old Liquidity Lines (BOS/FVG)
+        liquidityLinesRef.current.forEach(line => {
+            try {
+                candlestickSeriesRef.current?.removePriceLine(line);
+            } catch(e) {}
+        });
+        liquidityLinesRef.current = [];
+
+        // 2. Render Markers (Signals + Sweeps)
+        let markers: any[] = [];
+
+        // Add standard signals
         if (showSignals) {
-            const markers = signals
+            markers = markers.concat(signals
                 .filter(s => s.time && isValid(s.price))
                 .map(s => ({
                     time: s.time as Time,
-                    position: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'aboveBar' as const : 'belowBar' as const,
+                    position: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'aboveBar' : 'belowBar',
                     color: s.type.includes('ENTRY') ? '#3b82f6' : '#f59e0b',
-                    shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' as const : 'arrowUp' as const,
+                    shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' : 'arrowUp',
                     text: s.label,
-                }));
-            series.setMarkers(markers);
-        } else {
-            series.setMarkers([]);
+                }))
+            );
         }
-    } catch(e) {
-        console.warn("Signal markers error", e);
-    }
-  }, [signals, showSignals, chart]);
 
+        // Add Sweep Markers
+        if (liquidity && liquidity.sweeps.length > 0) {
+            markers = markers.concat(liquidity.sweeps.map(s => ({
+                time: s.candleTime as Time,
+                position: s.side === 'BUY' ? 'aboveBar' : 'belowBar', // Bearish sweep above, Bullish below
+                color: s.side === 'BUY' ? '#e11d48' : '#059669', // Rose/Emerald
+                shape: s.side === 'BUY' ? 'arrowDown' : 'arrowUp',
+                text: 'SWEEP',
+                size: 2
+            })));
+        }
+
+        if (typeof series.setMarkers === 'function') {
+            series.setMarkers(markers.sort((a: any, b: any) => (a.time as number) - (b.time as number)));
+        }
+
+        // 3. Render Liquidity Lines (BOS)
+        // Note: FVG boxes require plugins, sticking to BOS lines to keep it lightweight.
+        if (liquidity) {
+            liquidity.bos.forEach(b => {
+                const line = candlestickSeriesRef.current?.createPriceLine({
+                    price: b.price,
+                    color: b.direction === 'BULLISH' ? '#10b981' : '#f43f5e',
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Solid,
+                    axisLabelVisible: false,
+                    title: 'BOS',
+                });
+                if (line) liquidityLinesRef.current.push(line);
+            });
+            
+            // Optional: Render FVG bounds as dashed lines
+            liquidity.fvg.forEach(f => {
+                const startLine = candlestickSeriesRef.current?.createPriceLine({
+                    price: f.startPrice,
+                    color: '#f59e0b', // Amber
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dotted,
+                    axisLabelVisible: false,
+                    title: 'FVG High',
+                });
+                const endLine = candlestickSeriesRef.current?.createPriceLine({
+                    price: f.endPrice,
+                    color: '#f59e0b', 
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dotted,
+                    axisLabelVisible: false,
+                    title: 'FVG Low',
+                });
+                if(startLine) liquidityLinesRef.current.push(startLine);
+                if(endLine) liquidityLinesRef.current.push(endLine);
+            });
+        }
+
+    } catch(e) {
+        console.warn("Liquidity markers error", e);
+    }
+  }, [signals, showSignals, chart, liquidity]);
+
+  // Determine Regime Color for Indicator
+  let regimeColor = "text-zinc-500";
+  let regimeLabel = "UNCERTAIN";
+  if (regime) {
+      if (regime.regimeType === 'TRENDING') {
+          if (regime.trendDirection === 'BULL') {
+              regimeColor = "text-emerald-500";
+              regimeLabel = "BULL TREND";
+          } else {
+              regimeColor = "text-rose-500";
+              regimeLabel = "BEAR TREND";
+          }
+      } else if (regime.regimeType === 'EXPANDING') {
+          regimeColor = "text-blue-500";
+          regimeLabel = "EXPANSION";
+      } else if (regime.regimeType === 'COMPRESSING') {
+          regimeColor = "text-zinc-300";
+          regimeLabel = "SQUEEZE";
+      } else if (regime.regimeType === 'RANGING') {
+          regimeColor = "text-amber-500";
+          regimeLabel = "RANGE";
+      }
+  }
 
   return (
     <div className="w-full h-full flex flex-col relative rounded-xl overflow-hidden bg-[#18181b]/50 select-none group">
@@ -479,6 +592,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
                             {currentAdx > 50 ? "TREND" : "RNG"}
                         </span>
                     </div>
+
+                    {/* Regime Indicator */}
+                    {regime && (
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 rounded-full border border-white/5 shrink-0 hidden sm:flex">
+                            <Activity size={10} className={regimeColor} />
+                            <span className={`text-[9px] font-bold uppercase ${regimeColor}`}>
+                                {regimeLabel}
+                            </span>
+                        </div>
+                    )}
 
                     {/* Timeframe Selector */}
                     {onIntervalChange && (

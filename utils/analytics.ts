@@ -1,4 +1,5 @@
-import { CandleData, RegimeType } from '../types';
+
+import { CandleData, RegimeType, MarketRegimeType } from '../types';
 
 /**
  * Calculates the Average Directional Index (ADX) using Wilder's Smoothing technique.
@@ -265,4 +266,103 @@ export const generateSyntheticData = (startPrice = 42000, count = 300): CandleDa
             zScoreLower2: bands.lower2,
         };
     });
+};
+
+// --- REGIME SPECIFIC LOGIC ---
+
+/**
+ * Calculates ATR manually for a subset of candles
+ */
+export const calculateATR = (candles: CandleData[], period = 14): number => {
+    if (candles.length < period + 1) return 0;
+    
+    let sumTR = 0;
+    // Calculate initial TRs
+    for(let i = candles.length - period; i < candles.length; i++) {
+        const curr = candles[i];
+        const prev = candles[i-1];
+        const tr = Math.max(
+            curr.high - curr.low,
+            Math.abs(curr.high - prev.close),
+            Math.abs(curr.low - prev.close)
+        );
+        sumTR += tr;
+    }
+    return sumTR / period;
+};
+
+interface RegimeAnalysisResult {
+    type: MarketRegimeType;
+    atr: number;
+    rangeSize: number;
+    trendDirection: "BULL" | "BEAR" | "NEUTRAL";
+    volatilityPercentile: number;
+}
+
+export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
+    if (candles.length < 50) return { 
+        type: 'UNCERTAIN', atr: 0, rangeSize: 0, trendDirection: 'NEUTRAL', volatilityPercentile: 0 
+    };
+
+    const period = 14;
+    const recent = candles.slice(-period);
+    const currentATR = calculateATR(candles, period);
+    
+    // Calculate Long-term ATR Avg (last 50) to gauge relative volatility
+    const longTermATR = calculateATR(candles, 50);
+    const volatilityPercentile = Math.min(100, (currentATR / (longTermATR || 1)) * 50);
+
+    // Identify Trend
+    const sma20 = candles.slice(-20).reduce((acc, c) => acc + c.close, 0) / 20;
+    const price = candles[candles.length - 1].close;
+    const isBull = price > sma20;
+    
+    // Range Calculation
+    const highs = recent.map(c => c.high);
+    const lows = recent.map(c => c.low);
+    const maxH = Math.max(...highs);
+    const minL = Math.min(...lows);
+    const rangeSize = maxH - minL;
+
+    // Previous range (to detect expansion/compression)
+    const prevHighs = candles.slice(-period * 2, -period).map(c => c.high);
+    const prevLows = candles.slice(-period * 2, -period).map(c => c.low);
+    const prevRangeSize = Math.max(...prevHighs) - Math.min(...prevLows);
+
+    let type: MarketRegimeType = 'RANGING';
+    let trendDirection: "BULL" | "BEAR" | "NEUTRAL" = 'NEUTRAL';
+
+    // Logic Tree
+    if (currentATR > longTermATR * 1.1) {
+        // High Volatility State
+        if (Math.abs(price - sma20) > currentATR * 2) {
+            type = 'TRENDING';
+            trendDirection = isBull ? 'BULL' : 'BEAR';
+        } else if (rangeSize > prevRangeSize * 1.2) {
+            type = 'EXPANDING';
+        } else {
+            type = 'RANGING'; // High vol chop
+        }
+    } else {
+        // Low Volatility State
+        if (rangeSize < prevRangeSize * 0.8) {
+            type = 'COMPRESSING';
+        } else {
+            type = 'RANGING';
+        }
+    }
+
+    // Refinement: If clear ADX trend
+    if ((candles[candles.length-1].adx || 0) > 25) {
+        type = 'TRENDING';
+        trendDirection = isBull ? 'BULL' : 'BEAR';
+    }
+
+    return {
+        type,
+        atr: currentATR,
+        rangeSize,
+        trendDirection,
+        volatilityPercentile
+    };
 };

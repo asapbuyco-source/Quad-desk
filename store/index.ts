@@ -1,8 +1,8 @@
 
 import { create } from 'zustand';
-import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage, ExpectedValueData, Position, ClosedTrade, DailyStats } from '../types';
-import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS } from '../constants';
-import { calculateADX, detectMarketRegime, calculateSkewness, calculateKurtosis, calculateZScoreBands } from '../utils/analytics';
+import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage, ExpectedValueData, Position, ClosedTrade, DailyStats, BiasMatrixState, BiasType, TimeframeData, LiquidityState, SweepEvent, BreakOfStructure, FairValueGap, RegimeState, AiTacticalState } from '../types';
+import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS, API_BASE_URL } from '../constants';
+import { calculateADX, detectMarketRegime, calculateSkewness, calculateKurtosis, calculateZScoreBands, generateSyntheticData, analyzeRegime } from '../utils/analytics';
 import type { User } from 'firebase/auth';
 import { signInWithPopup, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -118,6 +118,170 @@ const calculateExpectedValue = (
     return { ev, rrRatio };
 };
 
+// --- Bias Calculation Logic ---
+const determineBias = (candles: any[]): BiasType => {
+    if (candles.length < 5) return 'NEUTRAL';
+    const recent = candles.slice(-5);
+    
+    // Count higher highs and higher lows
+    let hh = 0, hl = 0, lh = 0, ll = 0;
+    for(let i = 1; i < recent.length; i++) {
+        if (recent[i].high > recent[i-1].high) hh++;
+        if (recent[i].low > recent[i-1].low) hl++;
+        if (recent[i].high < recent[i-1].high) lh++;
+        if (recent[i].low < recent[i-1].low) ll++;
+    }
+
+    if (hh >= 3 && hl >= 3) return 'BULL';
+    if (lh >= 3 && ll >= 3) return 'BEAR';
+    return 'NEUTRAL';
+};
+
+// --- Liquidity Detection Logic ---
+const detectLiquidityEvents = (candles: CandleData[]): LiquidityState => {
+    const sweeps: SweepEvent[] = [];
+    const bos: BreakOfStructure[] = [];
+    const fvg: FairValueGap[] = [];
+    
+    if (candles.length < 5) return { sweeps: [], bos: [], fvg: [], lastUpdated: Date.now() };
+
+    // Identify Swing Highs/Lows (Pivot Points)
+    // A high is a high if it's higher than N neighbors. Let's use 3 neighbors.
+    interface Pivot { index: number; price: number; type: 'HIGH' | 'LOW'; time: number | string; }
+    const pivots: Pivot[] = [];
+    
+    for (let i = 3; i < candles.length - 3; i++) {
+        const curr = candles[i];
+        
+        // Pivot High
+        if (curr.high > candles[i-1].high && curr.high > candles[i-2].high &&
+            curr.high > candles[i+1].high && curr.high > candles[i+2].high) {
+            pivots.push({ index: i, price: curr.high, type: 'HIGH', time: curr.time });
+        }
+        // Pivot Low
+        if (curr.low < candles[i-1].low && curr.low < candles[i-2].low &&
+            curr.low < candles[i+1].low && curr.low < candles[i+2].low) {
+            pivots.push({ index: i, price: curr.low, type: 'LOW', time: curr.time });
+        }
+    }
+
+    // Detect BOS & Sweeps
+    // Iterate through recent candles to see if they break pivots
+    const recentCandles = candles.slice(-50); // Look at last 50 for events
+    const recentPivots = pivots.filter(p => p.index < candles.length - 5); // Pivots must be somewhat formed
+
+    recentCandles.forEach((c, idx) => {
+        // Map relative index back to absolute
+        const absoluteIndex = candles.length - 50 + idx;
+        
+        recentPivots.forEach(pivot => {
+            // Only check if price is AFTER pivot
+            if (absoluteIndex <= pivot.index) return;
+
+            // Check Highs (Resistance)
+            if (pivot.type === 'HIGH') {
+                if (c.high > pivot.price) {
+                    if (c.close > pivot.price) {
+                        // BOS Bullish
+                        // Dedupe roughly
+                        if (!bos.find(b => Math.abs(b.price - pivot.price) < 0.1 && b.timestamp === absoluteIndex)) {
+                             bos.push({ 
+                                 id: `bos-bull-${absoluteIndex}`, 
+                                 price: pivot.price, 
+                                 direction: 'BULLISH', 
+                                 timestamp: Date.now(), // Realtime sim
+                                 candleTime: c.time
+                             });
+                        }
+                    } else {
+                        // Sweep Bearish (High taken but closed below)
+                        // Only add if it's a fresh sweep (not already swept by recent candles)
+                        if (!sweeps.find(s => Math.abs(s.price - pivot.price) < 0.1)) {
+                            sweeps.push({ 
+                                id: `sweep-bear-${absoluteIndex}`, 
+                                price: pivot.price, 
+                                side: 'BUY', // Liquidity side swept
+                                timestamp: Date.now(),
+                                candleTime: c.time
+                            });
+                        }
+                    }
+                }
+            }
+            
+            // Check Lows (Support)
+            if (pivot.type === 'LOW') {
+                if (c.low < pivot.price) {
+                    if (c.close < pivot.price) {
+                        // BOS Bearish
+                        if (!bos.find(b => Math.abs(b.price - pivot.price) < 0.1 && b.timestamp === absoluteIndex)) {
+                             bos.push({ 
+                                 id: `bos-bear-${absoluteIndex}`, 
+                                 price: pivot.price, 
+                                 direction: 'BEARISH', 
+                                 timestamp: Date.now(),
+                                 candleTime: c.time
+                             });
+                        }
+                    } else {
+                        // Sweep Bullish (Low taken but closed above)
+                        if (!sweeps.find(s => Math.abs(s.price - pivot.price) < 0.1)) {
+                            sweeps.push({ 
+                                id: `sweep-bull-${absoluteIndex}`, 
+                                price: pivot.price, 
+                                side: 'SELL', 
+                                timestamp: Date.now(),
+                                candleTime: c.time
+                            });
+                        }
+                    }
+                }
+            }
+        });
+    });
+
+    // Detect FVGs
+    // Bullish FVG: Low[i] > High[i-2]
+    // Bearish FVG: High[i] < Low[i-2]
+    for (let i = 2; i < candles.length; i++) {
+        const curr = candles[i];
+        const prev2 = candles[i-2];
+        
+        // Bullish FVG
+        if (curr.low > prev2.high) {
+            fvg.push({
+                id: `fvg-bull-${i}`,
+                startPrice: prev2.high,
+                endPrice: curr.low,
+                direction: 'BULLISH',
+                resolved: false, // In a real app we'd check if subsequent price filled it
+                timestamp: Date.now(),
+                candleTime: curr.time
+            });
+        }
+        
+        // Bearish FVG
+        if (curr.high < prev2.low) {
+            fvg.push({
+                id: `fvg-bear-${i}`,
+                startPrice: curr.high,
+                endPrice: prev2.low,
+                direction: 'BEARISH',
+                resolved: false,
+                timestamp: Date.now(),
+                candleTime: curr.time
+            });
+        }
+    }
+
+    // Limit array sizes
+    return {
+        sweeps: sweeps.slice(-10).reverse(),
+        bos: bos.slice(-10).reverse(),
+        fvg: fvg.slice(-10).reverse(),
+        lastUpdated: Date.now()
+    };
+};
 
 interface AppState {
     ui: {
@@ -150,6 +314,10 @@ interface AppState {
         recentTrades: RecentTrade[];
         expectedValue: ExpectedValueData | null;
     };
+    biasMatrix: BiasMatrixState;
+    liquidity: LiquidityState;
+    regime: RegimeState; 
+    aiTactical: AiTacticalState; // New Slice
     ai: {
         scanResult: AiScanResult | undefined;
         isScanning: boolean;
@@ -201,6 +369,18 @@ interface AppState {
     processTradeTick: (trade: RecentTrade) => void;
     processSimTick: (payload: { asks: OrderBookLevel[]; bids: OrderBookLevel[]; metrics: Partial<MarketMetrics>; trade?: RecentTrade }) => void;
     
+    // Bias Matrix Actions
+    refreshBiasMatrix: () => Promise<void>;
+
+    // Liquidity Actions
+    refreshLiquidityAnalysis: () => void;
+
+    // Regime Actions
+    refreshRegimeAnalysis: () => void;
+
+    // AI Tactical Actions
+    refreshTacticalAnalysis: () => void;
+
     // AI Actions
     startAiScan: () => void;
     completeAiScan: (result: AiScanResult) => void;
@@ -280,6 +460,45 @@ export const useStore = create<AppState>((set, get) => ({
         runningCVD: 0,
         recentTrades: [],
         expectedValue: null
+    },
+    biasMatrix: {
+        symbol: 'BTCUSDT',
+        daily: null,
+        h4: null,
+        h1: null,
+        m5: null,
+        lastUpdated: 0,
+        isLoading: false
+    },
+    liquidity: {
+        sweeps: [],
+        bos: [],
+        fvg: [],
+        lastUpdated: 0
+    },
+    regime: {
+        symbol: 'BTCUSDT',
+        regimeType: 'UNCERTAIN',
+        trendDirection: 'NEUTRAL',
+        atr: 0,
+        rangeSize: 0,
+        volatilityPercentile: 0,
+        lastUpdated: 0
+    },
+    aiTactical: {
+        symbol: 'BTCUSDT',
+        probability: 0,
+        scenario: 'NEUTRAL',
+        entryLevel: 0,
+        exitLevel: 0,
+        stopLevel: 0,
+        confidenceFactors: {
+            biasAlignment: false,
+            liquidityAgreement: false,
+            regimeAgreement: false,
+            aiScore: 0
+        },
+        lastUpdated: 0
     },
     ai: { scanResult: undefined, isScanning: false, lastScanTime: 0, cooldownRemaining: 0 },
     analytics: { lastCalculation: 0, isCalculating: false },
@@ -391,7 +610,10 @@ export const useStore = create<AppState>((set, get) => ({
     toggleBacktest: () => set((state) => ({ 
         config: { ...state.config, isBacktest: !state.config.isBacktest },
         market: { ...state.market, candles: [], signals: [], runningCVD: 0, recentTrades: [] },
-        trading: { ...state.trading, activePosition: null, tradeHistory: [], dailyStats: DEFAULT_DAILY_STATS }
+        trading: { ...state.trading, activePosition: null, tradeHistory: [], dailyStats: DEFAULT_DAILY_STATS },
+        liquidity: { sweeps: [], bos: [], fvg: [], lastUpdated: 0 },
+        regime: { ...state.regime, regimeType: 'UNCERTAIN', atr: 0, rangeSize: 0, volatilityPercentile: 0 },
+        aiTactical: { ...state.aiTactical, probability: 0, scenario: 'NEUTRAL', lastUpdated: 0 }
     })),
 
     setSymbol: (activeSymbol) => set((state) => ({
@@ -403,7 +625,11 @@ export const useStore = create<AppState>((set, get) => ({
             runningCVD: 0,
             recentTrades: [],
             metrics: { ...state.market.metrics, pair: activeSymbol.replace('USDT', '/USDT') }
-        }
+        },
+        biasMatrix: { ...state.biasMatrix, symbol: activeSymbol, daily: null, h4: null, h1: null, m5: null },
+        liquidity: { sweeps: [], bos: [], fvg: [], lastUpdated: 0 },
+        regime: { symbol: activeSymbol, regimeType: 'UNCERTAIN', trendDirection: 'NEUTRAL', atr: 0, rangeSize: 0, volatilityPercentile: 0, lastUpdated: 0 },
+        aiTactical: { ...state.aiTactical, symbol: activeSymbol, probability: 0, scenario: 'NEUTRAL', lastUpdated: 0 }
     })),
 
     setInterval: (interval) => set((state) => ({ config: { ...state.config, interval } })),
@@ -415,6 +641,12 @@ export const useStore = create<AppState>((set, get) => ({
         const candlesWithAdx = calculateADX(candles);
         const initialCvdAnalysis = calculateCVDAnalysis(candlesWithAdx, initialCVD);
         const initialRegime = detectMarketRegime(candlesWithAdx);
+        
+        // Initial Liquidity Analysis
+        const liquidityAnalysis = detectLiquidityEvents(candlesWithAdx);
+        
+        // Initial Regime Analysis
+        const regimeResult = analyzeRegime(candlesWithAdx);
 
         return { 
             market: { 
@@ -426,7 +658,17 @@ export const useStore = create<AppState>((set, get) => ({
                     cvdContext: initialCvdAnalysis,
                     regime: initialRegime
                 }
-            } 
+            },
+            liquidity: liquidityAnalysis,
+            regime: {
+                symbol: state.config.activeSymbol,
+                regimeType: regimeResult.type,
+                trendDirection: regimeResult.trendDirection,
+                atr: regimeResult.atr,
+                rangeSize: regimeResult.rangeSize,
+                volatilityPercentile: regimeResult.volatilityPercentile,
+                lastUpdated: Date.now()
+            }
         };
     }),
 
@@ -558,6 +800,7 @@ export const useStore = create<AppState>((set, get) => ({
             const candlesWithAdx = calculateADX(candles);
             const cvdContext = calculateCVDAnalysis(candlesWithAdx, currentState.market.runningCVD);
             const currentRegime = detectMarketRegime(candlesWithAdx);
+            const liquidity = detectLiquidityEvents(candlesWithAdx);
             
             let newPosterior = currentState.market.metrics.bayesianPosterior || 0.5;
             let skewness = 0;
@@ -599,6 +842,7 @@ export const useStore = create<AppState>((set, get) => ({
                         kurtosis: kurtosis
                     }
                 },
+                liquidity,
                 analytics: {
                     lastCalculation: Date.now(),
                     isCalculating: false
@@ -646,6 +890,220 @@ export const useStore = create<AppState>((set, get) => ({
                 bids,
                 recentTrades: simTrades,
                 metrics: { ...state.market.metrics, ...metrics }
+            }
+        };
+    }),
+
+    refreshBiasMatrix: async () => {
+        const state = get();
+        if (state.biasMatrix.isLoading) return;
+
+        set(s => ({ biasMatrix: { ...s.biasMatrix, isLoading: true } }));
+
+        const symbol = state.config.activeSymbol;
+        const timeframes = [
+            { id: '1d', key: 'daily' },
+            { id: '4h', key: 'h4' },
+            { id: '1h', key: 'h1' },
+            { id: '5m', key: 'm5' }
+        ];
+
+        const updates: Partial<BiasMatrixState> = { lastUpdated: Date.now(), symbol };
+        const isSimulation = state.config.isBacktest || (API_BASE_URL.includes('localhost') && !API_BASE_URL.includes('render'));
+
+        try {
+            // Fetch all timeframes in parallel
+            const promises = timeframes.map(async (tf) => {
+                try {
+                    // Use backend proxy if available, or simulate
+                    let candles: any[] = [];
+                    
+                    if (isSimulation) {
+                         // Simulate data if backtesting or local
+                         const simData = generateSyntheticData(42000, 30);
+                         candles = simData.map(c => ({ 
+                             close: c.close, 
+                             high: c.high, 
+                             low: c.low, 
+                             time: c.time 
+                         }));
+                    } else {
+                        const res = await fetch(`${API_BASE_URL}/history?symbol=${symbol}&interval=${tf.id}&limit=30`);
+                        if (!res.ok) throw new Error('Fetch failed');
+                        const data = await res.json();
+                        if (Array.isArray(data)) {
+                             candles = data.map((k: any) => ({
+                                 close: parseFloat(k[4]),
+                                 high: parseFloat(k[2]),
+                                 low: parseFloat(k[3]),
+                                 time: k[0]
+                             }));
+                        }
+                    }
+                    
+                    if (candles.length > 0) {
+                        const bias = determineBias(candles);
+                        const sparkline = candles.slice(-20).map(c => c.close);
+                        return { key: tf.key, data: { bias, sparkline, lastUpdated: Date.now() } };
+                    }
+                } catch (e) {
+                    console.warn(`Bias fetch failed for ${tf.id}`);
+                }
+                return null;
+            });
+
+            const results = await Promise.all(promises);
+            
+            results.forEach(res => {
+                if (res) {
+                    (updates as any)[res.key] = res.data;
+                }
+            });
+
+        } catch (e) {
+            console.error("Bias Matrix update failed", e);
+        } finally {
+            set(s => ({ biasMatrix: { ...s.biasMatrix, ...updates, isLoading: false } }));
+        }
+    },
+
+    refreshLiquidityAnalysis: () => set((state) => {
+        const liquidity = detectLiquidityEvents(state.market.candles);
+        return { liquidity };
+    }),
+
+    refreshRegimeAnalysis: () => set((state) => {
+        const { candles } = state.market;
+        if (candles.length < 20) return {};
+        
+        const regimeResult = analyzeRegime(candles);
+        
+        return {
+            regime: {
+                symbol: state.config.activeSymbol,
+                regimeType: regimeResult.type,
+                trendDirection: regimeResult.trendDirection,
+                atr: regimeResult.atr,
+                rangeSize: regimeResult.rangeSize,
+                volatilityPercentile: regimeResult.volatilityPercentile,
+                lastUpdated: Date.now()
+            }
+        };
+    }),
+
+    refreshTacticalAnalysis: () => set((state) => {
+        const { biasMatrix, liquidity, regime, ai, market } = state;
+        const currentPrice = market.metrics.price;
+        
+        if (currentPrice === 0) return {}; // Not ready
+
+        let probability = 0;
+        let biasAlignment = false;
+        let liquidityAgreement = false;
+        let regimeAgreement = false;
+        let aiScore = 0;
+        
+        let tacticalDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+
+        // 1. Bias Score
+        if (biasMatrix.daily?.bias === 'BULL' && biasMatrix.h4?.bias === 'BULL') {
+            biasAlignment = true;
+            tacticalDirection = 'BULLISH';
+            probability += 25;
+        } else if (biasMatrix.daily?.bias === 'BEAR' && biasMatrix.h4?.bias === 'BEAR') {
+            biasAlignment = true;
+            tacticalDirection = 'BEARISH';
+            probability += 25;
+        }
+
+        // 2. Regime Score
+        if (tacticalDirection === 'BULLISH') {
+            if (regime.regimeType === 'TRENDING' && regime.trendDirection === 'BULL') {
+                regimeAgreement = true;
+                probability += 25;
+            }
+        } else if (tacticalDirection === 'BEARISH') {
+            if (regime.regimeType === 'TRENDING' && regime.trendDirection === 'BEAR') {
+                regimeAgreement = true;
+                probability += 25;
+            }
+        } else {
+            // Neutral Logic: High Prob if Ranging
+            if (regime.regimeType === 'RANGING') {
+                regimeAgreement = true;
+                // If neutral, we don't add full points unless we have a mean reversion setup
+            }
+        }
+
+        // 3. Liquidity Score
+        // Look for sweeps that support our directional bias
+        if (tacticalDirection === 'BULLISH') {
+            const hasBullishSweep = liquidity.sweeps.some(s => s.side === 'SELL' && (Date.now() - s.timestamp < 3600000)); // Recent Sell-side sweep (Bullish)
+            const hasBullishBOS = liquidity.bos.some(b => b.direction === 'BULLISH' && (Date.now() - b.timestamp < 3600000));
+            if (hasBullishSweep || hasBullishBOS) {
+                liquidityAgreement = true;
+                probability += 25;
+            }
+        } else if (tacticalDirection === 'BEARISH') {
+            const hasBearishSweep = liquidity.sweeps.some(s => s.side === 'BUY' && (Date.now() - s.timestamp < 3600000)); // Recent Buy-side sweep (Bearish)
+            const hasBearishBOS = liquidity.bos.some(b => b.direction === 'BEARISH' && (Date.now() - b.timestamp < 3600000));
+            if (hasBearishSweep || hasBearishBOS) {
+                liquidityAgreement = true;
+                probability += 25;
+            }
+        }
+
+        // 4. AI Score
+        const aiConf = ai.scanResult?.confidence || 0;
+        if (ai.scanResult?.verdict === 'ENTRY') {
+            // Check if AI direction matches tactical
+            // AI scan result usually has decision_price > currentPrice for Long? 
+            // Simplified: Assume AI entry is aligned if we don't have explicit direction in scan result object yet (add later if needed)
+            // For now, if AI verdict is ENTRY, we assume it found something good.
+            
+            // Check implicit AI direction via price levels
+            const aiDirection = (ai.scanResult.take_profit || 0) > currentPrice ? 'BULLISH' : 'BEARISH';
+            
+            if (aiDirection === tacticalDirection) {
+                aiScore = aiConf;
+                probability += 25 * aiConf; // Scale based on confidence
+            }
+        }
+
+        // 5. Construct Trade Plan (Entry/Stop/Exit)
+        // Default to AI levels if available
+        let entry = ai.scanResult?.entry_price || currentPrice;
+        let stop = ai.scanResult?.stop_loss || (tacticalDirection === 'BULLISH' ? currentPrice * 0.99 : currentPrice * 1.01);
+        let exit = ai.scanResult?.take_profit || (tacticalDirection === 'BULLISH' ? currentPrice * 1.02 : currentPrice * 0.98);
+
+        // If no AI levels, fallback to recent structure
+        if (!ai.scanResult || ai.scanResult.isSimulated) {
+             // Fallback Logic
+             if (tacticalDirection === 'BULLISH') {
+                 // Stop below recent sweep low or ATR
+                 stop = currentPrice - (regime.atr * 2);
+                 exit = currentPrice + (regime.atr * 4);
+             } else {
+                 stop = currentPrice + (regime.atr * 2);
+                 exit = currentPrice - (regime.atr * 4);
+             }
+        }
+
+        return {
+            aiTactical: {
+                symbol: state.config.activeSymbol,
+                probability: Math.min(100, Math.round(probability)),
+                scenario: tacticalDirection,
+                entryLevel: entry,
+                exitLevel: exit,
+                stopLevel: stop,
+                confidenceFactors: {
+                    biasAlignment,
+                    liquidityAgreement,
+                    regimeAgreement,
+                    aiScore
+                },
+                lastUpdated: Date.now()
             }
         };
     }),

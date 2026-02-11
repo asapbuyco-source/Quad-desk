@@ -1,6 +1,7 @@
 
 export type LiquidityType = 'WALL' | 'HOLE' | 'CLUSTER' | 'NORMAL';
 export type RegimeType = 'TRENDING' | 'MEAN_REVERTING' | 'HIGH_VOLATILITY';
+export type MarketRegimeType = "TRENDING" | "RANGING" | "EXPANDING" | "COMPRESSING" | "UNCERTAIN";
 
 export interface OrderBookLevel {
   price: number;
@@ -124,7 +125,7 @@ export interface TradeSignal {
 
 export interface PriceLevel {
   price: number;
-  type: 'SUPPORT' | 'RESISTANCE' | 'ENTRY' | 'STOP_LOSS' | 'TAKE_PROFIT';
+  type: 'SUPPORT' | 'RESISTANCE' | 'ENTRY' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'TACTICAL_ENTRY' | 'TACTICAL_STOP' | 'TACTICAL_TARGET';
   label: string;
 }
 
@@ -195,4 +196,89 @@ export interface DailyStats {
   losses: number;
   tradesToday: number;
   maxDrawdownR: number;
+}
+
+// --- Bias Matrix Types ---
+
+export type BiasType = "BULL" | "BEAR" | "NEUTRAL";
+
+export interface TimeframeData {
+    bias: BiasType;
+    sparkline: number[]; // Last 20 closes
+    lastUpdated: number;
+}
+
+export interface BiasMatrixState {
+    symbol: string;
+    daily: TimeframeData | null;
+    h4: TimeframeData | null;
+    h1: TimeframeData | null;
+    m5: TimeframeData | null;
+    lastUpdated: number;
+    isLoading: boolean;
+}
+
+// --- Liquidity Events Types ---
+
+export interface SweepEvent {
+  id: string;
+  price: number;
+  side: "BUY" | "SELL"; // BUY side liquidity swept (Highs taken) -> Bearish Indication
+  timestamp: number;
+  candleTime: number | string;
+}
+
+export interface BreakOfStructure {
+  id: string;
+  price: number;
+  direction: "BULLISH" | "BEARISH";
+  timestamp: number;
+  candleTime: number | string;
+}
+
+export interface FairValueGap {
+  id: string;
+  startPrice: number;
+  endPrice: number;
+  direction: "BULLISH" | "BEARISH";
+  resolved: boolean;
+  timestamp: number;
+  candleTime: number | string;
+}
+
+export interface LiquidityState {
+  sweeps: SweepEvent[];
+  bos: BreakOfStructure[];
+  fvg: FairValueGap[];
+  lastUpdated: number;
+}
+
+// --- Regime Types ---
+
+export interface RegimeState {
+  symbol: string;
+  regimeType: MarketRegimeType;
+  trendDirection: "BULL" | "BEAR" | "NEUTRAL";
+  atr: number;
+  rangeSize: number;
+  volatilityPercentile: number;
+  lastUpdated: number;
+}
+
+// --- AI Tactical Types ---
+
+export interface AiTacticalState {
+  symbol: string;
+  probability: number;  // 0-100%
+  scenario: "BULLISH" | "BEARISH" | "NEUTRAL";
+  entryLevel: number;
+  exitLevel: number;
+  stopLevel: number;
+  confidenceFactors: {
+    biasAlignment: boolean;
+    liquidityAgreement: boolean;
+    regimeAgreement: boolean;
+    aiScore: number; // 0-1
+  };
+  lastUpdated: number;
 }

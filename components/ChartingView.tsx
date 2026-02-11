@@ -12,12 +12,15 @@ const ChartingView: React.FC = () => {
   const { scanResult, isScanning, cooldownRemaining } = useStore(state => state.ai);
   const { interval, activeSymbol, isBacktest, aiModel } = useStore(state => state.config);
   const { activePosition } = useStore(state => state.trading);
+  const { liquidity, regime, aiTactical } = useStore(state => state);
   
   const { 
-      setInterval, 
+      setInterval: setChartInterval, 
       startAiScan, 
       completeAiScan, 
-      addNotification 
+      addNotification,
+      refreshRegimeAnalysis,
+      refreshTacticalAnalysis // Import new action
   } = useStore();
 
   const [layers, setLayers] = useState({
@@ -37,13 +40,26 @@ const ChartingView: React.FC = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Poll Analysis while charting
+  useEffect(() => {
+      refreshRegimeAnalysis();
+      refreshTacticalAnalysis();
+      const intervalId = window.setInterval(() => {
+          refreshRegimeAnalysis();
+          refreshTacticalAnalysis();
+      }, 5000);
+      return () => window.clearInterval(intervalId);
+  }, []);
+
   const toggleLayer = (key: keyof typeof layers) => {
     setLayers(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Merge Market Levels with Active Position Levels
+  // Merge Market Levels with Active Position AND Tactical Levels
   const chartLevels = useMemo(() => {
       const baseLevels = [...marketLevels];
+      
+      // 1. Position Levels
       if (activePosition && activePosition.isOpen) {
           baseLevels.push(
               { price: activePosition.entry, type: 'ENTRY', label: 'OPEN' },
@@ -51,8 +67,18 @@ const ChartingView: React.FC = () => {
               { price: activePosition.target, type: 'TAKE_PROFIT', label: 'TP' }
           );
       }
+
+      // 2. Tactical Levels (Only if probability is high)
+      if (aiTactical.probability > 50) {
+          baseLevels.push(
+              { price: aiTactical.entryLevel, type: 'TACTICAL_ENTRY', label: `PLAN ENTRY (${aiTactical.probability}%)` },
+              { price: aiTactical.stopLevel, type: 'TACTICAL_STOP', label: 'PLAN STOP' },
+              { price: aiTactical.exitLevel, type: 'TACTICAL_TARGET', label: 'PLAN TARGET' }
+          );
+      }
+
       return baseLevels;
-  }, [marketLevels, activePosition]);
+  }, [marketLevels, activePosition, aiTactical]);
 
   const handleAiScan = useCallback(async () => {
       if (isScanning || isBacktest) return;
@@ -70,7 +96,6 @@ const ChartingView: React.FC = () => {
       
       try {
           const controller = new AbortController();
-          // Increased timeout to 60s to handle Render backend cold starts (sleeping instances)
           const timeoutId = setTimeout(() => controller.abort(), 60000);
           
           const response = await fetch(`${API_BASE_URL}/analyze?symbol=${activeSymbol}&model=${aiModel}`, { signal: controller.signal });
@@ -136,6 +161,8 @@ const ChartingView: React.FC = () => {
                 signals={signals} 
                 levels={chartLevels}
                 aiScanResult={scanResult}
+                liquidity={liquidity}
+                regime={regime}
                 onScan={handleAiScan}
                 isScanning={isScanning || cooldownRemaining > 0}
                 showZScore={layers.zScore}
@@ -144,7 +171,7 @@ const ChartingView: React.FC = () => {
                 onToggleSidePanel={() => toggleLayer('volumeProfile')}
                 isSidePanelOpen={layers.volumeProfile}
                 interval={interval}
-                onIntervalChange={setInterval}
+                onIntervalChange={setChartInterval}
             >
                 {/* Header Controls */}
                 <div className="flex gap-1.5 bg-zinc-900/50 p-0.5 rounded-full border border-white/5 items-center">
