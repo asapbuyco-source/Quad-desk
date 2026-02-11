@@ -1,8 +1,10 @@
+
 import React from 'react';
 import OrderBook from './OrderBook';
 import TradeTape from './TradeTape';
 import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
+import PositionPanel from './PositionPanel';
 import { CHECKLIST_ITEMS } from '../constants';
 import { motion } from 'framer-motion';
 import { Terminal } from 'lucide-react';
@@ -52,7 +54,7 @@ const DashboardView: React.FC = () => {
 
       {/* Bottom Right: Sentinel & System Status */}
       <motion.div variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 basis-1/2">
              <SentinelPanel 
                 checklist={CHECKLIST_ITEMS} 
                 aiScanResult={scanResult} 
@@ -61,28 +63,9 @@ const DashboardView: React.FC = () => {
              />
         </div>
         
-        {/* Terminal/Logs */}
-        <div className="h-64 lg:h-1/3 fintech-card p-4 overflow-hidden flex flex-col shrink-0">
-            <div className="flex items-center gap-2 mb-2 text-slate-400 border-b border-white/5 pb-2">
-                <Terminal size={14} />
-                <span className="text-xs font-bold uppercase">System Logs</span>
-            </div>
-            <div className="flex-1 overflow-y-auto font-mono text-[10px] text-slate-500 space-y-1">
-                <p>&gt; Connecting to institutional gateway...</p>
-                <p className="text-trade-bid">&gt; [SUCCESS] Feed active: 12ms latency</p>
-                <p>&gt; AI Model [SENTINEL-X] loaded.</p>
-                {scanResult && (
-                   <p className="text-brand-accent">&gt; [AI] Market Scan Complete: {scanResult.verdict}</p> 
-                )}
-                {metrics.regime && (
-                    <p className="text-amber-500">&gt; Regime Update: {metrics.regime}</p>
-                )}
-                {recentTrades.length > 0 && (
-                    <p className="text-zinc-600">&gt; Trade stream active ({recentTrades.length} events buffered)</p>
-                )}
-                <p>&gt; Monitoring order flow for icebergs...</p>
-                {interval && <p className="text-zinc-500">&gt; Timeframe set to {interval}</p>}
-            </div>
+        {/* Position & Risk Engine */}
+        <div className="h-96 lg:h-1/2 min-h-0 basis-1/2">
+            <PositionPanel />
         </div>
       </motion.div>
     </motion.div>

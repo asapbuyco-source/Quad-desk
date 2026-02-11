@@ -341,6 +341,16 @@ async def analyze_market(
         }
     except Exception as e:
         logger.error(f"AI Analysis Error: {e}")
+        
+        # Sanitize error message for UI
+        error_msg = str(e)
+        if "429" in error_msg or "Quota" in error_msg:
+            clean_msg = "AI Rate Limit Exceeded (Free Tier). Switched to Local Simulation."
+        elif "503" in error_msg or "Overloaded" in error_msg:
+            clean_msg = "AI Service Overloaded. Switched to Local Simulation."
+        else:
+            clean_msg = f"Connection Issue: {error_msg[:50]}..."
+            
         # Fallback Simulation
         is_bullish = np.random.random() > 0.5
         base_price = current_price if current_price > 0 else 64000
@@ -351,7 +361,7 @@ async def analyze_market(
             "decision_price": base_price * (0.99 if is_bullish else 1.01),
             "verdict": "ENTRY" if is_bullish else "WAIT",
             "confidence": 0.85,
-            "analysis": f"[SIMULATION] AI Connection Issue: {str(e)}. Analyzed {symbol} locally.",
+            "analysis": f"[SIMULATION] {clean_msg}",
             "risk_reward_ratio": 2.5,
             "is_simulated": True
         }
@@ -416,10 +426,16 @@ async def get_market_intelligence(model: str = Query("gemini-3-flash-preview")):
 
     except Exception as e:
         logger.error(f"Gemini Intelligence Error: {e}")
+        error_msg = str(e)
+        if "429" in error_msg or "Quota" in error_msg:
+            clean_msg = "AI Rate Limit Exceeded. Using synthetic data."
+        else:
+            clean_msg = f"Simulation Mode Active ({error_msg[:30]}...)"
+
         return {
             "articles": [],
             "intelligence": {
-                "main_narrative": f"SIMULATION MODE: {str(e)}",
+                "main_narrative": clean_msg,
                 "whale_impact": "Low",
                 "ai_sentiment_score": 0.0
             },

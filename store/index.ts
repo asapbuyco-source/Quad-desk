@@ -1,5 +1,6 @@
+
 import { create } from 'zustand';
-import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage, ExpectedValueData } from '../types';
+import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage, ExpectedValueData, Position, ClosedTrade, DailyStats } from '../types';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS } from '../constants';
 import { calculateADX, detectMarketRegime, calculateSkewness, calculateKurtosis, calculateZScoreBands } from '../utils/analytics';
 import { User, signInWithPopup, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
@@ -158,6 +159,14 @@ interface AppState {
         lastCalculation: number;
         isCalculating: boolean;
     };
+    // Position & Risk State
+    trading: {
+        activePosition: Position | null;
+        tradeHistory: ClosedTrade[];
+        accountSize: number;
+        riskPercent: number;
+        dailyStats: DailyStats;
+    };
     notifications: ToastMessage[];
 
     // UI Actions
@@ -197,6 +206,13 @@ interface AppState {
     failAiScan: () => void;
     updateAiCooldown: (remaining: number) => void;
     
+    // Trading Actions
+    openPosition: (params: { entry: number; stop: number; target: number; direction: 'LONG' | 'SHORT' }) => void;
+    closePosition: (exitPrice: number) => void;
+    setAccountSize: (size: number) => void;
+    setRiskPercent: (percent: number) => void;
+    resetDailyStats: () => void;
+
     // Notification Actions
     addNotification: (toast: ToastMessage) => void;
     removeNotification: (id: string) => void;
@@ -232,6 +248,15 @@ const calculateCVDAnalysis = (candles: CandleData[], currentCVD: number) => {
     return { trend, divergence, interpretation, value: currentCVD };
 };
 
+const DEFAULT_DAILY_STATS: DailyStats = {
+    totalR: 0,
+    realizedPnL: 0,
+    wins: 0,
+    losses: 0,
+    tradesToday: 0,
+    maxDrawdownR: 0
+};
+
 export const useStore = create<AppState>((set, get) => ({
     ui: { hasEntered: false, activeTab: 'dashboard' },
     auth: { user: null, isAuthLoading: true, isAuthModalOpen: false, registrationOpen: true },
@@ -244,7 +269,7 @@ export const useStore = create<AppState>((set, get) => ({
         aiModel: 'gemini-3-pro-preview'
     },
     market: {
-        metrics: { ...MOCK_METRICS, pair: "BTC/USDT", price: 0, dailyPnL: 1250.00, circuitBreakerTripped: false },
+        metrics: { ...MOCK_METRICS, pair: "BTC/USDT", price: 0, dailyPnL: 0, circuitBreakerTripped: false },
         candles: [],
         asks: MOCK_ASKS,
         bids: MOCK_BIDS,
@@ -257,6 +282,14 @@ export const useStore = create<AppState>((set, get) => ({
     },
     ai: { scanResult: undefined, isScanning: false, lastScanTime: 0, cooldownRemaining: 0 },
     analytics: { lastCalculation: 0, isCalculating: false },
+    // Trading State Initial Values
+    trading: {
+        activePosition: null,
+        tradeHistory: [],
+        accountSize: 100000, // 100k Default
+        riskPercent: 1.0, // 1% Risk
+        dailyStats: DEFAULT_DAILY_STATS
+    },
     notifications: [],
 
     setHasEntered: (hasEntered) => set((state) => ({ ui: { ...state.ui, hasEntered } })),
@@ -267,18 +300,15 @@ export const useStore = create<AppState>((set, get) => ({
     setAuthLoading: (isLoading) => set((state) => ({ auth: { ...state.auth, isAuthLoading: isLoading } })),
     
     initSystemConfig: () => {
-        // Listen to system config in Firestore
         const docRef = doc(db, "system", "config");
         onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
                 set((state) => ({ auth: { ...state.auth, registrationOpen: data.registrationOpen !== false } }));
             } else {
-                // If doc doesn't exist, assume open and create it
                 setDoc(docRef, { registrationOpen: true }, { merge: true }).catch(err => console.warn("Failed to init config", err));
             }
         }, (error) => {
-            // Silently fail on offline/permission errors to avoid blocking the UI
             console.warn("System config sync failed (Offline/Permission):", error.message);
         });
     },
@@ -315,8 +345,6 @@ export const useStore = create<AppState>((set, get) => ({
 
     registerEmail: async (email, pass, name) => {
         const { registrationOpen } = get().auth;
-        
-        // ADMIN BACKDOOR: abrackly@gmail.com can always register even if closed
         const isAdmin = email.toLowerCase() === 'abrackly@gmail.com';
 
         if (!registrationOpen && !isAdmin) {
@@ -332,7 +360,6 @@ export const useStore = create<AppState>((set, get) => ({
         try {
             const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
             await updateProfile(userCredential.user, { displayName: name });
-            // User state updated by listener
         } catch (error: any) {
              throw error;
         }
@@ -362,7 +389,8 @@ export const useStore = create<AppState>((set, get) => ({
 
     toggleBacktest: () => set((state) => ({ 
         config: { ...state.config, isBacktest: !state.config.isBacktest },
-        market: { ...state.market, candles: [], signals: [], runningCVD: 0, recentTrades: [] }
+        market: { ...state.market, candles: [], signals: [], runningCVD: 0, recentTrades: [] },
+        trading: { ...state.trading, activePosition: null, tradeHistory: [], dailyStats: DEFAULT_DAILY_STATS }
     })),
 
     setSymbol: (activeSymbol) => set((state) => ({
@@ -403,6 +431,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     setMarketBands: (bands) => set((state) => ({ market: { ...state.market, bands } })),
 
+    // --- Core Logic: Market Updates & Position Management ---
     processWsTick: (k) => set((state) => {
         // PHASE 1: Immediate price update (Hot Path)
         const newPrice = parseFloat(k.c);
@@ -417,27 +446,49 @@ export const useStore = create<AppState>((set, get) => ({
         let updatedCandles = [...state.market.candles];
         let newRunningCVD = state.market.runningCVD;
         
-        // Dynamic Z-Score Band Calculation
-        // Calculate based on last 20 candles in memory if available
+        // --- Position & Risk Logic (Embedded for Zero Latency) ---
+        let activePosition = state.trading.activePosition;
+        
+        if (activePosition && activePosition.isOpen) {
+            const isLong = activePosition.direction === 'LONG';
+            const riskDistance = Math.abs(activePosition.entry - activePosition.stop);
+            
+            // Calculate Floating PnL
+            let priceDist = 0;
+            if (isLong) {
+                priceDist = newPrice - activePosition.entry;
+            } else {
+                priceDist = activePosition.entry - newPrice;
+            }
+            
+            // Calculate R-Multiple
+            const currentR = riskDistance > 0 ? priceDist / riskDistance : 0;
+            const currentPnL = activePosition.size * priceDist;
+
+            activePosition = {
+                ...activePosition,
+                floatingR: currentR,
+                unrealizedPnL: currentPnL
+            };
+        }
+        
+        // --- Candle Logic ---
         let bands = { upper1: 0, lower1: 0, upper2: 0, lower2: 0 };
         const windowSize = 20;
         if (updatedCandles.length >= windowSize) {
              const prices = updatedCandles.slice(-windowSize).map(c => c.close);
              bands = calculateZScoreBands(prices);
         } else {
-             // Fallback approximation if not enough data
              bands = {
                  upper1: newPrice * 1.01, lower1: newPrice * 0.99,
                  upper2: newPrice * 1.02, lower2: newPrice * 0.98
              };
         }
 
-        // Update or append candle logic
         if (updatedCandles.length > 0) {
             const lastCandle = updatedCandles[updatedCandles.length - 1];
             
             if (lastCandle.time === newTime) {
-                // Update existing
                 const currentCVD = (updatedCandles.length > 1 ? updatedCandles[updatedCandles.length - 2].cvd || 0 : 0) + delta;
                 updatedCandles[updatedCandles.length - 1] = {
                     ...lastCandle,
@@ -454,7 +505,6 @@ export const useStore = create<AppState>((set, get) => ({
                 };
                 newRunningCVD = currentCVD; 
             } else {
-                // Append new
                 const prevCVD = lastCandle.cvd || 0;
                 const currentCVD = prevCVD + delta;
                 updatedCandles.push({
@@ -466,7 +516,6 @@ export const useStore = create<AppState>((set, get) => ({
                     volume: totalVol,
                     delta: delta,
                     cvd: currentCVD,
-                    // Carry forward previous ADX until recalculated
                     adx: lastCandle.adx, 
                     zScoreUpper1: bands.upper1,
                     zScoreLower1: bands.lower1,
@@ -476,7 +525,6 @@ export const useStore = create<AppState>((set, get) => ({
                 newRunningCVD = currentCVD;
             }
         } else {
-             // First candle
              updatedCandles.push({
                 time: newTime,
                 open: parseFloat(k.o),
@@ -494,11 +542,8 @@ export const useStore = create<AppState>((set, get) => ({
             newRunningCVD = delta;
         }
 
-        // Calculate Toxicity (VPIN) based on recent trades in store
-        // We do this here instead of processTradeTick to throttle updates
         const newToxicity = calculateVPIN(state.market.recentTrades, 50, 50);
 
-        // PHASE 2: Schedule deferred analytics (Cold Path)
         if (analyticsTimeout) clearTimeout(analyticsTimeout);
 
         analyticsTimeout = setTimeout(() => {
@@ -513,13 +558,11 @@ export const useStore = create<AppState>((set, get) => ({
             const cvdContext = calculateCVDAnalysis(candlesWithAdx, currentState.market.runningCVD);
             const currentRegime = detectMarketRegime(candlesWithAdx);
             
-            // Bayesian & Skewness Logic
             let newPosterior = currentState.market.metrics.bayesianPosterior || 0.5;
             let skewness = 0;
             let kurtosis = 0;
 
             if (candles.length >= 30) {
-                 // Skewness
                  const returns = candles.slice(-30).map((candle, i, arr) => {
                     if (i === 0) return 0;
                     return (candle.close - arr[i - 1].close) / arr[i - 1].close;
@@ -527,7 +570,6 @@ export const useStore = create<AppState>((set, get) => ({
                  skewness = calculateSkewness(returns);
                  kurtosis = calculateKurtosis(returns);
 
-                 // Bayesian
                  if (candles.length >= 2) {
                      const current = candles[candles.length - 1];
                      const previous = candles[candles.length - 2];
@@ -565,7 +607,6 @@ export const useStore = create<AppState>((set, get) => ({
             analyticsTimeout = null;
         }, ANALYTICS_DEBOUNCE_MS);
 
-        // Return immediate update (UI Responsiveness)
         return {
             market: {
                 ...state.market,
@@ -577,8 +618,12 @@ export const useStore = create<AppState>((set, get) => ({
                     change: parseFloat(k.P) || 0,
                     ofi: ofi,
                     toxicity: newToxicity,
-                    // Keep previous analytics until cold path runs
+                    dailyPnL: state.trading.dailyStats.realizedPnL + (activePosition?.unrealizedPnL || 0)
                 }
+            },
+            trading: {
+                ...state.trading,
+                activePosition
             }
         };
     }),
@@ -619,7 +664,6 @@ export const useStore = create<AppState>((set, get) => ({
             ...newLevels
         ];
         
-        // Calculate Expected Value from Scan
         let expectedValueData = null;
         if (result.entry_price && result.stop_loss && result.take_profit) {
             const entry = result.entry_price;
@@ -629,7 +673,6 @@ export const useStore = create<AppState>((set, get) => ({
             const winSize = Math.abs(target - entry);
             const lossSize = Math.abs(entry - stop);
             
-            // Use AI confidence as win probability
             const winProb = result.confidence || 0.5;
             const lossProb = 1 - winProb;
             
@@ -658,6 +701,116 @@ export const useStore = create<AppState>((set, get) => ({
     
     updateAiCooldown: (cooldownRemaining) => set((state) => ({ ai: { ...state.ai, cooldownRemaining } })),
     
+    // --- Trading Action Implementations ---
+
+    openPosition: ({ entry, stop, target, direction }) => set((state) => {
+        if (state.trading.activePosition) return {};
+
+        const { accountSize, riskPercent } = state.trading;
+        const riskAmount = accountSize * (riskPercent / 100);
+        const priceDiff = Math.abs(entry - stop);
+        
+        // Prevent division by zero
+        if (priceDiff === 0) return {};
+
+        const size = riskAmount / priceDiff;
+
+        const newPosition: Position = {
+            id: Date.now().toString(),
+            symbol: state.config.activeSymbol,
+            direction,
+            entry,
+            stop,
+            target,
+            size,
+            riskAmount,
+            isOpen: true,
+            openTime: Date.now(),
+            floatingR: 0,
+            unrealizedPnL: 0
+        };
+
+        return {
+            trading: {
+                ...state.trading,
+                activePosition: newPosition
+            },
+            // Add Trade Signals to Chart
+            market: {
+                ...state.market,
+                signals: [
+                    ...state.market.signals,
+                    { 
+                        id: `entry-${newPosition.id}`, 
+                        type: direction === 'LONG' ? 'ENTRY_LONG' : 'ENTRY_SHORT',
+                        price: entry,
+                        time: Date.now() / 1000, 
+                        label: 'OPEN'
+                    }
+                ]
+            }
+        };
+    }),
+
+    closePosition: (exitPrice) => set((state) => {
+        const pos = state.trading.activePosition;
+        if (!pos) return {};
+
+        const isLong = pos.direction === 'LONG';
+        const priceDist = isLong ? exitPrice - pos.entry : pos.entry - exitPrice;
+        const riskDist = Math.abs(pos.entry - pos.stop);
+        const finalR = riskDist > 0 ? priceDist / riskDist : 0;
+        const finalPnL = pos.size * priceDist;
+
+        const closedTrade: ClosedTrade = {
+            ...pos,
+            closeTime: Date.now(),
+            exitPrice,
+            resultR: finalR,
+            realizedPnL: finalPnL
+        };
+
+        const isWin = finalR > 0;
+        
+        // Calculate Max Drawdown for the day
+        const currentDD = state.trading.dailyStats.totalR + finalR;
+        const newMaxDD = Math.min(state.trading.dailyStats.maxDrawdownR, currentDD);
+
+        return {
+            trading: {
+                ...state.trading,
+                activePosition: null,
+                tradeHistory: [closedTrade, ...state.trading.tradeHistory],
+                accountSize: state.trading.accountSize + finalPnL,
+                dailyStats: {
+                    totalR: state.trading.dailyStats.totalR + finalR,
+                    realizedPnL: state.trading.dailyStats.realizedPnL + finalPnL,
+                    wins: state.trading.dailyStats.wins + (isWin ? 1 : 0),
+                    losses: state.trading.dailyStats.losses + (isWin ? 0 : 1),
+                    tradesToday: state.trading.dailyStats.tradesToday + 1,
+                    maxDrawdownR: newMaxDD
+                }
+            },
+             market: {
+                ...state.market,
+                signals: [
+                    ...state.market.signals,
+                    { 
+                        id: `exit-${pos.id}`, 
+                        type: isWin ? 'EXIT_PROFIT' : 'EXIT_LOSS',
+                        price: exitPrice,
+                        time: Date.now() / 1000, 
+                        label: isWin ? `+${finalR.toFixed(1)}R` : `${finalR.toFixed(1)}R`
+                    }
+                ]
+            }
+        };
+    }),
+
+    setAccountSize: (size) => set(state => ({ trading: { ...state.trading, accountSize: size }})),
+    setRiskPercent: (percent) => set(state => ({ trading: { ...state.trading, riskPercent: percent }})),
+    resetDailyStats: () => set(state => ({ trading: { ...state.trading, dailyStats: DEFAULT_DAILY_STATS }})),
+
     addNotification: (toast) => set((state) => ({ notifications: [...state.notifications, toast] })),
     removeNotification: (id) => set((state) => ({ notifications: state.notifications.filter(n => n.id !== id) })),
 }));

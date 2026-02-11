@@ -161,3 +161,38 @@ export interface ToastMessage {
   title: string;
   message: string;
 }
+
+// --- Position & Risk Engine Types ---
+
+export interface Position {
+  id: string;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  entry: number;
+  stop: number;
+  target: number;
+  size: number; // Position size in units (e.g., BTC amount)
+  riskAmount: number; // Dollar amount risked
+  isOpen: boolean;
+  openTime: number;
+  
+  // Dynamic State
+  floatingR: number; 
+  unrealizedPnL: number;
+}
+
+export interface ClosedTrade extends Omit<Position, 'floatingR' | 'unrealizedPnL'> {
+  closeTime: number;
+  exitPrice: number;
+  resultR: number;
+  realizedPnL: number;
+}
+
+export interface DailyStats {
+  totalR: number;
+  realizedPnL: number;
+  wins: number;
+  losses: number;
+  tradesToday: number;
+  maxDrawdownR: number;
+}

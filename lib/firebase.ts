@@ -1,7 +1,7 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { getAnalytics } from "firebase/analytics";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { getAnalytics, isSupported } from "firebase/analytics";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD6eNi5OkV8mwvaV-hAyvNjOD_gLznNgtg",
@@ -13,23 +13,39 @@ const firebaseConfig = {
   measurementId: "G-Y4JY39HZF3"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Singleton pattern: Reuse existing app if available to prevent "Component auth not registered" error during hot-reload
+let app;
+let db;
+
+if (!getApps().length) {
+  // First initialization
+  app = initializeApp(firebaseConfig);
+  // Initialize Firestore with settings only once
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
+  });
+} else {
+  // Reuse existing instance
+  app = getApp();
+  // Get existing Firestore instance (avoids "Firestore already started" error)
+  db = getFirestore(app);
+}
+
 const auth = getAuth(app);
-
-// Initialize Firestore with persistent cache to handle offline/slow network conditions gracefully
-const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
-  })
-});
-
 const googleProvider = new GoogleAuthProvider();
 
-// Initialize Analytics (only in browser environment)
+// Initialize Analytics (Async check for browser support)
 let analytics;
 if (typeof window !== 'undefined') {
-  analytics = getAnalytics(app);
+  isSupported().then(yes => {
+    if (yes) {
+      analytics = getAnalytics(app);
+    }
+  }).catch(() => {
+    console.warn("Firebase Analytics not supported in this environment.");
+  });
 }
 
 export { auth, db, googleProvider, analytics };

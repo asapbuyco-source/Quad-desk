@@ -1,15 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
-import { AiScanResult } from '../types';
+import { AiScanResult, PriceLevel } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
 
 const ChartingView: React.FC = () => {
-  const { candles, signals, levels, metrics } = useStore(state => state.market);
+  const { candles, signals, levels: marketLevels, metrics } = useStore(state => state.market);
   const { scanResult, isScanning, cooldownRemaining } = useStore(state => state.ai);
   const { interval, activeSymbol, isBacktest, aiModel } = useStore(state => state.config);
+  const { activePosition } = useStore(state => state.trading);
   
   const { 
       setInterval, 
@@ -38,6 +40,19 @@ const ChartingView: React.FC = () => {
   const toggleLayer = (key: keyof typeof layers) => {
     setLayers(prev => ({ ...prev, [key]: !prev[key] }));
   };
+
+  // Merge Market Levels with Active Position Levels
+  const chartLevels = useMemo(() => {
+      const baseLevels = [...marketLevels];
+      if (activePosition && activePosition.isOpen) {
+          baseLevels.push(
+              { price: activePosition.entry, type: 'ENTRY', label: 'OPEN' },
+              { price: activePosition.stop, type: 'STOP_LOSS', label: 'SL' },
+              { price: activePosition.target, type: 'TAKE_PROFIT', label: 'TP' }
+          );
+      }
+      return baseLevels;
+  }, [marketLevels, activePosition]);
 
   const handleAiScan = useCallback(async () => {
       if (isScanning || isBacktest) return;
@@ -119,7 +134,7 @@ const ChartingView: React.FC = () => {
              <PriceChart 
                 data={candles} 
                 signals={signals} 
-                levels={levels}
+                levels={chartLevels}
                 aiScanResult={scanResult}
                 onScan={handleAiScan}
                 isScanning={isScanning || cooldownRemaining > 0}
