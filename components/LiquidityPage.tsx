@@ -11,7 +11,7 @@ const EventRow: React.FC<{
     direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     type: 'SWEEP' | 'BOS' | 'FVG';
     subtext?: string;
-}> = ({ label, price, time, direction, type, subtext }) => {
+}> = ({ label, price, time, direction, subtext }) => {
     
     let color = 'text-zinc-400';
     let icon = <MoveRight size={14} />;

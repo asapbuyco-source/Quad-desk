@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time, MouseEventHandler } from 'lightweight-charts';
-import { CandleData, TradeSignal, PriceLevel, AiScanResult, LiquidityState, RegimeState } from '../types';
+import { CandleData, TradeSignal, PriceLevel, LiquidityState, RegimeState } from '../types';
 import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus, Activity } from 'lucide-react';
 import { useLightweightChart } from '../hooks/useChart';
 
@@ -16,7 +16,7 @@ interface PriceChartProps {
   /** Key price levels to display as horizontal lines */
   levels?: PriceLevel[];
   /** Result from AI analysis containing support/resistance/pivot */
-  aiScanResult?: AiScanResult;
+  aiScanResult?: any;
   /** Liquidity Analysis State */
   liquidity?: LiquidityState;
   /** Regime Analysis State */
@@ -56,7 +56,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     data, 
     signals = [], 
     levels = [],
-    aiScanResult,
+    // aiScanResult, // Removed unused
     liquidity,
     regime,
     onScan,

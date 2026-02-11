@@ -21,7 +21,7 @@ const FactorRow: React.FC<{ label: string; isActive: boolean; score?: number }> 
 );
 
 const AITacticalPage: React.FC = () => {
-    const { aiTactical, refreshTacticalAnalysis, market: { metrics } } = useStore();
+    const { aiTactical, refreshTacticalAnalysis } = useStore();
     const { probability, scenario, entryLevel, stopLevel, exitLevel, confidenceFactors, lastUpdated, symbol } = aiTactical;
 
     useEffect(() => {

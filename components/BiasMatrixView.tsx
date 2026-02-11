@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { useStore } from '../store';
 import { Layers, ArrowUpCircle, ArrowDownCircle, MinusCircle, RefreshCw, Clock } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
-import { BiasType, TimeframeData } from '../types';
+import { TimeframeData } from '../types';
 
 const BiasCard: React.FC<{ 
     label: string; 
@@ -101,8 +101,8 @@ const BiasCard: React.FC<{
 };
 
 const BiasMatrixView: React.FC = () => {
-  const { biasMatrix, refreshBiasMatrix, config: { activeSymbol, isBacktest } } = useStore();
-  const { daily, h4, h1, m5, lastUpdated, isLoading } = biasMatrix;
+  const { biasMatrix, refreshBiasMatrix, config: { activeSymbol } } = useStore();
+  const { daily, h4, h1, m5, isLoading } = biasMatrix;
 
   useEffect(() => {
     refreshBiasMatrix();
