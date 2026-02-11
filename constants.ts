@@ -25,7 +25,10 @@ export const MOCK_METRICS: MarketMetrics = {
     { pair: "XAU/USD", zScore: -2.6, price: 2342.50 },
     { pair: "AUD/JPY", zScore: 0.4, price: 98.20 },
     { pair: "EUR/USD", zScore: 2.1, price: 1.0850 },
-  ]
+  ],
+  bayesianPosterior: 0.42,
+  skewness: 0.12,
+  kurtosis: 3.4
 };
 
 export const CHECKLIST_ITEMS: SentinelChecklist[] = [
@@ -204,10 +207,10 @@ const generateCandles = (count: number): CandleData[] => {
       low,
       close,
       volume: Math.floor(Math.random() * 1000) + 200,
-      zScoreUpper1: mean + (1.5 * stdDev),
-      zScoreLower1: mean - (1.5 * stdDev),
-      zScoreUpper2: mean + (2.5 * stdDev),
-      zScoreLower2: mean - (2.5 * stdDev),
+      zScoreUpper1: mean + (1.0 * stdDev), // Standardized to 1.0
+      zScoreLower1: mean - (1.0 * stdDev),
+      zScoreUpper2: mean + (2.0 * stdDev), // Standardized to 2.0
+      zScoreLower2: mean - (2.0 * stdDev),
     });
     price = close;
   }

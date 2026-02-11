@@ -27,10 +27,10 @@ export interface CandleData {
   low: number;
   close: number;
   volume: number;
-  zScoreUpper1: number; // +1.5 sigma
-  zScoreLower1: number; // -1.5 sigma
-  zScoreUpper2: number; // +2.5 sigma
-  zScoreLower2: number; // -2.5 sigma
+  zScoreUpper1: number; // +1.0 sigma
+  zScoreLower1: number; // -1.0 sigma
+  zScoreUpper2: number; // +2.0 sigma
+  zScoreLower2: number; // -2.0 sigma
   adx?: number; // Average Directional Index
   delta?: number; // Net Buy - Sell Volume for this candle
   cvd?: number; // Cumulative Volume Delta running total
@@ -69,6 +69,14 @@ export interface HeatmapItem {
   price: number;
 }
 
+export interface ExpectedValueData {
+    ev: number; // Actual expected value in price units
+    rrRatio: number; // Risk:Reward ratio
+    winProbability: number;
+    winAmount: number;
+    lossAmount: number;
+}
+
 export interface MarketMetrics {
   pair: string;
   price: number;
@@ -79,7 +87,7 @@ export interface MarketMetrics {
   retailSentiment: number; // 0-100 (Long %)
   institutionalCVD: number; // Normalized -100 to 100
   zScore: number;
-  toxicity: number; // 0-100
+  toxicity: number; // 0-100 (VPIN)
   ofi: number;
   heatmap: HeatmapItem[];
   dailyPnL?: number;
@@ -90,6 +98,10 @@ export interface MarketMetrics {
       interpretation: 'REAL STRENGTH' | 'REAL WEAKNESS' | 'ABSORPTION' | 'DISTRIBUTION' | 'NEUTRAL';
       value: number;
   };
+  // Advanced Analytics
+  bayesianPosterior?: number; // 0-1 probability
+  skewness?: number; // -3 to +3 typically
+  kurtosis?: number; // Excess kurtosis
 }
 
 export interface NewsItem {

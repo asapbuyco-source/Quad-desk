@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage } from '../types';
+import { MarketMetrics, CandleData, OrderBookLevel, TradeSignal, PriceLevel, RecentTrade, AiScanResult, ToastMessage, ExpectedValueData } from '../types';
 import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS } from '../constants';
-import { calculateADX, detectMarketRegime } from '../utils/analytics';
+import { calculateADX, detectMarketRegime, calculateSkewness, calculateKurtosis, calculateZScoreBands } from '../utils/analytics';
 import { User, signInWithPopup, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
@@ -9,6 +9,113 @@ import { auth, googleProvider, db } from '../lib/firebase';
 // Debounced Calculation Scheduler
 let analyticsTimeout: ReturnType<typeof setTimeout> | null = null;
 const ANALYTICS_DEBOUNCE_MS = 1000; // 1 second
+
+// --- VPIN Logic ---
+interface VPINBucket {
+    buyVolume: number;
+    sellVolume: number;
+    timestamp: number;
+}
+
+/**
+ * Calculates VPIN (toxicity) from recent trades
+ * VPIN measures order flow toxicity - high values indicate informed trading
+ */
+const calculateVPIN = (trades: RecentTrade[], bucketSize: number = 50, numBuckets: number = 50): number => {
+    if (trades.length < 10) return 0;
+    
+    const buckets: VPINBucket[] = [];
+    let currentBucket: VPINBucket = { buyVolume: 0, sellVolume: 0, timestamp: Date.now() };
+    let bucketVolume = 0;
+    
+    // 1. Divide trades into equal-volume buckets
+    for (const trade of trades) {
+        const volume = trade.size;
+        
+        if (trade.side === 'BUY') {
+            currentBucket.buyVolume += volume;
+        } else {
+            currentBucket.sellVolume += volume;
+        }
+        
+        bucketVolume += volume;
+        
+        // Bucket is full
+        if (bucketVolume >= bucketSize) {
+            buckets.push({ ...currentBucket });
+            currentBucket = { buyVolume: 0, sellVolume: 0, timestamp: Date.now() };
+            bucketVolume = 0;
+        }
+        
+        if (buckets.length >= numBuckets) break;
+    }
+    
+    if (buckets.length === 0) return 0;
+    
+    // 2. Calculate VPIN
+    const totalImbalance = buckets.reduce((sum, bucket) => {
+        const totalVol = bucket.buyVolume + bucket.sellVolume;
+        const imbalance = Math.abs(bucket.buyVolume - bucket.sellVolume);
+        return sum + (totalVol > 0 ? imbalance / totalVol : 0);
+    }, 0);
+    
+    const vpin = totalImbalance / buckets.length;
+    
+    // 3. Scale to 0-100 (VPIN typically ranges 0-0.5, but can spike higher)
+    const toxicity = Math.min(100, vpin * 200);
+    
+    return Math.round(toxicity);
+};
+
+// --- Bayesian Logic ---
+
+const calculateBayesianPosterior = (
+    prior: number,
+    likelihood: number,
+    evidenceProbability: number
+): number => {
+    if (evidenceProbability === 0) return prior;
+    return (likelihood * prior) / evidenceProbability;
+};
+
+const updateTrendContinuationBelief = (
+    currentPrice: number,
+    previousPrice: number,
+    ofi: number,
+    priorBelief: number = 0.5
+): number => {
+    const isUptrend = currentPrice > previousPrice;
+    
+    // P(E|H) - Likelihood: Probability of seeing this OFI if trend continues
+    let likelihood: number;
+    if (isUptrend) {
+        likelihood = ofi > 100 ? 0.8 : ofi > 0 ? 0.6 : 0.3;
+    } else {
+        likelihood = ofi < -100 ? 0.8 : ofi < 0 ? 0.6 : 0.3;
+    }
+    
+    // P(E) - Evidence
+    const evidenceProbability = 
+        (likelihood * priorBelief) + 
+        ((1 - likelihood) * (1 - priorBelief));
+    
+    return calculateBayesianPosterior(priorBelief, likelihood, evidenceProbability);
+};
+
+// --- Expected Value Logic ---
+
+const calculateExpectedValue = (
+    winProbability: number,
+    winAmount: number,
+    lossProbability: number,
+    lossAmount: number
+): { ev: number; rrRatio: number } => {
+    const ev = (winProbability * winAmount) - (lossProbability * lossAmount);
+    const rrRatio = lossAmount > 0 ? winAmount / lossAmount : 0;
+    
+    return { ev, rrRatio };
+};
+
 
 interface AppState {
     ui: {
@@ -39,6 +146,7 @@ interface AppState {
         bands: any | null;
         runningCVD: number;
         recentTrades: RecentTrade[];
+        expectedValue: ExpectedValueData | null;
     };
     ai: {
         scanResult: AiScanResult | undefined;
@@ -144,7 +252,8 @@ export const useStore = create<AppState>((set, get) => ({
         levels: MOCK_LEVELS,
         bands: null,
         runningCVD: 0,
-        recentTrades: []
+        recentTrades: [],
+        expectedValue: null
     },
     ai: { scanResult: undefined, isScanning: false, lastScanTime: 0, cooldownRemaining: 0 },
     analytics: { lastCalculation: 0, isCalculating: false },
@@ -304,7 +413,21 @@ export const useStore = create<AppState>((set, get) => ({
 
         let updatedCandles = [...state.market.candles];
         let newRunningCVD = state.market.runningCVD;
-        const bands = state.market.bands;
+        
+        // Dynamic Z-Score Band Calculation
+        // Calculate based on last 20 candles in memory if available
+        let bands = { upper1: 0, lower1: 0, upper2: 0, lower2: 0 };
+        const windowSize = 20;
+        if (updatedCandles.length >= windowSize) {
+             const prices = updatedCandles.slice(-windowSize).map(c => c.close);
+             bands = calculateZScoreBands(prices);
+        } else {
+             // Fallback approximation if not enough data
+             bands = {
+                 upper1: newPrice * 1.01, lower1: newPrice * 0.99,
+                 upper2: newPrice * 1.02, lower2: newPrice * 0.98
+             };
+        }
 
         // Update or append candle logic
         if (updatedCandles.length > 0) {
@@ -320,7 +443,11 @@ export const useStore = create<AppState>((set, get) => ({
                     low: Math.min(lastCandle.low, newPrice),
                     volume: totalVol,
                     delta: delta,
-                    cvd: currentCVD
+                    cvd: currentCVD,
+                    zScoreUpper1: bands.upper1,
+                    zScoreLower1: bands.lower1,
+                    zScoreUpper2: bands.upper2,
+                    zScoreLower2: bands.lower2
                 };
                 newRunningCVD = currentCVD; 
             } else {
@@ -336,12 +463,12 @@ export const useStore = create<AppState>((set, get) => ({
                     volume: totalVol,
                     delta: delta,
                     cvd: currentCVD,
-                    // Carry forward previous ADX/Bands until recalculated
+                    // Carry forward previous ADX until recalculated
                     adx: lastCandle.adx, 
-                    zScoreUpper1: bands ? bands.upper_1 : lastCandle.zScoreUpper1,
-                    zScoreLower1: bands ? bands.lower_1 : lastCandle.zScoreLower1,
-                    zScoreUpper2: bands ? bands.upper_2 : lastCandle.zScoreUpper2,
-                    zScoreLower2: bands ? bands.lower_2 : lastCandle.zScoreLower2,
+                    zScoreUpper1: bands.upper1,
+                    zScoreLower1: bands.lower1,
+                    zScoreUpper2: bands.upper2,
+                    zScoreLower2: bands.lower2,
                 });
                 newRunningCVD = currentCVD;
             }
@@ -356,13 +483,17 @@ export const useStore = create<AppState>((set, get) => ({
                 volume: totalVol,
                 delta: delta,
                 cvd: delta,
-                zScoreUpper1: newPrice * 1.002,
-                zScoreLower1: newPrice * 0.998,
-                zScoreUpper2: newPrice * 1.005,
-                zScoreLower2: newPrice * 0.995,
+                zScoreUpper1: bands.upper1,
+                zScoreLower1: bands.lower1,
+                zScoreUpper2: bands.upper2,
+                zScoreLower2: bands.lower2,
             });
             newRunningCVD = delta;
         }
+
+        // Calculate Toxicity (VPIN) based on recent trades in store
+        // We do this here instead of processTradeTick to throttle updates
+        const newToxicity = calculateVPIN(state.market.recentTrades, 50, 50);
 
         // PHASE 2: Schedule deferred analytics (Cold Path)
         if (analyticsTimeout) clearTimeout(analyticsTimeout);
@@ -374,17 +505,41 @@ export const useStore = create<AppState>((set, get) => ({
             set((s) => ({ analytics: { ...s.analytics, isCalculating: true } }));
             
             performance.mark('analytics-start');
-            const candlesWithAdx = calculateADX(currentState.market.candles);
+            const candles = currentState.market.candles;
+            const candlesWithAdx = calculateADX(candles);
             const cvdContext = calculateCVDAnalysis(candlesWithAdx, currentState.market.runningCVD);
             const currentRegime = detectMarketRegime(candlesWithAdx);
-            performance.mark('analytics-end');
             
-            // Log performance occasionally
-            if (Math.random() > 0.95) {
-                const duration = performance.measure('analytics', 'analytics-start', 'analytics-end').duration;
-                if (duration > 20) console.log(`Analytics took ${duration.toFixed(2)}ms`);
+            // Bayesian & Skewness Logic
+            let newPosterior = currentState.market.metrics.bayesianPosterior || 0.5;
+            let skewness = 0;
+            let kurtosis = 0;
+
+            if (candles.length >= 30) {
+                 // Skewness
+                 const returns = candles.slice(-30).map((candle, i, arr) => {
+                    if (i === 0) return 0;
+                    return (candle.close - arr[i - 1].close) / arr[i - 1].close;
+                 }).filter(r => !isNaN(r));
+                 skewness = calculateSkewness(returns);
+                 kurtosis = calculateKurtosis(returns);
+
+                 // Bayesian
+                 if (candles.length >= 2) {
+                     const current = candles[candles.length - 1];
+                     const previous = candles[candles.length - 2];
+                     const ofiVal = currentState.market.metrics.ofi;
+                     newPosterior = updateTrendContinuationBelief(
+                         current.close, 
+                         previous.close, 
+                         ofiVal, 
+                         newPosterior
+                     );
+                 }
             }
 
+            performance.mark('analytics-end');
+            
             set((s) => ({
                 market: {
                     ...s.market,
@@ -392,7 +547,10 @@ export const useStore = create<AppState>((set, get) => ({
                     metrics: {
                         ...s.market.metrics,
                         cvdContext,
-                        regime: currentRegime
+                        regime: currentRegime,
+                        bayesianPosterior: newPosterior,
+                        skewness: skewness,
+                        kurtosis: kurtosis
                     }
                 },
                 analytics: {
@@ -415,6 +573,7 @@ export const useStore = create<AppState>((set, get) => ({
                     price: newPrice,
                     change: parseFloat(k.P) || 0,
                     ofi: ofi,
+                    toxicity: newToxicity,
                     // Keep previous analytics until cold path runs
                 }
             }
@@ -456,9 +615,38 @@ export const useStore = create<AppState>((set, get) => ({
             ...state.market.levels.filter(l => !l.label.startsWith('AI') && l.label !== 'STOP' && l.label !== 'TARGET'),
             ...newLevels
         ];
+        
+        // Calculate Expected Value from Scan
+        let expectedValueData = null;
+        if (result.entry_price && result.stop_loss && result.take_profit) {
+            const entry = result.entry_price;
+            const target = result.take_profit;
+            const stop = result.stop_loss;
+            
+            const winSize = Math.abs(target - entry);
+            const lossSize = Math.abs(entry - stop);
+            
+            // Use AI confidence as win probability
+            const winProb = result.confidence || 0.5;
+            const lossProb = 1 - winProb;
+            
+            const { ev, rrRatio } = calculateExpectedValue(winProb, winSize, lossProb, lossSize);
+            
+            expectedValueData = {
+                ev,
+                rrRatio,
+                winProbability: winProb,
+                winAmount: winSize,
+                lossAmount: lossSize
+            };
+        }
 
         return { 
-            market: { ...state.market, levels: updatedLevels },
+            market: { 
+                ...state.market, 
+                levels: updatedLevels, 
+                expectedValue: expectedValueData
+            },
             ai: { ...state.ai, isScanning: false, scanResult: result } 
         };
     }),

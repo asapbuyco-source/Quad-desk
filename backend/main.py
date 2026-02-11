@@ -121,6 +121,13 @@ async def fetch_binance_candles(symbol: str, limit: int = 50):
     return []
 
 def calculate_z_score_bands(candles):
+    """
+    Calculate statistical Z-Score volatility bands.
+    
+    Standard statistical bands:
+    - Inner bands: ±1.0 standard deviation (68.27% of data)
+    - Outer bands: ±2.0 standard deviations (95.45% of data)
+    """
     if not candles:
         return {}
     closes = np.array([c['close'] for c in candles])
@@ -130,10 +137,10 @@ def calculate_z_score_bands(candles):
     return {
         "mean": float(mean),
         "std": float(std),
-        "upper_1": float(mean + 1.5 * std),
-        "lower_1": float(mean - 1.5 * std),
-        "upper_2": float(mean + 2.5 * std),
-        "lower_2": float(mean - 2.5 * std),
+        "upper_1": float(mean + 1.0 * std),
+        "lower_1": float(mean - 1.0 * std),
+        "upper_2": float(mean + 2.0 * std),
+        "lower_2": float(mean - 2.0 * std),
     }
 
 async def send_telegram_alert(symbol: str, analysis: MarketAnalysis):

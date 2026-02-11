@@ -126,6 +126,67 @@ export const detectMarketRegime = (data: CandleData[]): RegimeType => {
 };
 
 /**
+ * Calculates skewness of return distribution
+ */
+export const calculateSkewness = (returns: number[]): number => {
+    const n = returns.length;
+    if (n < 3) return 0;
+    
+    // Calculate mean
+    const mean = returns.reduce((sum, r) => sum + r, 0) / n;
+    
+    // Calculate variance
+    const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / n;
+    const stdDev = Math.sqrt(variance);
+    
+    if (stdDev === 0) return 0;
+    
+    // Calculate skewness
+    const skewness = returns.reduce((sum, r) => {
+        return sum + Math.pow((r - mean) / stdDev, 3);
+    }, 0) / n;
+    
+    return skewness;
+};
+
+/**
+ * Calculates excess kurtosis
+ */
+export const calculateKurtosis = (returns: number[]): number => {
+    const n = returns.length;
+    if (n < 4) return 0;
+    
+    const mean = returns.reduce((sum, r) => sum + r, 0) / n;
+    const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / n;
+    const stdDev = Math.sqrt(variance);
+    
+    if (stdDev === 0) return 0;
+    
+    const kurtosis = returns.reduce((sum, r) => {
+        return sum + Math.pow((r - mean) / stdDev, 4);
+    }, 0) / n;
+    
+    // Return excess kurtosis (subtract 3 for normal distribution)
+    return kurtosis - 3;
+};
+
+/**
+ * Calculate Z-Score bands from price array
+ */
+export const calculateZScoreBands = (prices: number[]) => {
+    const mean = prices.reduce((a, b) => a + b) / prices.length;
+    const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;
+    const stdDev = Math.sqrt(variance);
+    
+    return {
+        upper1: mean + (1.0 * stdDev),
+        lower1: mean - (1.0 * stdDev),
+        upper2: mean + (2.0 * stdDev),
+        lower2: mean - (2.0 * stdDev),
+    };
+};
+
+/**
  * Generates synthetic candlestick data for simulation or fallback scenarios.
  * Now includes CVD (Cumulative Volume Delta) simulation.
  */
@@ -135,6 +196,7 @@ export const generateSyntheticData = (startPrice = 42000, count = 300): CandleDa
     const data: CandleData[] = [];
     const now = Math.floor(Date.now() / 1000);
     
+    // Initial pass to generate candles
     for(let i = 0; i < count; i++) {
         let trend = 0;
         // Inject some deterministic patterns for consistency
@@ -179,12 +241,28 @@ export const generateSyntheticData = (startPrice = 42000, count = 300): CandleDa
             volume: totalVolume,
             delta: delta,
             cvd: runningCVD,
-            zScoreUpper1: close * 1.01,
-            zScoreLower1: close * 0.99,
-            zScoreUpper2: close * 1.02,
-            zScoreLower2: close * 0.98,
+            // Temporary bands, will recalculate properly
+            zScoreUpper1: 0,
+            zScoreLower1: 0,
+            zScoreUpper2: 0,
+            zScoreLower2: 0,
         });
         price = close;
     }
-    return calculateADX(data);
+
+    // Pass to calculate ADX
+    const withADX = calculateADX(data);
+
+    // Final Pass: Apply proper Z-Score Bands based on window
+    return withADX.map((c, i, arr) => {
+        const window = arr.slice(Math.max(0, i - 20), i + 1).map(c => c.close);
+        const bands = calculateZScoreBands(window);
+        return {
+            ...c,
+            zScoreUpper1: bands.upper1,
+            zScoreLower1: bands.lower1,
+            zScoreUpper2: bands.upper2,
+            zScoreLower2: bands.lower2,
+        };
+    });
 };

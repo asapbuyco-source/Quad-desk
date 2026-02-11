@@ -1,8 +1,8 @@
-
 import React, { useState } from 'react';
 import { SentinelChecklist, AiScanResult, HeatmapItem, MarketMetrics } from '../types';
 import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useStore } from '../store';
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];
@@ -34,6 +34,54 @@ const ZScoreCell: React.FC<{ item: HeatmapItem }> = ({ item }) => {
 
 const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, heatmap, currentRegime = 'MEAN_REVERTING' }) => {
   const [selectedItem, setSelectedItem] = useState<SentinelChecklist | null>(null);
+
+  // Hook into store to get live values
+  const { metrics, expectedValue } = useStore(state => ({
+      metrics: state.market.metrics,
+      expectedValue: state.market.expectedValue
+  }));
+
+  // Calculate dynamic checklist statuses based on live metrics
+  const dynamicChecklist = checklist.map(item => {
+      switch(item.id) {
+          case '1': // Dislocation (Z-Score)
+              // This is usually pre-calculated in store, but we update status logic
+              const zVal = Math.abs(metrics.zScore);
+              return {
+                  ...item,
+                  value: `${metrics.zScore.toFixed(2)}σ`,
+                  status: zVal > 2.0 ? 'pass' : (zVal > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+              };
+
+          case '2': // Bayesian
+              const bayesian = metrics.bayesianPosterior || 0.5;
+              return {
+                  ...item,
+                  value: bayesian.toFixed(2),
+                  status: bayesian > 0.6 ? 'pass' : (bayesian > 0.4 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+              };
+          
+          case '4': // Skewness
+              const skew = metrics.skewness || 0;
+              return {
+                  ...item,
+                  value: skew.toFixed(2) + 'γ',
+                  status: skew > -0.5 ? 'pass' : (skew > -1.0 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+              };
+          
+          case '5': // Expected Value
+              if (!expectedValue) return item;
+              return {
+                  ...item,
+                  value: `${expectedValue.rrRatio.toFixed(1)}:1`,
+                  status: expectedValue.rrRatio > 2.0 ? 'pass' : 
+                         (expectedValue.rrRatio > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+              };
+          
+          default:
+              return item;
+      }
+  });
 
   const handleKeyDown = (e: React.KeyboardEvent, item: SentinelChecklist) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -135,7 +183,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
             )}
 
             {/* Checklist Items */}
-            {checklist.map((item) => {
+            {dynamicChecklist.map((item) => {
                 // Determine if this item is locked for the current regime
                 const isLocked = item.requiredRegime && !item.requiredRegime.includes(currentRegime);
 
