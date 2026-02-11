@@ -3,11 +3,11 @@ import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { 
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, Cell, ReferenceLine, Area
+  ResponsiveContainer, Cell, ReferenceLine
 } from 'recharts';
 import { useStore } from '../store';
 import { useVolumeProfileData } from '../hooks/useChart';
-import { BarChart2, Activity, Layers, ArrowUp, ArrowDown, Minus, Anchor, TrendingUp } from 'lucide-react';
+import { BarChart2, Activity, Layers, Minus, Anchor, TrendingUp } from 'lucide-react';
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -43,7 +43,7 @@ const StatCard: React.FC<{ label: string; value: string; subValue?: string; colo
 );
 
 const AnalyticsView: React.FC = () => {
-  const { candles, metrics } = useStore(state => state.market);
+  const { candles } = useStore(state => state.market);
   
   // 1. Prepare Data for Time-Series Chart (Order Flow)
   const timeData = useMemo(() => {
