@@ -275,8 +275,11 @@ export const useStore = create<AppState>((set, get) => ({
                 set((state) => ({ auth: { ...state.auth, registrationOpen: data.registrationOpen !== false } }));
             } else {
                 // If doc doesn't exist, assume open and create it
-                setDoc(docRef, { registrationOpen: true }, { merge: true });
+                setDoc(docRef, { registrationOpen: true }, { merge: true }).catch(err => console.warn("Failed to init config", err));
             }
+        }, (error) => {
+            // Silently fail on offline/permission errors to avoid blocking the UI
+            console.warn("System config sync failed (Offline/Permission):", error.message);
         });
     },
 
