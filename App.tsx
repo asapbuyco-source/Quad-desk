@@ -339,7 +339,8 @@ const App: React.FC = () => {
                     ofi: Math.max(-500, Math.min(500, currentMetrics.ofi + Math.floor((Math.random() - 0.5) * 50))),
                     toxicity: Math.min(100, Math.max(0, currentMetrics.toxicity + Math.floor((Math.random() - 0.5) * 5))),
                     zScore: Math.min(4, Math.max(-4, currentMetrics.zScore + (Math.random() - 0.5) * 0.1)),
-                    heatmap: currentMetrics.heatmap.map(item => ({ ...item, zScore: item.zScore + (Math.random() - 0.5) * 0.2 }))
+                    heatmap: currentMetrics.heatmap.map(item => ({ ...item, zScore: item.zScore + (Math.random() - 0.5) * 0.2 })),
+                    retailSentiment: Math.max(0, Math.min(100, (currentMetrics.retailSentiment || 50) + (Math.random() - 0.5) * 2))
                 }
             });
         }, 1000);

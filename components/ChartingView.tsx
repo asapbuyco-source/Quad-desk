@@ -20,7 +20,7 @@ const ChartingView: React.FC = () => {
       completeAiScan, 
       addNotification,
       refreshRegimeAnalysis,
-      refreshTacticalAnalysis // Import new action
+      refreshTacticalAnalysis 
   } = useStore();
 
   const [layers, setLayers] = useState({
@@ -55,11 +55,31 @@ const ChartingView: React.FC = () => {
     setLayers(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Merge Market Levels with Active Position AND Tactical Levels
+  // Optimized Level Merging logic to reduce clutter
   const chartLevels = useMemo(() => {
-      const baseLevels = [...marketLevels];
+      const currentPrice = metrics.price;
+      if (!currentPrice) return [];
+
+      // 1. Filter Market Levels (AI Support/Resistance)
+      // Only keep levels within 15% of current price to avoid scaling issues
+      // And limit to 3 closest levels of each type
+      const rangeFilter = (p: number) => Math.abs((p - currentPrice) / currentPrice) < 0.15;
       
-      // 1. Position Levels
+      const supports = marketLevels
+        .filter(l => l.type === 'SUPPORT' && rangeFilter(l.price))
+        .sort((a, b) => b.price - a.price) // Closest below first
+        .slice(0, 3);
+
+      const resistances = marketLevels
+        .filter(l => l.type === 'RESISTANCE' && rangeFilter(l.price))
+        .sort((a, b) => a.price - b.price) // Closest above first
+        .slice(0, 3);
+
+      const otherLevels = marketLevels.filter(l => l.type !== 'SUPPORT' && l.type !== 'RESISTANCE');
+
+      const baseLevels = [...supports, ...resistances, ...otherLevels];
+      
+      // 2. Position Levels (Always show active trade lines)
       if (activePosition && activePosition.isOpen) {
           baseLevels.push(
               { price: activePosition.entry, type: 'ENTRY', label: 'OPEN' },
@@ -68,17 +88,17 @@ const ChartingView: React.FC = () => {
           );
       }
 
-      // 2. Tactical Levels (Only if probability is high)
-      if (aiTactical.probability > 50) {
+      // 3. Tactical Levels (Only if probability is high or explicitly enabled)
+      if (aiTactical.probability > 60) {
           baseLevels.push(
-              { price: aiTactical.entryLevel, type: 'TACTICAL_ENTRY', label: `PLAN ENTRY (${aiTactical.probability}%)` },
-              { price: aiTactical.stopLevel, type: 'TACTICAL_STOP', label: 'PLAN STOP' },
-              { price: aiTactical.exitLevel, type: 'TACTICAL_TARGET', label: 'PLAN TARGET' }
+              { price: aiTactical.entryLevel, type: 'TACTICAL_ENTRY', label: `PLAN (${aiTactical.probability}%)` },
+              { price: aiTactical.stopLevel, type: 'TACTICAL_STOP', label: 'PLAN SL' },
+              { price: aiTactical.exitLevel, type: 'TACTICAL_TARGET', label: 'PLAN TP' }
           );
       }
 
       return baseLevels;
-  }, [marketLevels, activePosition, aiTactical]);
+  }, [marketLevels, activePosition, aiTactical, metrics.price]);
 
   const handleAiScan = useCallback(async () => {
       if (isScanning || isBacktest) return;

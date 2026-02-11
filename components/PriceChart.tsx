@@ -498,12 +498,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
 
         // 3. Render Liquidity Lines (BOS)
-        // Note: FVG boxes require plugins, sticking to BOS lines to keep it lightweight.
-        if (liquidity) {
-            liquidity.bos.forEach(b => {
+        // LIMIT: Only show last 2 BOS events to keep chart clean
+        if (liquidity && liquidity.bos.length > 0) {
+            liquidity.bos.slice(0, 2).forEach(b => {
                 const line = candlestickSeriesRef.current?.createPriceLine({
                     price: b.price,
-                    color: b.direction === 'BULLISH' ? '#10b981' : '#f43f5e',
+                    color: b.direction === 'BULLISH' ? 'rgba(16, 185, 129, 0.5)' : 'rgba(244, 63, 94, 0.5)',
                     lineWidth: 1,
                     lineStyle: LineStyle.Solid,
                     axisLabelVisible: false,
@@ -512,23 +512,23 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 if (line) liquidityLinesRef.current.push(line);
             });
             
-            // Optional: Render FVG bounds as dashed lines
-            liquidity.fvg.forEach(f => {
+            // Optional: Render FVG bounds as dashed lines (Last 2 only)
+            liquidity.fvg.slice(0, 2).forEach(f => {
                 const startLine = candlestickSeriesRef.current?.createPriceLine({
                     price: f.startPrice,
-                    color: '#f59e0b', // Amber
+                    color: 'rgba(245, 158, 11, 0.4)', // Amber low opacity
                     lineWidth: 1,
                     lineStyle: LineStyle.Dotted,
                     axisLabelVisible: false,
-                    title: 'FVG High',
+                    title: '', // Minimal title
                 });
                 const endLine = candlestickSeriesRef.current?.createPriceLine({
                     price: f.endPrice,
-                    color: '#f59e0b', 
+                    color: 'rgba(245, 158, 11, 0.4)', 
                     lineWidth: 1,
                     lineStyle: LineStyle.Dotted,
                     axisLabelVisible: false,
-                    title: 'FVG Low',
+                    title: 'FVG',
                 });
                 if(startLine) liquidityLinesRef.current.push(startLine);
                 if(endLine) liquidityLinesRef.current.push(endLine);

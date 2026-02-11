@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
-import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight } from 'lucide-react';
+import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight, Heart } from 'lucide-react';
 
 interface LandingPageProps {
   onEnter: () => void;
@@ -165,9 +166,16 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
             {/* --- Infinite Ticker --- */}
             <div className="w-full border-y border-white/5 bg-black/50 backdrop-blur-sm py-4 overflow-hidden relative z-20">
-                <div className="flex w-max gap-20 animate-[scroll_30s_linear_infinite]">
+                <div className="flex w-max gap-20 animate-[scroll_40s_linear_infinite]">
                     {[...Array(2)].map((_, i) => (
                         <div key={i} className="flex gap-20 items-center opacity-40 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
+                             {/* Special Project Dedication Tags */}
+                             <PartnerLogo name="PROJECT LILI" isSpecial />
+                             <PartnerLogo name="INSPIRED BY LILIAN" />
+                             <PartnerLogo name="MY SPECIAL PERSON" />
+                             <PartnerLogo name="BEAUTIFUL WIFE" />
+                             
+                             {/* Standard Partners */}
                              <PartnerLogo name="GOLDMAN SACHS" />
                              <PartnerLogo name="JP MORGAN" />
                              <PartnerLogo name="CITADEL" />
@@ -396,10 +404,18 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 };
 
 // Helper for Ticker
-const PartnerLogo = ({ name }: { name: string }) => (
+const PartnerLogo = ({ name, isSpecial }: { name: string; isSpecial?: boolean }) => (
     <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded bg-white/10" />
-        <span className="text-lg font-bold font-mono tracking-tighter text-white/50">{name}</span>
+        {isSpecial ? (
+            <div className="w-8 h-8 rounded bg-brand-accent/20 flex items-center justify-center text-brand-accent">
+                <Heart size={14} fill="currentColor" />
+            </div>
+        ) : (
+            <div className="w-8 h-8 rounded bg-white/10" />
+        )}
+        <span className={`text-lg font-bold font-mono tracking-tighter ${isSpecial ? 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'text-white/50'}`}>
+            {name}
+        </span>
     </div>
 );
 

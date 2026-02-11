@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { SentinelChecklist, AiScanResult, HeatmapItem, MarketMetrics } from '../types';
 import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info, Lock } from 'lucide-react';
@@ -61,6 +62,19 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                   status: bayesian > 0.6 ? 'pass' : (bayesian > 0.4 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
               };
           
+          case '3': // Sentiment Washout
+              const sentiment = metrics.retailSentiment || 50;
+              let sStatus: 'pass' | 'warning' | 'fail' = 'fail';
+              // Contrarian Logic: Extreme sentiment is good (reversal likely), Neutral is bad (no edge)
+              if (sentiment <= 30 || sentiment >= 70) sStatus = 'pass';
+              else if ((sentiment > 30 && sentiment <= 40) || (sentiment >= 60 && sentiment < 70)) sStatus = 'warning';
+              
+              return {
+                  ...item,
+                  value: `${sentiment.toFixed(0)}% Long`,
+                  status: sStatus
+              };
+
           case '4': // Skewness
               const skew = metrics.skewness || 0;
               return {
