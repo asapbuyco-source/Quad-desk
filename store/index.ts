@@ -1,4 +1,3 @@
-
 import { create } from 'zustand';
 import { 
     CandleData, 
@@ -328,7 +327,7 @@ export const useStore = create<StoreState>((set, get) => ({
         set(state => ({ auth: { ...state.auth, user: null } }));
     },
 
-    setMarketHistory: ({ candles, initialCVD }) => set(state => {
+    setMarketHistory: ({ candles }) => set(state => {
         const metrics = { ...state.market.metrics };
         if (candles.length > 0) {
             const last = candles[candles.length - 1];

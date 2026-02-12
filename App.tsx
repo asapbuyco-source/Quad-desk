@@ -1,5 +1,4 @@
-
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
 import DashboardView from './components/DashboardView';
@@ -39,9 +38,6 @@ const App: React.FC = () => {
       setActiveTab,
       setMarketHistory,
       setMarketBands,
-      processWsTick,
-      processTradeTick,
-      processDepthUpdate, 
       updateAiCooldown,
       addNotification,
       removeNotification,

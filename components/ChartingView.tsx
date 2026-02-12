@@ -1,8 +1,6 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
-import { AiScanResult } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
@@ -10,7 +8,7 @@ import { API_BASE_URL } from '../constants';
 const ChartingView: React.FC = () => {
   const { candles, signals, levels: marketLevels, metrics } = useStore(state => state.market);
   const { scanResult, isScanning, cooldownRemaining } = useStore(state => state.ai);
-  const { interval, activeSymbol, isBacktest, aiModel } = useStore(state => state.config);
+  const { interval, activeSymbol, aiModel } = useStore(state => state.config);
   const { activePosition } = useStore(state => state.trading);
   const { liquidity, regime, aiTactical } = useStore(state => state);
   
