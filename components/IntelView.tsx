@@ -26,75 +26,12 @@ interface MarketIntelResponse {
     articles: NewsArticle[];
     intelligence: IntelligenceData;
     timestamp?: number;
-    is_simulated?: boolean; // Backend flag
-    isSimulated?: boolean; // Frontend cache/fallback flag
+    is_simulated?: boolean; 
+    isSimulated?: boolean; 
 }
 
 const CACHE_KEY = 'market_intel_cache';
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
-
-// Fallback Mock Data for when Backend/NewsAPI is completely unreachable and no cache exists
-const MOCK_INTEL_DATA: MarketIntelResponse = {
-    articles: [
-        {
-            source: { id: 'bloomberg', name: 'BLOOMBERG' },
-            author: 'Crypto Desk',
-            title: 'Institutional Order Flow Indicates Accumulation in $62k-$64k Zone',
-            description: 'Proprietary flow data suggests smart money is front-running expected volatility, with iceberg buy orders detected across major exchanges.',
-            url: '#',
-            urlToImage: null,
-            publishedAt: new Date().toISOString(),
-            content: ''
-        },
-        {
-            source: { id: 'reuters', name: 'REUTERS' },
-            author: 'Tech',
-            title: 'Global Liquidity cycle turns positive for Risk Assets',
-            description: 'Central bank balance sheet expansion in Asia is correlating with renewed bid in crypto markets, despite Fed hawkishness.',
-            url: '#',
-            urlToImage: null,
-            publishedAt: new Date(Date.now() - 3600000).toISOString(),
-            content: ''
-        },
-        {
-            source: { id: 'glassnode', name: 'GLASSNODE' },
-            author: 'On-Chain',
-            title: 'Long-Term Holder Supply reaches all-time high',
-            description: 'Coins held for longer than 155 days have crossed 76% of total supply, signaling extreme supply shock potential.',
-            url: '#',
-            urlToImage: null,
-            publishedAt: new Date(Date.now() - 7200000).toISOString(),
-            content: ''
-        },
-        {
-            source: { id: 'deribit', name: 'DERIBIT' },
-            author: 'Options',
-            title: 'Call Open Interest clusters at $70k strike',
-            description: 'Options market dealers are short gamma above $68k, which could fuel a self-reinforcing rally if price breaks resistance.',
-            url: '#',
-            urlToImage: null,
-            publishedAt: new Date(Date.now() - 10800000).toISOString(),
-            content: ''
-        },
-        {
-             source: { id: 'coindesk', name: 'COINDESK' },
-             author: 'Market',
-             title: 'Layer 2 Volume flips Ethereum Mainnet',
-             description: 'Arbitrum and Optimism activity surges as DeFi yields attract capital rotation away from traditional staking.',
-             url: '#',
-             urlToImage: null,
-             publishedAt: new Date(Date.now() - 14400000).toISOString(),
-             content: ''
-        }
-    ],
-    intelligence: {
-        main_narrative: "Supply Shock meets Institutional Demand",
-        whale_impact: "High",
-        ai_sentiment_score: 0.85
-    },
-    timestamp: Date.now(),
-    isSimulated: true
-};
 
 const IntelView: React.FC = () => {
   const [data, setData] = useState<MarketIntelResponse | null>(null);
@@ -132,7 +69,6 @@ const IntelView: React.FC = () => {
 
           // 2. NETWORK REQUEST
           const controller = new AbortController();
-          // Timeout increased to 60s for cold-start backends
           const timeoutId = setTimeout(() => controller.abort(), 60000);
 
           const res = await fetch(`${API_BASE_URL}/market-intelligence?model=${aiModel}`, {
@@ -155,36 +91,27 @@ const IntelView: React.FC = () => {
           // Update State & Cache
           localStorage.setItem(CACHE_KEY, JSON.stringify(result));
           setData(result);
-          setError(null); // Clear any previous errors
+          setError(null); 
 
       } catch (err: any) {
-          console.warn("Intel Fetch Error:", err);
+          console.error("Intel Fetch Error:", err);
           
-          // 4. ROBUST FALLBACK LOGIC
           const cached = localStorage.getItem(CACHE_KEY);
           
           if (data) {
-              // Scenario A: We already have data on screen (e.g., user clicked refresh and it failed). 
-              // Keep showing current data, just show an error toast/banner.
               setError(`Update Failed: ${err.message}. Showing existing data.`);
           } 
           else if (cached) {
-              // Scenario B: First load failed, but we have stale cache.
-              // Better to show stale real data than mock data.
               try {
                   const parsed = JSON.parse(cached);
                   setData(parsed);
                   setError(`Network Error (${err.name}). Showing cached data.`);
               } catch {
-                  // Cache was corrupt
-                  setData(MOCK_INTEL_DATA);
-                  setError(`System Offline. Engaging Simulation Mode.`);
+                  setError(`Data Unavailable. Please try again.`);
               }
           } 
           else {
-              // Scenario C: No data, no cache. Total failure.
-              setData(MOCK_INTEL_DATA);
-              setError(`Connection Failed (${err.message}). Using Synthetic Data.`);
+              setError(`Connection Failed (${err.message}). Unable to fetch intelligence.`);
           }
       } finally {
           setLoading(false);
@@ -193,13 +120,10 @@ const IntelView: React.FC = () => {
 
   useEffect(() => {
       fetchIntelligence();
-      
-      // Auto-refresh interval (every 10 mins) to keep data fresh if tab is open
       const interval = setInterval(() => fetchIntelligence(false), CACHE_DURATION);
       return () => clearInterval(interval);
   }, []);
 
-  // Update "Last Updated" display every minute
   useEffect(() => {
       const updateTimer = () => {
           if (data?.timestamp) {
@@ -212,7 +136,6 @@ const IntelView: React.FC = () => {
       return () => clearInterval(i);
   }, [data?.timestamp]);
 
-  // Helper to format time relative
   const formatTime = (isoString: string) => {
       const date = new Date(isoString);
       const now = new Date();
@@ -223,7 +146,6 @@ const IntelView: React.FC = () => {
       return date.toLocaleDateString();
   };
 
-  // Helper for Sentiment Badge
   const getSentimentInfo = (score: number) => {
       if (score > 0.2) return { label: 'BULLISH', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', icon: TrendingUp };
       if (score < -0.2) return { label: 'BEARISH', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20', icon: TrendingDown };
@@ -231,13 +153,12 @@ const IntelView: React.FC = () => {
   };
 
   const isSimulated = data?.isSimulated || data?.is_simulated;
-  const isCached = !isSimulated && data?.timestamp && (Date.now() - data.timestamp > 5000); // Consider "Cached" if older than 5s
+  const isCached = !isSimulated && data?.timestamp && (Date.now() - data.timestamp > 5000);
 
   return (
     <div className="h-full w-full overflow-y-auto">
         <div className="flex flex-col gap-6 max-w-7xl mx-auto px-4 lg:px-0 relative w-full pb-24 lg:pb-12 pt-2">
       
-      {/* Header Section */}
       <div className="flex flex-col gap-6">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div>
@@ -253,7 +174,6 @@ const IntelView: React.FC = () => {
             </div>
             
             <div className="flex items-center gap-3 self-end md:self-auto">
-                {/* Data Source Badge */}
                 {isSimulated ? (
                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
                         <AlertTriangle size={12} className="text-amber-500" />
@@ -298,7 +218,6 @@ const IntelView: React.FC = () => {
             </div>
         </div>
 
-        {/* AI Pulse Dashboard */}
         <AnimatePresence mode='wait'>
             {data && data.intelligence ? (
                 <motion.div 
@@ -306,7 +225,6 @@ const IntelView: React.FC = () => {
                     animate={{ opacity: 1, y: 0 }}
                     className="grid grid-cols-1 md:grid-cols-12 gap-4"
                 >
-                    {/* Main Narrative Card */}
                     <div className="md:col-span-8 p-6 rounded-2xl bg-gradient-to-br from-zinc-900 to-black border border-white/10 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Newspaper size={120} />
@@ -322,9 +240,7 @@ const IntelView: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Metrics Cards */}
                     <div className="md:col-span-4 flex flex-col gap-4">
-                        {/* Whale Impact */}
                         <div className="flex-1 p-5 rounded-2xl bg-zinc-900/50 border border-white/5 flex items-center justify-between relative overflow-hidden">
                              <div className="absolute inset-0 bg-blue-500/5" />
                              <div>
@@ -345,7 +261,6 @@ const IntelView: React.FC = () => {
                              </div>
                         </div>
 
-                        {/* Sentiment Score */}
                         <div className="flex-1 p-5 rounded-2xl bg-zinc-900/50 border border-white/5 flex items-center justify-between relative overflow-hidden">
                              <div className="absolute inset-0 bg-purple-500/5" />
                              <div>
@@ -367,7 +282,6 @@ const IntelView: React.FC = () => {
                     </div>
                 </motion.div>
             ) : (
-                // Loading Skeleton for Header
                 <div className="h-48 rounded-2xl bg-white/5 animate-pulse border border-white/5 flex items-center justify-center">
                      <div className="flex flex-col items-center gap-3">
                          <div className="w-8 h-8 rounded-full border-2 border-brand-accent border-t-transparent animate-spin" />
@@ -380,7 +294,6 @@ const IntelView: React.FC = () => {
         </AnimatePresence>
       </div>
 
-      {/* Error / Status Message */}
       <AnimatePresence>
         {error && (
             <motion.div 
@@ -395,7 +308,6 @@ const IntelView: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* News Grid */}
       <div className="flex-1">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence mode='popLayout'>
@@ -421,7 +333,6 @@ const IntelView: React.FC = () => {
                                     </span>
                                 </div>
                                 
-                                {/* Sentiment Badge (Contextual) */}
                                 <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${sentiment.bg} ${sentiment.color} ${sentiment.border}`}>
                                     {sentiment.label}
                                 </div>

@@ -30,7 +30,6 @@ const ChartingView: React.FC = () => {
     volumeProfile: false 
   });
 
-  // Track window size for responsive width
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -40,7 +39,6 @@ const ChartingView: React.FC = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Poll Analysis while charting
   useEffect(() => {
       refreshRegimeAnalysis();
       refreshTacticalAnalysis();
@@ -55,31 +53,26 @@ const ChartingView: React.FC = () => {
     setLayers(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Optimized Level Merging logic to reduce clutter
   const chartLevels = useMemo(() => {
       const currentPrice = metrics.price;
       if (!currentPrice) return [];
 
-      // 1. Filter Market Levels (AI Support/Resistance)
-      // Only keep levels within 15% of current price to avoid scaling issues
-      // And limit to 3 closest levels of each type
       const rangeFilter = (p: number) => Math.abs((p - currentPrice) / currentPrice) < 0.15;
       
       const supports = marketLevels
         .filter(l => l.type === 'SUPPORT' && rangeFilter(l.price))
-        .sort((a, b) => b.price - a.price) // Closest below first
+        .sort((a, b) => b.price - a.price)
         .slice(0, 3);
 
       const resistances = marketLevels
         .filter(l => l.type === 'RESISTANCE' && rangeFilter(l.price))
-        .sort((a, b) => a.price - b.price) // Closest above first
+        .sort((a, b) => a.price - b.price) 
         .slice(0, 3);
 
       const otherLevels = marketLevels.filter(l => l.type !== 'SUPPORT' && l.type !== 'RESISTANCE');
 
       const baseLevels = [...supports, ...resistances, ...otherLevels];
       
-      // 2. Position Levels (Always show active trade lines)
       if (activePosition && activePosition.isOpen) {
           baseLevels.push(
               { price: activePosition.entry, type: 'ENTRY', label: 'OPEN' },
@@ -88,7 +81,6 @@ const ChartingView: React.FC = () => {
           );
       }
 
-      // 3. Tactical Levels (Only if probability is high or explicitly enabled)
       if (aiTactical.probability > 60) {
           baseLevels.push(
               { price: aiTactical.entryLevel, type: 'TACTICAL_ENTRY', label: `PLAN (${aiTactical.probability}%)` },
@@ -101,7 +93,7 @@ const ChartingView: React.FC = () => {
   }, [marketLevels, activePosition, aiTactical, metrics.price]);
 
   const handleAiScan = useCallback(async () => {
-      if (isScanning || isBacktest) return;
+      if (isScanning) return;
       if (cooldownRemaining > 0) {
           addNotification({ 
               id: Date.now().toString(), 
@@ -139,32 +131,17 @@ const ChartingView: React.FC = () => {
               throw new Error("Invalid response");
           }
       } catch (e: any) {
-          console.warn("Backend unavailable. Simulation fallback.", e);
+          console.error("AI Scan Failed", e);
           const errorMsg = e.name === 'AbortError' ? 'Request timed out (Backend Sleeping)' : e.message;
           
           addNotification({ 
               id: Date.now().toString(), 
               type: 'error', 
-              title: 'Network Fault', 
-              message: `${errorMsg}. Engaging simulation protocols.` 
+              title: 'Analysis Failed', 
+              message: `${errorMsg}. Please try again later.` 
           });
-          
-          await new Promise(r => setTimeout(r, 2000));
-          
-          const currentPrice = metrics.price || 43000;
-          const isBullish = Math.random() > 0.4;
-          const simResult: AiScanResult = {
-              support: [currentPrice * 0.985, currentPrice * 0.96],
-              resistance: [currentPrice * 1.015, currentPrice * 1.04],
-              decision_price: currentPrice * (isBullish ? 0.99 : 1.01),
-              verdict: isBullish ? 'ENTRY' : 'WAIT',
-              analysis: `[SIMULATION] Connection Failed: ${errorMsg}. Volatility contraction detected locally.`,
-              risk_reward_ratio: 2.5,
-              isSimulated: true
-          };
-          completeAiScan(simResult);
       }
-  }, [isScanning, cooldownRemaining, isBacktest, activeSymbol, metrics.price, aiModel, startAiScan, completeAiScan, addNotification]);
+  }, [isScanning, cooldownRemaining, activeSymbol, metrics.price, aiModel, startAiScan, completeAiScan, addNotification]);
 
   return (
     <motion.div 
@@ -174,7 +151,6 @@ const ChartingView: React.FC = () => {
     >
       <div className="flex-1 w-full h-full relative overflow-hidden flex gap-2">
         
-        {/* Main Chart Area */}
         <div className="flex-1 min-w-0 h-full fintech-card overflow-hidden relative z-10 border-x-0 lg:border-x border-t-0 lg:border-t rounded-none lg:rounded-xl">
              <PriceChart 
                 data={candles} 
@@ -193,7 +169,6 @@ const ChartingView: React.FC = () => {
                 interval={interval}
                 onIntervalChange={setChartInterval}
             >
-                {/* Header Controls */}
                 <div className="flex gap-1.5 bg-zinc-900/50 p-0.5 rounded-full border border-white/5 items-center">
                     <button
                         onClick={() => toggleLayer('zScore')}
@@ -240,7 +215,6 @@ const ChartingView: React.FC = () => {
             </PriceChart>
         </div>
 
-        {/* Side Panel: Volume Profile */}
         <AnimatePresence>
             {layers.volumeProfile && (
                 <motion.div 
