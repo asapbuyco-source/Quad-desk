@@ -14,6 +14,7 @@ import AITacticalPage from './components/AITacticalPage'; // New Import
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl'; // Import Admin Panel
+import AlertEngine from './components/AlertEngine'; // Import Alert Engine
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import { CandleData, OrderBookLevel, RecentTrade, LiquidityType } from './types';
@@ -413,8 +414,11 @@ const App: React.FC = () => {
             >
                 <NavBar activeTab={ui.activeTab} setActiveTab={setActiveTab} />
                 
-                {/* Admin Control Panel - Injected at App Root Level */}
+                {/* Admin Control Panel */}
                 <AdminControl />
+                
+                {/* Alert Engine (Background Service) */}
+                <AlertEngine />
 
                 <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                     <Header />

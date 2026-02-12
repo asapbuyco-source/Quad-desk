@@ -1,3 +1,4 @@
+
 import os
 import sys
 import json
@@ -6,12 +7,12 @@ import numpy as np
 import httpx
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Query, BackgroundTasks
+from fastapi import FastAPI, Query, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Dict, Any
 import logging
 
 # Setup Logging
@@ -57,6 +58,65 @@ class MarketAnalysis(BaseModel):
     take_profit: Optional[float] = None
     risk_reward_ratio: Optional[float] = None
     is_simulated: bool = False
+
+# --- ALERT SYSTEM MODELS ---
+
+class LiquidityEvent(BaseModel):
+    side: str # BUY or SELL
+    timestamp: float # in ms
+
+class MarketSnapshot(BaseModel):
+    symbol: str
+    price: float
+    zScore: float
+    skewness: float
+    bayesianPosterior: float
+    expectedValueRR: float
+    
+    # Tactical
+    tacticalProbability: float
+    biasAlignment: bool
+    liquidityAgreement: bool
+    regimeAgreement: bool
+    aiScore: float
+    
+    # Liquidity History
+    sweeps: List[LiquidityEvent]
+    bosDirection: Optional[str] = None # BULLISH or BEARISH or None
+    
+    # Regime
+    regimeType: str
+    trendDirection: str
+    volatilityPercentile: float
+    
+    # Metrics
+    institutionalCVD: float
+    ofi: float
+    toxicity: float
+    retailSentiment: float
+    
+    # Biases (for AI Context)
+    dailyBias: str
+    h4Bias: str
+    h1Bias: str
+
+class AlertDecision(BaseModel):
+    shouldAlert: bool
+    reason: str
+    score: int
+    passedConditions: List[str]
+    aiAnalysis: Optional[Dict[str, Any]] = None
+
+class TelegramPayload(BaseModel):
+    symbol: str
+    direction: str
+    confidence: float
+    entry: float
+    stop: float
+    target: float
+    rrRatio: float
+    reasoning: str
+    conditions: List[str]
 
 app = FastAPI()
 
@@ -123,10 +183,6 @@ async def fetch_binance_candles(symbol: str, limit: int = 50):
 def calculate_z_score_bands(candles):
     """
     Calculate statistical Z-Score volatility bands.
-    
-    Standard statistical bands:
-    - Inner bands: ±1.0 standard deviation (68.27% of data)
-    - Outer bands: ±2.0 standard deviations (95.45% of data)
     """
     if not candles:
         return {}
@@ -145,7 +201,7 @@ def calculate_z_score_bands(candles):
 
 async def send_telegram_alert(symbol: str, analysis: MarketAnalysis):
     """
-    Sends a high-priority alert to Telegram if configured.
+    Sends a high-priority alert to Telegram if configured. (Legacy function)
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
@@ -216,6 +272,194 @@ async def health_check():
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
         "timestamp": datetime.now().isoformat()
     }
+
+# --- NEW ALERT SYSTEM ENDPOINTS ---
+
+@app.post("/alerts/evaluate")
+async def evaluate_alert(snapshot: MarketSnapshot):
+    """
+    Evaluates 5 trading conditions. If 4/5 pass, queries AI for confirmation.
+    """
+    passed_conditions = []
+    
+    # 1. Sentinel Stats
+    # Z-Score > 2.0 OR < -2.0, Positive Skew (safety), High Bayesian, Good RR
+    cond1 = (
+        abs(snapshot.zScore) > 2.0 and
+        snapshot.skewness > -0.5 and
+        snapshot.bayesianPosterior > 0.6 and
+        snapshot.expectedValueRR >= 2.0
+    )
+    if cond1: passed_conditions.append("Sentinel Stats (Z>2, RR>2)")
+
+    # 2. AI Tactical
+    cond2 = (
+        snapshot.tacticalProbability > 75 and
+        snapshot.biasAlignment and
+        snapshot.liquidityAgreement and
+        snapshot.regimeAgreement and
+        snapshot.aiScore > 0.7
+    )
+    if cond2: passed_conditions.append("AI Tactical (Prob > 75%)")
+
+    # 3. Liquidity Pattern (Directional Sweep)
+    # Check for recent sweep (last 10 mins = 600,000ms) matching BOS logic
+    now = datetime.now().timestamp() * 1000
+    recent_sweeps = [s for s in snapshot.sweeps if (now - s.timestamp) < 600000]
+    
+    has_bullish_liq = any(s.side == 'SELL' for s in recent_sweeps) and snapshot.bosDirection == 'BULLISH'
+    has_bearish_liq = any(s.side == 'BUY' for s in recent_sweeps) and snapshot.bosDirection == 'BEARISH'
+    
+    cond3 = has_bullish_liq or has_bearish_liq
+    if cond3: passed_conditions.append("Liquidity (Recent Sweep + BOS)")
+
+    # 4. Regime Support
+    cond4 = False
+    if snapshot.regimeType == 'TRENDING':
+        cond4 = snapshot.trendDirection != 'NEUTRAL'
+    elif snapshot.regimeType == 'RANGING':
+        cond4 = abs(snapshot.zScore) > 2.0
+    elif snapshot.regimeType == 'EXPANDING':
+        cond4 = snapshot.volatilityPercentile > 70
+    
+    if cond4: passed_conditions.append(f"Regime Support ({snapshot.regimeType})")
+
+    # 5. CVD Divergence
+    # Bullish Div: Price Down (Z < -2) but CVD Up (> 50)
+    # Bearish Div: Price Up (Z > 2) but CVD Down (< -50)
+    bull_div = snapshot.zScore < -2.0 and snapshot.institutionalCVD > 50
+    bear_div = snapshot.zScore > 2.0 and snapshot.institutionalCVD < -50
+    cond5 = bull_div or bear_div
+    
+    if cond5: passed_conditions.append("CVD Divergence")
+
+    score = len(passed_conditions)
+    
+    # FAIL FAST if score < 4
+    if score < 4:
+        return AlertDecision(
+            shouldAlert=False,
+            reason=f"Only {score}/5 conditions met.",
+            score=score,
+            passedConditions=passed_conditions
+        )
+
+    # --- AI CONFIRMATION STEP ---
+    if not GEMINI_API_KEY:
+        return AlertDecision(shouldAlert=False, reason="Conditions Met but AI Key Missing", score=score, passedConditions=passed_conditions)
+
+    try:
+        model = genai.GenerativeModel('gemini-3-flash-preview')
+        
+        prompt = f"""
+        You are a senior trading analyst. Analyze this market snapshot and respond ONLY with JSON.
+        
+        MARKET DATA:
+        - Symbol: {snapshot.symbol}
+        - Price: {snapshot.price}
+        - Z-Score: {snapshot.zScore}
+        - OFI: {snapshot.ofi}
+        - Toxicity: {snapshot.toxicity}
+        - Retail Sentiment: {snapshot.retailSentiment}% Long
+        - Institutional CVD: {snapshot.institutionalCVD}
+
+        TIMEFRAME BIAS:
+        - Daily: {snapshot.dailyBias}
+        - 4H: {snapshot.h4Bias}
+        - 1H: {snapshot.h1Bias}
+
+        REGIME: {snapshot.regimeType} ({snapshot.trendDirection})
+
+        CONDITIONS MET: {score}/5
+        Reasons: {', '.join(passed_conditions)}
+
+        Response format:
+        {{
+          "should_trade": true/false,
+          "direction": "LONG" or "SHORT",
+          "confidence": 0.0 to 1.0,
+          "entry": float,
+          "stop": float,
+          "target": float,
+          "reasoning": "Brief 1-sentence explanation"
+        }}
+        """
+        
+        response = await model.generate_content_async(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
+        ai_res = json.loads(response.text)
+        
+        # Final Decision
+        if ai_res.get("should_trade") is True:
+            return AlertDecision(
+                shouldAlert=True,
+                reason="AI Confirmed Setup",
+                score=score,
+                passedConditions=passed_conditions,
+                aiAnalysis=ai_res
+            )
+        else:
+            return AlertDecision(
+                shouldAlert=False,
+                reason=f"AI Rejected: {ai_res.get('reasoning')}",
+                score=score,
+                passedConditions=passed_conditions,
+                aiAnalysis=ai_res
+            )
+
+    except Exception as e:
+        logger.error(f"AI Alert Evaluation Error: {e}")
+        # Fallback if AI fails but math is good? No, safer to fail.
+        return AlertDecision(
+            shouldAlert=False,
+            reason=f"AI Error: {str(e)}",
+            score=score,
+            passedConditions=passed_conditions
+        )
+
+@app.post("/alerts/send-telegram")
+async def process_telegram_alert(payload: TelegramPayload):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        raise HTTPException(status_code=500, detail="Telegram not configured")
+
+    conditions_list = "\n".join([f"✅ {c}" for c in payload.conditions])
+    
+    emoji = "🟢" if payload.direction == "LONG" else "🔴"
+    
+    msg = (
+        f"{emoji} <b>TIER 1 ALERT: {payload.symbol}</b>\n\n"
+        f"<b>Direction:</b> {payload.direction}\n"
+        f"<b>Confidence:</b> {payload.confidence*100:.0f}%\n\n"
+        f"📊 <b>Levels:</b>\n"
+        f"• Entry: {payload.entry}\n"
+        f"• Stop: {payload.stop}\n"
+        f"• Target: {payload.target}\n"
+        f"• R:R: {payload.rrRatio:.1f}:1\n\n"
+        f"🤖 <b>AI Analysis:</b>\n"
+        f"<i>{payload.reasoning}</i>\n\n"
+        f"<b>Conditions Met:</b>\n"
+        f"{conditions_list}\n\n"
+        f"⏰ {datetime.now().strftime('%H:%M:%S UTC')}"
+    )
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json={
+                "chat_id": TELEGRAM_CHAT_ID, 
+                "text": msg, 
+                "parse_mode": "HTML"
+            })
+            if resp.status_code != 200:
+                logger.error(f"Telegram Error: {resp.text}")
+                raise HTTPException(status_code=500, detail="Telegram API Error")
+            return {"status": "sent"}
+        except Exception as e:
+            logger.error(f"Telegram Network Error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/history")
 async def proxy_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000):
@@ -322,7 +566,7 @@ async def analyze_market(
         raw_result = json.loads(response.text)
         validated = MarketAnalysis(**raw_result)
         
-        # Trigger Telegram Alert in background
+        # Trigger Telegram Alert in background (Legacy)
         background_tasks.add_task(send_telegram_alert, symbol, validated)
         
         return validated.dict()
