@@ -1,19 +1,15 @@
+
 import React, { useState } from 'react';
 import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X, BrainCircuit, Cpu, LogOut, User as UserIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
+import ProfileOverlay from './ProfileOverlay';
 
 const ASSETS = [
     { id: 'BTCUSDT', label: 'BTC/USDT', name: 'Bitcoin' },
     { id: 'ETHUSDT', label: 'ETH/USDT', name: 'Ethereum' },
     { id: 'SOLUSDT', label: 'SOL/USDT', name: 'Solana' },
-];
-
-const AI_MODELS = [
-    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'High Reasoning (Complex Tasks)' },
-    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', desc: 'Low Latency (Fast)' },
-    { id: 'gemini-flash-latest', label: 'Gemini Flash', desc: 'Standard Flash' },
 ];
 
 const Header: React.FC = () => {
@@ -22,9 +18,9 @@ const Header: React.FC = () => {
   const [apiUrl, setApiUrl] = useState(API_BASE_URL);
   
   const { metrics } = useStore(state => state.market);
-  const { isBacktest, activeSymbol, playbackSpeed, backtestDate, aiModel } = useStore(state => state.config);
+  const { isBacktest, activeSymbol, playbackSpeed, backtestDate } = useStore(state => state.config);
   const { user } = useStore(state => state.auth);
-  const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setAiModel, logout } = useStore();
+  const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setProfileOpen } = useStore();
 
   const handleSaveSettings = () => {
       localStorage.setItem('VITE_API_URL', apiUrl);
@@ -32,6 +28,7 @@ const Header: React.FC = () => {
   };
 
   return (
+    <>
     <header className="h-16 lg:h-20 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-transparent relative z-40 border-b border-white/5 lg:border-none">
       
       {/* Left: Ticker & Price */}
@@ -199,10 +196,13 @@ const Header: React.FC = () => {
             <Settings size={20} className="w-5 h-5 lg:w-5 lg:h-5" />
         </button>
 
-        {/* Profile Avatar / Logout */}
+        {/* Profile Avatar / Trigger */}
         <div className="relative group">
             {user ? (
-                <button className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 border border-white/20 overflow-hidden relative">
+                <button 
+                    onClick={() => setProfileOpen(true)}
+                    className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 border border-white/20 overflow-hidden relative cursor-pointer hover:ring-2 hover:ring-white/20 transition-all"
+                >
                     {user.photoURL ? (
                         <img src={user.photoURL} alt={user.displayName || "User"} className="w-full h-full object-cover" />
                     ) : (
@@ -214,22 +214,10 @@ const Header: React.FC = () => {
             ) : (
                 <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-zinc-800 border border-white/10"></div>
             )}
-            
-            {/* Logout Tooltip */}
-            {user && (
-                <div className="absolute top-full right-0 mt-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
-                    <button 
-                        onClick={() => logout()}
-                        className="flex items-center gap-2 bg-[#09090b] border border-white/10 px-4 py-2 rounded-lg text-xs font-bold text-rose-500 whitespace-nowrap shadow-xl hover:bg-white/5"
-                    >
-                        <LogOut size={12} /> LOGOUT
-                    </button>
-                </div>
-            )}
         </div>
       </div>
       
-      {/* Settings Modal */}
+      {/* Settings Modal (Global System Config) */}
       <AnimatePresence>
           {isSettingsOpen && (
               <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -257,36 +245,9 @@ const Header: React.FC = () => {
                       </div>
                       
                       <div className="p-6 space-y-6">
-                          {/* AI Model Settings */}
-                          <div className="space-y-3">
-                              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                                  <BrainCircuit size={12} className="text-brand-accent" /> AI Inference Engine
-                              </label>
-                              <div className="space-y-1">
-                                  {AI_MODELS.map((model) => (
-                                      <button
-                                          key={model.id}
-                                          onClick={() => setAiModel(model.id)}
-                                          className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-all text-left group
-                                              ${aiModel === model.id 
-                                                  ? 'bg-brand-accent/10 border-brand-accent/50' 
-                                                  : 'bg-black/20 border-white/5 hover:bg-white/5'}
-                                          `}
-                                      >
-                                          <div>
-                                              <div className={`text-sm font-bold ${aiModel === model.id ? 'text-brand-accent' : 'text-zinc-300'}`}>
-                                                  {model.label}
-                                              </div>
-                                              <div className="text-[10px] text-zinc-500">{model.desc}</div>
-                                          </div>
-                                          {aiModel === model.id && <Cpu size={14} className="text-brand-accent" />}
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-
+                          
                           {/* API Endpoint Settings */}
-                          <div className="space-y-2 pt-4 border-t border-white/5">
+                          <div className="space-y-2">
                               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                                   <Server size={12} /> Backend API Endpoint
                               </label>
@@ -324,6 +285,10 @@ const Header: React.FC = () => {
           )}
       </AnimatePresence>
     </header>
+    
+    {/* Profile Overlay Component */}
+    <ProfileOverlay />
+    </>
   );
 };
 

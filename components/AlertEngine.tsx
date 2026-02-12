@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
-import { Zap, Clock, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Zap, Clock, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const COOLDOWN_MS = 10 * 60 * 1000; // 10 Minutes
@@ -15,8 +15,9 @@ const AlertEngine: React.FC = () => {
         liquidity, 
         regime, 
         aiTactical, 
-        config: { activeSymbol, isBacktest },
-        addNotification 
+        config: { activeSymbol, isBacktest, telegramBotToken, telegramChatId },
+        addNotification,
+        logAlert // Import logging action
     } = useStore();
 
     const lastAlertTimeRef = useRef<number>(0);
@@ -98,7 +99,9 @@ const AlertEngine: React.FC = () => {
                         target: decision.aiAnalysis.target,
                         rrRatio: (Math.abs(decision.aiAnalysis.target - decision.aiAnalysis.entry) / Math.abs(decision.aiAnalysis.entry - decision.aiAnalysis.stop)) || 0,
                         reasoning: decision.aiAnalysis.reasoning,
-                        conditions: decision.passedConditions
+                        conditions: decision.passedConditions,
+                        botToken: telegramBotToken,
+                        chatId: telegramChatId
                     };
 
                     const sendRes = await fetch(`${API_BASE_URL}/alerts/send-telegram`, {
@@ -114,8 +117,30 @@ const AlertEngine: React.FC = () => {
                             title: 'ALERT SENT',
                             message: `AI confirmed ${payload.direction} setup on ${activeSymbol}. Sent to Telegram.`
                         });
+                        
+                        // LOG ALERT TO FIRESTORE
+                        await logAlert({
+                            timestamp: Date.now(),
+                            symbol: activeSymbol,
+                            direction: payload.direction,
+                            confidence: payload.confidence,
+                            price: payload.entry,
+                            result: "SENT"
+                        });
+
                         lastAlertTimeRef.current = Date.now();
                         setStatus('COOLDOWN');
+                    } else {
+                        // Log Failure
+                        await logAlert({
+                            timestamp: Date.now(),
+                            symbol: activeSymbol,
+                            direction: payload.direction,
+                            confidence: payload.confidence,
+                            price: payload.entry,
+                            result: "FAILED: Telegram API Error"
+                        });
+                        setStatus('IDLE');
                     }
                 } else {
                     setStatus('IDLE');
@@ -130,7 +155,7 @@ const AlertEngine: React.FC = () => {
 
         const intervalId = setInterval(checkConditions, POLL_INTERVAL_MS);
         return () => clearInterval(intervalId);
-    }, [activeSymbol, isBacktest, market.metrics, biasMatrix, liquidity, regime, aiTactical]);
+    }, [activeSymbol, isBacktest, market.metrics, biasMatrix, liquidity, regime, aiTactical, telegramBotToken, telegramChatId]);
 
     if (isBacktest) return null;
 

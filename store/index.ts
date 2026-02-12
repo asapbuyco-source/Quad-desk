@@ -5,7 +5,7 @@ import { MOCK_METRICS, MOCK_ASKS, MOCK_BIDS, MOCK_LEVELS, API_BASE_URL } from '.
 import { calculateADX, detectMarketRegime, calculateSkewness, calculateKurtosis, calculateZScoreBands, generateSyntheticData, analyzeRegime } from '../utils/analytics';
 import type { User } from 'firebase/auth';
 import { signInWithPopup, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, getDoc, collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
 
 // Debounced Calculation Scheduler
@@ -19,274 +19,25 @@ interface VPINBucket {
     timestamp: number;
 }
 
-/**
- * Calculates VPIN (toxicity) from recent trades
- * VPIN measures order flow toxicity - high values indicate informed trading
- */
-const calculateVPIN = (trades: RecentTrade[], bucketSize: number = 50, numBuckets: number = 50): number => {
-    if (trades.length < 10) return 0;
-    
-    const buckets: VPINBucket[] = [];
-    let currentBucket: VPINBucket = { buyVolume: 0, sellVolume: 0, timestamp: Date.now() };
-    let bucketVolume = 0;
-    
-    // 1. Divide trades into equal-volume buckets
-    for (const trade of trades) {
-        const volume = trade.size;
-        
-        if (trade.side === 'BUY') {
-            currentBucket.buyVolume += volume;
-        } else {
-            currentBucket.sellVolume += volume;
-        }
-        
-        bucketVolume += volume;
-        
-        // Bucket is full
-        if (bucketVolume >= bucketSize) {
-            buckets.push({ ...currentBucket });
-            currentBucket = { buyVolume: 0, sellVolume: 0, timestamp: Date.now() };
-            bucketVolume = 0;
-        }
-        
-        if (buckets.length >= numBuckets) break;
-    }
-    
-    if (buckets.length === 0) return 0;
-    
-    // 2. Calculate VPIN
-    const totalImbalance = buckets.reduce((sum, bucket) => {
-        const totalVol = bucket.buyVolume + bucket.sellVolume;
-        const imbalance = Math.abs(bucket.buyVolume - bucket.sellVolume);
-        return sum + (totalVol > 0 ? imbalance / totalVol : 0);
-    }, 0);
-    
-    const vpin = totalImbalance / buckets.length;
-    
-    // 3. Scale to 0-100 (VPIN typically ranges 0-0.5, but can spike higher)
-    const toxicity = Math.min(100, vpin * 200);
-    
-    return Math.round(toxicity);
-};
+// ... (Existing calculation functions: calculateVPIN, calculateBayesianPosterior, etc. - NO CHANGE)
 
-// --- Bayesian Logic ---
-
-const calculateBayesianPosterior = (
-    prior: number,
-    likelihood: number,
-    evidenceProbability: number
-): number => {
-    if (evidenceProbability === 0) return prior;
-    return (likelihood * prior) / evidenceProbability;
-};
-
-const updateTrendContinuationBelief = (
-    currentPrice: number,
-    previousPrice: number,
-    ofi: number,
-    priorBelief: number = 0.5
-): number => {
-    const isUptrend = currentPrice > previousPrice;
-    
-    // P(E|H) - Likelihood: Probability of seeing this OFI if trend continues
-    let likelihood: number;
-    if (isUptrend) {
-        likelihood = ofi > 100 ? 0.8 : ofi > 0 ? 0.6 : 0.3;
-    } else {
-        likelihood = ofi < -100 ? 0.8 : ofi < 0 ? 0.6 : 0.3;
-    }
-    
-    // P(E) - Evidence
-    const evidenceProbability = 
-        (likelihood * priorBelief) + 
-        ((1 - likelihood) * (1 - priorBelief));
-    
-    return calculateBayesianPosterior(priorBelief, likelihood, evidenceProbability);
-};
-
-// --- Expected Value Logic ---
-
-const calculateExpectedValue = (
-    winProbability: number,
-    winAmount: number,
-    lossProbability: number,
-    lossAmount: number
-): { ev: number; rrRatio: number } => {
-    const ev = (winProbability * winAmount) - (lossProbability * lossAmount);
-    const rrRatio = lossAmount > 0 ? winAmount / lossAmount : 0;
-    
-    return { ev, rrRatio };
-};
-
-// --- Bias Calculation Logic ---
-const determineBias = (candles: any[]): BiasType => {
-    if (candles.length < 5) return 'NEUTRAL';
-    const recent = candles.slice(-5);
-    
-    // Count higher highs and higher lows
-    let hh = 0, hl = 0, lh = 0, ll = 0;
-    for(let i = 1; i < recent.length; i++) {
-        if (recent[i].high > recent[i-1].high) hh++;
-        if (recent[i].low > recent[i-1].low) hl++;
-        if (recent[i].high < recent[i-1].high) lh++;
-        if (recent[i].low < recent[i-1].low) ll++;
-    }
-
-    if (hh >= 3 && hl >= 3) return 'BULL';
-    if (lh >= 3 && ll >= 3) return 'BEAR';
-    return 'NEUTRAL';
-};
-
-// --- Liquidity Detection Logic ---
-const detectLiquidityEvents = (candles: CandleData[]): LiquidityState => {
-    const sweeps: SweepEvent[] = [];
-    const bos: BreakOfStructure[] = [];
-    const fvg: FairValueGap[] = [];
-    
-    if (candles.length < 5) return { sweeps: [], bos: [], fvg: [], lastUpdated: Date.now() };
-
-    // Identify Swing Highs/Lows (Pivot Points)
-    // A high is a high if it's higher than N neighbors. Let's use 3 neighbors.
-    interface Pivot { index: number; price: number; type: 'HIGH' | 'LOW'; time: number | string; }
-    const pivots: Pivot[] = [];
-    
-    for (let i = 3; i < candles.length - 3; i++) {
-        const curr = candles[i];
-        
-        // Pivot High
-        if (curr.high > candles[i-1].high && curr.high > candles[i-2].high &&
-            curr.high > candles[i+1].high && curr.high > candles[i+2].high) {
-            pivots.push({ index: i, price: curr.high, type: 'HIGH', time: curr.time });
-        }
-        // Pivot Low
-        if (curr.low < candles[i-1].low && curr.low < candles[i-2].low &&
-            curr.low < candles[i+1].low && curr.low < candles[i+2].low) {
-            pivots.push({ index: i, price: curr.low, type: 'LOW', time: curr.time });
-        }
-    }
-
-    // Detect BOS & Sweeps
-    // Iterate through recent candles to see if they break pivots
-    const recentCandles = candles.slice(-50); // Look at last 50 for events
-    const recentPivots = pivots.filter(p => p.index < candles.length - 5); // Pivots must be somewhat formed
-
-    recentCandles.forEach((c, idx) => {
-        // Map relative index back to absolute
-        const absoluteIndex = candles.length - 50 + idx;
-        
-        recentPivots.forEach(pivot => {
-            // Only check if price is AFTER pivot
-            if (absoluteIndex <= pivot.index) return;
-
-            // Check Highs (Resistance)
-            if (pivot.type === 'HIGH') {
-                if (c.high > pivot.price) {
-                    if (c.close > pivot.price) {
-                        // BOS Bullish
-                        // Dedupe roughly
-                        if (!bos.find(b => Math.abs(b.price - pivot.price) < 0.1 && b.timestamp === absoluteIndex)) {
-                             bos.push({ 
-                                 id: `bos-bull-${absoluteIndex}`, 
-                                 price: pivot.price, 
-                                 direction: 'BULLISH', 
-                                 timestamp: Date.now(), // Realtime sim
-                                 candleTime: c.time
-                             });
-                        }
-                    } else {
-                        // Sweep Bearish (High taken but closed below)
-                        // Only add if it's a fresh sweep (not already swept by recent candles)
-                        if (!sweeps.find(s => Math.abs(s.price - pivot.price) < 0.1)) {
-                            sweeps.push({ 
-                                id: `sweep-bear-${absoluteIndex}`, 
-                                price: pivot.price, 
-                                side: 'BUY', // Liquidity side swept
-                                timestamp: Date.now(),
-                                candleTime: c.time
-                            });
-                        }
-                    }
-                }
-            }
-            
-            // Check Lows (Support)
-            if (pivot.type === 'LOW') {
-                if (c.low < pivot.price) {
-                    if (c.close < pivot.price) {
-                        // BOS Bearish
-                        if (!bos.find(b => Math.abs(b.price - pivot.price) < 0.1 && b.timestamp === absoluteIndex)) {
-                             bos.push({ 
-                                 id: `bos-bear-${absoluteIndex}`, 
-                                 price: pivot.price, 
-                                 direction: 'BEARISH', 
-                                 timestamp: Date.now(),
-                                 candleTime: c.time
-                             });
-                        }
-                    } else {
-                        // Sweep Bullish (Low taken but closed above)
-                        if (!sweeps.find(s => Math.abs(s.price - pivot.price) < 0.1)) {
-                            sweeps.push({ 
-                                id: `sweep-bull-${absoluteIndex}`, 
-                                price: pivot.price, 
-                                side: 'SELL', 
-                                timestamp: Date.now(),
-                                candleTime: c.time
-                            });
-                        }
-                    }
-                }
-            }
-        });
-    });
-
-    // Detect FVGs
-    // Bullish FVG: Low[i] > High[i-2]
-    // Bearish FVG: High[i] < Low[i-2]
-    for (let i = 2; i < candles.length; i++) {
-        const curr = candles[i];
-        const prev2 = candles[i-2];
-        
-        // Bullish FVG
-        if (curr.low > prev2.high) {
-            fvg.push({
-                id: `fvg-bull-${i}`,
-                startPrice: prev2.high,
-                endPrice: curr.low,
-                direction: 'BULLISH',
-                resolved: false, // In a real app we'd check if subsequent price filled it
-                timestamp: Date.now(),
-                candleTime: curr.time
-            });
-        }
-        
-        // Bearish FVG
-        if (curr.high < prev2.low) {
-            fvg.push({
-                id: `fvg-bear-${i}`,
-                startPrice: curr.high,
-                endPrice: prev2.low,
-                direction: 'BEARISH',
-                resolved: false,
-                timestamp: Date.now(),
-                candleTime: curr.time
-            });
-        }
-    }
-
-    // Limit array sizes
-    return {
-        sweeps: sweeps.slice(-10).reverse(),
-        bos: bos.slice(-10).reverse(),
-        fvg: fvg.slice(-10).reverse(),
-        lastUpdated: Date.now()
-    };
-};
+// --- Helper Types for Alert Logs ---
+export interface AlertLog {
+    id: string;
+    timestamp: number;
+    symbol: string;
+    direction: string;
+    confidence: number;
+    price: number;
+    result: string; // "SENT" or error message
+}
 
 interface AppState {
+    // ... (Existing State Properties)
     ui: {
         hasEntered: boolean;
         activeTab: string;
+        isProfileOpen: boolean;
     };
     auth: {
         user: User | null;
@@ -301,7 +52,10 @@ interface AppState {
         playbackSpeed: number;
         backtestDate: string;
         aiModel: string;
+        telegramBotToken: string;
+        telegramChatId: string;
     };
+    // ... (Market, Bias, Liquidity, Regime, AI, Analytics, Trading State - NO CHANGE)
     market: {
         metrics: MarketMetrics;
         candles: CandleData[];
@@ -317,18 +71,25 @@ interface AppState {
     biasMatrix: BiasMatrixState;
     liquidity: LiquidityState;
     regime: RegimeState; 
-    aiTactical: AiTacticalState; // New Slice
+    aiTactical: AiTacticalState;
     ai: {
         scanResult: AiScanResult | undefined;
         isScanning: boolean;
         lastScanTime: number;
         cooldownRemaining: number;
+        orderFlowAnalysis: {
+            verdict: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | null;
+            confidence: number;
+            explanation: string;
+            flowType: string;
+            timestamp: number;
+            isLoading: boolean;
+        };
     };
     analytics: {
         lastCalculation: number;
         isCalculating: boolean;
     };
-    // Position & Risk State
     trading: {
         activePosition: Position | null;
         tradeHistory: ClosedTrade[];
@@ -337,12 +98,13 @@ interface AppState {
         dailyStats: DailyStats;
     };
     notifications: ToastMessage[];
+    alertLogs: AlertLog[]; // NEW STATE
 
-    // UI Actions
+    // ... (Existing Actions)
     setHasEntered: (hasEntered: boolean) => void;
     setActiveTab: (tab: string) => void;
+    setProfileOpen: (isOpen: boolean) => void;
     
-    // Auth Actions
     setUser: (user: User | null) => void;
     setAuthLoading: (isLoading: boolean) => void;
     signInGoogle: () => Promise<void>;
@@ -350,11 +112,9 @@ interface AppState {
     loginEmail: (email: string, pass: string) => Promise<void>;
     logout: () => Promise<void>;
     
-    // Admin Actions
     initSystemConfig: () => void;
     toggleRegistration: (isOpen: boolean) => Promise<void>;
 
-    // Config Actions
     toggleBacktest: () => void;
     setSymbol: (symbol: string) => void;
     setInterval: (interval: string) => void;
@@ -362,44 +122,43 @@ interface AppState {
     setBacktestDate: (date: string) => void;
     setAiModel: (model: string) => void;
     
-    // Market Actions
+    loadUserProfile: (uid: string) => Promise<void>;
+    updateUserProfile: (settings: { aiModel?: string; telegramBotToken?: string; telegramChatId?: string }) => Promise<void>;
+
+    // New Alert Actions
+    logAlert: (alert: Omit<AlertLog, 'id'>) => Promise<void>;
+    fetchAlertHistory: () => Promise<void>;
+
+    // New Analysis Action
+    fetchOrderFlowAnalysis: (payload: { symbol: string; price: number; netDelta: number; totalVolume: number; pocPrice: number; cvdTrend: string; candleCount: number }) => Promise<void>;
+
     setMarketHistory: (payload: { candles: CandleData[], initialCVD: number }) => void;
     setMarketBands: (bands: any) => void;
     processWsTick: (tick: any) => void;
     processTradeTick: (trade: RecentTrade) => void;
     processSimTick: (payload: { asks: OrderBookLevel[]; bids: OrderBookLevel[]; metrics: Partial<MarketMetrics>; trade?: RecentTrade }) => void;
     
-    // Bias Matrix Actions
     refreshBiasMatrix: () => Promise<void>;
-
-    // Liquidity Actions
     refreshLiquidityAnalysis: () => void;
-
-    // Regime Actions
     refreshRegimeAnalysis: () => void;
-
-    // AI Tactical Actions
     refreshTacticalAnalysis: () => void;
 
-    // AI Actions
     startAiScan: () => void;
     completeAiScan: (result: AiScanResult) => void;
     failAiScan: () => void;
     updateAiCooldown: (remaining: number) => void;
     
-    // Trading Actions
     openPosition: (params: { entry: number; stop: number; target: number; direction: 'LONG' | 'SHORT' }) => void;
     closePosition: (exitPrice: number) => void;
     setAccountSize: (size: number) => void;
     setRiskPercent: (percent: number) => void;
     resetDailyStats: () => void;
 
-    // Notification Actions
     addNotification: (toast: ToastMessage) => void;
     removeNotification: (id: string) => void;
 }
 
-// Helper: CVD Analysis Logic
+// ... (Existing Helper Functions: calculateCVDAnalysis - NO CHANGE)
 const calculateCVDAnalysis = (candles: CandleData[], currentCVD: number) => {
     if (candles.length < 10) return { trend: 'FLAT' as const, divergence: 'NONE' as const, interpretation: 'NEUTRAL' as const, value: currentCVD };
 
@@ -429,6 +188,131 @@ const calculateCVDAnalysis = (candles: CandleData[], currentCVD: number) => {
     return { trend, divergence, interpretation, value: currentCVD };
 };
 
+// ... (Existing Helper Functions - NO CHANGE)
+const calculateVPIN = (trades: RecentTrade[], bucketSize: number = 50, numBuckets: number = 50): number => {
+    if (trades.length < 10) return 0;
+    const buckets: VPINBucket[] = [];
+    let currentBucket: VPINBucket = { buyVolume: 0, sellVolume: 0, timestamp: Date.now() };
+    let bucketVolume = 0;
+    for (const trade of trades) {
+        const volume = trade.size;
+        if (trade.side === 'BUY') { currentBucket.buyVolume += volume; } else { currentBucket.sellVolume += volume; }
+        bucketVolume += volume;
+        if (bucketVolume >= bucketSize) {
+            buckets.push({ ...currentBucket });
+            currentBucket = { buyVolume: 0, sellVolume: 0, timestamp: Date.now() };
+            bucketVolume = 0;
+        }
+        if (buckets.length >= numBuckets) break;
+    }
+    if (buckets.length === 0) return 0;
+    const totalImbalance = buckets.reduce((sum, bucket) => {
+        const totalVol = bucket.buyVolume + bucket.sellVolume;
+        const imbalance = Math.abs(bucket.buyVolume - bucket.sellVolume);
+        return sum + (totalVol > 0 ? imbalance / totalVol : 0);
+    }, 0);
+    const vpin = totalImbalance / buckets.length;
+    const toxicity = Math.min(100, vpin * 200);
+    return Math.round(toxicity);
+};
+
+const updateTrendContinuationBelief = (currentPrice: number, previousPrice: number, ofi: number, priorBelief: number = 0.5): number => {
+    const isUptrend = currentPrice > previousPrice;
+    let likelihood: number;
+    if (isUptrend) { likelihood = ofi > 100 ? 0.8 : ofi > 0 ? 0.6 : 0.3; } else { likelihood = ofi < -100 ? 0.8 : ofi < 0 ? 0.6 : 0.3; }
+    const evidenceProbability = (likelihood * priorBelief) + ((1 - likelihood) * (1 - priorBelief));
+    return calculateBayesianPosterior(priorBelief, likelihood, evidenceProbability);
+};
+
+const calculateBayesianPosterior = (prior: number, likelihood: number, evidenceProbability: number): number => {
+    if (evidenceProbability === 0) return prior;
+    return (likelihood * prior) / evidenceProbability;
+};
+
+const calculateExpectedValue = (winProbability: number, winAmount: number, lossProbability: number, lossAmount: number): { ev: number; rrRatio: number } => {
+    const ev = (winProbability * winAmount) - (lossProbability * lossAmount);
+    const rrRatio = lossAmount > 0 ? winAmount / lossAmount : 0;
+    return { ev, rrRatio };
+};
+
+const determineBias = (candles: any[]): BiasType => {
+    if (candles.length < 5) return 'NEUTRAL';
+    const recent = candles.slice(-5);
+    let hh = 0, hl = 0, lh = 0, ll = 0;
+    for(let i = 1; i < recent.length; i++) {
+        if (recent[i].high > recent[i-1].high) hh++;
+        if (recent[i].low > recent[i-1].low) hl++;
+        if (recent[i].high < recent[i-1].high) lh++;
+        if (recent[i].low < recent[i-1].low) ll++;
+    }
+    if (hh >= 3 && hl >= 3) return 'BULL';
+    if (lh >= 3 && ll >= 3) return 'BEAR';
+    return 'NEUTRAL';
+};
+
+const detectLiquidityEvents = (candles: CandleData[]): LiquidityState => {
+    const sweeps: SweepEvent[] = [];
+    const bos: BreakOfStructure[] = [];
+    const fvg: FairValueGap[] = [];
+    if (candles.length < 5) return { sweeps: [], bos: [], fvg: [], lastUpdated: Date.now() };
+    interface Pivot { index: number; price: number; type: 'HIGH' | 'LOW'; time: number | string; }
+    const pivots: Pivot[] = [];
+    for (let i = 3; i < candles.length - 3; i++) {
+        const curr = candles[i];
+        if (curr.high > candles[i-1].high && curr.high > candles[i-2].high && curr.high > candles[i+1].high && curr.high > candles[i+2].high) {
+            pivots.push({ index: i, price: curr.high, type: 'HIGH', time: curr.time });
+        }
+        if (curr.low < candles[i-1].low && curr.low < candles[i-2].low && curr.low < candles[i+1].low && curr.low < candles[i+2].low) {
+            pivots.push({ index: i, price: curr.low, type: 'LOW', time: curr.time });
+        }
+    }
+    const recentCandles = candles.slice(-50);
+    const recentPivots = pivots.filter(p => p.index < candles.length - 5);
+    recentCandles.forEach((c, idx) => {
+        const absoluteIndex = candles.length - 50 + idx;
+        recentPivots.forEach(pivot => {
+            if (absoluteIndex <= pivot.index) return;
+            if (pivot.type === 'HIGH') {
+                if (c.high > pivot.price) {
+                    if (c.close > pivot.price) {
+                        if (!bos.find(b => Math.abs(b.price - pivot.price) < 0.1 && b.timestamp === absoluteIndex)) {
+                             bos.push({ id: `bos-bull-${absoluteIndex}`, price: pivot.price, direction: 'BULLISH', timestamp: Date.now(), candleTime: c.time });
+                        }
+                    } else {
+                        if (!sweeps.find(s => Math.abs(s.price - pivot.price) < 0.1)) {
+                            sweeps.push({ id: `sweep-bear-${absoluteIndex}`, price: pivot.price, side: 'BUY', timestamp: Date.now(), candleTime: c.time });
+                        }
+                    }
+                }
+            }
+            if (pivot.type === 'LOW') {
+                if (c.low < pivot.price) {
+                    if (c.close < pivot.price) {
+                        if (!bos.find(b => Math.abs(b.price - pivot.price) < 0.1 && b.timestamp === absoluteIndex)) {
+                             bos.push({ id: `bos-bear-${absoluteIndex}`, price: pivot.price, direction: 'BEARISH', timestamp: Date.now(), candleTime: c.time });
+                        }
+                    } else {
+                        if (!sweeps.find(s => Math.abs(s.price - pivot.price) < 0.1)) {
+                            sweeps.push({ id: `sweep-bull-${absoluteIndex}`, price: pivot.price, side: 'SELL', timestamp: Date.now(), candleTime: c.time });
+                        }
+                    }
+                }
+            }
+        });
+    });
+    for (let i = 2; i < candles.length; i++) {
+        const curr = candles[i];
+        const prev2 = candles[i-2];
+        if (curr.low > prev2.high) {
+            fvg.push({ id: `fvg-bull-${i}`, startPrice: prev2.high, endPrice: curr.low, direction: 'BULLISH', resolved: false, timestamp: Date.now(), candleTime: curr.time });
+        }
+        if (curr.high < prev2.low) {
+            fvg.push({ id: `fvg-bear-${i}`, startPrice: curr.high, endPrice: prev2.low, direction: 'BEARISH', resolved: false, timestamp: Date.now(), candleTime: curr.time });
+        }
+    }
+    return { sweeps: sweeps.slice(-10).reverse(), bos: bos.slice(-10).reverse(), fvg: fvg.slice(-10).reverse(), lastUpdated: Date.now() };
+};
+
 const DEFAULT_DAILY_STATS: DailyStats = {
     totalR: 0,
     realizedPnL: 0,
@@ -439,7 +323,7 @@ const DEFAULT_DAILY_STATS: DailyStats = {
 };
 
 export const useStore = create<AppState>((set, get) => ({
-    ui: { hasEntered: false, activeTab: 'dashboard' },
+    ui: { hasEntered: false, activeTab: 'dashboard', isProfileOpen: false },
     auth: { user: null, isAuthLoading: true, isAuthModalOpen: false, registrationOpen: true },
     config: { 
         isBacktest: false, 
@@ -447,7 +331,9 @@ export const useStore = create<AppState>((set, get) => ({
         activeSymbol: 'BTCUSDT', 
         playbackSpeed: 1, 
         backtestDate: new Date().toISOString().split('T')[0],
-        aiModel: 'gemini-3-pro-preview'
+        aiModel: 'gemini-3-pro-preview',
+        telegramBotToken: '',
+        telegramChatId: ''
     },
     market: {
         metrics: { ...MOCK_METRICS, pair: "BTC/USDT", price: 0, dailyPnL: 0, circuitBreakerTripped: false },
@@ -500,23 +386,47 @@ export const useStore = create<AppState>((set, get) => ({
         },
         lastUpdated: 0
     },
-    ai: { scanResult: undefined, isScanning: false, lastScanTime: 0, cooldownRemaining: 0 },
+    ai: { 
+        scanResult: undefined, 
+        isScanning: false, 
+        lastScanTime: 0, 
+        cooldownRemaining: 0,
+        orderFlowAnalysis: {
+            verdict: null,
+            confidence: 0,
+            explanation: '',
+            flowType: '',
+            timestamp: 0,
+            isLoading: false
+        }
+    },
     analytics: { lastCalculation: 0, isCalculating: false },
-    // Trading State Initial Values
     trading: {
         activePosition: null,
         tradeHistory: [],
-        accountSize: 100000, // 100k Default
-        riskPercent: 1.0, // 1% Risk
+        accountSize: 100000, 
+        riskPercent: 1.0, 
         dailyStats: DEFAULT_DAILY_STATS
     },
     notifications: [],
+    alertLogs: [], // Initial state
 
     setHasEntered: (hasEntered) => set((state) => ({ ui: { ...state.ui, hasEntered } })),
     setActiveTab: (activeTab) => set((state) => ({ ui: { ...state.ui, activeTab } })),
+    setProfileOpen: (isProfileOpen) => {
+        set((state) => ({ ui: { ...state.ui, isProfileOpen } }));
+        if (isProfileOpen) {
+            get().fetchAlertHistory(); // Refresh logs on open
+        }
+    },
     
     // Auth Actions
-    setUser: (user) => set((state) => ({ auth: { ...state.auth, user, isAuthLoading: false } })),
+    setUser: (user) => {
+        set((state) => ({ auth: { ...state.auth, user, isAuthLoading: false } }));
+        if (user) {
+            get().loadUserProfile(user.uid);
+        }
+    },
     setAuthLoading: (isLoading) => set((state) => ({ auth: { ...state.auth, isAuthLoading: isLoading } })),
     
     initSystemConfig: () => {
@@ -547,6 +457,140 @@ export const useStore = create<AppState>((set, get) => ({
         }
     },
 
+    loadUserProfile: async (uid: string) => {
+        try {
+            const userDoc = await getDoc(doc(db, "users", uid));
+            if (userDoc.exists()) {
+                const data = userDoc.data();
+                const settings = data.settings || {};
+                
+                // Update Config from DB
+                set(state => ({
+                    config: {
+                        ...state.config,
+                        aiModel: settings.aiModel || state.config.aiModel,
+                        telegramBotToken: settings.telegramBotToken || '',
+                        telegramChatId: settings.telegramChatId || ''
+                    }
+                }));
+            }
+        } catch (error) {
+            console.warn("Failed to load user profile:", error);
+        }
+    },
+
+    updateUserProfile: async (settings) => {
+        const { user } = get().auth;
+        if (!user) return;
+
+        try {
+            await setDoc(doc(db, "users", user.uid), { settings }, { merge: true });
+            
+            // Optimistic update of local state
+            set(state => ({
+                config: {
+                    ...state.config,
+                    ...settings
+                }
+            }));
+
+            get().addNotification({
+                id: Date.now().toString(),
+                type: 'success',
+                title: 'Settings Saved',
+                message: 'Profile configuration updated successfully.'
+            });
+        } catch (error: any) {
+            get().addNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                title: 'Save Failed',
+                message: error.message
+            });
+        }
+    },
+
+    logAlert: async (alertData) => {
+        const { user } = get().auth;
+        if (!user) return;
+
+        try {
+            // Add to Firestore collection
+            await addDoc(collection(db, "users", user.uid, "alerts"), {
+                ...alertData,
+                timestamp: Date.now()
+            });
+            
+            // Optionally update local state immediately, but fetchAlertHistory will handle it on next view
+        } catch (e) {
+            console.error("Failed to log alert:", e);
+        }
+    },
+
+    fetchAlertHistory: async () => {
+        const { user } = get().auth;
+        if (!user) return;
+
+        try {
+            const alertsRef = collection(db, "users", user.uid, "alerts");
+            const q = query(alertsRef, orderBy("timestamp", "desc"), limit(20));
+            const querySnapshot = await getDocs(q);
+            
+            const logs: AlertLog[] = [];
+            querySnapshot.forEach((doc) => {
+                logs.push({ id: doc.id, ...doc.data() } as AlertLog);
+            });
+
+            set({ alertLogs: logs });
+        } catch (e) {
+            console.error("Failed to fetch alert history:", e);
+        }
+    },
+
+    fetchOrderFlowAnalysis: async (payload) => {
+        set(state => ({
+            ai: {
+                ...state.ai,
+                orderFlowAnalysis: { ...state.ai.orderFlowAnalysis, isLoading: true }
+            }
+        }));
+
+        try {
+            const res = await fetch(`${API_BASE_URL}/analyze/flow`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) throw new Error("Analysis failed");
+
+            const result = await res.json();
+            
+            set(state => ({
+                ai: {
+                    ...state.ai,
+                    orderFlowAnalysis: {
+                        verdict: result.verdict,
+                        confidence: result.confidence,
+                        explanation: result.explanation,
+                        flowType: result.flow_type,
+                        timestamp: Date.now(),
+                        isLoading: false
+                    }
+                }
+            }));
+        } catch (e) {
+            console.error("Flow Analysis Error:", e);
+            set(state => ({
+                ai: {
+                    ...state.ai,
+                    orderFlowAnalysis: { ...state.ai.orderFlowAnalysis, isLoading: false, explanation: "Analysis failed. Please try again." }
+                }
+            }));
+        }
+    },
+
+    // ... (Remaining Auth & Market Actions - NO CHANGE)
     signInGoogle: async () => {
         if (!get().auth.registrationOpen) {
             // Note: Google sign in usually creates an account if one doesn't exist.
@@ -596,6 +640,7 @@ export const useStore = create<AppState>((set, get) => ({
     logout: async () => {
         try {
             await signOut(auth);
+            get().setProfileOpen(false); // Close profile if open
             get().addNotification({
                 id: Date.now().toString(),
                 type: 'info',
@@ -635,7 +680,13 @@ export const useStore = create<AppState>((set, get) => ({
     setInterval: (interval) => set((state) => ({ config: { ...state.config, interval } })),
     setPlaybackSpeed: (playbackSpeed) => set((state) => ({ config: { ...state.config, playbackSpeed } })),
     setBacktestDate: (backtestDate) => set((state) => ({ config: { ...state.config, backtestDate } })),
-    setAiModel: (aiModel) => set((state) => ({ config: { ...state.config, aiModel } })),
+    
+    // Modified setAiModel to persist change
+    setAiModel: (aiModel) => {
+        set((state) => ({ config: { ...state.config, aiModel } }));
+        // Also persist to DB
+        get().updateUserProfile({ aiModel });
+    },
 
     setMarketHistory: ({ candles, initialCVD }) => set((state) => {
         const candlesWithAdx = calculateADX(candles);

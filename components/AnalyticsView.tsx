@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { useStore } from '../store';
 import { useVolumeProfileData } from '../hooks/useChart';
-import { BarChart2, Activity, Layers, Minus, Anchor, TrendingUp } from 'lucide-react';
+import { BarChart2, Activity, Layers, Minus, Anchor, TrendingUp, BrainCircuit, RefreshCw, Zap } from 'lucide-react';
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -43,7 +43,9 @@ const StatCard: React.FC<{ label: string; value: string; subValue?: string; colo
 );
 
 const AnalyticsView: React.FC = () => {
-  const { candles } = useStore(state => state.market);
+  const { candles, metrics } = useStore(state => state.market);
+  const { config, fetchOrderFlowAnalysis } = useStore();
+  const { orderFlowAnalysis } = useStore(state => state.ai);
   
   // 1. Prepare Data for Time-Series Chart (Order Flow)
   const timeData = useMemo(() => {
@@ -73,12 +75,31 @@ const AnalyticsView: React.FC = () => {
       const totalDelta = candles.reduce((acc, c) => acc + (c.delta || 0), 0);
       const poc = profileData.find(p => p.type === 'POC')?.price || 0;
       
+      const startCvd = timeData.length > 0 ? (timeData[0].cvd || 0) : 0;
+      const endCvd = timeData.length > 0 ? (timeData[timeData.length-1].cvd || 0) : 0;
+      const cvdTrend = endCvd > startCvd + 50 ? "UP" : endCvd < startCvd - 50 ? "DOWN" : "FLAT";
+
       return {
           totalVol,
           totalDelta,
-          poc
+          poc,
+          cvdTrend
       };
-  }, [candles, profileData]);
+  }, [candles, profileData, timeData]);
+
+  const handleAnalysis = () => {
+      if (orderFlowAnalysis.isLoading) return;
+      
+      fetchOrderFlowAnalysis({
+          symbol: config.activeSymbol,
+          price: metrics.price,
+          netDelta: stats.totalDelta,
+          totalVolume: stats.totalVol,
+          pocPrice: stats.poc,
+          cvdTrend: stats.cvdTrend,
+          candleCount: candles.length
+      });
+  };
 
   if (!candles || candles.length === 0) {
       return (
@@ -91,12 +112,88 @@ const AnalyticsView: React.FC = () => {
       );
   }
 
+  // Verdict Colors
+  let verdictColor = "text-zinc-400";
+  let verdictBg = "from-zinc-900 to-black";
+  let verdictBorder = "border-white/10";
+  
+  if (orderFlowAnalysis.verdict === 'BULLISH') {
+      verdictColor = "text-emerald-400";
+      verdictBg = "from-emerald-900/20 to-black";
+      verdictBorder = "border-emerald-500/20";
+  } else if (orderFlowAnalysis.verdict === 'BEARISH') {
+      verdictColor = "text-rose-400";
+      verdictBg = "from-rose-900/20 to-black";
+      verdictBorder = "border-rose-500/20";
+  } else if (orderFlowAnalysis.verdict === 'NEUTRAL') {
+      verdictColor = "text-amber-400";
+      verdictBg = "from-amber-900/20 to-black";
+      verdictBorder = "border-amber-500/20";
+  }
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="flex flex-col h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 pt-6 max-w-7xl mx-auto gap-6"
     >
+      {/* AI Verdict Section */}
+      <div className={`rounded-2xl border ${verdictBorder} bg-gradient-to-r ${verdictBg} p-6 relative overflow-hidden group transition-all duration-500`}>
+          <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+              <BrainCircuit size={120} />
+          </div>
+          
+          <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+              <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1.5 rounded-lg bg-brand-accent/20 text-brand-accent">
+                          <Zap size={14} fill="currentColor" />
+                      </div>
+                      <span className="text-xs font-bold text-white uppercase tracking-widest">Neural Flow Engine</span>
+                  </div>
+                  
+                  {orderFlowAnalysis.verdict ? (
+                      <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+                          <div className="flex items-baseline gap-3 mb-2">
+                              <h2 className={`text-4xl font-black tracking-tighter ${verdictColor}`}>
+                                  {orderFlowAnalysis.verdict}
+                              </h2>
+                              <span className="text-sm font-mono text-zinc-500 font-bold">
+                                  CONF: {(orderFlowAnalysis.confidence * 100).toFixed(0)}%
+                              </span>
+                          </div>
+                          <p className="text-zinc-300 text-sm leading-relaxed max-w-2xl font-light">
+                              {orderFlowAnalysis.explanation}
+                          </p>
+                          <div className="mt-3 flex items-center gap-2">
+                              <span className="text-[10px] text-zinc-500 font-mono uppercase">Context: {orderFlowAnalysis.flowType}</span>
+                              <span className="text-zinc-700">•</span>
+                              <span className="text-[10px] text-zinc-500 font-mono">Last Update: {new Date(orderFlowAnalysis.timestamp).toLocaleTimeString()}</span>
+                          </div>
+                      </div>
+                  ) : (
+                      <div className="text-zinc-500 text-sm italic">
+                          AI analysis not yet generated. Initiate synthesis to interpret order flow dynamics.
+                      </div>
+                  )}
+              </div>
+
+              <button 
+                  onClick={handleAnalysis}
+                  disabled={orderFlowAnalysis.isLoading}
+                  className={`
+                      flex items-center gap-2 px-6 py-3 rounded-xl font-bold uppercase text-xs tracking-wider transition-all shadow-lg
+                      ${orderFlowAnalysis.isLoading 
+                          ? 'bg-zinc-800 text-zinc-500 cursor-wait' 
+                          : 'bg-white text-black hover:bg-zinc-200 hover:scale-105'}
+                  `}
+              >
+                  <RefreshCw size={14} className={orderFlowAnalysis.isLoading ? "animate-spin" : ""} />
+                  {orderFlowAnalysis.isLoading ? "Synthesizing..." : "Synthesize Flow"}
+              </button>
+          </div>
+      </div>
+
       {/* Header Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="md:col-span-1 flex items-center gap-3">

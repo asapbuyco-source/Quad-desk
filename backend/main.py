@@ -117,6 +117,23 @@ class TelegramPayload(BaseModel):
     rrRatio: float
     reasoning: str
     conditions: List[str]
+    botToken: Optional[str] = None
+    chatId: Optional[str] = None
+
+class OrderFlowPayload(BaseModel):
+    symbol: str
+    price: float
+    netDelta: float
+    totalVolume: float
+    pocPrice: float
+    cvdTrend: str # "UP", "DOWN", "FLAT"
+    candleCount: int
+
+class OrderFlowVerdict(BaseModel):
+    verdict: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+    confidence: float
+    explanation: str
+    flow_type: str # "ABSORPTION", "AGGRESSION", "EXHAUSTION", "BALANCED"
 
 app = FastAPI()
 
@@ -420,10 +437,57 @@ async def evaluate_alert(snapshot: MarketSnapshot):
             passedConditions=passed_conditions
         )
 
+@app.post("/analyze/flow")
+async def analyze_order_flow(payload: OrderFlowPayload):
+    if not GEMINI_API_KEY:
+        return {"error": "AI Key Missing"}
+
+    try:
+        model = genai.GenerativeModel('gemini-3-flash-preview')
+        
+        prompt = f"""
+        Act as an Expert Order Flow Analyst (ex-Citadel). Analyze this specific flow data for {payload.symbol}:
+        
+        - Price: {payload.price}
+        - Net Delta (Aggressor): {payload.netDelta}
+        - Total Volume: {payload.totalVolume}
+        - Point of Control (POC): {payload.pocPrice}
+        - CVD Trend: {payload.cvdTrend}
+        
+        Determine the immediate micro-structure context:
+        1. ABSORPTION? (High Volume/Delta but little price move)
+        2. AGGRESSION? (High Delta pushing price strongly)
+        3. EXHAUSTION? (Price moving on low volume/delta)
+        4. BALANCED? (Price pivoting around POC)
+        
+        Respond ONLY in JSON:
+        {{
+            "verdict": "BULLISH" | "BEARISH" | "NEUTRAL",
+            "confidence": 0.0-1.0,
+            "explanation": "Concise 1-sentence technical reason focusing on the delta/volume relationship.",
+            "flow_type": "ABSORPTION" | "AGGRESSION" | "EXHAUSTION" | "BALANCED"
+        }}
+        """
+        
+        response = await model.generate_content_async(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
+        return json.loads(response.text)
+
+    except Exception as e:
+        logger.error(f"Order Flow Analysis Error: {e}")
+        return {"error": str(e)}
+
 @app.post("/alerts/send-telegram")
 async def process_telegram_alert(payload: TelegramPayload):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        raise HTTPException(status_code=500, detail="Telegram not configured")
+    # Determine which credentials to use: User provided or Server Env
+    bot_token = payload.botToken or TELEGRAM_BOT_TOKEN
+    chat_id = payload.chatId or TELEGRAM_CHAT_ID
+
+    if not bot_token or not chat_id:
+        raise HTTPException(status_code=500, detail="Telegram not configured (Missing Token or Chat ID)")
 
     conditions_list = "\n".join([f"✅ {c}" for c in payload.conditions])
     
@@ -445,17 +509,17 @@ async def process_telegram_alert(payload: TelegramPayload):
         f"⏰ {datetime.now().strftime('%H:%M:%S UTC')}"
     )
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(url, json={
-                "chat_id": TELEGRAM_CHAT_ID, 
+                "chat_id": chat_id, 
                 "text": msg, 
                 "parse_mode": "HTML"
             })
             if resp.status_code != 200:
                 logger.error(f"Telegram Error: {resp.text}")
-                raise HTTPException(status_code=500, detail="Telegram API Error")
+                raise HTTPException(status_code=500, detail=f"Telegram API Error: {resp.text}")
             return {"status": "sent"}
         except Exception as e:
             logger.error(f"Telegram Network Error: {e}")
