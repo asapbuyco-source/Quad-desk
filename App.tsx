@@ -22,6 +22,7 @@ import { Lock, RefreshCw } from 'lucide-react';
 import { useStore } from './store';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './lib/firebase';
+import { calculateADX } from './utils/analytics'; // Import for Audit Fix #3
 
 const SCAN_COOLDOWN = 60;
 
@@ -42,7 +43,11 @@ const App: React.FC = () => {
       addNotification,
       removeNotification,
       setUser,
-      initSystemConfig
+      initSystemConfig,
+      loadUserPreferences,
+      processWsTick,
+      processTradeTick,
+      processDepthUpdate
   } = useStore();
 
   useEffect(() => {
@@ -51,6 +56,7 @@ const App: React.FC = () => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
         if (user) {
             setUser(user);
+            loadUserPreferences(); // Restore user settings (active symbol)
             addNotification({
                 id: 'auth-success',
                 type: 'success',
@@ -83,10 +89,19 @@ const App: React.FC = () => {
                 throw new Error("Invalid data format received from backend");
             }
 
+            // --- AUDIT FIX #1: CVD Persistence & Recovery ---
             let runningCVD = 0;
+            const cachedCVD = localStorage.getItem(`cvd_${config.activeSymbol}`);
+            if (cachedCVD && !isNaN(parseFloat(cachedCVD))) {
+                runningCVD = parseFloat(cachedCVD);
+            }
+
             const formattedCandles: CandleData[] = data.map((k: any) => {
                 const vol = parseFloat(k[5]);
                 const takerBuyVol = parseFloat(k[9]); 
+                // Formula: Delta = TakerBuy - TakerSell
+                // TakerSell = Total - TakerBuy
+                // Delta = TakerBuy - (Total - TakerBuy) = 2*TakerBuy - Total
                 const delta = (2 * takerBuyVol) - vol;
                 runningCVD += delta;
 
@@ -95,12 +110,16 @@ const App: React.FC = () => {
                     open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]), volume: vol,
                     delta: delta,
                     cvd: runningCVD,
-                    zScoreUpper1: parseFloat(k[4]) * 1.002, zScoreLower1: parseFloat(k[4]) * 0.998,
-                    zScoreUpper2: parseFloat(k[4]) * 1.005, zScoreLower2: parseFloat(k[4]) * 0.995,
+                    zScoreUpper1: 0, zScoreLower1: 0,
+                    zScoreUpper2: 0, zScoreLower2: 0,
+                    adx: 0 // Placeholder
                 };
             }).filter((c: CandleData) => !isNaN(c.close));
             
-            setMarketHistory({ candles: formattedCandles, initialCVD: runningCVD });
+            // --- AUDIT FIX #3: Calculate ADX for History ---
+            const candlesWithADX = calculateADX(formattedCandles, 14);
+
+            setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
         } catch (e: any) {
             console.error(`History Fetch Failed: ${e.message}`);
             addNotification({ 
@@ -136,6 +155,22 @@ const App: React.FC = () => {
       let useUsEndpoint = false;
       const MAX_RETRIES = 10;
       const BASE_DELAY = 1000;
+      
+      // --- AUDIT FIX #5: WebSocket Gap Detection ---
+      let lastMessageTime = Date.now();
+      let gapCheckInterval: ReturnType<typeof setInterval> | null = null;
+      const GAP_THRESHOLD = 60000; // 60 seconds
+
+      const checkForGaps = () => {
+          const now = Date.now();
+          if (now - lastMessageTime > GAP_THRESHOLD && ws?.readyState === WebSocket.OPEN) {
+              console.warn("⚠️ Data Gap Detected. Attempting history refetch...");
+              // Trigger a basic history refresh by closing socket, forcing a reconnect/reload logic
+              // A cleaner way is to just call fetchHistory() again via re-triggering logic, 
+              // but closing the socket will trigger the 'onclose' retry which handles connection resets.
+              ws.close(); 
+          }
+      };
 
       const connect = () => {
           const symbol = config.activeSymbol.toLowerCase();
@@ -147,13 +182,21 @@ const App: React.FC = () => {
 
           ws = new WebSocket(`${baseUrl}/stream?streams=${streams}`);
           
-          ws.onopen = () => { retryCount = 0; };
+          ws.onopen = () => { 
+              retryCount = 0;
+              lastMessageTime = Date.now();
+              if (gapCheckInterval) clearInterval(gapCheckInterval);
+              gapCheckInterval = setInterval(checkForGaps, 10000);
+          };
           
           ws.onmessage = (event) => {
+              lastMessageTime = Date.now(); // Update heartbeat
               const message = JSON.parse(event.data);
+              
               if (message.data) {
-                  const { processWsTick, processTradeTick, processDepthUpdate } = useStore.getState();
-
+                  // NOTE: using destructured handlers from store state inside the effect
+                  // to avoid stale closure issues if they were not destructured at top level
+                  
                   if (message.data.e === 'kline') {
                       processWsTick(message.data.k);
                   } 
@@ -224,6 +267,8 @@ const App: React.FC = () => {
           };
           
           ws.onclose = () => {
+              if (gapCheckInterval) clearInterval(gapCheckInterval);
+              
               if (retryCount < MAX_RETRIES) {
                    if (!useUsEndpoint && retryCount >= 1) {
                        console.log("⚠️ Geo-Restriction Detected. Switching to Binance.US WebSocket stream.");
@@ -249,6 +294,7 @@ const App: React.FC = () => {
               clearTimeout(reconnectTimer);
               reconnectTimer = null;
           }
+          if (gapCheckInterval) clearInterval(gapCheckInterval);
       };
   }, [config.interval, config.activeSymbol]);
 

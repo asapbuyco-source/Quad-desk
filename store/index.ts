@@ -116,6 +116,7 @@ interface StoreState {
     
     setUser: (user: User | null) => void;
     initSystemConfig: () => Promise<void>;
+    loadUserPreferences: () => Promise<void>;
     signInGoogle: () => Promise<void>;
     registerEmail: (e: string, p: string, n: string) => Promise<void>;
     loginEmail: (e: string, p: string) => Promise<void>;
@@ -156,7 +157,7 @@ export const useStore = create<StoreState>((set, get) => ({
     },
     config: {
         isBacktest: false,
-        activeSymbol: 'BTCUSDT',
+        activeSymbol: typeof localStorage !== 'undefined' ? (localStorage.getItem('activeSymbol') || 'BTCUSDT') : 'BTCUSDT',
         playbackSpeed: 1,
         backtestDate: new Date().toISOString().split('T')[0],
         interval: '1m',
@@ -255,10 +256,32 @@ export const useStore = create<StoreState>((set, get) => ({
     setProfileOpen: (val) => set(state => ({ ui: { ...state.ui, isProfileOpen: val } })),
 
     toggleBacktest: () => set(state => ({ config: { ...state.config, isBacktest: !state.config.isBacktest } })),
-    setSymbol: (symbol) => set(state => ({ 
-        config: { ...state.config, activeSymbol: symbol },
-        market: { ...state.market, candles: [], recentTrades: [] } // Reset data on symbol change
-    })),
+    
+    setSymbol: (symbol) => {
+        set(state => ({ 
+            config: { ...state.config, activeSymbol: symbol },
+            market: { ...state.market, candles: [], recentTrades: [], asks: [], bids: [] }, // Reset market data
+            // Reset Analysis States to avoid stale data
+            biasMatrix: { ...state.biasMatrix, symbol, daily: null, h4: null, h1: null, m5: null, isLoading: true },
+            regime: { ...state.regime, symbol, regimeType: 'UNCERTAIN', atr: 0 },
+            aiTactical: { ...state.aiTactical, symbol, probability: 0, scenario: 'NEUTRAL' },
+            liquidity: { ...state.liquidity, sweeps: [], bos: [], fvg: [] }
+        }));
+
+        // Persist to LocalStorage
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('activeSymbol', symbol);
+        }
+
+        // Persist to Firestore if user is logged in
+        const state = get();
+        if (state.auth.user) {
+            setDoc(doc(db, 'users', state.auth.user.uid), { 
+                config: { activeSymbol: symbol } 
+            }, { merge: true }).catch(err => console.error("Failed to save symbol preference", err));
+        }
+    },
+
     setPlaybackSpeed: (speed) => set(state => ({ config: { ...state.config, playbackSpeed: speed } })),
     setBacktestDate: (date) => set(state => ({ config: { ...state.config, backtestDate: date } })),
     setInterval: (interval) => set(state => ({ config: { ...state.config, interval } })),
@@ -282,6 +305,23 @@ export const useStore = create<StoreState>((set, get) => ({
                 }));
             }
         } catch(e) { console.error(e); }
+    },
+
+    loadUserPreferences: async () => {
+        const state = get();
+        if (!state.auth.user) return;
+        
+        try {
+            const snap = await getDoc(doc(db, 'users', state.auth.user.uid));
+            if (snap.exists()) {
+                const data = snap.data();
+                if (data.config?.activeSymbol) {
+                    get().setSymbol(data.config.activeSymbol);
+                }
+            }
+        } catch (e) {
+            console.error("Error loading user preferences:", e);
+        }
     },
 
     signInGoogle: async () => {
@@ -330,17 +370,64 @@ export const useStore = create<StoreState>((set, get) => ({
         set(state => ({ auth: { ...state.auth, user: null } }));
     },
 
-    setMarketHistory: ({ candles }) => set(state => {
+    setMarketHistory: ({ candles, initialCVD }) => set(state => {
+        // --- AUDIT FIX: Z-Score Band Calculation for ALL historical candles ---
+        // Prevents the chart from having 0-value bands for history
+        
+        const enrichedCandles = candles.map((candle, i) => {
+            if (i < 19) {
+                // Not enough data for bands yet, use % envelope as fallback
+                return {
+                    ...candle,
+                    zScoreUpper1: candle.close * 1.002,
+                    zScoreLower1: candle.close * 0.998,
+                    zScoreUpper2: candle.close * 1.005,
+                    zScoreLower2: candle.close * 0.995,
+                };
+            }
+            
+            // Get rolling window of 20 candles including current
+            const window = candles.slice(i - 19, i + 1);
+            const prices = window.map(c => c.close);
+            const bands = calculateZScoreBands(prices);
+            
+            return {
+                ...candle,
+                zScoreUpper1: bands.upper1,
+                zScoreLower1: bands.lower1,
+                zScoreUpper2: bands.upper2,
+                zScoreLower2: bands.lower2
+            };
+        });
+
         const metrics = { ...state.market.metrics };
-        if (candles.length > 0) {
-            const last = candles[candles.length - 1];
+        if (enrichedCandles.length > 0) {
+            const last = enrichedCandles[enrichedCandles.length - 1];
             metrics.price = last.close;
             metrics.change = ((last.close - last.open) / last.open) * 100;
+            metrics.institutionalCVD = initialCVD; // Set CVD from recovery
+            
+            // Calculate current Z-Score
+            const prices = enrichedCandles.slice(-20).map(c => c.close);
+            if (prices.length >= 20) {
+                const mean = prices.reduce((a, b) => a + b, 0) / 20;
+                const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / 20;
+                const stdDev = Math.sqrt(variance);
+                metrics.zScore = stdDev === 0 ? 0 : (last.close - mean) / stdDev;
+            }
         }
+
+        // --- AUDIT FIX: Persist CVD to prevent reset ---
+        if (typeof localStorage !== 'undefined') {
+            try {
+                localStorage.setItem(`cvd_${state.config.activeSymbol}`, initialCVD.toString());
+            } catch (e) { console.warn("Failed to persist CVD"); }
+        }
+
         return {
             market: {
                 ...state.market,
-                candles,
+                candles: enrichedCandles,
                 metrics
             }
         };
@@ -427,6 +514,32 @@ export const useStore = create<StoreState>((set, get) => ({
             divergence = 'BEARISH_DISTRIBUTION';
         }
 
+        // --- AUDIT FIX: Expected Value (EV) Calculation ---
+        // Calculate EV dynamically if an AI setup exists
+        let expectedValue: ExpectedValueData | null = state.market.expectedValue;
+        if (state.ai.scanResult && state.ai.scanResult.verdict === 'ENTRY') {
+            const scan = state.ai.scanResult;
+            const entry = scan.entry_price || scan.decision_price;
+            const stop = scan.stop_loss || (entry * 0.99);
+            const target = scan.take_profit || (entry * 1.02);
+            
+            const risk = Math.abs(entry - stop);
+            const reward = Math.abs(target - entry);
+            const rrRatio = risk === 0 ? 0 : reward / risk;
+            
+            // Confidence acts as win rate proxy (conservative base 0.4 if low conf)
+            const winRate = Math.max(0.4, scan.confidence || 0.5);
+            const ev = (winRate * reward) - ((1 - winRate) * risk);
+            
+            expectedValue = {
+                ev,
+                rrRatio,
+                winProbability: winRate,
+                winAmount: reward,
+                lossAmount: risk
+            };
+        }
+
         return {
             market: {
                 ...state.market,
@@ -447,7 +560,8 @@ export const useStore = create<StoreState>((set, get) => ({
                         divergence,
                         interpretation: contextInterpretation
                     }
-                }
+                },
+                expectedValue // Include computed EV
             }
         };
     }),
