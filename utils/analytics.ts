@@ -94,6 +94,45 @@ export const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
 };
 
 /**
+ * Calculates Relative Strength Index (RSI) using Wilder's Smoothing.
+ * Used as a proxy for Retail Sentiment.
+ */
+export const calculateRSI = (prices: number[], period = 14): number => {
+    if (prices.length < period + 1) return 50;
+
+    let gains = 0;
+    let losses = 0;
+
+    // 1. Initial SMA
+    for (let i = 1; i <= period; i++) {
+        const change = prices[i] - prices[i - 1];
+        if (change > 0) gains += change;
+        else losses -= change;
+    }
+
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+
+    // 2. Smoothed averages
+    for (let i = period + 1; i < prices.length; i++) {
+        const change = prices[i] - prices[i - 1];
+        let g = 0; 
+        let l = 0;
+        
+        if (change > 0) g = change;
+        else l = -change;
+        
+        avgGain = (avgGain * (period - 1) + g) / period;
+        avgLoss = (avgLoss * (period - 1) + l) / period;
+    }
+
+    if (avgLoss === 0) return 100;
+    
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+};
+
+/**
  * Detects the current market regime based on ADX, Volume, and Z-Score behavior.
  */
 export const detectMarketRegime = (data: CandleData[]): RegimeType => {
@@ -186,89 +225,6 @@ export const calculateZScoreBands = (prices: number[]) => {
         lower2: mean - (2.0 * stdDev),
     };
 };
-
-/**
- * Generates synthetic candlestick data for simulation or fallback scenarios.
- * Now includes CVD (Cumulative Volume Delta) simulation.
- */
-export const generateSyntheticData = (startPrice = 42000, count = 300): CandleData[] => {
-    let price = startPrice;
-    let runningCVD = 0;
-    const data: CandleData[] = [];
-    const now = Math.floor(Date.now() / 1000);
-    
-    // Initial pass to generate candles
-    for(let i = 0; i < count; i++) {
-        let trend = 0;
-        // Inject some deterministic patterns for consistency
-        if(i > 50 && i < 100) trend = startPrice * 0.0015; 
-        if(i > 100 && i < 150) trend = -(startPrice * 0.002); 
-        if(i > 150) trend = startPrice * 0.0005; 
-        
-        const vol = Math.random() * (startPrice * 0.002);
-        const move = trend + (Math.random() - 0.5) * vol;
-        const close = price + move;
-        const high = Math.max(price, close) + Math.random() * (vol * 0.5);
-        const low = Math.min(price, close) - Math.random() * (vol * 0.5);
-        
-        // Ensure high/low encapsulate open/close
-        const finalHigh = Math.max(high, price, close);
-        const finalLow = Math.min(low, price, close);
-        
-        // Reverse time calculation so index 0 is oldest
-        const time = now - ((count - i) * 60);
-
-        // Simulate Delta based on price move direction mostly, with some noise for divergence
-        const totalVolume = 500 + Math.abs(move) * 10;
-        const isUp = close > price;
-        // Directional bias for delta
-        let deltaBias = isUp ? 0.6 : 0.4;
-        
-        // Create Divergence occasionally
-        if (i > 250 && i < 280) { // Fake absorption at end
-             deltaBias = isUp ? 0.3 : 0.7; // Price moves opposite to volume pressure
-        }
-
-        const takerBuyVol = totalVolume * (deltaBias + (Math.random() * 0.1 - 0.05));
-        const delta = (2 * takerBuyVol) - totalVolume; // Approximation
-        runningCVD += delta;
-
-        data.push({
-            time: time,
-            open: price,
-            high: finalHigh,
-            low: finalLow,
-            close: close,
-            volume: totalVolume,
-            delta: delta,
-            cvd: runningCVD,
-            // Temporary bands, will recalculate properly
-            zScoreUpper1: 0,
-            zScoreLower1: 0,
-            zScoreUpper2: 0,
-            zScoreLower2: 0,
-        });
-        price = close;
-    }
-
-    // Pass to calculate ADX
-    const withADX = calculateADX(data);
-
-    // Final Pass: Apply proper Z-Score Bands based on window
-    return withADX.map((c, i, arr) => {
-        const window = arr.slice(Math.max(0, i - 20), i + 1).map(c => c.close);
-        const bands = calculateZScoreBands(window);
-        return {
-            ...c,
-            zScoreUpper1: bands.upper1,
-            zScoreLower1: bands.lower1,
-            zScoreUpper2: bands.upper2,
-            zScoreLower2: bands.lower2,
-        };
-    });
-};
-
-// --- REGIME SPECIFIC LOGIC ---
 
 /**
  * Calculates ATR manually for a subset of candles

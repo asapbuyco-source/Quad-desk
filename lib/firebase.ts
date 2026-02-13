@@ -2,7 +2,13 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, Auth } from "firebase/auth";
 import { getAnalytics, isSupported, Analytics } from "firebase/analytics";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getFirestore, Firestore } from "firebase/firestore";
+import { 
+  getFirestore, 
+  Firestore, 
+  initializeFirestore, 
+  persistentLocalCache, 
+  memoryLocalCache 
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD6eNi5OkV8mwvaV-hAyvNjOD_gLznNgtg",
@@ -14,30 +20,48 @@ const firebaseConfig = {
   measurementId: "G-Y4JY39HZF3"
 };
 
-// Singleton pattern: Reuse existing app if available to prevent "Component auth not registered" error during hot-reload
+// Singleton pattern to handle HMR
 let app: FirebaseApp;
 let db: Firestore;
 
 if (!getApps().length) {
-  // First initialization
   app = initializeApp(firebaseConfig);
-  // Initialize Firestore with settings only once
-  db = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager()
-    })
-  });
 } else {
-  // Reuse existing instance
   app = getApp();
-  // Get existing Firestore instance (avoids "Firestore already started" error)
-  db = getFirestore(app);
+}
+
+// Robust Firestore Initialization
+// 1. Try Persistence (Ideal)
+// 2. Fallback to Memory (If IndexedDB blocked/incognito)
+// 3. Fallback to Existing (If HMR re-run)
+try {
+    db = initializeFirestore(app, {
+        localCache: persistentLocalCache()
+    });
+} catch (error: any) {
+    try {
+        // Fallback: Use memory cache if persistence fails (common in restricted envs)
+        db = initializeFirestore(app, {
+            localCache: memoryLocalCache()
+        });
+    } catch (e2: any) {
+        // Fallback: If totally failed (e.g., already initialized), just get the existing instance
+        try {
+            db = getFirestore(app);
+        } catch (e3) {
+            console.error("Firestore fatal initialization error:", e3);
+            // We cannot recover if we can't get an instance, but we avoid throwing the specific "Service not available" to the UI if possible.
+            // In a real scenario, this might need a mock DB or UI error state.
+            // For now, we allow the error to surface if it's truly unrecoverable, but the memory fallback usually fixes 99% of cases.
+            throw e3;
+        }
+    }
 }
 
 const auth: Auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
-// Initialize Analytics (Async check for browser support)
+// Initialize Analytics (Async)
 let analytics: Analytics | undefined;
 if (typeof window !== 'undefined') {
   isSupported().then(yes => {

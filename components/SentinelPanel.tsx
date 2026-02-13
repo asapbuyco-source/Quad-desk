@@ -46,7 +46,6 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
   const dynamicChecklist = checklist.map(item => {
       switch(item.id) {
           case '1': // Dislocation (Z-Score)
-              // This is usually pre-calculated in store, but we update status logic
               const zVal = Math.abs(metrics.zScore);
               return {
                   ...item,
@@ -62,16 +61,18 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                   status: bayesian > 0.6 ? 'pass' : (bayesian > 0.4 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
               };
           
-          case '3': // Sentiment Washout
-              const sentiment = metrics.retailSentiment || 50;
+          case '3': // Sentiment Washout (RSI Based)
+              const rsi = metrics.retailSentiment || 50;
               let sStatus: 'pass' | 'warning' | 'fail' = 'fail';
-              // Contrarian Logic: Extreme sentiment is good (reversal likely), Neutral is bad (no edge)
-              if (sentiment <= 30 || sentiment >= 70) sStatus = 'pass';
-              else if ((sentiment > 30 && sentiment <= 40) || (sentiment >= 60 && sentiment < 70)) sStatus = 'warning';
+              let sLabel = "NEUTRAL";
+              
+              if (rsi >= 70) { sStatus = 'pass'; sLabel = "OVERHEATED"; }
+              else if (rsi <= 30) { sStatus = 'pass'; sLabel = "CAPITULATION"; }
+              else if (rsi > 60 || rsi < 40) { sStatus = 'warning'; sLabel = "BUILDING"; }
               
               return {
                   ...item,
-                  value: `${sentiment.toFixed(0)}% Long`,
+                  value: `RSI ${rsi.toFixed(0)} (${sLabel})`,
                   status: sStatus
               };
 

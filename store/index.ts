@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { 
+import type { 
     CandleData, 
     MarketMetrics, 
     OrderBookLevel, 
@@ -28,7 +28,7 @@ import {
     signInWithEmailAndPassword, 
     signOut, 
     updateProfile, 
-    User 
+    type User 
 } from 'firebase/auth';
 import { 
     doc, 
@@ -37,7 +37,10 @@ import {
 } from 'firebase/firestore';
 import { 
     calculateZScoreBands, 
-    analyzeRegime 
+    analyzeRegime,
+    calculateRSI,
+    calculateSkewness,
+    calculateKurtosis
 } from '../utils/analytics';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 
@@ -367,8 +370,13 @@ export const useStore = create<StoreState>((set, get) => ({
             if (candles.length > 1000) candles.shift();
         }
 
-        const prices = candles.slice(-20).map(c => c.close);
-        const bands = calculateZScoreBands(prices);
+        // --- REAL-TIME CALCULATIONS ---
+        const prices = candles.slice(-50).map(c => c.close); // Use last 50 for calculations
+        const currentPrice = candle.close;
+        const prevClose = candles[candles.length - 2]?.close || currentPrice;
+        
+        // 1. Z-Score Bands
+        const bands = calculateZScoreBands(prices.slice(-20)); // Last 20 for Bands
         const updatedLast = candles[candles.length - 1];
         updatedLast.zScoreUpper1 = bands.upper1;
         updatedLast.zScoreLower1 = bands.lower1;
@@ -376,13 +384,48 @@ export const useStore = create<StoreState>((set, get) => ({
         updatedLast.zScoreLower2 = bands.lower2;
         candles[candles.length - 1] = updatedLast;
         
-        const currentPrice = candle.close;
-        const prevClose = candles[candles.length - 2]?.close || currentPrice;
+        // 2. Metrics
         const priceChange = ((currentPrice - prevClose) / prevClose) * 100;
-        
-        const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
+        const mean = prices.slice(-20).reduce((a, b) => a + b, 0) / 20;
         const stdDev = (bands.upper1 - mean);
         const zScore = stdDev === 0 ? 0 : (currentPrice - mean) / stdDev;
+
+        // 3. Advanced Statistics (Log Returns)
+        const returns = prices.slice(1).map((p, i) => Math.log(p / prices[i]));
+        const skewness = calculateSkewness(returns); // Last 50 candles returns
+        const kurtosis = calculateKurtosis(returns);
+
+        // 4. Retail Sentiment Proxy (RSI)
+        const rsi = calculateRSI(prices, 14); // 14 period RSI
+        
+        // 5. Bayesian Proxy (Trend Confidence)
+        // Simple logic: If Price > SMA20 AND RSI is neutral/bullish, confidence is higher.
+        const sma20 = mean; // Already calculated
+        const trendScore = currentPrice > sma20 ? 0.6 : 0.4;
+        const rsiMod = rsi > 70 ? -0.1 : (rsi < 30 ? 0.1 : 0); // Mean reversion drag
+        const bayesian = Math.min(0.99, Math.max(0.01, trendScore + rsiMod));
+
+        // 6. Institutional CVD & Context (Whale Hunter)
+        const avgVol = candles.slice(-20).reduce((a,c) => a + c.volume, 0) / 20;
+        const candleDelta = ((candle.close - candle.open) / (candle.high - candle.low || 1)) * candle.volume;
+        // Normalize Delta to -100 to 100 relative to avg volume * 2 (aggressiveness factor)
+        const instCvd = Math.max(-100, Math.min(100, (candleDelta / (avgVol * 2 || 1)) * 100));
+
+        // Derive Context (Absorption vs Distribution)
+        let contextInterpretation: 'REAL STRENGTH' | 'REAL WEAKNESS' | 'ABSORPTION' | 'DISTRIBUTION' | 'NEUTRAL' = 'NEUTRAL';
+        let divergence: 'NONE' | 'BULLISH_ABSORPTION' | 'BEARISH_DISTRIBUTION' = 'NONE';
+        const trend = instCvd > 20 ? 'UP' : instCvd < -20 ? 'DOWN' : 'FLAT';
+
+        if (priceChange > 0 && instCvd > 20) contextInterpretation = 'REAL STRENGTH';
+        else if (priceChange < 0 && instCvd < -20) contextInterpretation = 'REAL WEAKNESS';
+        else if (priceChange <= 0 && instCvd > 30) {
+            contextInterpretation = 'ABSORPTION';
+            divergence = 'BULLISH_ABSORPTION';
+        }
+        else if (priceChange >= 0 && instCvd < -30) {
+            contextInterpretation = 'DISTRIBUTION';
+            divergence = 'BEARISH_DISTRIBUTION';
+        }
 
         return {
             market: {
@@ -392,7 +435,18 @@ export const useStore = create<StoreState>((set, get) => ({
                     ...state.market.metrics,
                     price: currentPrice,
                     change: parseFloat(priceChange.toFixed(2)),
-                    zScore: parseFloat(zScore.toFixed(2))
+                    zScore: parseFloat(zScore.toFixed(2)),
+                    retailSentiment: parseFloat(rsi.toFixed(0)), // RSI mapped to 0-100 Sentiment
+                    skewness: parseFloat(skewness.toFixed(2)),
+                    kurtosis: parseFloat(kurtosis.toFixed(2)),
+                    bayesianPosterior: parseFloat(bayesian.toFixed(2)),
+                    institutionalCVD: parseFloat(instCvd.toFixed(0)),
+                    cvdContext: {
+                        value: parseFloat(instCvd.toFixed(0)),
+                        trend,
+                        divergence,
+                        interpretation: contextInterpretation
+                    }
                 }
             }
         };

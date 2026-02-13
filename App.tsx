@@ -16,7 +16,7 @@ import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine'; 
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
-import { CandleData, OrderBookLevel, RecentTrade, LiquidityType } from './types';
+import type { CandleData, OrderBookLevel, RecentTrade, LiquidityType } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lock, RefreshCw } from 'lucide-react';
 import { useStore } from './store';
