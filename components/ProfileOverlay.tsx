@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { User, LogOut, X, BrainCircuit, Cpu, MessageSquare, Save, Lock, AlertCircle, History, Send } from 'lucide-react';
+import { User, LogOut, X, BrainCircuit, Cpu, MessageSquare, Save, Lock, AlertCircle, History, Send, Loader } from 'lucide-react';
 import { useStore } from '../store';
+import { API_BASE_URL } from '../constants';
 
 const AI_MODELS = [
     { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'High Reasoning (Complex Tasks)' },
@@ -13,18 +14,20 @@ const AI_MODELS = [
 const ProfileOverlay: React.FC = () => {
     const { 
         auth: { user }, 
-        config: { aiModel, telegramBotToken, telegramChatId },
+        config: { aiModel, telegramBotToken, telegramChatId, activeSymbol },
         ui: { isProfileOpen },
         alertLogs,
         setProfileOpen, 
         setAiModel, 
         updateUserProfile,
-        logout
+        logout,
+        addNotification
     } = useStore();
 
     const [tempBotToken, setTempBotToken] = useState(telegramBotToken);
     const [tempChatId, setTempChatId] = useState(telegramChatId);
     const [isSaving, setIsSaving] = useState(false);
+    const [isSendingTest, setIsSendingTest] = useState(false);
     const [activeTab, setActiveTab] = useState<'SETTINGS' | 'LOGS'>('SETTINGS');
 
     // Sync state when opening
@@ -38,11 +41,74 @@ const ProfileOverlay: React.FC = () => {
 
     const handleSave = async () => {
         setIsSaving(true);
-        await updateUserProfile({
-            telegramBotToken: tempBotToken,
-            telegramChatId: tempChatId
-        });
-        setIsSaving(false);
+        try {
+            // Update Store
+            await updateUserProfile({
+                telegramBotToken: tempBotToken,
+                telegramChatId: tempChatId
+            });
+            
+            // Push to Backend for Autonomous Mode
+            await fetch(`${API_BASE_URL}/alerts/configure`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    symbol: activeSymbol,
+                    telegram_bot_token: tempBotToken,
+                    telegram_chat_id: tempChatId
+                })
+            });
+            
+            addNotification({
+                id: Date.now().toString(),
+                type: 'success',
+                title: 'Settings Saved',
+                message: 'Configuration pushed to autonomous backend.'
+            });
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleTestAlert = async () => {
+        setIsSendingTest(true);
+        try {
+            const res = await fetch(`${API_BASE_URL}/alerts/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: activeSymbol,
+                    direction: 'LONG',
+                    confidence: 1.0,
+                    entry: 0, stop: 0, target: 0, rrRatio: 0,
+                    reasoning: "TEST", conditions: [],
+                    botToken: tempBotToken,
+                    chatId: tempChatId
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                addNotification({
+                    id: Date.now().toString(),
+                    type: 'success',
+                    title: 'Test Sent',
+                    message: 'Check your Telegram for the verification message.'
+                });
+            } else {
+                throw new Error(data.message);
+            }
+        } catch (e: any) {
+            addNotification({
+                id: Date.now().toString(),
+                type: 'error',
+                title: 'Test Failed',
+                message: e.message
+            });
+        } finally {
+            setIsSendingTest(false);
+        }
     };
 
     if (!isProfileOpen || !user) return null;
@@ -145,9 +211,6 @@ const ProfileOverlay: React.FC = () => {
                                         </button>
                                     ))}
                                 </div>
-                                <p className="text-[10px] text-zinc-500 leading-relaxed px-1">
-                                    Your AI model preference is synchronized to the cloud and will persist across sessions.
-                                </p>
                             </div>
 
                             {/* Telegram Integration */}
@@ -157,7 +220,7 @@ const ProfileOverlay: React.FC = () => {
                                         <MessageSquare size={16} className="text-blue-400" />
                                         Telegram Alerts
                                     </div>
-                                    <div className="text-[9px] font-bold bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">BETA</div>
+                                    <div className="text-[9px] font-bold bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">24/7 AUTONOMOUS</div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -187,21 +250,24 @@ const ProfileOverlay: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <div className="bg-amber-500/5 border border-amber-500/10 rounded-lg p-3 flex gap-3 items-start">
-                                    <AlertCircle size={14} className="text-amber-500 shrink-0 mt-0.5" />
-                                    <p className="text-[10px] text-amber-500/80 leading-relaxed">
-                                        Providing custom credentials overrides the default system bot. Ensure your bot has permission to post in the specified chat.
-                                    </p>
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={handleTestAlert}
+                                        disabled={isSendingTest}
+                                        className="flex-1 py-2.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 text-xs font-bold rounded-xl flex items-center justify-center gap-2 border border-blue-600/50 transition-all"
+                                    >
+                                        {isSendingTest ? <Loader size={14} className="animate-spin" /> : <Send size={14} />}
+                                        TEST ALERT
+                                    </button>
+                                    <button 
+                                        onClick={handleSave}
+                                        disabled={isSaving}
+                                        className="flex-[2] py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all"
+                                    >
+                                        {isSaving ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save size={14} />}
+                                        SAVE CONFIG
+                                    </button>
                                 </div>
-
-                                <button 
-                                    onClick={handleSave}
-                                    disabled={isSaving}
-                                    className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all"
-                                >
-                                    {isSaving ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save size={14} />}
-                                    SAVE CONFIGURATION
-                                </button>
                             </div>
                         </>
                     ) : (

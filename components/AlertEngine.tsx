@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
-import { Zap, Clock, ShieldCheck } from 'lucide-react';
+import { Zap, Clock, ShieldCheck, Server } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const COOLDOWN_MS = 10 * 60 * 1000; // 10 Minutes
@@ -17,24 +17,45 @@ const AlertEngine: React.FC = () => {
         aiTactical, 
         config: { activeSymbol, isBacktest, telegramBotToken, telegramChatId },
         addNotification,
-        logAlert // Import logging action
+        logAlert 
     } = useStore();
 
     const lastAlertTimeRef = useRef<number>(0);
-    const [status, setStatus] = useState<'IDLE' | 'CHECKING' | 'COOLDOWN' | 'FIRING'>('IDLE');
+    const [status, setStatus] = useState<'IDLE' | 'CHECKING' | 'COOLDOWN' | 'FIRING' | 'AUTONOMOUS'>('IDLE');
     const [lastResult, setLastResult] = useState<string>("");
+    const [backendAutonomous, setBackendAutonomous] = useState(false);
 
+    // 1. Check Backend Status on Mount
     useEffect(() => {
-        // Disable in backtest or if price is 0
-        if (isBacktest || market.metrics.price === 0) {
-            setStatus('IDLE');
+        const checkBackend = async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/alerts/status`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.autonomous_mode) {
+                        setBackendAutonomous(true);
+                        setStatus('AUTONOMOUS');
+                        console.log("🚀 Backend Autonomous Mode Active - Frontend Loop Disabled");
+                    }
+                }
+            } catch (e) {
+                console.warn("Backend status check failed, using frontend fallback");
+            }
+        };
+        checkBackend();
+        const interval = setInterval(checkBackend, 60000); // Re-check every minute
+        return () => clearInterval(interval);
+    }, []);
+
+    // 2. Main Loop (Only runs if NOT autonomous)
+    useEffect(() => {
+        if (backendAutonomous || isBacktest || market.metrics.price === 0) {
             return;
         }
 
         const checkConditions = async () => {
             const now = Date.now();
             
-            // Check Cooldown
             if (now - lastAlertTimeRef.current < COOLDOWN_MS) {
                 setStatus('COOLDOWN');
                 return;
@@ -43,7 +64,6 @@ const AlertEngine: React.FC = () => {
             setStatus('CHECKING');
 
             try {
-                // Construct Snapshot for Backend
                 const snapshot = {
                     symbol: activeSymbol,
                     price: market.metrics.price,
@@ -75,7 +95,6 @@ const AlertEngine: React.FC = () => {
                     h1Bias: biasMatrix.h1?.bias || 'NEUTRAL'
                 };
 
-                // 1. Evaluate
                 const res = await fetch(`${API_BASE_URL}/alerts/evaluate`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -89,7 +108,6 @@ const AlertEngine: React.FC = () => {
                 if (decision.shouldAlert && decision.aiAnalysis) {
                     setStatus('FIRING');
                     
-                    // 2. Send Telegram
                     const payload = {
                         symbol: activeSymbol,
                         direction: decision.aiAnalysis.direction,
@@ -115,32 +133,20 @@ const AlertEngine: React.FC = () => {
                             id: Date.now().toString(),
                             type: 'success',
                             title: 'ALERT SENT',
-                            message: `AI confirmed ${payload.direction} setup on ${activeSymbol}. Sent to Telegram.`
+                            message: `Frontend: AI confirmed ${payload.direction} setup on ${activeSymbol}.`
                         });
                         
-                        // LOG ALERT TO FIRESTORE
                         await logAlert({
                             timestamp: Date.now(),
                             symbol: activeSymbol,
                             direction: payload.direction,
                             confidence: payload.confidence,
                             price: payload.entry,
-                            result: "SENT"
+                            result: "SENT (FE)"
                         });
 
                         lastAlertTimeRef.current = Date.now();
                         setStatus('COOLDOWN');
-                    } else {
-                        // Log Failure
-                        await logAlert({
-                            timestamp: Date.now(),
-                            symbol: activeSymbol,
-                            direction: payload.direction,
-                            confidence: payload.confidence,
-                            price: payload.entry,
-                            result: "FAILED: Telegram API Error"
-                        });
-                        setStatus('IDLE');
                     }
                 } else {
                     setStatus('IDLE');
@@ -155,7 +161,7 @@ const AlertEngine: React.FC = () => {
 
         const intervalId = setInterval(checkConditions, POLL_INTERVAL_MS);
         return () => clearInterval(intervalId);
-    }, [activeSymbol, isBacktest, market.metrics, biasMatrix, liquidity, regime, aiTactical, telegramBotToken, telegramChatId]);
+    }, [activeSymbol, isBacktest, market.metrics, biasMatrix, liquidity, regime, aiTactical, telegramBotToken, telegramChatId, backendAutonomous]);
 
     if (isBacktest) return null;
 
@@ -173,6 +179,7 @@ const AlertEngine: React.FC = () => {
                         flex items-center gap-2 px-3 py-1.5 rounded-full border backdrop-blur-md shadow-lg pointer-events-auto
                         ${status === 'FIRING' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 
                           status === 'COOLDOWN' ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' :
+                          status === 'AUTONOMOUS' ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
                           status === 'CHECKING' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
                           'bg-zinc-900/80 border-white/10 text-zinc-400'}
                     `}
@@ -180,16 +187,21 @@ const AlertEngine: React.FC = () => {
                     <div className="relative">
                         {status === 'FIRING' ? <Zap size={12} fill="currentColor" /> :
                          status === 'COOLDOWN' ? <Clock size={12} /> :
+                         status === 'AUTONOMOUS' ? <Server size={12} /> :
                          <ShieldCheck size={12} />}
                         
                         {status === 'CHECKING' && (
                             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-blue-500 rounded-full animate-ping opacity-75"></span>
+                        )}
+                        {status === 'AUTONOMOUS' && (
+                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-purple-500 rounded-full animate-pulse opacity-75"></span>
                         )}
                     </div>
                     
                     <span className="text-[10px] font-bold uppercase tracking-wider">
                         {status === 'FIRING' ? 'BROADCASTING' : 
                          status === 'COOLDOWN' ? 'COOLDOWN' : 
+                         status === 'AUTONOMOUS' ? 'BACKEND ACTIVE' :
                          status === 'CHECKING' ? 'ANALYZING' : 
                          'SENTINEL ACTIVE'}
                     </span>
