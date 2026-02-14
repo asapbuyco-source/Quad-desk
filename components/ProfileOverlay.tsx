@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { User, LogOut, X, BrainCircuit, Cpu, MessageSquare, Save, Lock, AlertCircle, History, Send, Loader } from 'lucide-react';
+import { User, LogOut, X, BrainCircuit, Cpu, MessageSquare, Save, Lock, History, Send, Loader } from 'lucide-react';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
 
