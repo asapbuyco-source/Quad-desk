@@ -49,8 +49,7 @@ const App: React.FC = () => {
       loadUserPreferences,
       processWsTick,
       processTradeTick,
-      processDepthUpdate,
-      setInterval: setStoreInterval
+      processDepthUpdate
   } = useStore();
 
   const handlePeriodChange = (period: PeriodType) => {
