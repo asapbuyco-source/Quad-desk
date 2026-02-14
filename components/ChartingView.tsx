@@ -1,17 +1,31 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
+import PeriodSelector from './PeriodSelector';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
+import { PeriodType } from '../types';
 
-const ChartingView: React.FC = () => {
+interface ChartingViewProps {
+    currentPeriod?: PeriodType;
+    onPeriodChange?: (period: PeriodType) => void;
+}
+
+const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentPeriod, onPeriodChange: propOnPeriodChange }) => {
   const { candles, signals, levels: marketLevels, metrics } = useStore(state => state.market);
   const { scanResult, isScanning, cooldownRemaining } = useStore(state => state.ai);
   const { interval, activeSymbol, aiModel } = useStore(state => state.config);
   const { activePosition } = useStore(state => state.trading);
   const { liquidity, regime, aiTactical } = useStore(state => state);
   
+  // Local state if not provided by props (for standalone usage if needed)
+  const [localPeriod, setLocalPeriod] = useState<PeriodType>('20-PERIOD');
+  
+  const currentPeriod = propCurrentPeriod || localPeriod;
+  const onPeriodChange = propOnPeriodChange || setLocalPeriod;
+
   const { 
       setInterval: setChartInterval, 
       startAiScan, 
@@ -166,8 +180,9 @@ const ChartingView: React.FC = () => {
                 isSidePanelOpen={layers.volumeProfile}
                 interval={interval}
                 onIntervalChange={setChartInterval}
+                currentPeriod={currentPeriod} // Pass period type to chart
             >
-                <div className="flex gap-1.5 bg-zinc-900/50 p-0.5 rounded-full border border-white/5 items-center">
+                <div className="flex gap-1.5 bg-zinc-900/50 p-0.5 rounded-full border border-white/5 items-center overflow-x-auto scrollbar-hide max-w-full">
                     <button
                         onClick={() => toggleLayer('zScore')}
                         className={`
@@ -209,6 +224,12 @@ const ChartingView: React.FC = () => {
                         <span className="hidden sm:inline">SIGNALS</span>
                         <span className="sm:hidden">SIG</span>
                     </button>
+
+                    {/* Separator */}
+                    <div className="w-px h-4 bg-white/10 mx-1"></div>
+
+                    {/* Period Selector Component */}
+                    <PeriodSelector currentPeriod={currentPeriod} onPeriodChange={onPeriodChange} />
                 </div>
             </PriceChart>
         </div>

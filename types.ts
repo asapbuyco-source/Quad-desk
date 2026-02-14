@@ -2,6 +2,7 @@
 export type LiquidityType = 'WALL' | 'HOLE' | 'CLUSTER' | 'NORMAL';
 export type RegimeType = 'TRENDING' | 'MEAN_REVERTING' | 'HIGH_VOLATILITY';
 export type MarketRegimeType = "TRENDING" | "RANGING" | "EXPANDING" | "COMPRESSING" | "UNCERTAIN";
+export type PeriodType = '20-DAY' | '20-HOUR' | '20-PERIOD';
 
 export interface OrderBookLevel {
   price: number;

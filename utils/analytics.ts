@@ -214,7 +214,9 @@ export const calculateKurtosis = (returns: number[]): number => {
  * Calculate Z-Score bands from price array
  */
 export const calculateZScoreBands = (prices: number[]) => {
-    const mean = prices.reduce((a, b) => a + b) / prices.length;
+    if (prices.length === 0) return { upper1: 0, lower1: 0, upper2: 0, lower2: 0 };
+    
+    const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
     const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;
     const stdDev = Math.sqrt(variance);
     

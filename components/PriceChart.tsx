@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time, MouseEventHandler } from 'lightweight-charts';
-import { CandleData, TradeSignal, PriceLevel, LiquidityState, RegimeState } from '../types';
+import { CandleData, TradeSignal, PriceLevel, LiquidityState, RegimeState, PeriodType } from '../types';
 import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus, Activity } from 'lucide-react';
 import { useLightweightChart } from '../hooks/useChart';
 
@@ -41,6 +41,8 @@ interface PriceChartProps {
   interval?: string;
   /** Callback to change timeframe */
   onIntervalChange?: (interval: string) => void;
+  /** Selected MA period type context */
+  currentPeriod?: PeriodType;
 }
 
 /**
@@ -68,7 +70,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
     onToggleSidePanel,
     isSidePanelOpen,
     interval = '1m',
-    onIntervalChange
+    onIntervalChange,
+    currentPeriod = '20-PERIOD'
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   
@@ -258,7 +261,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     lastCandleCountRef.current = 0;
     lastCandleTimeRef.current = null;
-  }, [interval]);
+  }, [interval, currentPeriod]); // Trigger refresh on period change too
 
   // Optimized Data Update (Incremental)
   useEffect(() => {
@@ -299,6 +302,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 const volumes = validData.map(mapVolume);
                 
                 // Full Bands & ADX update
+                // Logic: Recalculate bands if period changed? For now, assume backend provides bands for default period
+                // or frontend logic inside Store handles recalculation based on period selector
+                // Here we just map what's in data.
                 const adxData = validData.map(d => ({ time: d.time as Time, value: isValid(d.adx) ? (d.adx || 0) : 0 }));
                 const u1Data = validData.filter(d => isValid(d.zScoreUpper1)).map(d => ({ time: d.time as Time, value: d.zScoreUpper1 }));
                 const l1Data = validData.filter(d => isValid(d.zScoreLower1)).map(d => ({ time: d.time as Time, value: d.zScoreLower1 }));
@@ -698,6 +704,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
                      </span>
                      <span className="text-zinc-600">V</span>
                      <span className="text-zinc-400">{hoveredData.volume ? (hoveredData.volume/1000).toFixed(1) + 'K' : '-'}</span>
+                 </div>
+                 {/* Show Active Period Context in Tooltip */}
+                 <div className="mt-1 pt-1 border-t border-white/5 text-[9px] text-zinc-600 font-mono text-right">
+                     MA: {currentPeriod}
                  </div>
              </div>
         )}

@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react';
+
+import React, { useEffect, useState } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
 import DashboardView from './components/DashboardView';
@@ -16,7 +17,7 @@ import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine'; 
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
-import type { CandleData, OrderBookLevel, RecentTrade, LiquidityType } from './types';
+import type { CandleData, OrderBookLevel, RecentTrade, LiquidityType, PeriodType } from './types';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lock, RefreshCw } from 'lucide-react';
 import { useStore } from './store';
@@ -33,6 +34,7 @@ const App: React.FC = () => {
   const ai = useStore(state => state.ai);
   const authState = useStore(state => state.auth);
   const notifications = useStore(state => state.notifications);
+  const [currentPeriod, setCurrentPeriod] = useState<PeriodType>('20-PERIOD');
   
   const {
       setHasEntered,
@@ -47,8 +49,26 @@ const App: React.FC = () => {
       loadUserPreferences,
       processWsTick,
       processTradeTick,
-      processDepthUpdate
+      processDepthUpdate,
+      setInterval: setStoreInterval
   } = useStore();
+
+  const handlePeriodChange = (period: PeriodType) => {
+    setCurrentPeriod(period);
+    // Logic to update calculations based on period could go here or within components/store logic
+    // For simplicity, we might map period type to interval if applicable, or just pass it down.
+    // '20-DAY' implies Daily interval context for MA
+    // '20-HOUR' implies Hourly interval context for MA
+    // '20-PERIOD' implies current chart interval context for MA
+    
+    if (period === '20-DAY') {
+        // You might want to switch the main interval to '1d' or just overlay daily MA
+        // setStoreInterval('1d'); 
+    } else if (period === '20-HOUR') {
+        // setStoreInterval('1h');
+    }
+    // For now we just track it in state to pass to ChartingView
+  };
 
   useEffect(() => {
     initSystemConfig();
@@ -346,7 +366,7 @@ const App: React.FC = () => {
 
                     <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
                         {ui.activeTab === 'dashboard' && <DashboardView />}
-                        {ui.activeTab === 'charting' && <ChartingView />}
+                        {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
                         {ui.activeTab === 'bias' && <BiasMatrixView />}
                         {ui.activeTab === 'liquidity' && <LiquidityPage />}
                         {ui.activeTab === 'regime' && <RegimePage />}
