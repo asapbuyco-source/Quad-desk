@@ -54,19 +54,12 @@ const App: React.FC = () => {
 
   const handlePeriodChange = (period: PeriodType) => {
     setCurrentPeriod(period);
-    // Logic to update calculations based on period could go here or within components/store logic
-    // For simplicity, we might map period type to interval if applicable, or just pass it down.
-    // '20-DAY' implies Daily interval context for MA
-    // '20-HOUR' implies Hourly interval context for MA
-    // '20-PERIOD' implies current chart interval context for MA
-    
     if (period === '20-DAY') {
         // You might want to switch the main interval to '1d' or just overlay daily MA
         // setStoreInterval('1d'); 
     } else if (period === '20-HOUR') {
         // setStoreInterval('1h');
     }
-    // For now we just track it in state to pass to ChartingView
   };
 
   useEffect(() => {
@@ -95,6 +88,15 @@ const App: React.FC = () => {
             console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             
+            // CRITICAL: Check for HTML response (Redirect/Proxy Error)
+            const contentType = res.headers.get("content-type");
+            if (contentType && contentType.includes("text/html")) {
+                const text = await res.text();
+                // If text contains "Railway", it's likely a Railway error page
+                if (text.includes("Railway")) throw new Error("Backend Unavailable (Railway Error Page)");
+                throw new Error("API returned HTML. Check API_BASE_URL.");
+            }
+
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             
             const data = await res.json();
@@ -118,9 +120,6 @@ const App: React.FC = () => {
             const formattedCandles: CandleData[] = data.map((k: any) => {
                 const vol = parseFloat(k[5]);
                 const takerBuyVol = parseFloat(k[9]); 
-                // Formula: Delta = TakerBuy - TakerSell
-                // TakerSell = Total - TakerBuy
-                // Delta = TakerBuy - (Total - TakerBuy) = 2*TakerBuy - Total
                 const delta = (2 * takerBuyVol) - vol;
                 runningCVD += delta;
 
@@ -145,7 +144,7 @@ const App: React.FC = () => {
                 id: Date.now().toString(), 
                 type: 'error', 
                 title: 'Data Feed Error', 
-                message: `Could not fetch historical data from backend. (${e.message})` 
+                message: `Could not fetch historical data. ${e.message}` 
             });
         }
     };
@@ -156,9 +155,11 @@ const App: React.FC = () => {
       const fetchBands = async () => {
           try {
               const res = await fetch(`${API_BASE_URL}/bands?symbol=${config.activeSymbol}`);
-              if (res.ok) {
-                  const data = await res.json();
-                  if (!data.error) setMarketBands(data);
+              // Silent failure check for HTML
+              const contentType = res.headers.get("content-type");
+              if (contentType && contentType.includes("application/json")) {
+                   const data = await res.json();
+                   if (!data.error) setMarketBands(data);
               }
           } catch(e) {}
       };
@@ -184,9 +185,6 @@ const App: React.FC = () => {
           const now = Date.now();
           if (now - lastMessageTime > GAP_THRESHOLD && ws?.readyState === WebSocket.OPEN) {
               console.warn("⚠️ Data Gap Detected. Attempting history refetch...");
-              // Trigger a basic history refresh by closing socket, forcing a reconnect/reload logic
-              // A cleaner way is to just call fetchHistory() again via re-triggering logic, 
-              // but closing the socket will trigger the 'onclose' retry which handles connection resets.
               ws.close(); 
           }
       };
@@ -213,9 +211,6 @@ const App: React.FC = () => {
               const message = JSON.parse(event.data);
               
               if (message.data) {
-                  // NOTE: using destructured handlers from store state inside the effect
-                  // to avoid stale closure issues if they were not destructured at top level
-                  
                   if (message.data.e === 'kline') {
                       processWsTick(message.data.k);
                   } 

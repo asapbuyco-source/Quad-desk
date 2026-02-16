@@ -3,9 +3,26 @@ import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem,
 
 export const APP_NAME = "QUANT DESK";
 
-// Backend API URL - Priority: LocalStorage > Env Var > Production URL > Localhost Fallback
-const STORED_URL = typeof window !== 'undefined' ? localStorage.getItem('VITE_API_URL') : null;
-export const API_BASE_URL = STORED_URL || (import.meta as any).env?.VITE_API_URL || 'https://quant-desk-backend-production.up.railway.app';
+// Backend API URL
+// Logic: Check LocalStorage -> Check Env Var -> Fallback to Production
+// We add validation to ensure the stored URL is a valid http string to prevent relative path issues (which cause HTML 404s).
+const getApiUrl = () => {
+    let url = 'https://quant-desk-backend-production.up.railway.app'; // Default Production
+    
+    if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('VITE_API_URL');
+        if (stored && stored.startsWith('http')) {
+            url = stored;
+        } else if ((import.meta as any).env?.VITE_API_URL) {
+            url = (import.meta as any).env.VITE_API_URL;
+        }
+    }
+    
+    // Strip trailing slash if present to avoid double slashes in requests
+    return url.replace(/\/$/, "");
+};
+
+export const API_BASE_URL = getApiUrl();
 
 console.log('🔗 API Base URL:', API_BASE_URL);
 

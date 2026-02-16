@@ -2,11 +2,9 @@
 [build]
 builder = "nixpacks"
 watchPatterns = ["backend/**"]
-# CRITICAL: Force Python provider so Nixpacks ignores the root package.json
-providers = ["python"]
 
 [phases.setup]
-# Explicitly install Python 3.11, GCC (for compiling modules), and Zlib (common failure point)
+# Manually define packages to avoid provider auto-detection issues (Node vs Python)
 nixPkgs = ["python311", "gcc", "zlib", "openssl"]
 nixLibs = ["zlib", "openssl"]
 
