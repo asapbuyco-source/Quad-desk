@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { SentinelChecklist, AiScanResult, HeatmapItem, MarketMetrics } from '../types';
 import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -34,31 +34,66 @@ const ZScoreCell: React.FC<{ item: HeatmapItem }> = ({ item }) => {
 };
 
 const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, heatmap, currentRegime = 'MEAN_REVERTING' }) => {
-  const [selectedItem, setSelectedItem] = useState<SentinelChecklist | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
   // Hook into store to get live values
-  const { metrics, expectedValue } = useStore(state => ({
+  const { metrics, expectedValue, candles } = useStore(state => ({
       metrics: state.market.metrics,
-      expectedValue: state.market.expectedValue
+      expectedValue: state.market.expectedValue,
+      candles: state.market.candles
   }));
 
-  // Calculate dynamic checklist statuses based on live metrics
+  // Calculate stats for live details (Mean, StdDev) based on last 20 candles
+  const stats = useMemo(() => {
+     if (candles.length < 20) return { mean: 0, stdDev: 0 };
+     const closes = candles.slice(-20).map(c => c.close);
+     const mean = closes.reduce((a, b) => a + b, 0) / 20;
+     const variance = closes.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / 20;
+     return { mean, stdDev: Math.sqrt(variance) };
+  }, [candles]);
+
+  // Calculate dynamic checklist statuses and detailed variables based on live metrics
   const dynamicChecklist = checklist.map(item => {
+      // Deep clone details to update variables safely
+      let details = item.details ? { 
+          ...item.details, 
+          variables: item.details.variables.map(v => ({...v})) 
+      } : undefined;
+
       switch(item.id) {
           case '1': // Dislocation (Z-Score)
               const zVal = Math.abs(metrics.zScore);
+              
+              if (details && details.variables) {
+                  details.variables[0].value = metrics.price.toFixed(2);
+                  details.variables[1].value = stats.mean.toFixed(2);
+                  details.variables[2].value = stats.stdDev.toFixed(2);
+              }
+
               return {
                   ...item,
                   value: `${metrics.zScore.toFixed(2)}σ`,
-                  status: zVal > 2.0 ? 'pass' : (zVal > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+                  status: zVal > 2.0 ? 'pass' : (zVal > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
+                  details
               };
 
-          case '2': // Bayesian
+          case '2': // Bayesian Posterior
               const bayesian = metrics.bayesianPosterior || 0.5;
+              
+              if (details && details.variables) {
+                  details.variables[0].value = "0.50";
+                  // Heuristic logic for display matching calculation
+                  details.variables[1].value = (metrics.price > stats.mean) ? "Strong (0.6)" : "Weak (0.4)";
+                  const rsiVal = metrics.retailSentiment;
+                  const volConf = rsiVal > 70 ? "Overbought (-0.1)" : rsiVal < 30 ? "Oversold (+0.1)" : "Neutral (0)";
+                  details.variables[2].value = volConf;
+              }
+
               return {
                   ...item,
                   value: bayesian.toFixed(2),
-                  status: bayesian > 0.6 ? 'pass' : (bayesian > 0.4 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+                  status: bayesian > 0.6 ? 'pass' : (bayesian > 0.4 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
+                  details
               };
           
           case '3': // Sentiment Washout (RSI Based)
@@ -70,27 +105,49 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
               else if (rsi <= 30) { sStatus = 'pass'; sLabel = "CAPITULATION"; }
               else if (rsi > 60 || rsi < 40) { sStatus = 'warning'; sLabel = "BUILDING"; }
               
+              if (details && details.variables) {
+                  details.variables[0].value = rsi.toFixed(1);
+                  details.variables[1].value = metrics.regime;
+                  details.variables[2].value = sLabel;
+              }
+
               return {
                   ...item,
                   value: `RSI ${rsi.toFixed(0)} (${sLabel})`,
-                  status: sStatus
+                  status: sStatus,
+                  details
               };
 
           case '4': // Skewness
               const skew = metrics.skewness || 0;
+              
+              if (details && details.variables) {
+                  details.variables[0].value = "50"; // Fixed sample window
+                  details.variables[1].value = (metrics.kurtosis || 0).toFixed(2);
+              }
+
               return {
                   ...item,
                   value: skew.toFixed(2) + 'γ',
-                  status: skew > -0.5 ? 'pass' : (skew > -1.0 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+                  status: skew > -0.5 ? 'pass' : (skew > -1.0 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
+                  details
               };
           
           case '5': // Expected Value
               if (!expectedValue) return item;
+              
+              if (details && details.variables) {
+                  details.variables[0].value = (expectedValue.winProbability * 100).toFixed(0) + "%";
+                  details.variables[1].value = expectedValue.winAmount.toFixed(2);
+                  details.variables[2].value = expectedValue.lossAmount.toFixed(2);
+              }
+
               return {
                   ...item,
                   value: `${expectedValue.rrRatio.toFixed(1)}:1`,
                   status: expectedValue.rrRatio > 2.0 ? 'pass' : 
-                         (expectedValue.rrRatio > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail'
+                         (expectedValue.rrRatio > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
+                  details
               };
           
           default:
@@ -98,10 +155,15 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
       }
   });
 
-  const handleKeyDown = (e: React.KeyboardEvent, item: SentinelChecklist) => {
+  const selectedItem = useMemo(() => 
+      selectedItemId ? dynamicChecklist.find(i => i.id === selectedItemId) || null : null,
+      [selectedItemId, dynamicChecklist]
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent, id: string) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      setSelectedItem(item);
+      setSelectedItemId(id);
     }
   };
 
@@ -207,8 +269,8 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                         key={item.id} 
                         role="button"
                         tabIndex={0}
-                        onClick={() => !isLocked && setSelectedItem(item)}
-                        onKeyDown={(e) => !isLocked && handleKeyDown(e, item)}
+                        onClick={() => !isLocked && setSelectedItemId(item.id)}
+                        onKeyDown={(e) => !isLocked && handleKeyDown(e, item.id)}
                         className={`
                             group flex flex-col p-3 rounded-xl transition-all border relative overflow-hidden focus:outline-none 
                             ${isLocked 
@@ -261,7 +323,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        onClick={() => setSelectedItem(null)}
+                        onClick={() => setSelectedItemId(null)}
                         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
                     />
                     
@@ -290,7 +352,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                 </div>
                             </div>
                             <button 
-                                onClick={() => setSelectedItem(null)}
+                                onClick={() => setSelectedItemId(null)}
                                 className="p-2 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"
                             >
                                 <X size={20} />
@@ -300,6 +362,30 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                         {/* Body */}
                         <div className="p-6 space-y-6">
                             
+                            {/* Required Regime Section (New) */}
+                            {selectedItem.requiredRegime && selectedItem.requiredRegime.length > 0 && (
+                                <div className="bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl">
+                                    <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                        <Activity size={12} /> Strategic Context
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mb-3 leading-relaxed">
+                                        This risk parameter is statistically significant during specific market regimes. It may be locked if the current regime does not align.
+                                    </p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {selectedItem.requiredRegime.map(r => (
+                                            <div key={r} className={`px-2 py-1 rounded text-[10px] font-mono font-bold border flex items-center gap-2 ${
+                                                r === currentRegime 
+                                                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                                                    : 'bg-zinc-800 text-zinc-500 border-zinc-700'
+                                            }`}>
+                                                {r === currentRegime && <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />}
+                                                {r.replace('_', ' ')}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Formula Section */}
                             <div className="space-y-2">
                                 <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">

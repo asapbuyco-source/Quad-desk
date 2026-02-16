@@ -1,0 +1,19 @@
+
+[build]
+builder = "nixpacks"
+watchPatterns = ["backend/**"]
+
+[phases.setup]
+nixPkgs = ["python311", "gcc"]
+
+[phases.install]
+# Navigate to backend folder to install dependencies
+cmds = ["cd backend && pip install -r requirements.txt"]
+
+[deploy]
+# Navigate to backend folder and start Uvicorn
+startCommand = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+numReplicas = 1
