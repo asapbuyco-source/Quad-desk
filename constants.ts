@@ -4,24 +4,28 @@ import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem,
 export const APP_NAME = "QUANT DESK";
 
 // Backend API URL
-// Logic: Check LocalStorage -> Check Env Var -> Fallback to Production
-// We add validation to ensure the stored URL is a valid http string to prevent relative path issues (which cause HTML 404s).
+// Logic: Check LocalStorage -> Check Env Var -> Check Localhost -> Fallback to Production
 const getApiUrl = () => {
     let url = 'https://quant-desk-backend-production.up.railway.app'; // Default Production
     
     if (typeof window !== 'undefined') {
         const stored = localStorage.getItem('VITE_API_URL');
+        
+        // 1. Priority: Local Storage Override
         if (stored && stored.startsWith('http')) {
             url = stored;
-        } else if ((import.meta as any).env?.VITE_API_URL) {
+        } 
+        // 2. Priority: Environment Variable
+        else if ((import.meta as any).env?.VITE_API_URL) {
             url = (import.meta as any).env.VITE_API_URL;
-        } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-             // Optional: Default to localhost backend if frontend is localhost and no other config
-             // url = 'http://localhost:8000'; 
+        } 
+        // 3. Priority: Localhost Auto-Detect (Fixes 502s locally)
+        else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+             url = 'http://localhost:8000'; 
         }
     }
     
-    // Strip trailing slash if present to avoid double slashes in requests
+    // Strip trailing slash if present
     return url.replace(/\/$/, "");
 };
 
@@ -153,9 +157,9 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
   },
 ];
 
-export const MOCK_NEWS: NewsItem[] = []; // Removed static news
-export const MOCK_CANDLES: CandleData[] = []; // Removed static candles
-export const MOCK_SIGNALS: TradeSignal[] = []; // Removed static signals
-export const MOCK_LEVELS: PriceLevel[] = []; // Removed static levels
-export const MOCK_ASKS: OrderBookLevel[] = []; // Removed static DOM
-export const MOCK_BIDS: OrderBookLevel[] = []; // Removed static DOM
+export const MOCK_NEWS: NewsItem[] = []; 
+export const MOCK_CANDLES: CandleData[] = []; 
+export const MOCK_SIGNALS: TradeSignal[] = []; 
+export const MOCK_LEVELS: PriceLevel[] = []; 
+export const MOCK_ASKS: OrderBookLevel[] = []; 
+export const MOCK_BIDS: OrderBookLevel[] = []; 

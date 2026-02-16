@@ -13,6 +13,9 @@ const SystemMonitor: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const logContainerRef = useRef<HTMLDivElement>(null);
+    
+    // Backoff state
+    const [pollInterval, setPollInterval] = useState(2000); 
 
     const fetchStatus = async () => {
         setIsLoading(true);
@@ -21,26 +24,37 @@ const SystemMonitor: React.FC = () => {
             
             const contentType = res.headers.get("content-type");
             if (contentType && contentType.includes("text/html")) {
-                throw new Error("Invalid API Endpoint (Received HTML)");
+                throw new Error("Invalid Endpoint (502/HTML)");
             }
 
-            if (!res.ok) throw new Error("Connection Refused");
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            
             const data = await res.json();
             setHealth(data);
             setError(null);
+            setPollInterval(2000); // Reset to fast polling on success
         } catch (e: any) {
             setError(e.message);
+            setPollInterval(prev => Math.min(prev * 1.5, 30000)); // Slow down polling on error up to 30s
         } finally {
             setIsLoading(false);
         }
     };
 
-    // Auto-poll and scroll to bottom
+    // Auto-poll with dynamic interval
     useEffect(() => {
         fetchStatus();
-        const interval = setInterval(fetchStatus, 2000); // 2s polling for live logs
-        return () => clearInterval(interval);
-    }, []);
+        let timeoutId: ReturnType<typeof setTimeout>;
+        
+        const loop = () => {
+            timeoutId = setTimeout(() => {
+                fetchStatus().then(loop);
+            }, pollInterval);
+        };
+        
+        loop();
+        return () => clearTimeout(timeoutId);
+    }, [pollInterval]);
 
     useEffect(() => {
         if (logContainerRef.current) {
