@@ -1,10 +1,10 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { motion as m, AnimatePresence } from 'framer-motion';
-import { ShieldAlert, ToggleLeft, ToggleRight, X, Activity, Server, Cpu, Terminal, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ShieldAlert, ToggleLeft, ToggleRight, X, Activity, Server, Cpu, Terminal, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
-import { SystemHealth, LogEntry } from '../types';
+import { SystemHealth } from '../types';
 
 const motion = m as any;
 
