@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { motion as m } from 'framer-motion';
 import { 
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, Cell, ReferenceLine
@@ -8,6 +8,8 @@ import {
 import { useStore } from '../store';
 import { useVolumeProfileData } from '../hooks/useChart';
 import { BarChart2, Activity, Layers, Minus, Anchor, TrendingUp, BrainCircuit, RefreshCw, Zap } from 'lucide-react';
+
+const motion = m as any;
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {

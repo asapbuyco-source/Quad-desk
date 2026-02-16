@@ -1,10 +1,12 @@
 
 import React, { useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Layers, ArrowUpCircle, ArrowDownCircle, MinusCircle, RefreshCw, Clock } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { TimeframeData } from '../types';
+
+const motion = m as any;
 
 const BiasCard: React.FC<{ 
     label: string; 

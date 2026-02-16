@@ -1,4 +1,5 @@
 
+
 export type LiquidityType = 'WALL' | 'HOLE' | 'CLUSTER' | 'NORMAL';
 export type RegimeType = 'TRENDING' | 'MEAN_REVERTING' | 'HIGH_VOLATILITY';
 export type MarketRegimeType = "TRENDING" | "RANGING" | "EXPANDING" | "COMPRESSING" | "UNCERTAIN";
@@ -282,4 +283,23 @@ export interface AiTacticalState {
     aiScore: number; // 0-1
   };
   lastUpdated: number;
+}
+
+// --- Admin System Types ---
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  module: string;
+}
+
+export interface SystemHealth {
+  status: string;
+  uptime: string;
+  cpu_percent: number;
+  memory_mb: number;
+  threads: number;
+  autonomous_active: boolean;
+  logs: LogEntry[];
 }

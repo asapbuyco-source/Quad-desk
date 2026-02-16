@@ -3,10 +3,12 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PriceChart from './PriceChart';
 import VolumeProfile from './VolumeProfile';
 import PeriodSelector from './PeriodSelector';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
 import { PeriodType } from '../types';
+
+const motion = m as any;
 
 interface ChartingViewProps {
     currentPeriod?: PeriodType;

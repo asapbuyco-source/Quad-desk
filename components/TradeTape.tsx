@@ -2,7 +2,9 @@
 import React, { useState } from 'react';
 import { RecentTrade } from '../types';
 import { Activity, ArrowDown, ArrowUp, Zap, Filter } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion as m } from 'framer-motion';
+
+const motion = m as any;
 
 interface TradeTapeProps {
   trades: RecentTrade[];

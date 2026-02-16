@@ -1,7 +1,10 @@
+
 import React from 'react';
 import { MarketMetrics } from '../types';
 import { Activity, Skull, TrendingUp, Anchor, BarChart2, ArrowRight, TrendingDown, Waves, Zap } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion as m } from 'framer-motion';
+
+const motion = m as any;
 
 interface OrderFlowMetricsProps {
   metrics: MarketMetrics;

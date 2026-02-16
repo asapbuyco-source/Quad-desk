@@ -1,6 +1,9 @@
+
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion as m } from 'framer-motion';
 import { Shield, Activity, Terminal, ScanSearch, CandlestickChart, Anchor, BookOpen } from 'lucide-react';
+
+const motion = m as any;
 
 const GuideCard: React.FC<{ 
     icon: React.ElementType, 

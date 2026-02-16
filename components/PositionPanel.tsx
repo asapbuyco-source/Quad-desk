@@ -2,7 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { ArrowUpCircle, ArrowDownCircle, Target, Shield, Wallet, PlayCircle, StopCircle, Percent } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
+
+const motion = m as any;
 
 const PositionPanel: React.FC = () => {
     const { 

@@ -1,10 +1,12 @@
 
 import React, { useState } from 'react';
 import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, Server, RefreshCw, X, User as UserIcon } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
 import ProfileOverlay from './ProfileOverlay';
+
+const motion = m as any;
 
 const ASSETS = [
     { id: 'BTCUSDT', label: 'BTC/USDT', name: 'Bitcoin' },

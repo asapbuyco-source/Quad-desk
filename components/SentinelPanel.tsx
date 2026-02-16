@@ -2,8 +2,10 @@
 import React, { useState, useMemo } from 'react';
 import { SentinelChecklist, AiScanResult, HeatmapItem, MarketMetrics } from '../types';
 import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info, Lock } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
+
+const motion = m as any;
 
 interface SentinelPanelProps {
   checklist: SentinelChecklist[];

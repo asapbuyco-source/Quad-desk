@@ -1,8 +1,10 @@
 
 import React, { useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
 import { X, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { ToastMessage } from '../types';
+
+const motion = m as any;
 
 interface ToastProps {
   toasts: ToastMessage[];

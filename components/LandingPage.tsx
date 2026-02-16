@@ -1,7 +1,9 @@
 
 import React, { useState } from 'react';
-import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
+import { motion as m, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight, Heart } from 'lucide-react';
+
+const motion = m as any;
 
 interface LandingPageProps {
   onEnter: () => void;

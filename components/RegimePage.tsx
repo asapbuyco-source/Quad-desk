@@ -1,8 +1,10 @@
 
 import React, { useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Activity, TrendingUp, TrendingDown, Maximize2, Minimize2, Radio, Info, RefreshCw, BarChart2 } from 'lucide-react';
+
+const motion = m as any;
 
 const RegimePage: React.FC = () => {
     const { regime, refreshRegimeAnalysis } = useStore();
@@ -93,70 +95,4 @@ const RegimePage: React.FC = () => {
                     </div>
 
                     {/* Volatility Gauge */}
-                    <div className="bg-black/30 backdrop-blur-md border border-white/10 rounded-2xl p-6 min-w-[240px]">
-                        <div className="flex justify-between items-end mb-4">
-                            <span className="text-xs font-bold text-zinc-400 uppercase">Volatility Rank</span>
-                            <span className="text-2xl font-mono font-bold text-white">{volatilityPercentile.toFixed(0)}%</span>
-                        </div>
-                        <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                            <motion.div 
-                                initial={{ width: 0 }}
-                                animate={{ width: `${volatilityPercentile}%` }}
-                                transition={{ duration: 1, ease: "easeOut" }}
-                                className={`h-full rounded-full ${volatilityPercentile > 80 ? 'bg-rose-500' : volatilityPercentile > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                            />
-                        </div>
-                    </div>
-                </div>
-            </motion.div>
-
-            {/* Metrics Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* ATR Card */}
-                <div className="p-5 rounded-2xl bg-zinc-900/50 border border-white/5 relative overflow-hidden">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Activity size={16} className="text-zinc-500" />
-                        <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">ATR (14)</span>
-                    </div>
-                    <div className="text-3xl font-mono font-bold text-white mb-1">
-                        {atr.toFixed(2)}
-                    </div>
-                    <p className="text-[10px] text-zinc-500">Average True Range (Volatility)</p>
-                </div>
-
-                {/* Range Size Card */}
-                <div className="p-5 rounded-2xl bg-zinc-900/50 border border-white/5 relative overflow-hidden">
-                    <div className="flex items-center gap-2 mb-4">
-                        <BarChart2 size={16} className="text-zinc-500" />
-                        <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Range Size</span>
-                    </div>
-                    <div className="text-3xl font-mono font-bold text-white mb-1">
-                        {rangeSize.toFixed(2)}
-                    </div>
-                    <p className="text-[10px] text-zinc-500">Current 14-period High/Low Delta</p>
-                </div>
-
-                {/* Info / Context Card */}
-                <div className="p-5 rounded-2xl bg-zinc-900/50 border border-white/5 relative overflow-hidden flex flex-col justify-center">
-                    <div className="flex items-start gap-3">
-                        <Info size={18} className={config.color} />
-                        <div>
-                            <span className={`text-xs font-bold uppercase mb-1 block ${config.color}`}>Strategy Directive</span>
-                            <p className="text-xs text-zinc-400 leading-relaxed">
-                                {regimeType === 'TRENDING' && trendDirection === 'BULL' && "Prioritize long entries on pullbacks. Avoid counter-trend fading."}
-                                {regimeType === 'TRENDING' && trendDirection === 'BEAR' && "Prioritize short entries on rallies. Avoid catching knives."}
-                                {regimeType === 'RANGING' && "Fade extremes. Buy support, sell resistance. Mean reversion strategies active."}
-                                {regimeType === 'EXPANDING' && "Volatility breakout detected. Reduce leverage, widen stops."}
-                                {regimeType === 'COMPRESSING' && "Volatility squeeze imminent. Prepare for breakout in either direction."}
-                                {regimeType === 'UNCERTAIN' && "Gathering data..."}
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-        </motion.div>
-    );
-};
-
-export default RegimePage;
+                    <div className="bg-black

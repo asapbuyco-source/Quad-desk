@@ -1,8 +1,10 @@
 
 import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
 import { Droplets, ArrowUp, ArrowDown, MoveRight, ScanLine, AlertTriangle, RefreshCw, Layers, Clock } from 'lucide-react';
+
+const motion = m as any;
 
 const EventRow: React.FC<{
     label: string;

@@ -2,7 +2,9 @@
 import React, { useMemo } from 'react';
 import { OrderBookLevel } from '../types';
 import { ArrowDownUp, BoxSelect, Wind, Crosshair, AlertOctagon } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion as m } from 'framer-motion';
+
+const motion = m as any;
 
 interface OrderBookProps {
   asks: OrderBookLevel[];

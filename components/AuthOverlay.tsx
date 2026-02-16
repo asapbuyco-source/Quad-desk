@@ -1,7 +1,10 @@
+
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
 import { Shield, Fingerprint, Lock, Hexagon, Mail, User, AlertCircle, Loader2 } from 'lucide-react';
 import { useStore } from '../store';
+
+const motion = m as any;
 
 const AuthOverlay: React.FC = () => {
     const { signInGoogle, registerEmail, loginEmail, auth: { registrationOpen } } = useStore();

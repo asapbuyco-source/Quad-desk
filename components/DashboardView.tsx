@@ -5,8 +5,10 @@ import TradeTape from './TradeTape';
 import SentinelPanel from './SentinelPanel';
 import OrderFlowMetrics from './OrderFlowMetrics';
 import { CHECKLIST_ITEMS } from '../constants';
-import { motion } from 'framer-motion';
+import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
+
+const motion = m as any;
 
 const container = {
   hidden: { opacity: 0 },

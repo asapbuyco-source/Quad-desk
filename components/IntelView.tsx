@@ -1,9 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
 import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle, Database } from 'lucide-react';
 import { API_BASE_URL } from '../constants';
 import { useStore } from '../store';
+
+const motion = m as any;
 
 interface NewsArticle {
     source: { id: string | null; name: string };
