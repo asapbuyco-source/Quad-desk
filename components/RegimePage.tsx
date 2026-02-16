@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
@@ -95,4 +94,73 @@ const RegimePage: React.FC = () => {
                     </div>
 
                     {/* Volatility Gauge */}
-                    <div className="bg-black
+                    <div className="bg-black/20 p-6 rounded-2xl border border-white/5 backdrop-blur-sm min-w-[200px]">
+                        <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase mb-2">
+                            <BarChart2 size={14} /> Volatility
+                        </div>
+                        <div className="text-3xl font-mono font-bold text-white mb-2">{volatilityPercentile.toFixed(0)}%</div>
+                        <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div 
+                                className={`h-full ${volatilityPercentile > 80 ? 'bg-rose-500' : volatilityPercentile > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
+                                style={{ width: `${volatilityPercentile}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </motion.div>
+
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                {/* ATR Card */}
+                <div className="p-6 rounded-2xl bg-zinc-900/50 border border-white/5">
+                    <div className="flex items-center gap-2 text-zinc-500 text-xs font-bold uppercase mb-4">
+                        <Activity size={14} /> ATR (14)
+                    </div>
+                    <div className="text-4xl font-mono font-bold text-white mb-2">
+                        {atr.toFixed(2)}
+                    </div>
+                    <p className="text-xs text-zinc-500 leading-relaxed">
+                        Average True Range. Measures market volatility by decomposing the entire range of an asset price for that period.
+                    </p>
+                </div>
+
+                {/* Range Size Card */}
+                <div className="p-6 rounded-2xl bg-zinc-900/50 border border-white/5">
+                    <div className="flex items-center gap-2 text-zinc-500 text-xs font-bold uppercase mb-4">
+                        <Maximize2 size={14} /> Range Size
+                    </div>
+                    <div className="text-4xl font-mono font-bold text-white mb-2">
+                        {rangeSize.toFixed(2)}
+                    </div>
+                    <p className="text-xs text-zinc-500 leading-relaxed">
+                        Current trading range amplitude. High values indicate expansion, low values indicate compression.
+                    </p>
+                </div>
+
+                {/* Info Card */}
+                <div className="p-6 rounded-2xl bg-zinc-900/50 border border-white/5 flex flex-col justify-between">
+                     <div className="flex items-center gap-2 text-zinc-500 text-xs font-bold uppercase mb-4">
+                        <Info size={14} /> Strategy Lock
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {regimeType === 'TRENDING' ? (
+                            <>
+                                <span className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 text-xs font-bold">TREND FOLLOWING</span>
+                                <span className="px-2 py-1 rounded bg-zinc-800 text-zinc-500 text-xs font-bold line-through">MEAN REVERSION</span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="px-2 py-1 rounded bg-zinc-800 text-zinc-500 text-xs font-bold line-through">TREND FOLLOWING</span>
+                                <span className="px-2 py-1 rounded bg-amber-500/20 text-amber-400 text-xs font-bold">MEAN REVERSION</span>
+                            </>
+                        )}
+                    </div>
+                </div>
+
+            </div>
+        </motion.div>
+    );
+};
+
+export default RegimePage;

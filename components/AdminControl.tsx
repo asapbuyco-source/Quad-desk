@@ -18,6 +18,12 @@ const SystemMonitor: React.FC = () => {
         setIsLoading(true);
         try {
             const res = await fetch(`${API_BASE_URL}/admin/system-status`);
+            
+            const contentType = res.headers.get("content-type");
+            if (contentType && contentType.includes("text/html")) {
+                throw new Error("Invalid API Endpoint (Received HTML)");
+            }
+
             if (!res.ok) throw new Error("Connection Refused");
             const data = await res.json();
             setHealth(data);

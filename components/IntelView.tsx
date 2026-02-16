@@ -78,6 +78,12 @@ const IntelView: React.FC = () => {
           });
           clearTimeout(timeoutId);
           
+          // Check for HTML response (misconfigured API URL)
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.includes("text/html")) {
+              throw new Error("API URL Misconfigured (Response was HTML)");
+          }
+
           if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
           
           const json = await res.json();
