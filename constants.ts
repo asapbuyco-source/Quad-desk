@@ -5,7 +5,7 @@ export const APP_NAME = "QUANT DESK";
 
 // Backend API URL - Priority: LocalStorage > Env Var > Production URL > Localhost Fallback
 const STORED_URL = typeof window !== 'undefined' ? localStorage.getItem('VITE_API_URL') : null;
-export const API_BASE_URL = STORED_URL || (import.meta as any).env?.VITE_API_URL || 'https://quad-desk.onrender.com';
+export const API_BASE_URL = STORED_URL || (import.meta as any).env?.VITE_API_URL || 'https://quant-desk-backend-production.up.railway.app';
 
 console.log('🔗 API Base URL:', API_BASE_URL);
 

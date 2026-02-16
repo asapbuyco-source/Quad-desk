@@ -4,7 +4,9 @@ builder = "nixpacks"
 watchPatterns = ["backend/**"]
 
 [phases.setup]
-nixPkgs = ["python311", "gcc"]
+# Force Python 3.11 and essential build libraries
+nixPkgs = ["python311", "gcc", "zlib"]
+nixLibs = ["zlib"]
 
 [phases.install]
 # Navigate to backend folder to install dependencies
