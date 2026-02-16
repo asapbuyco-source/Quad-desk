@@ -1,6 +1,13 @@
+
 [build]
   command = "npm run build"
   publish = "dist"
+
+# Default Production Variables
+# These are used during the build process on Netlify.
+# You can override these in the Netlify Dashboard if needed.
+[build.environment]
+  VITE_API_URL = "https://quant-desk-backend-production.up.railway.app"
 
 [[redirects]]
   from = "/*"
