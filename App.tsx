@@ -23,7 +23,7 @@ import { Lock, RefreshCw } from 'lucide-react';
 import { useStore } from './store';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './lib/firebase';
-import { calculateADX } from './utils/analytics'; // Import for Audit Fix #3
+import { calculateADX, generateMockCandles } from './utils/analytics'; // Import for Audit Fix #3 & Simulation
 
 const motion = m as any;
 
@@ -142,11 +142,17 @@ const App: React.FC = () => {
             setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
         } catch (e: any) {
             console.error(`History Fetch Failed: ${e.message}`);
+            
+            // SIMULATION FALLBACK
+            console.warn("⚠️ Activating Simulation Mode due to backend failure.");
+            const mockData = generateMockCandles(200); // 200 candles fallback
+            setMarketHistory({ candles: mockData, initialCVD: 0 });
+
             addNotification({ 
                 id: Date.now().toString(), 
-                type: 'error', 
-                title: 'Data Feed Error', 
-                message: `Could not fetch historical data. ${e.message}` 
+                type: 'warning', 
+                title: 'Simulation Mode Active', 
+                message: `Backend Connection Failed: ${e.message}. Using synthetic data.` 
             });
         }
     };

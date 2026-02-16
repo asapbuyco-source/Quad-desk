@@ -105,7 +105,7 @@ const SystemMonitor: React.FC = () => {
                     className="flex-1 overflow-y-auto p-3 font-mono text-[10px] space-y-1"
                 >
                     {error ? (
-                        <div className="text-rose-500 opacity-80">> Connection to backend failed: {error}</div>
+                        <div className="text-rose-500 opacity-80">&gt; Connection to backend failed: {error}</div>
                     ) : health?.logs && health.logs.length > 0 ? (
                         health.logs.map((log, i) => (
                             <div key={i} className="flex gap-2 hover:bg-white/5 px-1 rounded">
@@ -122,7 +122,7 @@ const SystemMonitor: React.FC = () => {
                             </div>
                         ))
                     ) : (
-                        <div className="text-zinc-600 italic">> No logs available or buffer empty.</div>
+                        <div className="text-zinc-600 italic">&gt; No logs available or buffer empty.</div>
                     )}
                 </div>
             </div>

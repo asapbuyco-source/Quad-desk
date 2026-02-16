@@ -15,6 +15,9 @@ const getApiUrl = () => {
             url = stored;
         } else if ((import.meta as any).env?.VITE_API_URL) {
             url = (import.meta as any).env.VITE_API_URL;
+        } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+             // Optional: Default to localhost backend if frontend is localhost and no other config
+             // url = 'http://localhost:8000'; 
         }
     }
     

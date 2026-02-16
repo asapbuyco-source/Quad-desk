@@ -2,6 +2,68 @@
 import { CandleData, RegimeType, MarketRegimeType } from '../types';
 
 /**
+ * Generates synthetic candle data for fallback/simulation modes.
+ * Creates a "Random Walk" with realistic volatility and volume characteristics.
+ */
+export const generateMockCandles = (count: number, startPrice: number = 65000, intervalSeconds: number = 60): CandleData[] => {
+    let currentPrice = startPrice;
+    const now = Math.floor(Date.now() / 1000);
+    // Start 'count' periods ago
+    let currentTime = now - (count * intervalSeconds);
+    const candles: CandleData[] = [];
+
+    // Basic trend factor
+    const trend = (Math.random() - 0.5) * 0.0001; 
+
+    for (let i = 0; i < count; i++) {
+        const time = currentTime + (i * intervalSeconds);
+        // Volatility typically proportional to price
+        const volatility = currentPrice * 0.0015; // 0.15% base volatility
+        
+        // Random change + slight trend
+        const change = ((Math.random() - 0.5) * volatility) + (currentPrice * trend);
+        
+        const open = currentPrice;
+        const close = currentPrice + change;
+        
+        // Ensure High/Low encapsulate Open/Close
+        const high = Math.max(open, close) + (Math.random() * volatility * 0.5);
+        const low = Math.min(open, close) - (Math.random() * volatility * 0.5);
+        
+        // Random volume
+        const volume = Math.random() * 50 + 20;
+
+        // Mock Z-Score Bands (Simple Envelope)
+        const mean = close; // Simplified
+        const std = close * 0.005;
+
+        candles.push({
+            time,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            zScoreUpper1: mean + std,
+            zScoreLower1: mean - std,
+            zScoreUpper2: mean + (std * 2),
+            zScoreLower2: mean - (std * 2),
+            adx: Math.random() * 40 + 10,
+            delta: (Math.random() - 0.5) * volume * 0.4,
+            cvd: 0 // Calculated below
+        });
+        currentPrice = close;
+    }
+    
+    // Calculate basic CVD
+    let cvd = 0;
+    return candles.map(c => {
+        cvd += c.delta || 0;
+        return { ...c, cvd };
+    });
+};
+
+/**
  * Calculates the Average Directional Index (ADX) using Wilder's Smoothing technique.
  * Time Complexity: O(N) - Single pass calculation
  */
