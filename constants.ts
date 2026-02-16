@@ -96,7 +96,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       label: 'Skewness Audit', 
       status: 'warning', 
       value: 'WAIT',
-      requiredRegime: ['HIGH_VOLATILITY', 'TRENDING'],
+      requiredRegime: ['HIGH_VOLATILITY', 'TRENDING'], 
       details: {
           formula: "γ = E[(X - μ)/σ]^3",
           explanation: "Measures the asymmetry of the return distribution. Negative skew implies frequent small gains but rare, large losses (Tail Risk).",

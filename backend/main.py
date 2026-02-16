@@ -1,3 +1,4 @@
+
 import os
 import logging
 import asyncio
@@ -32,6 +33,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Default to the specific new frontend if env var is missing
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quantdesk.netlify.app")
 
 # Initialize AI & News
@@ -139,12 +141,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# CORS Setup
+# CORS Setup - Updated for new frontend
 origins = [
     "http://localhost:5173",
     "http://localhost:3000",
     "https://quantdesk.netlify.app",
-    "https://quant-desk.netlify.app",
+    "https://www.quantdesk.netlify.app",
     FRONTEND_URL
 ]
 
@@ -157,6 +159,11 @@ app.add_middleware(
 )
 
 # --- ENDPOINTS ---
+
+@app.get("/")
+def root():
+    """Root endpoint to verify API is running."""
+    return {"status": "online", "service": "Quant Desk API"}
 
 @app.get("/health")
 def health_check():

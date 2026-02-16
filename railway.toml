@@ -2,11 +2,13 @@
 [build]
 builder = "nixpacks"
 watchPatterns = ["backend/**"]
+# CRITICAL: Force Python provider so Nixpacks ignores the root package.json
+providers = ["python"]
 
 [phases.setup]
-# Force Python 3.11 and essential build libraries
-nixPkgs = ["python311", "gcc", "zlib"]
-nixLibs = ["zlib"]
+# Explicitly install Python 3.11, GCC (for compiling modules), and Zlib (common failure point)
+nixPkgs = ["python311", "gcc", "zlib", "openssl"]
+nixLibs = ["zlib", "openssl"]
 
 [phases.install]
 # Navigate to backend folder to install dependencies
@@ -14,8 +16,9 @@ cmds = ["cd backend && pip install -r requirements.txt"]
 
 [deploy]
 # Navigate to backend folder and start Uvicorn
+# Host 0.0.0.0 is required for container exposure
 startCommand = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
-healthcheckTimeout = 120
+healthcheckTimeout = 180
 restartPolicyType = "ON_FAILURE"
 numReplicas = 1
