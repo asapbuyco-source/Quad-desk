@@ -1,14 +1,23 @@
 
-import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, Auth } from "firebase/auth";
-import { getAnalytics, isSupported, Analytics } from "firebase/analytics";
-import { 
+import * as firebaseApp from "firebase/app";
+import * as firebaseAuth from "firebase/auth";
+import * as firebaseAnalytics from "firebase/analytics";
+import * as firebaseFirestore from "firebase/firestore";
+
+const { initializeApp, getApps, getApp } = firebaseApp;
+const { getAuth, GoogleAuthProvider } = firebaseAuth;
+const { getAnalytics, isSupported } = firebaseAnalytics;
+const { 
   getFirestore, 
-  Firestore, 
   initializeFirestore, 
   persistentLocalCache, 
   memoryLocalCache 
-} from "firebase/firestore";
+} = firebaseFirestore;
+
+export type { FirebaseApp } from "firebase/app";
+export type { Auth, User } from "firebase/auth";
+export type { Analytics } from "firebase/analytics";
+export type { Firestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD6eNi5OkV8mwvaV-hAyvNjOD_gLznNgtg",
@@ -21,8 +30,8 @@ const firebaseConfig = {
 };
 
 // Singleton pattern to handle HMR
-let app: FirebaseApp;
-let db: Firestore;
+let app: firebaseApp.FirebaseApp;
+let db: firebaseFirestore.Firestore;
 
 if (!getApps().length) {
   app = initializeApp(firebaseConfig);
@@ -50,19 +59,16 @@ try {
             db = getFirestore(app);
         } catch (e3) {
             console.error("Firestore fatal initialization error:", e3);
-            // We cannot recover if we can't get an instance, but we avoid throwing the specific "Service not available" to the UI if possible.
-            // In a real scenario, this might need a mock DB or UI error state.
-            // For now, we allow the error to surface if it's truly unrecoverable, but the memory fallback usually fixes 99% of cases.
             throw e3;
         }
     }
 }
 
-const auth: Auth = getAuth(app);
+const auth: firebaseAuth.Auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
 // Initialize Analytics (Async)
-let analytics: Analytics | undefined;
+let analytics: firebaseAnalytics.Analytics | undefined;
 if (typeof window !== 'undefined') {
   isSupported().then(yes => {
     if (yes) {

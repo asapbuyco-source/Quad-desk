@@ -3,7 +3,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { API_BASE_URL } from '../constants';
 import { Zap, Clock, ShieldCheck, Server } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as m, AnimatePresence } from 'framer-motion';
+
+const motion = m as any;
 
 const COOLDOWN_MS = 10 * 60 * 1000; // 10 Minutes
 const POLL_INTERVAL_MS = 30000; // 30 Seconds

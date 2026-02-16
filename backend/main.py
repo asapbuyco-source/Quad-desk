@@ -158,12 +158,34 @@ def calculate_bands_logic(closes: List[float], period: int = 20):
         "std": std.iloc[-1]
     }
 
+# --- 24/7 KEEPER LOOP ---
+async def self_ping():
+    """
+    Background task to self-ping the application every 14 minutes.
+    This prevents free-tier hosting (like Render/Railway) from sleeping due to inactivity.
+    """
+    port = int(os.getenv("PORT", 8000))
+    url = f"http://127.0.0.1:{port}/health"
+    
+    while True:
+        await asyncio.sleep(60 * 14) # Sleep for 14 minutes
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.get(url, timeout=5.0)
+                logger.info("💓 Self-Ping: Maintained active state")
+        except Exception as e:
+            logger.warning(f"Self-ping failed (Service might be busy): {e}")
+
 # --- FASTAPI APP ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
     logger.info("🚀 Quant Desk Backend Starting...")
+    
+    # Start the 24/7 Keep-Alive Loop
+    asyncio.create_task(self_ping())
+    
     yield
     logger.info("🛑 Shutting down...")
 

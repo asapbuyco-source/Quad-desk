@@ -17,15 +17,16 @@ import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine'; 
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
-import type { CandleData, OrderBookLevel, RecentTrade, LiquidityType, PeriodType } from './types';
+import type { CandleData, RecentTrade, PeriodType } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { Lock, RefreshCw, ServerOff } from 'lucide-react';
 import { useStore } from './store';
-import { onAuthStateChanged } from 'firebase/auth';
+import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX, generateMockCandles } from './utils/analytics'; 
 
 const motion = m as any;
+const { onAuthStateChanged } = firebaseAuth;
 
 const SCAN_COOLDOWN = 60;
 

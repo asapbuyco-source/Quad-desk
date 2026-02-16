@@ -23,19 +23,27 @@ import {
     googleProvider, 
     db 
 } from '../lib/firebase';
-import { 
+import * as firebaseAuth from 'firebase/auth';
+import * as firebaseFirestore from 'firebase/firestore';
+
+// Destructure from namespace imports
+const { 
     signInWithPopup, 
     createUserWithEmailAndPassword, 
     signInWithEmailAndPassword, 
     signOut, 
-    updateProfile, 
-    type User 
-} from 'firebase/auth';
-import { 
+    updateProfile 
+} = firebaseAuth;
+
+const { 
     doc, 
     getDoc, 
-    setDoc
-} from 'firebase/firestore';
+    setDoc 
+} = firebaseFirestore;
+
+// Use explicit types from the namespace if generic import fails
+type User = firebaseAuth.User;
+
 import { 
     calculateZScoreBands, 
     analyzeRegime,

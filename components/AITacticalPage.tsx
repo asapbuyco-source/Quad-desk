@@ -1,8 +1,10 @@
 
 import React, { useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Target, Shield, Crosshair, CheckCircle2, XCircle, BrainCircuit, RefreshCw, ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+
+const motion = m as any;
 
 const FactorRow: React.FC<{ label: string; isActive: boolean; score?: number }> = ({ label, isActive, score }) => (
     <div className={`flex items-center justify-between p-3 rounded-xl border ${isActive ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-zinc-900/30 border-white/5'}`}>
