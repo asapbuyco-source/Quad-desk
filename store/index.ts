@@ -657,8 +657,15 @@ export const useStore = create<StoreState>((set, get) => ({
         
         // Issue #5: Calculate Toxicity (VPIN Proxy)
         const now = Date.now();
-        // Add current trade to buffer
-        const buffer = [...state.recentTradesBuffer, { ...trade, timestamp: now }]
+        // Add current trade to buffer - Map 'size' from RecentTrade to 'volume' for buffer
+        const newTradeForBuffer = {
+            price: trade.price,
+            volume: trade.size,
+            side: trade.side,
+            timestamp: now
+        };
+
+        const buffer = [...state.recentTradesBuffer, newTradeForBuffer]
             .filter(t => now - t.timestamp < 60000); // Keep last 60s
             
         const totalVol = buffer.reduce((sum, t) => sum + t.volume, 0);
