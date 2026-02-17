@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
@@ -312,15 +311,31 @@ const App: React.FC = () => {
       };
 
       const dispatchDepth = () => {
-          const asks: OrderBookLevel[] = Array.from(orderBookRef.current.asks.entries())
-              .sort((a, b) => a[0] - b[0]) // Ascending
-              .slice(0, 20)
-              .map(([price, size]) => ({ price, size, total: 0 }));
-          
-          const bids: OrderBookLevel[] = Array.from(orderBookRef.current.bids.entries())
-              .sort((a, b) => b[0] - a[0]) // Descending
-              .slice(0, 20)
-              .map(([price, size]) => ({ price, size, total: 0 }));
+          const rawAsks = Array.from(orderBookRef.current.asks.entries()) as [number, number][];
+          const rawBids = Array.from(orderBookRef.current.bids.entries()) as [number, number][];
+
+          // Helper to classify liquidity
+          const classifyLevels = (levels: [number, number][], isBid: boolean): OrderBookLevel[] => {
+              // Sort
+              const sorted = levels.sort((a, b) => isBid ? b[0] - a[0] : a[0] - b[0]).slice(0, 20);
+              if (sorted.length === 0) return [];
+
+              // Calculate stats for Wall detection
+              const sizes = sorted.map(l => l[1]);
+              const avgSize = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+              // Wall Threshold: 2.5x Average (Heuristic)
+              const wallThreshold = avgSize * 2.5;
+
+              return sorted.map(([price, size]) => ({
+                  price,
+                  size,
+                  total: 0, // Calculated in UI if needed
+                  classification: size > wallThreshold ? 'WALL' : 'NORMAL'
+              }));
+          };
+
+          const asks = classifyLevels(rawAsks, false);
+          const bids = classifyLevels(rawBids, true);
 
           processDepthUpdate({ asks, bids, metrics: {} });
       };
