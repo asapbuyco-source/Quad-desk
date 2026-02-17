@@ -19,7 +19,7 @@ import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Lock, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
+import { Lock, RefreshCw, Loader2, AlertTriangle, ServerCrash } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
@@ -88,7 +88,7 @@ const App: React.FC = () => {
     const fetchHistory = async () => {
         try {
             console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
-            // Reset error state on new attempt
+            // Reset specific error message on retry
             setConnectionErrorMessage('');
             
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
@@ -145,6 +145,7 @@ const App: React.FC = () => {
             console.error(`History Fetch Failed: ${e.message}`);
             
             setConnectionError(true);
+            // capture the specific error message
             setConnectionErrorMessage(e.message || "Unknown Connection Error");
             setIsLoading(true);
             
@@ -282,7 +283,7 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 blur-xl bg-brand-accent/20 animate-pulse"></div>
                 </div>
                 
-                <div className="mt-8 text-center space-y-4 relative z-10">
+                <div className="mt-8 text-center space-y-4 relative z-10 px-4">
                     <div className="space-y-2">
                         <h2 className={`text-xl font-bold tracking-widest uppercase ${connectionError ? 'text-rose-500' : 'text-white'}`}>
                             {connectionError ? "CONNECTION LOST" : "ESTABLISHING UPLINK"}
@@ -292,6 +293,7 @@ const App: React.FC = () => {
                         </p>
                     </div>
 
+                    {/* Diagnostic Box for specific errors (502, Network, etc) */}
                     {connectionError && (
                         <motion.div 
                             initial={{ opacity: 0, y: 10 }}
@@ -299,12 +301,19 @@ const App: React.FC = () => {
                             className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 max-w-xs mx-auto backdrop-blur-md"
                         >
                             <div className="flex items-center justify-center gap-2 text-rose-400 mb-1">
-                                <AlertTriangle size={12} />
-                                <span className="text-[10px] font-bold uppercase">Diagnostic Info</span>
+                                {connectionErrorMessage.includes('502') ? <ServerCrash size={12} /> : <AlertTriangle size={12} />}
+                                <span className="text-[10px] font-bold uppercase">
+                                    {connectionErrorMessage.includes('502') ? 'Server Unavailable' : 'Diagnostic Info'}
+                                </span>
                             </div>
                             <p className="text-xs font-mono text-rose-300 break-words">
                                 {connectionErrorMessage}
                             </p>
+                            {connectionErrorMessage.includes('Failed to fetch') && (
+                                <p className="text-[10px] text-rose-400/70 mt-2">
+                                    Is the backend running? Check port 8000.
+                                </p>
+                            )}
                         </motion.div>
                     )}
                 </div>
