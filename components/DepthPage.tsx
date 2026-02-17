@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import { useStore } from '../store';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { ArrowDown, ArrowUp, Mountain, Activity, Shield, BoxSelect, AlertOctagon, Scale } from 'lucide-react';
+import { ArrowDown, ArrowUp, Mountain, Activity, BoxSelect, Scale } from 'lucide-react';
 import { motion as m } from 'framer-motion';
 import { OrderBookLevel } from '../types';
 
