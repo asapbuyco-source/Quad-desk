@@ -10,7 +10,8 @@ import GuideView from './components/GuideView';
 import BiasMatrixView from './components/BiasMatrixView';
 import LiquidityPage from './components/LiquidityPage';
 import RegimePage from './components/RegimePage';
-import AITacticalPage from './components/AITacticalPage'; 
+import AITacticalPage from './components/AITacticalPage';
+import DepthPage from './components/DepthPage'; // Import DepthPage
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl'; 
@@ -430,6 +431,7 @@ const App: React.FC = () => {
                     <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
                         {ui.activeTab === 'dashboard' && <DashboardView />}
                         {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
+                        {ui.activeTab === 'depth' && <DepthPage />} 
                         {ui.activeTab === 'bias' && <BiasMatrixView />}
                         {ui.activeTab === 'liquidity' && <LiquidityPage />}
                         {ui.activeTab === 'regime' && <RegimePage />}

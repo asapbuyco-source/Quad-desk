@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart, BookOpen, Layers, Droplets, Activity, BrainCircuit } from 'lucide-react';
+import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart, BookOpen, Layers, Droplets, Activity, BrainCircuit, Mountain } from 'lucide-react';
 
 interface NavBarProps {
   activeTab: string;
@@ -11,10 +11,11 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
   const tabs = [
     { id: 'dashboard', icon: LayoutGrid, label: 'Desk' },
     { id: 'charting', icon: CandlestickChart, label: 'Chart' },
+    { id: 'depth', icon: Mountain, label: 'Depth' }, // Added Depth Tab
     { id: 'bias', icon: Layers, label: 'Matrix' },
     { id: 'liquidity', icon: Droplets, label: 'Liquidity' },
     { id: 'regime', icon: Activity, label: 'Regime' },
-    { id: 'ai-tactical', icon: BrainCircuit, label: 'Tactical' }, // New Tab
+    { id: 'ai-tactical', icon: BrainCircuit, label: 'Tactical' },
     { id: 'analytics', icon: BarChart2, label: 'Data' },
     { id: 'intel', icon: Radio, label: 'Intel' },
     { id: 'guide', icon: BookOpen, label: 'Guide' },
@@ -28,7 +29,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
             <Hexagon size={28} strokeWidth={2} className="drop-shadow-lg" />
         </div>
 
-        <div className="flex flex-col gap-4 w-full px-2">
+        <div className="flex flex-col gap-4 w-full px-2 overflow-y-auto scrollbar-hide">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
@@ -37,7 +38,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
                 onClick={() => setActiveTab(tab.id)}
                 aria-label={`Switch to ${tab.label} tab`}
                 className={`
-                  relative flex flex-col items-center justify-center gap-1 w-full aspect-square rounded-xl transition-all duration-300 group
+                  relative flex flex-col items-center justify-center gap-1 w-full aspect-square rounded-xl transition-all duration-300 group shrink-0
                   ${isActive ? 'bg-brand-accent shadow-[0_0_20px_rgba(59,130,246,0.4)]' : 'hover:bg-white/5 text-slate-400'}
                 `}
               >
@@ -67,7 +68,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
       </div>
 
       {/* Mobile Floating Bottom Bar */}
-      <div className="lg:hidden fixed bottom-6 left-6 right-6 h-16 fintech-card flex items-center justify-around z-50 px-2 shadow-2xl">
+      <div className="lg:hidden fixed bottom-6 left-6 right-6 h-16 fintech-card flex items-center justify-around z-50 px-2 shadow-2xl overflow-x-auto">
         {tabs.map((tab) => {
            const isActive = activeTab === tab.id;
            return (
@@ -76,7 +77,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
                 onClick={() => setActiveTab(tab.id)}
                 aria-label={`Switch to ${tab.label} tab`}
                 className={`
-                    relative flex items-center justify-center w-12 h-12 rounded-full transition-all
+                    relative flex items-center justify-center w-12 h-12 rounded-full transition-all shrink-0 mx-1
                     ${isActive ? 'bg-brand-accent text-white shadow-lg shadow-brand-accent/30' : 'text-slate-400'}
                 `}
              >
