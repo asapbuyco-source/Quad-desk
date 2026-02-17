@@ -16,7 +16,8 @@ import type {
     RegimeState,
     AiTacticalState,
     ExpectedValueData,
-    TimeframeData
+    TimeframeData,
+    HeatmapItem
 } from '../types';
 import { 
     auth, 
@@ -110,6 +111,11 @@ interface StoreState {
     aiTactical: AiTacticalState;
     notifications: ToastMessage[];
     alertLogs: any[];
+    
+    // New State Fields
+    cvdRunning: number;
+    dailyPnL: number;
+    recentTradesBuffer: Array<{ price: number; volume: number; side: 'BUY' | 'SELL'; timestamp: number }>;
 
     // Actions
     setHasEntered: (val: boolean) => void;
@@ -152,6 +158,7 @@ interface StoreState {
     refreshLiquidityAnalysis: () => Promise<void>;
     refreshRegimeAnalysis: () => void;
     refreshTacticalAnalysis: () => void;
+    refreshHeatmap: () => Promise<void>;
     
     addNotification: (toast: ToastMessage) => void;
     removeNotification: (id: string) => void;
@@ -256,7 +263,17 @@ export const useStore = create<StoreState>((set, get) => ({
         lastUpdated: 0
     },
     notifications: [],
-    alertLogs: [],
+    // Issue #13: Initialize alerts from storage
+    alertLogs: (() => {
+        if (typeof localStorage === 'undefined') return [];
+        try {
+            const stored = localStorage.getItem('quant-desk-alerts');
+            return stored ? JSON.parse(stored) : [];
+        } catch { return []; }
+    })(),
+    cvdRunning: 0,
+    dailyPnL: 0,
+    recentTradesBuffer: [],
 
     // --- Actions ---
 
@@ -382,7 +399,6 @@ export const useStore = create<StoreState>((set, get) => ({
     setMarketHistory: ({ candles, initialCVD }) => set(state => {
         let runningCVD = initialCVD;
 
-        // --- AUDIT FIX: Z-Score Band & Cumulative CVD Calculation ---
         const enrichedCandles = candles.map((candle, i) => {
             // 1. Calculate Estimated Delta & Accumulate CVD
             const estimatedDelta = candle.delta ?? (((candle.close - candle.open) / (candle.high - candle.low || 1)) * candle.volume);
@@ -420,7 +436,8 @@ export const useStore = create<StoreState>((set, get) => ({
             const last = enrichedCandles[enrichedCandles.length - 1];
             metrics.price = last.close;
             metrics.change = ((last.close - last.open) / last.open) * 100;
-            metrics.institutionalCVD = last.cvd; // Set to True Cumulative CVD
+            // Issue #4: Initialize cumulative CVD properly
+            metrics.institutionalCVD = runningCVD;
             
             // Calculate current Z-Score
             const prices = enrichedCandles.slice(-20).map(c => c.close);
@@ -439,6 +456,7 @@ export const useStore = create<StoreState>((set, get) => ({
         }
 
         return {
+            cvdRunning: runningCVD, // Set current CVD state
             market: {
                 ...state.market,
                 candles: enrichedCandles,
@@ -447,7 +465,27 @@ export const useStore = create<StoreState>((set, get) => ({
         };
     }),
 
-    setMarketBands: (bands) => set(state => ({ market: { ...state.market, bands } })),
+    setMarketBands: (bands) => set(state => {
+        // Issue #8: Apply backend bands to data
+        const candles = [...state.market.candles];
+        if (candles.length > 0 && bands) {
+            const latest = candles[candles.length - 1];
+            candles[candles.length - 1] = {
+                ...latest,
+                zScoreUpper1: bands.upper_1,
+                zScoreLower1: bands.lower_1,
+                zScoreUpper2: bands.upper_2,
+                zScoreLower2: bands.lower_2,
+            };
+        }
+        return { 
+            market: { 
+                ...state.market, 
+                bands, 
+                candles // Update with backend data applied
+            } 
+        };
+    }),
 
     processWsTick: (kline) => set(state => {
         const candle: CandleData = {
@@ -485,14 +523,12 @@ export const useStore = create<StoreState>((set, get) => ({
         updatedLast.zScoreLower2 = bands.lower2;
         
         // 2. CVD Calculation (Cumulative)
+        // Issue #4: Cumulative CVD logic
         // Estimate Delta for this specific candle
         const candleDelta = ((candle.close - candle.open) / (candle.high - candle.low || 1)) * candle.volume;
         
-        // Get previous cumulative CVD.
-        // If we updated an existing candle, prev is at index-2.
-        // If we pushed a new candle, prev is at index-2 (since current is at index-1).
-        const prevCvd = candles.length > 1 ? (candles[candles.length - 2].cvd || 0) : (state.market.metrics.institutionalCVD || 0);
-        const cumulativeCvd = prevCvd + candleDelta;
+        // Use running CVD from state instead of just candle delta
+        const cumulativeCvd = state.cvdRunning + candleDelta;
         
         updatedLast.delta = candleDelta;
         updatedLast.cvd = cumulativeCvd;
@@ -501,7 +537,10 @@ export const useStore = create<StoreState>((set, get) => ({
         // 3. Metrics
         const priceChange = ((currentPrice - prevClose) / prevClose) * 100;
         const mean = prices.slice(-20).reduce((a, b) => a + b, 0) / 20;
-        const stdDev = (bands.upper1 - mean);
+        
+        // Issue #9: Direct StdDev calculation
+        const variance = prices.slice(-20).reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / 20;
+        const stdDev = Math.sqrt(variance);
         const zScore = stdDev === 0 ? 0 : (currentPrice - mean) / stdDev;
 
         // 4. Advanced Statistics (Log Returns)
@@ -519,7 +558,7 @@ export const useStore = create<StoreState>((set, get) => ({
         const rsiMod = rsi > 70 ? -0.1 : (rsi < 30 ? 0.1 : 0); // Mean reversion drag
         const bayesian = Math.min(0.99, Math.max(0.01, trendScore + rsiMod));
 
-        // 7. Context Interpretation (Using Normalized Pressure, not Raw CVD)
+        // 7. Context Interpretation (Using Normalized Pressure)
         const avgVol = candles.slice(-20).reduce((a,c) => a + c.volume, 0) / 20;
         // Normalize Delta to -100 to 100 relative to avg volume * 2 (aggressiveness factor)
         const pressureScore = Math.max(-100, Math.min(100, (candleDelta / (avgVol * 2 || 1)) * 100));
@@ -540,8 +579,7 @@ export const useStore = create<StoreState>((set, get) => ({
             divergence = 'BEARISH_DISTRIBUTION';
         }
 
-        // --- AUDIT FIX: Expected Value (EV) Calculation ---
-        // Calculate EV dynamically if an AI setup exists
+        // Expected Value (EV) Calculation
         let expectedValue: ExpectedValueData | null = state.market.expectedValue;
         if (state.ai.scanResult && state.ai.scanResult.verdict === 'ENTRY') {
             const scan = state.ai.scanResult;
@@ -553,7 +591,6 @@ export const useStore = create<StoreState>((set, get) => ({
             const reward = Math.abs(target - entry);
             const rrRatio = risk === 0 ? 0 : reward / risk;
             
-            // Confidence acts as win rate proxy (conservative base 0.4 if low conf)
             const winRate = Math.max(0.4, scan.confidence || 0.5);
             const ev = (winRate * reward) - ((1 - winRate) * risk);
             
@@ -566,7 +603,30 @@ export const useStore = create<StoreState>((set, get) => ({
             };
         }
 
+        // Issue #2: Update Active Position P&L
+        let activePosition = state.trading.activePosition;
+        if (activePosition) {
+            const pos = activePosition;
+            const priceDiff = pos.direction === 'LONG' 
+                ? currentPrice - pos.entry 
+                : pos.entry - currentPrice;
+            
+            const unrealizedPnL = priceDiff * pos.size;
+            const floatingR = pos.riskAmount !== 0 ? unrealizedPnL / pos.riskAmount : 0;
+            
+            activePosition = {
+                ...pos,
+                unrealizedPnL,
+                floatingR
+            };
+        }
+
         return {
+            cvdRunning: cumulativeCvd, // Update running CVD
+            trading: {
+                ...state.trading,
+                activePosition
+            },
             market: {
                 ...state.market,
                 candles,
@@ -579,28 +639,47 @@ export const useStore = create<StoreState>((set, get) => ({
                     skewness: parseFloat(skewness.toFixed(2)),
                     kurtosis: parseFloat(kurtosis.toFixed(2)),
                     bayesianPosterior: parseFloat(bayesian.toFixed(2)),
-                    institutionalCVD: parseFloat(cumulativeCvd.toFixed(0)), // TRUE CUMULATIVE
+                    institutionalCVD: parseFloat(cumulativeCvd.toFixed(0)), // TRUE CUMULATIVE for display
                     cvdContext: {
-                        value: parseFloat(pressureScore.toFixed(0)), // NORMALIZED PRESSURE (-100 to 100) for Gauge
+                        value: parseFloat(pressureScore.toFixed(0)), // NORMALIZED PRESSURE for gauge
                         trend,
                         divergence,
                         interpretation: contextInterpretation
                     }
                 },
-                expectedValue // Include computed EV
+                expectedValue
             }
         };
     }),
 
     processTradeTick: (trade) => set(state => {
         const updatedTrades = [trade, ...state.market.recentTrades].slice(0, 50);
-        return { market: { ...state.market, recentTrades: updatedTrades } };
+        
+        // Issue #5: Calculate Toxicity (VPIN Proxy)
+        const now = Date.now();
+        // Add current trade to buffer
+        const buffer = [...state.recentTradesBuffer, { ...trade, timestamp: now }]
+            .filter(t => now - t.timestamp < 60000); // Keep last 60s
+            
+        const totalVol = buffer.reduce((sum, t) => sum + t.volume, 0);
+        const sellVol = buffer.filter(t => t.side === 'SELL').reduce((sum, t) => sum + t.volume, 0);
+        
+        const toxicity = totalVol > 0 ? (sellVol / totalVol) * 100 : 0;
+
+        return { 
+            recentTradesBuffer: buffer,
+            market: { 
+                ...state.market, 
+                recentTrades: updatedTrades,
+                metrics: {
+                    ...state.market.metrics,
+                    toxicity: parseFloat(toxicity.toFixed(1))
+                }
+            } 
+        };
     }),
 
     processDepthUpdate: ({ asks, bids, metrics }) => set(state => {
-        // --- AUDIT FIX: Order Flow Imbalance (OFI) Calculation ---
-        // Measures the imbalance between the best bid and best ask sizes.
-        // Value: -100 (Full Sell Pressure) to 100 (Full Buy Pressure)
         let ofi = state.market.metrics.ofi;
         
         if (asks.length > 0 && bids.length > 0) {
@@ -716,7 +795,17 @@ export const useStore = create<StoreState>((set, get) => ({
         
         const rResult = pnl / pos.riskAmount;
         
+        // Issue #10: Circuit Breaker Logic
+        const newDailyPnL = state.dailyPnL + rResult;
+        const circuitBreakerTripped = newDailyPnL <= -6; // -6R daily limit
+
+        if (circuitBreakerTripped) {
+            // Can add alert notification here
+            console.warn("CIRCUIT BREAKER TRIPPED");
+        }
+
         return {
+            dailyPnL: newDailyPnL,
             trading: {
                 ...state.trading,
                 activePosition: null,
@@ -728,6 +817,13 @@ export const useStore = create<StoreState>((set, get) => ({
                     wins: pnl > 0 ? state.trading.dailyStats.wins + 1 : state.trading.dailyStats.wins,
                     losses: pnl <= 0 ? state.trading.dailyStats.losses + 1 : state.trading.dailyStats.losses,
                     tradesToday: state.trading.dailyStats.tradesToday + 1
+                }
+            },
+            market: {
+                ...state.market,
+                metrics: {
+                    ...state.market.metrics,
+                    circuitBreakerTripped
                 }
             }
         };
@@ -770,7 +866,7 @@ export const useStore = create<StoreState>((set, get) => ({
             fetchTF('1d'), 
             fetchTF('4h'), 
             fetchTF('1h'), 
-            fetchTF('5m') // AUDIT FIX: Fetch 5m for M5 slot (was 15m)
+            fetchTF('5m')
         ]);
         
         set(s => ({
@@ -902,10 +998,65 @@ export const useStore = create<StoreState>((set, get) => ({
         };
     }),
 
+    // Issue #6: Heatmap Population
+    refreshHeatmap: async () => {
+        try {
+            const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+            const heatmapData: HeatmapItem[] = [];
+            
+            // Parallel fetch for heatmap data
+            await Promise.all(symbols.map(async (symbol) => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/bands?symbol=${symbol}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        // Estimate z-score from current price vs bands (rough approx since we only have bands)
+                        // Ideally endpoint returns current price/zscore. Assuming backend returns just bands for now.
+                        // We need price. Let's fetch history tick for price.
+                        const histRes = await fetch(`${API_BASE_URL}/history?symbol=${symbol}&limit=1`);
+                        const histData = await histRes.json();
+                        if (histData && histData.length > 0) {
+                            const price = histData[histData.length-1][4]; // Close
+                            const mean = data.sma;
+                            const std = data.std;
+                            const zScore = std ? (price - mean) / std : 0;
+                            
+                            heatmapData.push({
+                                pair: symbol.replace('USDT', ''),
+                                zScore: zScore,
+                                price: price
+                            });
+                        }
+                    }
+                } catch(e) {}
+            }));
+            
+            if (heatmapData.length > 0) {
+                set(state => ({
+                    market: {
+                        ...state.market,
+                        metrics: {
+                            ...state.market.metrics,
+                            heatmap: heatmapData
+                        }
+                    }
+                }));
+            }
+        } catch (error) {
+            console.error('Heatmap refresh error:', error);
+        }
+    },
+
     addNotification: (toast) => set(state => ({ notifications: [...state.notifications, toast] })),
     removeNotification: (id) => set(state => ({ notifications: state.notifications.filter(n => n.id !== id) })),
 
     logAlert: async (alert) => {
-        set(state => ({ alertLogs: [alert, ...state.alertLogs].slice(0, 50) }));
+        const newAlert = { ...alert, id: Date.now().toString() };
+        const updatedLogs = [newAlert, ...get().alertLogs].slice(0, 50);
+        set({ alertLogs: updatedLogs });
+        // Issue #13: Persistence
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('quant-desk-alerts', JSON.stringify(updatedLogs));
+        }
     }
 }));

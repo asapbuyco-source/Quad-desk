@@ -207,7 +207,8 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
                 <span className={`text-2xl font-mono font-bold ${ofiColor}`}>
                     {metrics.ofi > 0 ? '+' : ''}{metrics.ofi.toFixed(0)}
                 </span>
-                <span className="text-[9px] text-slate-500 font-mono">LOTS</span>
+                {/* Issue #7: Fix label to "IMBALANCE %" */}
+                <span className="text-[9px] text-slate-500 font-mono">IMBALANCE %</span>
             </div>
          </div>
          
@@ -215,12 +216,12 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
             {/* Split Bar Gauge */}
             <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden relative flex">
                  <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/20 z-20"></div>
-                 {/* Fill */}
+                 {/* Fill - Issue #7: Fix gauge calculation */}
                  <motion.div 
                     animate={{ 
                         left: metrics.ofi > 0 ? '50%' : 'auto',
                         right: metrics.ofi < 0 ? '50%' : 'auto',
-                        width: `${Math.min(Math.abs(metrics.ofi) / 5, 50)}%` 
+                        width: `${Math.min(Math.abs(metrics.ofi) / 2, 50)}%` 
                     }}
                     className={`absolute top-0 bottom-0 ${ofiBg}`}
                  />

@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
@@ -46,6 +47,13 @@ const App: React.FC = () => {
   // Local Order Book Buffer for Kraken Incremental Updates
   const orderBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
   
+  // Issue #3: Candle Aggregation Refs
+  const candleOpenRef = useRef<number | null>(null);
+  const candleHighRef = useRef<number | null>(null);
+  const candleLowRef = useRef<number | null>(null);
+  const candleVolumeRef = useRef<number>(0);
+  const lastCandleTimeRef = useRef<number>(0);
+
   const {
       setHasEntered,
       setActiveTab,
@@ -59,7 +67,8 @@ const App: React.FC = () => {
       loadUserPreferences,
       processWsTick,
       processTradeTick,
-      processDepthUpdate
+      processDepthUpdate,
+      refreshHeatmap
   } = useStore();
 
   const handlePeriodChange = (period: PeriodType) => {
@@ -85,6 +94,13 @@ const App: React.FC = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Issue #6: Poll Heatmap
+  useEffect(() => {
+      refreshHeatmap();
+      const interval = setInterval(refreshHeatmap, 60000);
+      return () => clearInterval(interval);
+  }, [config.activeSymbol]);
 
   // REST API History Fetcher (Kraken via Backend)
   useEffect(() => {
@@ -141,6 +157,13 @@ const App: React.FC = () => {
             
             const candlesWithADX = calculateADX(formattedCandles, 14);
             setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
+            
+            // Reset aggregation refs on new history load
+            candleOpenRef.current = null;
+            candleHighRef.current = null;
+            candleLowRef.current = null;
+            candleVolumeRef.current = 0;
+            
             setIsLoading(false);
 
         } catch (e: any) {
@@ -223,19 +246,24 @@ const App: React.FC = () => {
                   const channelName = msg[2];
                   const data = msg[1];
 
-                  // 1. Handle Trade -> Tape
+                  // 1. Handle Trade -> Tape & Candle Volume
                   if (channelName === 'trade') {
                       // data is array of trades: [[price, vol, time, side, type, misc], ...]
                       data.forEach((t: any) => {
+                          const price = parseFloat(t[0]);
+                          const vol = parseFloat(t[1]);
                           const trade: RecentTrade = {
                               id: `${t[2]}-${t[0]}`, // time-price as fake ID
-                              price: parseFloat(t[0]),
-                              size: parseFloat(t[1]),
+                              price: price,
+                              size: vol,
                               side: t[3] === 's' ? 'SELL' : 'BUY',
                               time: parseFloat(t[2]) * 1000,
-                              isWhale: (parseFloat(t[0]) * parseFloat(t[1])) > 50000
+                              isWhale: (price * vol) > 50000
                           };
                           processTradeTick(trade);
+                          
+                          // Issue #3: Accumulate volume for synthetic candle
+                          candleVolumeRef.current += vol;
                       });
                   }
 
@@ -247,14 +275,30 @@ const App: React.FC = () => {
                       const intervalMs = getIntervalMs(config.interval);
                       const startTime = Math.floor(time / intervalMs) * intervalMs;
 
+                      // Reset refs if new candle started
+                      if (startTime !== lastCandleTimeRef.current) {
+                          candleOpenRef.current = price;
+                          candleHighRef.current = price;
+                          candleLowRef.current = price;
+                          candleVolumeRef.current = 0;
+                          lastCandleTimeRef.current = startTime;
+                      }
+
+                      // Initialize if null (e.g. first tick after load)
+                      if (candleOpenRef.current === null) candleOpenRef.current = price;
+                      
+                      // Update High/Low
+                      if (candleHighRef.current === null || price > candleHighRef.current) candleHighRef.current = price;
+                      if (candleLowRef.current === null || price < candleLowRef.current) candleLowRef.current = price;
+
                       // Synthetic candle update
                       const syntheticKline = {
                           t: startTime,
-                          o: price, 
-                          h: price, 
-                          l: price,
+                          o: candleOpenRef.current, 
+                          h: candleHighRef.current, 
+                          l: candleLowRef.current,
                           c: price, 
-                          v: 0 // Ticker doesn't give incremental volume easily, assume 0 for tick update
+                          v: candleVolumeRef.current // Use accumulated volume from trades
                       };
                       processWsTick(syntheticKline);
                   }

@@ -234,17 +234,27 @@ def calculate_bands_logic(closes: List[float], period: int = 20):
     }
 
 # --- 24/7 KEEPER LOOP ---
+# Issue #12: Robust Self-Ping
 async def self_ping():
+    # Wait for startup
+    await asyncio.sleep(20)
     port = int(os.getenv("PORT", 8000))
-    url = f"http://127.0.0.1:{port}/health"
+    
     while True:
-        await asyncio.sleep(60 * 14)
+        await asyncio.sleep(60 * 14) # 14 minutes
         try:
-            async with httpx.AsyncClient() as client:
-                await client.get(url, timeout=5.0)
-                logger.info("💓 Self-Ping: Maintained active state")
-        except Exception:
-            pass
+            # Try both loopback and all-interfaces
+            for host in ["127.0.0.1", "0.0.0.0"]:
+                url = f"http://{host}:{port}/health"
+                try:
+                    async with httpx.AsyncClient() as client:
+                        await client.get(url, timeout=5.0)
+                        logger.info(f"💓 Self-Ping success on {host}")
+                        break
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Self-ping failed: {e}")
 
 # --- FASTAPI APP ---
 

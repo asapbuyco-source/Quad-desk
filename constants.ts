@@ -82,7 +82,8 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       requiredRegime: ['TRENDING'], 
       details: {
           formula: "P(A|B) = [P(B|A) * P(A)] / P(B)",
-          explanation: "Updates the probability of a 'Trend Continuation' (Hypothesis A) given new 'Order Flow Data' (Evidence B).",
+          // Issue #11: Update description to match implementation
+          explanation: "Updates the probability of a 'Trend Continuation' based on Trend Strength and RSI divergence/confirmation.",
           variables: [
               { label: "P(A) Prior", value: "0.50", unit: "", description: "Initial belief" },
               { label: "Trend Strength", value: "--", unit: "", description: "Momentum Factor" },
@@ -162,4 +163,4 @@ export const MOCK_CANDLES: CandleData[] = [];
 export const MOCK_SIGNALS: TradeSignal[] = []; 
 export const MOCK_LEVELS: PriceLevel[] = []; 
 export const MOCK_ASKS: OrderBookLevel[] = []; 
-export const MOCK_BIDS: OrderBookLevel[] = []; 
+export const MOCK_BIDS: OrderBookLevel[] = [];
