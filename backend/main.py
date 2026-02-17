@@ -114,72 +114,98 @@ class AnalysisRequest(BaseModel):
 
 # --- UTILITIES ---
 
-def map_symbol_to_coinbase(symbol: str) -> str:
-    """Maps internal symbols (BTCUSDT) to Coinbase format (BTC-USD)."""
-    if symbol.endswith("USDT"):
-        return f"{symbol[:-4]}-USD"
-    if symbol.endswith("USD"):
-        return f"{symbol[:-3]}-USD"
-    return symbol
-
-def map_interval_to_granularity(interval: str) -> int:
-    """Maps Binance-style intervals to Coinbase granularity (seconds)."""
-    mapping = {
-        "1m": 60,
-        "5m": 300,
-        "15m": 900,
-        "1h": 3600,
-        "6h": 21600,
-        "1d": 86400
-    }
-    # Coinbase doesn't support 4h explicitly, fallback to 1h or 6h
-    if interval == "4h":
-        return 3600 
-    return mapping.get(interval, 60)
-
-async def fetch_coinbase_candles(symbol: str, interval: str, limit: int = 300):
-    """
-    Fetch historical candles from Coinbase Pro REST API.
-    Replaces Binance API to avoid 451/502 errors.
-    """
-    cb_symbol = map_symbol_to_coinbase(symbol)
-    granularity = map_interval_to_granularity(interval)
+def map_symbol_to_kraken(symbol: str) -> str:
+    """Maps internal symbols (BTCUSDT) to Kraken format (XBTUSDT or XBTUSD)."""
+    base = ""
+    quote = ""
     
-    url = f"https://api.pro.coinbase.com/products/{cb_symbol}/candles"
-    params = {"granularity": granularity}
+    # Base Mapping
+    if symbol.startswith("BTC"): base = "XBT"
+    elif symbol.startswith("ETH"): base = "ETH"
+    elif symbol.startswith("SOL"): base = "SOL"
+    else: base = symbol[:3] # Fallback
+    
+    # Quote Mapping
+    if symbol.endswith("USDT"): quote = "USDT"
+    elif symbol.endswith("USD"): quote = "USD"
+    else: quote = "USD"
+    
+    return f"{base}{quote}"
+
+def map_interval_to_kraken(interval: str) -> int:
+    """Maps Binance-style intervals to Kraken minutes."""
+    mapping = {
+        "1m": 1,
+        "5m": 5,
+        "15m": 15,
+        "1h": 60,
+        "4h": 240,
+        "1d": 1440
+    }
+    return mapping.get(interval, 1)
+
+async def fetch_kraken_candles(symbol: str, interval: str, limit: int = 300):
+    """
+    Fetch historical candles from Kraken Public REST API.
+    Docs: https://docs.kraken.com/rest/#tag/Market-Data/operation/getOHLCData
+    """
+    pair = map_symbol_to_kraken(symbol)
+    kraken_interval = map_interval_to_kraken(interval)
+    
+    url = "https://api.kraken.com/0/public/OHLC"
+    params = {
+        "pair": pair,
+        "interval": kraken_interval
+    }
     
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(url, params=params, timeout=10.0)
-            
-            if resp.status_code == 404:
-                logger.error(f"Coinbase 404 for {cb_symbol}")
-                raise HTTPException(status_code=404, detail="Symbol not found on Coinbase")
+            # Fake User-Agent to prevent 403s on some cloud providers
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = await client.get(url, params=params, headers=headers, timeout=10.0)
             
             resp.raise_for_status()
-            raw_data = resp.json()
+            data = resp.json()
             
-            # Coinbase Format: [time, low, high, open, close, volume]
-            # Binance Format Expected by Frontend: [time (ms), open, high, low, close, volume]
+            # Kraken returns errors in a list, empty if successful
+            if data.get("error"):
+                error_msg = data["error"][0]
+                logger.error(f"Kraken API Error: {error_msg}")
+                # Handle generic unknown pair error
+                if "Unknown asset pair" in error_msg:
+                    raise HTTPException(status_code=404, detail="Symbol not found on Kraken")
+                raise HTTPException(status_code=502, detail=f"Kraken Error: {error_msg}")
+
+            # Kraken Result is a dict where the key is the pair name (which might differ from request)
+            # e.g. Request XBTUSD -> Result XXBTZUSD
+            result = data.get("result", {})
             
+            # Find the first value that is a list (the OHLC data)
+            ohlc_list = next((v for k, v in result.items() if isinstance(v, list)), [])
+            
+            # Kraken Format: [int <time>, string <open>, string <high>, string <low>, string <close>, string <vwap>, string <volume>, int <count>]
             formatted_data = []
-            # Coinbase returns newest first, Binance consumers usually expect oldest first for graphing,
-            # but lightweight-charts handles sorting usually. We reverse to match standard ascending time.
-            for d in raw_data:
+            
+            for d in ohlc_list:
                 formatted_data.append([
-                    d[0] * 1000, # Time to ms
-                    d[3],        # Open
-                    d[2],        # High
-                    d[1],        # Low
-                    d[4],        # Close
-                    d[5]         # Volume
+                    int(d[0]) * 1000,   # Time to ms
+                    float(d[1]),        # Open
+                    float(d[2]),        # High
+                    float(d[3]),        # Low
+                    float(d[4]),        # Close
+                    float(d[6])         # Volume
                 ])
             
+            # Sort by time ascending (Kraken usually returns ascending, but ensure safety)
+            # Limit logic: Kraken returns last 720 points by default. We slice the last `limit`.
             return sorted(formatted_data, key=lambda x: x[0])[-limit:]
             
         except httpx.HTTPStatusError as e:
-            logger.error(f"Coinbase API Error: {e.response.text}")
-            raise HTTPException(status_code=502, detail=f"Coinbase Data Error: {e.response.status_code}")
+            logger.error(f"Kraken HTTP Error: {e.response.text}")
+            raise HTTPException(status_code=502, detail=f"Kraken Data Error: {e.response.status_code}")
+        except StopIteration:
+            logger.error(f"Kraken parsing error: No OHLC list found in {data}")
+            raise HTTPException(status_code=500, detail="Invalid Data Structure from Kraken")
         except Exception as e:
             logger.error(f"Fetch failed: {e}")
             raise HTTPException(status_code=500, detail="Internal Data Fetch Error")
@@ -225,7 +251,7 @@ async def self_ping():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
-    logger.info("🚀 Quant Desk Backend Starting (Coinbase Pro Integrated)...")
+    logger.info("🚀 Quant Desk Backend Starting (Kraken Integrated)...")
     asyncio.create_task(self_ping())
     yield
     logger.info("🛑 Shutting down...")
@@ -252,11 +278,11 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    return {"status": "online", "service": "Quant Desk API (Coinbase)"}
+    return {"status": "online", "service": "Quant Desk API (Kraken)"}
 
 @app.get("/health")
 def health_check():
-    return {"status": "operational", "version": "2.5.0"}
+    return {"status": "operational", "version": "2.6.0"}
 
 @app.get("/admin/system-status")
 def system_status():
@@ -275,18 +301,18 @@ def system_status():
 @app.get("/history")
 async def get_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 300):
     """
-    Get historical candles from Coinbase.
+    Get historical candles from Kraken.
     """
-    data = await fetch_coinbase_candles(symbol, interval, limit)
+    data = await fetch_kraken_candles(symbol, interval, limit)
     return data
 
 @app.get("/bands")
 async def get_bands(symbol: str = "BTCUSDT"):
     """
-    Calculates dynamic Z-Score bands based on Coinbase data.
+    Calculates dynamic Z-Score bands based on Kraken data.
     """
-    # Fetch wider context (1h granularity = 3600s)
-    raw_data = await fetch_coinbase_candles(symbol, "1h", 50)
+    # Fetch wider context (1h granularity)
+    raw_data = await fetch_kraken_candles(symbol, "1h", 50)
     
     if not raw_data:
         raise HTTPException(status_code=404, detail="No data found")
@@ -310,7 +336,7 @@ async def analyze_market(symbol: str = "BTCUSDT", model: str = "gemini-3-flash-p
         raise HTTPException(status_code=503, detail="AI Service Config Missing")
 
     # Use 15m candles
-    klines = await fetch_coinbase_candles(symbol, "15m", 30)
+    klines = await fetch_kraken_candles(symbol, "15m", 30)
     
     prices_str = "\n".join([
         f"Time: {datetime.fromtimestamp(x[0]/1000).strftime('%H:%M')} | O:{x[1]} H:{x[2]} L:{x[3]} C:{x[4]} V:{x[5]}"

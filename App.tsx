@@ -24,7 +24,7 @@ import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX } from './utils/analytics'; 
-import { toCoinbaseSymbol, getIntervalMs } from './utils/symbolMapping';
+import { toKrakenSymbol, getIntervalMs } from './utils/symbolMapping';
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -43,7 +43,7 @@ const App: React.FC = () => {
   const [connectionErrorMessage, setConnectionErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
-  // Local Order Book Buffer for Coinbase Incremental Updates
+  // Local Order Book Buffer for Kraken Incremental Updates
   const orderBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
   
   const {
@@ -86,7 +86,7 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // REST API History Fetcher
+  // REST API History Fetcher (Kraken via Backend)
   useEffect(() => {
     let retryTimer: ReturnType<typeof setTimeout>;
 
@@ -95,7 +95,7 @@ const App: React.FC = () => {
             console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
             setConnectionErrorMessage('');
             
-            // Backend now connects to Coinbase, expects Binance-like interval param but handles mapping internally
+            // Backend maps symbol/interval to Kraken format
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             
             if (res.status === 502 || res.status === 503) {
@@ -123,13 +123,10 @@ const App: React.FC = () => {
                 runningCVD = parseFloat(cachedCVD);
             }
 
-            // Backend maps Coinbase data to Binance structure: [time, open, high, low, close, vol]
+            // Data comes as [time, open, high, low, close, volume]
             const formattedCandles: CandleData[] = data.map((k: any) => {
                 const vol = parseFloat(k[5]);
-                // Coinbase doesn't give taker/maker vol in candles easily, so estimate delta or set to 0
-                // For simplified simulation, we assume some delta distribution or just 0
-                const delta = 0; // Requires tick aggregation for accuracy, defaulting to 0 for initial load
-                // Or better: runningCVD stays as is until live trades come in.
+                const delta = 0; // Estimation only possible with trade ticks
 
                 return {
                     time: k[0] / 1000,
@@ -181,7 +178,7 @@ const App: React.FC = () => {
       return () => clearInterval(i);
   }, [config.activeSymbol, connectionError]);
 
-  // Coinbase Pro WebSocket Logic
+  // Kraken WebSocket Logic
   useEffect(() => {
       if (connectionError) return; 
 
@@ -192,92 +189,114 @@ const App: React.FC = () => {
       const MAX_RETRIES = 5;
       
       const connect = () => {
-          // Coinbase Pro Websocket
-          ws = new WebSocket('wss://ws-feed.pro.coinbase.com');
-          const cbSymbol = toCoinbaseSymbol(config.activeSymbol);
+          // Kraken Public Websocket
+          ws = new WebSocket('wss://ws.kraken.com');
+          const krakenSymbol = toKrakenSymbol(config.activeSymbol, false); // "XBT/USDT"
           
           ws.onopen = () => { 
               retryCount = 0;
               // Subscribe to Channels
-              ws?.send(JSON.stringify({
-                  type: "subscribe",
-                  product_ids: [cbSymbol],
-                  channels: ["level2", "matches", "ticker"]
-              }));
+              const subMsg = {
+                  event: "subscribe",
+                  pair: [krakenSymbol],
+                  subscription: {} as any
+              };
+              
+              // 1. Ticker
+              ws?.send(JSON.stringify({ ...subMsg, subscription: { name: "ticker" } }));
+              // 2. Trade
+              ws?.send(JSON.stringify({ ...subMsg, subscription: { name: "trade" } }));
+              // 3. Book (Depth 25)
+              ws?.send(JSON.stringify({ ...subMsg, subscription: { name: "book", depth: 25 } }));
           };
 
           ws.onmessage = (event) => {
               const msg = JSON.parse(event.data);
               
-              // 1. Handle Trade (Match) -> Tape
-              if (msg.type === 'match') {
-                  const trade: RecentTrade = {
-                      id: msg.trade_id.toString(),
-                      price: parseFloat(msg.price),
-                      size: parseFloat(msg.size),
-                      side: msg.side === 'sell' ? 'SELL' : 'BUY', // Coinbase: 'sell' means taker sold
-                      time: new Date(msg.time).getTime(),
-                      isWhale: (parseFloat(msg.price) * parseFloat(msg.size)) > 50000
-                  };
-                  processTradeTick(trade);
+              // Handle Heartbeat
+              if (msg.event === 'heartbeat' || msg.event === 'systemStatus' || msg.event === 'subscriptionStatus') {
+                  return;
               }
 
-              // 2. Handle Ticker -> Synthetic Kline Update
-              // Coinbase doesn't steam klines, so we construct a partial one
-              else if (msg.type === 'ticker') {
-                  const price = parseFloat(msg.price);
-                  const time = new Date(msg.time).getTime();
-                  const intervalMs = getIntervalMs(config.interval);
-                  
-                  // Calculate Candle Start Time (bucketing)
-                  const startTime = Math.floor(time / intervalMs) * intervalMs;
+              // Kraken sends data as Array: [channelID, data, channelName, pair]
+              if (Array.isArray(msg)) {
+                  const channelName = msg[2];
+                  const data = msg[1];
 
-                  // Construct synthetic kline compatible with store
-                  // Note: Store logic assumes if t matches last, update C/H/L/V. 
-                  // If we send price as OHLC, store logic will adjust H/L naturally if it holds state, 
-                  // but store `processWsTick` assumes incoming kline is authoritative for that slice.
-                  // We simulate a 'tick' where close is current price.
-                  const syntheticKline = {
-                      t: startTime, // Start time of candle
-                      o: price, // Placeholder, store handles Open logic if new
-                      h: price, 
-                      l: price,
-                      c: price, 
-                      v: parseFloat(msg.last_size || "0") // Volume of this specific tick
-                  };
-                  processWsTick(syntheticKline);
-              }
+                  // 1. Handle Trade -> Tape
+                  if (channelName === 'trade') {
+                      // data is array of trades: [[price, vol, time, side, type, misc], ...]
+                      data.forEach((t: any) => {
+                          const trade: RecentTrade = {
+                              id: `${t[2]}-${t[0]}`, // time-price as fake ID
+                              price: parseFloat(t[0]),
+                              size: parseFloat(t[1]),
+                              side: t[3] === 's' ? 'SELL' : 'BUY',
+                              time: parseFloat(t[2]) * 1000,
+                              isWhale: (parseFloat(t[0]) * parseFloat(t[1])) > 50000
+                          };
+                          processTradeTick(trade);
+                      });
+                  }
 
-              // 3. Handle Orderbook (Snapshot + L2 Update)
-              else if (msg.type === 'snapshot') {
-                  // Reset Local Map
-                  orderBookRef.current.asks.clear();
-                  orderBookRef.current.bids.clear();
-                  
-                  msg.asks.forEach((x: any) => orderBookRef.current.asks.set(parseFloat(x[0]), parseFloat(x[1])));
-                  msg.bids.forEach((x: any) => orderBookRef.current.bids.set(parseFloat(x[0]), parseFloat(x[1])));
-                  
-                  dispatchDepth();
-              }
-              else if (msg.type === 'l2update') {
-                  // Apply diffs
-                  msg.changes.forEach((change: any[]) => {
-                      const side = change[0]; // "buy" or "sell"
-                      const price = parseFloat(change[1]);
-                      const size = parseFloat(change[2]);
-                      
-                      const targetMap = side === 'buy' ? orderBookRef.current.bids : orderBookRef.current.asks;
-                      
-                      if (size === 0) targetMap.delete(price);
-                      else targetMap.set(price, size);
-                  });
-                  
-                  // Throttle dispatch to UI (200ms) to prevent render thrashing
-                  if (!depthThrottle) {
-                      depthThrottle = setTimeout(() => {
+                  // 2. Handle Ticker -> Synthetic Kline
+                  else if (channelName === 'ticker') {
+                      // data format: { c: [price, vol], ... }
+                      const price = parseFloat(data.c[0]);
+                      const time = Date.now();
+                      const intervalMs = getIntervalMs(config.interval);
+                      const startTime = Math.floor(time / intervalMs) * intervalMs;
+
+                      // Synthetic candle update
+                      const syntheticKline = {
+                          t: startTime,
+                          o: price, 
+                          h: price, 
+                          l: price,
+                          c: price, 
+                          v: 0 // Ticker doesn't give incremental volume easily, assume 0 for tick update
+                      };
+                      processWsTick(syntheticKline);
+                  }
+
+                  // 3. Handle Book -> Depth
+                  else if (channelName.startsWith('book')) {
+                      // Snapshot: contains 'as' (asks) and 'bs' (bids)
+                      if (data.as || data.bs) {
+                          orderBookRef.current.asks.clear();
+                          orderBookRef.current.bids.clear();
+                          
+                          if (data.as) data.as.forEach((x: any) => orderBookRef.current.asks.set(parseFloat(x[0]), parseFloat(x[1])));
+                          if (data.bs) data.bs.forEach((x: any) => orderBookRef.current.bids.set(parseFloat(x[0]), parseFloat(x[1])));
+                          
                           dispatchDepth();
-                          depthThrottle = null;
-                      }, 200);
+                      } 
+                      // Update: contains 'a' or 'b' or both
+                      else {
+                          if (data.a) {
+                              data.a.forEach((x: any) => {
+                                  const price = parseFloat(x[0]);
+                                  const size = parseFloat(x[1]);
+                                  if (size === 0) orderBookRef.current.asks.delete(price);
+                                  else orderBookRef.current.asks.set(price, size);
+                              });
+                          }
+                          if (data.b) {
+                              data.b.forEach((x: any) => {
+                                  const price = parseFloat(x[0]);
+                                  const size = parseFloat(x[1]);
+                                  if (size === 0) orderBookRef.current.bids.delete(price);
+                                  else orderBookRef.current.bids.set(price, size);
+                              });
+                          }
+
+                          if (!depthThrottle) {
+                              depthThrottle = setTimeout(() => {
+                                  dispatchDepth();
+                                  depthThrottle = null;
+                              }, 200);
+                          }
+                      }
                   }
               }
           };
@@ -291,15 +310,14 @@ const App: React.FC = () => {
           };
       };
 
-      // Helper to convert Map to Sorted Arrays for Store
       const dispatchDepth = () => {
           const asks: OrderBookLevel[] = Array.from(orderBookRef.current.asks.entries())
-              .sort((a, b) => a[0] - b[0]) // Ascending price
+              .sort((a, b) => a[0] - b[0]) // Ascending
               .slice(0, 20)
-              .map(([price, size]) => ({ price, size, total: 0 })); // Total calc handled by component if needed
+              .map(([price, size]) => ({ price, size, total: 0 }));
           
           const bids: OrderBookLevel[] = Array.from(orderBookRef.current.bids.entries())
-              .sort((a, b) => b[0] - a[0]) // Descending price
+              .sort((a, b) => b[0] - a[0]) // Descending
               .slice(0, 20)
               .map(([price, size]) => ({ price, size, total: 0 }));
 
