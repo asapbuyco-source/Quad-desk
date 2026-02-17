@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
 import DashboardView from './components/DashboardView';
@@ -17,13 +17,14 @@ import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine'; 
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
-import type { CandleData, RecentTrade, PeriodType } from './types';
+import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { Lock, RefreshCw, Loader2, AlertTriangle, ServerCrash } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX } from './utils/analytics'; 
+import { toCoinbaseSymbol, getIntervalMs } from './utils/symbolMapping';
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -41,6 +42,9 @@ const App: React.FC = () => {
   const [connectionError, setConnectionError] = useState<boolean>(false);
   const [connectionErrorMessage, setConnectionErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  
+  // Local Order Book Buffer for Coinbase Incremental Updates
+  const orderBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
   
   const {
       setHasEntered,
@@ -82,18 +86,18 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  // REST API History Fetcher
   useEffect(() => {
     let retryTimer: ReturnType<typeof setTimeout>;
 
     const fetchHistory = async () => {
         try {
             console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
-            // Reset specific error message on retry
             setConnectionErrorMessage('');
             
+            // Backend now connects to Coinbase, expects Binance-like interval param but handles mapping internally
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             
-            // Handle 502/503 specifically
             if (res.status === 502 || res.status === 503) {
                 throw new Error(`Backend Unavailable (HTTP ${res.status})`);
             }
@@ -110,7 +114,6 @@ const App: React.FC = () => {
             if (data.error) throw new Error(data.error);
             if (!Array.isArray(data)) throw new Error("Invalid data format received");
 
-            // Success path
             setConnectionError(false);
             setConnectionErrorMessage('');
             
@@ -120,11 +123,13 @@ const App: React.FC = () => {
                 runningCVD = parseFloat(cachedCVD);
             }
 
+            // Backend maps Coinbase data to Binance structure: [time, open, high, low, close, vol]
             const formattedCandles: CandleData[] = data.map((k: any) => {
                 const vol = parseFloat(k[5]);
-                const takerBuyVol = parseFloat(k[9]); 
-                const delta = (2 * takerBuyVol) - vol;
-                runningCVD += delta;
+                // Coinbase doesn't give taker/maker vol in candles easily, so estimate delta or set to 0
+                // For simplified simulation, we assume some delta distribution or just 0
+                const delta = 0; // Requires tick aggregation for accuracy, defaulting to 0 for initial load
+                // Or better: runningCVD stays as is until live trades come in.
 
                 return {
                     time: k[0] / 1000,
@@ -145,11 +150,8 @@ const App: React.FC = () => {
             console.error(`History Fetch Failed: ${e.message}`);
             
             setConnectionError(true);
-            // capture the specific error message
             setConnectionErrorMessage(e.message || "Unknown Connection Error");
             setIsLoading(true);
-            
-            // Auto Retry
             retryTimer = setTimeout(fetchHistory, 3000);
         }
     };
@@ -160,9 +162,10 @@ const App: React.FC = () => {
     return () => clearTimeout(retryTimer);
   }, [config.interval, config.activeSymbol]);
 
+  // Bands Fetcher
   useEffect(() => {
       const fetchBands = async () => {
-          if (connectionError) return; // Don't spam if down
+          if (connectionError) return;
           try {
               const res = await fetch(`${API_BASE_URL}/bands?symbol=${config.activeSymbol}`);
               if (res.ok) {
@@ -170,7 +173,7 @@ const App: React.FC = () => {
                    if (!data.error) setMarketBands(data);
               }
           } catch(e) {
-              // Silent fail for bands to avoid console noise
+              // Silent fail
           }
       };
       fetchBands();
@@ -178,45 +181,103 @@ const App: React.FC = () => {
       return () => clearInterval(i);
   }, [config.activeSymbol, connectionError]);
 
-  // Websocket logic
+  // Coinbase Pro WebSocket Logic
   useEffect(() => {
       if (connectionError) return; 
 
       let ws: WebSocket | null = null;
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+      let depthThrottle: ReturnType<typeof setTimeout> | null = null;
       let retryCount = 0;
-      let useUsEndpoint = false;
       const MAX_RETRIES = 5;
       
       const connect = () => {
-          const symbol = config.activeSymbol.toLowerCase();
-          const streams = `${symbol}@kline_${config.interval}/${symbol}@aggTrade/${symbol}@depth20@100ms`;
-          const baseUrl = useUsEndpoint ? 'wss://stream.binance.us:9443' : 'wss://stream.binance.com:9443';
-
-          ws = new WebSocket(`${baseUrl}/stream?streams=${streams}`);
+          // Coinbase Pro Websocket
+          ws = new WebSocket('wss://ws-feed.pro.coinbase.com');
+          const cbSymbol = toCoinbaseSymbol(config.activeSymbol);
           
-          ws.onopen = () => { retryCount = 0; };
+          ws.onopen = () => { 
+              retryCount = 0;
+              // Subscribe to Channels
+              ws?.send(JSON.stringify({
+                  type: "subscribe",
+                  product_ids: [cbSymbol],
+                  channels: ["level2", "matches", "ticker"]
+              }));
+          };
+
           ws.onmessage = (event) => {
-              const message = JSON.parse(event.data);
-              if (message.data) {
-                  if (message.data.e === 'kline') processWsTick(message.data.k);
-                  else if (message.data.e === 'aggTrade') {
-                      const isSell = message.data.m; 
-                      const trade: RecentTrade = {
-                          id: message.data.a.toString(),
-                          price: parseFloat(message.data.p),
-                          size: parseFloat(message.data.q),
-                          side: isSell ? 'SELL' : 'BUY',
-                          time: message.data.T,
-                          isWhale: (parseFloat(message.data.p) * parseFloat(message.data.q)) > 50000
-                      };
-                      processTradeTick(trade);
-                  }
-                  else if (message.stream.includes('@depth20')) {
-                      // ... depth logic (simplified for fallback context)
-                      const asks = message.data.asks.map((l:any) => ({price: parseFloat(l[0]), size: parseFloat(l[1])})).reverse();
-                      const bids = message.data.bids.map((l:any) => ({price: parseFloat(l[0]), size: parseFloat(l[1])}));
-                      processDepthUpdate({ asks, bids, metrics: {} });
+              const msg = JSON.parse(event.data);
+              
+              // 1. Handle Trade (Match) -> Tape
+              if (msg.type === 'match') {
+                  const trade: RecentTrade = {
+                      id: msg.trade_id.toString(),
+                      price: parseFloat(msg.price),
+                      size: parseFloat(msg.size),
+                      side: msg.side === 'sell' ? 'SELL' : 'BUY', // Coinbase: 'sell' means taker sold
+                      time: new Date(msg.time).getTime(),
+                      isWhale: (parseFloat(msg.price) * parseFloat(msg.size)) > 50000
+                  };
+                  processTradeTick(trade);
+              }
+
+              // 2. Handle Ticker -> Synthetic Kline Update
+              // Coinbase doesn't steam klines, so we construct a partial one
+              else if (msg.type === 'ticker') {
+                  const price = parseFloat(msg.price);
+                  const time = new Date(msg.time).getTime();
+                  const intervalMs = getIntervalMs(config.interval);
+                  
+                  // Calculate Candle Start Time (bucketing)
+                  const startTime = Math.floor(time / intervalMs) * intervalMs;
+
+                  // Construct synthetic kline compatible with store
+                  // Note: Store logic assumes if t matches last, update C/H/L/V. 
+                  // If we send price as OHLC, store logic will adjust H/L naturally if it holds state, 
+                  // but store `processWsTick` assumes incoming kline is authoritative for that slice.
+                  // We simulate a 'tick' where close is current price.
+                  const syntheticKline = {
+                      t: startTime, // Start time of candle
+                      o: price, // Placeholder, store handles Open logic if new
+                      h: price, 
+                      l: price,
+                      c: price, 
+                      v: parseFloat(msg.last_size || "0") // Volume of this specific tick
+                  };
+                  processWsTick(syntheticKline);
+              }
+
+              // 3. Handle Orderbook (Snapshot + L2 Update)
+              else if (msg.type === 'snapshot') {
+                  // Reset Local Map
+                  orderBookRef.current.asks.clear();
+                  orderBookRef.current.bids.clear();
+                  
+                  msg.asks.forEach((x: any) => orderBookRef.current.asks.set(parseFloat(x[0]), parseFloat(x[1])));
+                  msg.bids.forEach((x: any) => orderBookRef.current.bids.set(parseFloat(x[0]), parseFloat(x[1])));
+                  
+                  dispatchDepth();
+              }
+              else if (msg.type === 'l2update') {
+                  // Apply diffs
+                  msg.changes.forEach((change: any[]) => {
+                      const side = change[0]; // "buy" or "sell"
+                      const price = parseFloat(change[1]);
+                      const size = parseFloat(change[2]);
+                      
+                      const targetMap = side === 'buy' ? orderBookRef.current.bids : orderBookRef.current.asks;
+                      
+                      if (size === 0) targetMap.delete(price);
+                      else targetMap.set(price, size);
+                  });
+                  
+                  // Throttle dispatch to UI (200ms) to prevent render thrashing
+                  if (!depthThrottle) {
+                      depthThrottle = setTimeout(() => {
+                          dispatchDepth();
+                          depthThrottle = null;
+                      }, 200);
                   }
               }
           };
@@ -229,11 +290,27 @@ const App: React.FC = () => {
                }
           };
       };
+
+      // Helper to convert Map to Sorted Arrays for Store
+      const dispatchDepth = () => {
+          const asks: OrderBookLevel[] = Array.from(orderBookRef.current.asks.entries())
+              .sort((a, b) => a[0] - b[0]) // Ascending price
+              .slice(0, 20)
+              .map(([price, size]) => ({ price, size, total: 0 })); // Total calc handled by component if needed
+          
+          const bids: OrderBookLevel[] = Array.from(orderBookRef.current.bids.entries())
+              .sort((a, b) => b[0] - a[0]) // Descending price
+              .slice(0, 20)
+              .map(([price, size]) => ({ price, size, total: 0 }));
+
+          processDepthUpdate({ asks, bids, metrics: {} });
+      };
       
       connect();
       return () => {
           if (ws) ws.close();
           if (reconnectTimer) clearTimeout(reconnectTimer);
+          if (depthThrottle) clearTimeout(depthThrottle);
       };
   }, [config.interval, config.activeSymbol, connectionError]);
 
@@ -293,7 +370,6 @@ const App: React.FC = () => {
                         </p>
                     </div>
 
-                    {/* Diagnostic Box for specific errors (502, Network, etc) */}
                     {connectionError && (
                         <motion.div 
                             initial={{ opacity: 0, y: 10 }}

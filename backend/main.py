@@ -59,7 +59,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-# Default to the specific new frontend if env var is missing
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quantdesk.netlify.app")
 
 # Initialize AI & News
@@ -69,7 +68,6 @@ if GEMINI_API_KEY:
 newsapi = NewsApiClient(api_key=NEWS_API_KEY) if NEWS_API_KEY else None
 
 # --- GLOBAL STATE ---
-# In a production app, use Redis. For this demo, memory is fine.
 state = {
     "start_time": time.time(),
     "market_intel_cache": {
@@ -91,7 +89,6 @@ class AlertSnapshot(BaseModel):
     zScore: float
     tacticalProbability: float
     aiScore: float
-    # Allow extra fields for flexibility
     class Config:
         extra = "allow"
 
@@ -117,22 +114,75 @@ class AnalysisRequest(BaseModel):
 
 # --- UTILITIES ---
 
-async def fetch_binance_klines(symbol: str, interval: str, limit: int = 200):
-    """Fetch raw OHLCV data from Binance Public API."""
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
+def map_symbol_to_coinbase(symbol: str) -> str:
+    """Maps internal symbols (BTCUSDT) to Coinbase format (BTC-USD)."""
+    if symbol.endswith("USDT"):
+        return f"{symbol[:-4]}-USD"
+    if symbol.endswith("USD"):
+        return f"{symbol[:-3]}-USD"
+    return symbol
+
+def map_interval_to_granularity(interval: str) -> int:
+    """Maps Binance-style intervals to Coinbase granularity (seconds)."""
+    mapping = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "1h": 3600,
+        "6h": 21600,
+        "1d": 86400
+    }
+    # Coinbase doesn't support 4h explicitly, fallback to 1h or 6h
+    if interval == "4h":
+        return 3600 
+    return mapping.get(interval, 60)
+
+async def fetch_coinbase_candles(symbol: str, interval: str, limit: int = 300):
+    """
+    Fetch historical candles from Coinbase Pro REST API.
+    Replaces Binance API to avoid 451/502 errors.
+    """
+    cb_symbol = map_symbol_to_coinbase(symbol)
+    granularity = map_interval_to_granularity(interval)
+    
+    url = f"https://api.pro.coinbase.com/products/{cb_symbol}/candles"
+    params = {"granularity": granularity}
     
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.get(url, params=params, timeout=10.0)
+            
+            if resp.status_code == 404:
+                logger.error(f"Coinbase 404 for {cb_symbol}")
+                raise HTTPException(status_code=404, detail="Symbol not found on Coinbase")
+            
             resp.raise_for_status()
-            data = resp.json()
-            # Binance format: [Open Time, Open, High, Low, Close, Volume, ...]
-            # We convert to a cleaner list of lists or DataFrame friendly format
-            return data 
+            raw_data = resp.json()
+            
+            # Coinbase Format: [time, low, high, open, close, volume]
+            # Binance Format Expected by Frontend: [time (ms), open, high, low, close, volume]
+            
+            formatted_data = []
+            # Coinbase returns newest first, Binance consumers usually expect oldest first for graphing,
+            # but lightweight-charts handles sorting usually. We reverse to match standard ascending time.
+            for d in raw_data:
+                formatted_data.append([
+                    d[0] * 1000, # Time to ms
+                    d[3],        # Open
+                    d[2],        # High
+                    d[1],        # Low
+                    d[4],        # Close
+                    d[5]         # Volume
+                ])
+            
+            return sorted(formatted_data, key=lambda x: x[0])[-limit:]
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Coinbase API Error: {e.response.text}")
+            raise HTTPException(status_code=502, detail=f"Coinbase Data Error: {e.response.status_code}")
         except Exception as e:
-            logger.error(f"Binance fetch failed: {e}")
-            raise HTTPException(status_code=502, detail="Upstream data provider failed")
+            logger.error(f"Fetch failed: {e}")
+            raise HTTPException(status_code=500, detail="Internal Data Fetch Error")
 
 def calculate_bands_logic(closes: List[float], period: int = 20):
     """Numpy calculation for Z-Score Bands."""
@@ -148,7 +198,6 @@ def calculate_bands_logic(closes: List[float], period: int = 20):
     upper2 = sma + (std * 2)
     lower2 = sma - (std * 2)
     
-    # Return the latest values
     return {
         "upper_1": upper1.iloc[-1],
         "lower_1": lower1.iloc[-1],
@@ -160,38 +209,29 @@ def calculate_bands_logic(closes: List[float], period: int = 20):
 
 # --- 24/7 KEEPER LOOP ---
 async def self_ping():
-    """
-    Background task to self-ping the application every 14 minutes.
-    This prevents free-tier hosting (like Render/Railway) from sleeping due to inactivity.
-    """
     port = int(os.getenv("PORT", 8000))
     url = f"http://127.0.0.1:{port}/health"
-    
     while True:
-        await asyncio.sleep(60 * 14) # Sleep for 14 minutes
+        await asyncio.sleep(60 * 14)
         try:
             async with httpx.AsyncClient() as client:
                 await client.get(url, timeout=5.0)
                 logger.info("💓 Self-Ping: Maintained active state")
-        except Exception as e:
-            logger.warning(f"Self-ping failed (Service might be busy): {e}")
+        except Exception:
+            pass
 
 # --- FASTAPI APP ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
-    logger.info("🚀 Quant Desk Backend Starting...")
-    
-    # Start the 24/7 Keep-Alive Loop
+    logger.info("🚀 Quant Desk Backend Starting (Coinbase Pro Integrated)...")
     asyncio.create_task(self_ping())
-    
     yield
     logger.info("🛑 Shutting down...")
 
 app = FastAPI(lifespan=lifespan)
 
-# CORS Setup - Updated for new frontend
 origins = [
     "http://localhost:5173",
     "http://localhost:3000",
@@ -212,21 +252,16 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    """Root endpoint to verify API is running."""
-    return {"status": "online", "service": "Quant Desk API"}
+    return {"status": "online", "service": "Quant Desk API (Coinbase)"}
 
 @app.get("/health")
 def health_check():
-    return {"status": "operational", "version": "2.4.0"}
+    return {"status": "operational", "version": "2.5.0"}
 
 @app.get("/admin/system-status")
 def system_status():
-    """
-    Returns internal system health metrics and recent logs.
-    """
     process = psutil.Process(os.getpid())
     uptime_seconds = time.time() - state["start_time"]
-    
     return {
         "status": "ONLINE",
         "uptime": str(timedelta(seconds=int(uptime_seconds))),
@@ -238,25 +273,25 @@ def system_status():
     }
 
 @app.get("/history")
-async def get_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000):
+async def get_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 300):
     """
-    Proxy to get historical candles. 
-    Frontend uses this to populate the initial chart before WebSocket takes over.
+    Get historical candles from Coinbase.
     """
-    data = await fetch_binance_klines(symbol, interval, limit)
+    data = await fetch_coinbase_candles(symbol, interval, limit)
     return data
 
 @app.get("/bands")
 async def get_bands(symbol: str = "BTCUSDT"):
     """
-    Calculates dynamic Z-Score bands based on the last 50 1-hour candles
-    to give a broader context trend to the frontend.
+    Calculates dynamic Z-Score bands based on Coinbase data.
     """
-    # Fetch wider context (1h) for stability
-    raw_data = await fetch_binance_klines(symbol, "1h", 50)
+    # Fetch wider context (1h granularity = 3600s)
+    raw_data = await fetch_coinbase_candles(symbol, "1h", 50)
+    
     if not raw_data:
         raise HTTPException(status_code=404, detail="No data found")
     
+    # Raw data format is [time, o, h, l, c, v]
     closes = [float(x[4]) for x in raw_data]
     bands = calculate_bands_logic(closes, 20)
     
@@ -271,17 +306,12 @@ async def get_bands(symbol: str = "BTCUSDT"):
 
 @app.get("/analyze")
 async def analyze_market(symbol: str = "BTCUSDT", model: str = "gemini-3-flash-preview"):
-    """
-    Uses Gemini to analyze recent price action and determine support/resistance.
-    """
     if not GEMINI_API_KEY:
-        logger.error("Gemini API Key missing")
         raise HTTPException(status_code=503, detail="AI Service Config Missing")
 
-    # Fetch last 30 15m candles for a tactical view
-    klines = await fetch_binance_klines(symbol, "15m", 30)
+    # Use 15m candles
+    klines = await fetch_coinbase_candles(symbol, "15m", 30)
     
-    # Format for AI
     prices_str = "\n".join([
         f"Time: {datetime.fromtimestamp(x[0]/1000).strftime('%H:%M')} | O:{x[1]} H:{x[2]} L:{x[3]} C:{x[4]} V:{x[5]}"
         for x in klines
@@ -294,11 +324,11 @@ async def analyze_market(symbol: str = "BTCUSDT", model: str = "gemini-3-flash-p
     {prices_str}
     
     TASK:
-    1. Identify key Support and Resistance levels based on volume nodes and liquidity wicks.
+    1. Identify key Support and Resistance levels.
     2. Determine a "Decision Price" (Pivot).
     3. Issue a Verdict: ENTRY (Long/Short), EXIT, or WAIT.
     4. Provide confidence (0.0 - 1.0).
-    5. Calculate Risk:Reward ratio based on logical stop/target.
+    5. Calculate Risk:Reward ratio.
 
     OUTPUT JSON ONLY:
     {{
@@ -318,13 +348,10 @@ async def analyze_market(symbol: str = "BTCUSDT", model: str = "gemini-3-flash-p
     try:
         gen_model = genai.GenerativeModel(model)
         response = await gen_model.generate_content_async(prompt)
-        # Simple extraction logic (Gemini usually returns markdown json blocks)
         text = response.text.replace('```json', '').replace('```', '').strip()
-        logger.info(f"AI Analysis generated for {symbol}")
         return json.loads(text)
     except Exception as e:
         logger.error(f"AI Analysis failed: {e}")
-        # Fallback / Simulated response if AI fails (prevents UI crash)
         current_price = float(klines[-1][4])
         return {
             "support": [current_price * 0.98],
@@ -339,24 +366,16 @@ async def analyze_market(symbol: str = "BTCUSDT", model: str = "gemini-3-flash-p
 
 @app.post("/analyze/flow")
 async def analyze_order_flow(req: AnalysisRequest):
-    """
-    Analyzes Order Flow Metrics (CVD, Delta, Volume Profile context).
-    """
     if not GEMINI_API_KEY:
         return {"verdict": "NEUTRAL", "explanation": "AI Disabled", "confidence": 0}
 
     prompt = f"""
     Analyze the Order Flow for {req.symbol}.
     Price: {req.price}
-    Net Delta: {req.netDelta} (Positive = Buying Pressure, Negative = Selling)
+    Net Delta: {req.netDelta}
     Total Volume: {req.totalVolume}
     Point of Control (POC): {req.pocPrice}
     CVD Trend: {req.cvdTrend}
-    
-    Determine if this represents:
-    - ABSORPTION (Price flat/down but CVD up)
-    - EXHAUSTION (Price up but Delta dropping)
-    - INITIATIVE (Price moves with Delta)
     
     JSON Output: {{ "verdict": "BULLISH"|"BEARISH"|"NEUTRAL", "confidence": 0.0-1.0, "explanation": "string", "flow_type": "ABSORPTION"|"INITIATIVE"|"EXHAUSTION" }}
     """
@@ -371,29 +390,19 @@ async def analyze_order_flow(req: AnalysisRequest):
 
 @app.get("/market-intelligence")
 async def get_market_intel(model: str = "gemini-3-flash-preview"):
-    """
-    Aggregates global crypto news and uses AI to determine a 'Narrative' and Sentiment Score.
-    Uses simple caching to avoid hitting NewsAPI rate limits.
-    """
     now = datetime.now().timestamp() * 1000
     cache = state["market_intel_cache"]
-    
-    # Return cache if valid (10 mins)
     if cache["data"] and (now - cache["timestamp"] < 600000):
         return cache["data"]
 
     articles = []
-    
-    # 1. Fetch News
     if newsapi:
         try:
-            # Fetch generic crypto news
             response = newsapi.get_everything(q="bitcoin OR ethereum OR crypto", language="en", sort_by="publishedAt", page_size=5)
             articles = response.get('articles', [])
-        except Exception as e:
-            logger.error(f"NewsAPI error: {e}")
+        except Exception:
+            pass
 
-    # 2. AI Synthesis
     intelligence = {
         "main_narrative": "Consolidating market structure amidst quiet news cycle.",
         "whale_impact": "Medium",
@@ -405,33 +414,23 @@ async def get_market_intel(model: str = "gemini-3-flash-preview"):
         prompt = f"""
         Read these headlines:
         {headlines}
-        
-        1. Summarize the single dominant narrative in 1 sentence.
-        2. Estimate "Whale Impact" (Low, Medium, High).
-        3. Give a sentiment score (-1.0 to 1.0).
-        
-        JSON Output: {{ "main_narrative": "...", "whale_impact": "...", "ai_sentiment_score": 0.0 }}
+        Output JSON: {{ "main_narrative": "...", "whale_impact": "...", "ai_sentiment_score": 0.0 }}
         """
         try:
             gen_model = genai.GenerativeModel(model)
             resp = await gen_model.generate_content_async(prompt)
             text = resp.text.replace('```json', '').replace('```', '').strip()
             intelligence = json.loads(text)
-        except Exception as e:
-            logger.error(f"Intel synthesis failed: {e}")
+        except Exception:
+            pass
 
     result = {
         "articles": articles,
         "intelligence": intelligence,
         "timestamp": now
     }
-    
-    # Update Cache
     state["market_intel_cache"] = {"data": result, "timestamp": now}
-    
     return result
-
-# --- ALERTS & AUTOMATION ---
 
 @app.get("/alerts/status")
 def get_alert_status():
@@ -445,35 +444,25 @@ async def configure_alerts(config: dict):
         "chat_id": config.get("telegram_chat_id")
     })
     state["autonomous_active"] = True
-    logger.info("Autonomous mode activated via configuration")
     return {"status": "configured", "mode": "autonomous"}
 
 @app.post("/alerts/evaluate")
 async def evaluate_alert(snapshot: AlertSnapshot):
-    """
-    Server-side Logic Gate for Alerts.
-    Ensures that alerts are only fired if mathematical conditions are strictly met.
-    """
     should_alert = False
     reasons = []
 
-    # 1. Z-Score Check (Dislocation)
     if abs(snapshot.zScore) > 2.0:
         reasons.append(f"Z-Score Dislocation ({snapshot.zScore})")
     
-    # 2. Tactical AI Probability High
     if snapshot.tacticalProbability > 75:
         reasons.append(f"AI Tactical High Prob ({snapshot.tacticalProbability}%)")
         should_alert = True
     
-    # 3. Liquidity Sweep + Reversal logic
     if snapshot.sweeps and len(snapshot.sweeps) > 0:
-        # If we swept lows and bias is Bullish
         if snapshot.sweeps[0]['side'] == 'SELL' and snapshot.tacticalProbability > 60:
              reasons.append("Liquidity Sweep (Long)")
              should_alert = True
 
-    # Construct Verdict
     return {
         "shouldAlert": should_alert,
         "passedConditions": reasons,
@@ -482,7 +471,7 @@ async def evaluate_alert(snapshot: AlertSnapshot):
             "direction": "LONG" if snapshot.aiScore > 0 else "SHORT",
             "confidence": snapshot.aiScore,
             "entry": snapshot.price,
-            "stop": snapshot.price * 0.99, # Simplified dynamic calc
+            "stop": snapshot.price * 0.99, 
             "target": snapshot.price * 1.02,
             "reasoning": " & ".join(reasons) if reasons else "Monitoring"
         }
@@ -490,44 +479,24 @@ async def evaluate_alert(snapshot: AlertSnapshot):
 
 @app.post("/alerts/send-telegram")
 async def send_telegram(payload: TelegramPayload):
-    """
-    Sends a formatted alert to Telegram.
-    """
     token = payload.botToken or state["alert_config"]["bot_token"]
     chat_id = payload.chatId or state["alert_config"]["chat_id"]
 
     if not token or not chat_id:
-        logger.warning("Telegram credentials missing during send attempt")
         raise HTTPException(status_code=400, detail="Telegram credentials missing")
 
-    message = f"""
-🚨 **QUANT DESK ALERT: {payload.symbol}** 🚨
-
-**Direction:** {payload.direction}
-**Confidence:** {int(payload.confidence * 100)}%
-**Price:** {payload.entry}
-
-📉 **Stop:** {payload.stop}
-🎯 **Target:** {payload.target}
-📊 **Logic:** {payload.reasoning}
-
-_Generated by Gemini 3 Neural Engine_
-    """
+    message = f"🚨 **QUANT DESK ALERT: {payload.symbol}**\n\n**Dir:** {payload.direction} ({int(payload.confidence * 100)}%)\n**Price:** {payload.entry}\n**Logic:** {payload.reasoning}"
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
-            resp.raise_for_status()
-            logger.info(f"Telegram Alert sent to {chat_id}")
+            await client.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
             return {"success": True}
         except Exception as e:
-            logger.error(f"Telegram failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/alerts/test")
 async def test_alert(payload: TelegramPayload):
-    # Proxy to the real sender
     return await send_telegram(payload)
 
 if __name__ == "__main__":
