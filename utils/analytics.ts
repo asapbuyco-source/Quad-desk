@@ -273,7 +273,8 @@ export const calculateKurtosis = (returns: number[]): number => {
 };
 
 /**
- * Calculate Z-Score bands from price array
+ * Calculate Z-Score bands from price array.
+ * Added safety against zero variance (division by zero).
  */
 export const calculateZScoreBands = (prices: number[]) => {
     if (prices.length === 0) return { upper1: 0, lower1: 0, upper2: 0, lower2: 0 };
@@ -281,6 +282,16 @@ export const calculateZScoreBands = (prices: number[]) => {
     const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
     const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;
     const stdDev = Math.sqrt(variance);
+    
+    // GUARD: If volatility is 0, bands collapse to mean
+    if (stdDev === 0) {
+        return {
+            upper1: mean,
+            lower1: mean,
+            upper2: mean,
+            lower2: mean
+        };
+    }
     
     return {
         upper1: mean + (1.0 * stdDev),
@@ -291,14 +302,15 @@ export const calculateZScoreBands = (prices: number[]) => {
 };
 
 /**
- * Calculates ATR manually for a subset of candles
+ * Calculates ATR using Wilder's Smoothing (RMA).
+ * Accurate O(N) calculation.
  */
 export const calculateATR = (candles: CandleData[], period = 14): number => {
     if (candles.length < period + 1) return 0;
     
-    let sumTR = 0;
-    // Calculate initial TRs
-    for(let i = candles.length - period; i < candles.length; i++) {
+    // 1. Calculate True Ranges
+    const trs: number[] = [];
+    for(let i = 1; i < candles.length; i++) {
         const curr = candles[i];
         const prev = candles[i-1];
         const tr = Math.max(
@@ -306,9 +318,20 @@ export const calculateATR = (candles: CandleData[], period = 14): number => {
             Math.abs(curr.high - prev.close),
             Math.abs(curr.low - prev.close)
         );
-        sumTR += tr;
+        trs.push(tr);
     }
-    return sumTR / period;
+
+    if (trs.length < period) return 0;
+
+    // 2. Initial SMA (First period)
+    let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+
+    // 3. Wilder's Smoothing for the rest
+    for (let i = period; i < trs.length; i++) {
+        atr = (atr * (period - 1) + trs[i]) / period;
+    }
+
+    return atr;
 };
 
 interface RegimeAnalysisResult {
@@ -324,13 +347,14 @@ export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
         type: 'UNCERTAIN', atr: 0, rangeSize: 0, trendDirection: 'NEUTRAL', volatilityPercentile: 0 
     };
 
-    const period = 14;
-    const recent = candles.slice(-period);
-    const currentATR = calculateATR(candles, period);
-    
-    // Calculate Long-term ATR Avg (last 50) to gauge relative volatility
+    // Calculate ATR (Short Term vs Long Term)
+    const currentATR = calculateATR(candles, 14);
     const longTermATR = calculateATR(candles, 50);
-    const volatilityPercentile = Math.min(100, (currentATR / (longTermATR || 1)) * 50);
+    
+    // Percentile based on ratio of short-term volatility to long-term baseline
+    // 1.0 ratio = 50th percentile (Normal). 2.0 = 100th (Extreme).
+    const volatilityRatio = longTermATR > 0 ? currentATR / longTermATR : 1;
+    const volatilityPercentile = Math.min(100, Math.max(0, volatilityRatio * 50));
 
     // Identify Trend
     const sma20 = candles.slice(-20).reduce((acc, c) => acc + c.close, 0) / 20;
@@ -338,6 +362,7 @@ export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
     const isBull = price > sma20;
     
     // Range Calculation
+    const recent = candles.slice(-14);
     const highs = recent.map(c => c.high);
     const lows = recent.map(c => c.low);
     const maxH = Math.max(...highs);
@@ -345,15 +370,15 @@ export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
     const rangeSize = maxH - minL;
 
     // Previous range (to detect expansion/compression)
-    const prevHighs = candles.slice(-period * 2, -period).map(c => c.high);
-    const prevLows = candles.slice(-period * 2, -period).map(c => c.low);
+    const prevHighs = candles.slice(-28, -14).map(c => c.high);
+    const prevLows = candles.slice(-28, -14).map(c => c.low);
     const prevRangeSize = Math.max(...prevHighs) - Math.min(...prevLows);
 
     let type: MarketRegimeType = 'RANGING';
     let trendDirection: "BULL" | "BEAR" | "NEUTRAL" = 'NEUTRAL';
 
     // Logic Tree
-    if (currentATR > longTermATR * 1.1) {
+    if (volatilityRatio > 1.1) {
         // High Volatility State
         if (Math.abs(price - sma20) > currentATR * 2) {
             type = 'TRENDING';

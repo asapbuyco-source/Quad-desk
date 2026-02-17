@@ -3,7 +3,7 @@ import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Layers, ArrowUpCircle, ArrowDownCircle, MinusCircle, RefreshCw, Clock } from 'lucide-react';
-import { LineChart, Line, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
 import { TimeframeData } from '../types';
 
 const motion = m as any;
@@ -39,6 +39,7 @@ const BiasCard: React.FC<{
     }
 
     const chartData = data ? data.sparkline.map((val, i) => ({ i, val })) : [];
+    const isLive = data ? (Date.now() - data.lastUpdated < 60000) : false;
 
     return (
         <motion.div
@@ -56,6 +57,10 @@ const BiasCard: React.FC<{
                 </div>
                 {data && (
                     <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/20 border border-white/5">
+                        {isLive && <span className="relative flex h-2 w-2 mr-1">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${data.bias === 'BULL' ? 'bg-emerald-400' : data.bias === 'BEAR' ? 'bg-rose-400' : 'bg-amber-400'}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2 w-2 ${data.bias === 'BULL' ? 'bg-emerald-500' : data.bias === 'BEAR' ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
+                        </span>}
                         <span className={`text-xs font-black tracking-widest ${color}`}>
                             {data.bias}
                         </span>
@@ -67,12 +72,14 @@ const BiasCard: React.FC<{
                 {data ? (
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData}>
+                            <YAxis domain={['dataMin', 'dataMax']} hide />
                             <Line 
                                 type="monotone" 
                                 dataKey="val" 
                                 stroke={data.bias === 'BULL' ? '#10b981' : data.bias === 'BEAR' ? '#f43f5e' : '#f59e0b'} 
                                 strokeWidth={2} 
                                 dot={false} 
+                                isAnimationActive={false}
                             />
                         </LineChart>
                     </ResponsiveContainer>
