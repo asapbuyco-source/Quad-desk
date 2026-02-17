@@ -11,12 +11,15 @@ interface OrderFlowMetricsProps {
 }
 
 const WhaleHunterWidget: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
-    // Extract CVD Context
-    const cvd = metrics.cvdContext?.value || 0;
+    // Extract Cumulative Value (True Net Contracts)
+    const cumulativeCvd = metrics.institutionalCVD;
+    
+    // Extract Context (Normalized for Gauge)
+    const contextValue = metrics.cvdContext?.value || 0;
     const interpretation = metrics.cvdContext?.interpretation || 'NEUTRAL';
     const divergence = metrics.cvdContext?.divergence || 'NONE';
 
-    // Status Logic
+    // Status Logic based on Interpretation
     let statusColor = "text-slate-400";
     let statusBg = "bg-slate-500/10";
     let statusIcon = <Activity size={12} />;
@@ -45,7 +48,7 @@ const WhaleHunterWidget: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) =>
             <div className="flex justify-between items-start relative z-10">
                 <div className="flex flex-col">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                        <Anchor size={12} className={cvd > 0 ? "text-emerald-400" : "text-rose-400"} />
+                        <Anchor size={12} className={cumulativeCvd > 0 ? "text-emerald-400" : "text-rose-400"} />
                         Cumulative Delta
                     </span>
                     <span className="text-xs text-slate-500 font-mono mt-0.5">Aggressive Vol. Tracker</span>
@@ -57,15 +60,15 @@ const WhaleHunterWidget: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) =>
                 </div>
             </div>
 
-            {/* CVD Value Display */}
+            {/* CVD Value Display (Using Cumulative Number) */}
             <div className="flex flex-col items-center justify-center my-2">
-                <span className={`text-3xl font-mono font-black tracking-tighter ${cvd > 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                    {cvd > 0 ? "+" : ""}{cvd.toFixed(0)}
+                <span className={`text-3xl font-mono font-black tracking-tighter ${cumulativeCvd > 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                    {cumulativeCvd > 0 ? "+" : ""}{cumulativeCvd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </span>
                 <span className="text-[9px] text-zinc-500 uppercase tracking-wide">Net Market Contracts</span>
             </div>
 
-            {/* Bar & Market Truth */}
+            {/* Bar & Market Truth (Using Normalized Score for Gauge) */}
             <div className="flex flex-col gap-2 mt-auto">
                 {/* Divergence Warning */}
                 {divergence !== 'NONE' && (
@@ -77,23 +80,24 @@ const WhaleHunterWidget: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) =>
                     </motion.div>
                 )}
 
+                {/* Pressure Gauge (-100 to 100 range) */}
                 <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden flex relative">
                      {/* Center Marker */}
                     <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/20 z-10" />
                     
                     <motion.div 
                         animate={{ 
-                            width: `${Math.min(Math.abs(cvd) / 100, 50)}%`,
-                            left: cvd > 0 ? '50%' : 'auto',
-                            right: cvd < 0 ? '50%' : 'auto'
+                            width: `${Math.min(Math.abs(contextValue), 50)}%`, // Max 50% width from center
+                            left: contextValue > 0 ? '50%' : 'auto',
+                            right: contextValue < 0 ? '50%' : 'auto'
                         }}
-                        className={`h-full relative ${cvd > 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} 
+                        className={`h-full relative ${contextValue > 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} 
                     />
                 </div>
                 
                 <div className="flex justify-between text-[8px] font-mono text-slate-600">
-                    <span>Seller Dominance</span>
-                    <span>Buyer Dominance</span>
+                    <span>Sell Pressure</span>
+                    <span>Buy Pressure</span>
                 </div>
             </div>
         </div>

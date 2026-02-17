@@ -380,26 +380,34 @@ export const useStore = create<StoreState>((set, get) => ({
     },
 
     setMarketHistory: ({ candles, initialCVD }) => set(state => {
-        // --- AUDIT FIX: Z-Score Band Calculation for ALL historical candles ---
+        let runningCVD = initialCVD;
+
+        // --- AUDIT FIX: Z-Score Band & Cumulative CVD Calculation ---
         const enrichedCandles = candles.map((candle, i) => {
+            // 1. Calculate Estimated Delta & Accumulate CVD
+            const estimatedDelta = candle.delta ?? (((candle.close - candle.open) / (candle.high - candle.low || 1)) * candle.volume);
+            runningCVD += estimatedDelta;
+
+            // 2. Z-Score Bands
+            let bands;
             if (i < 19) {
                 // Not enough data for bands yet, use % envelope as fallback
-                return {
-                    ...candle,
-                    zScoreUpper1: candle.close * 1.002,
-                    zScoreLower1: candle.close * 0.998,
-                    zScoreUpper2: candle.close * 1.005,
-                    zScoreLower2: candle.close * 0.995,
+                bands = {
+                    upper1: candle.close * 1.002,
+                    lower1: candle.close * 0.998,
+                    upper2: candle.close * 1.005,
+                    lower2: candle.close * 0.995,
                 };
+            } else {
+                // Get rolling window of 20 candles including current
+                const window = candles.slice(i - 19, i + 1).map(c => c.close);
+                bands = calculateZScoreBands(window);
             }
-            
-            // Get rolling window of 20 candles including current
-            const window = candles.slice(i - 19, i + 1);
-            const prices = window.map(c => c.close);
-            const bands = calculateZScoreBands(prices);
             
             return {
                 ...candle,
+                delta: estimatedDelta,
+                cvd: runningCVD,
                 zScoreUpper1: bands.upper1,
                 zScoreLower1: bands.lower1,
                 zScoreUpper2: bands.upper2,
@@ -412,7 +420,7 @@ export const useStore = create<StoreState>((set, get) => ({
             const last = enrichedCandles[enrichedCandles.length - 1];
             metrics.price = last.close;
             metrics.change = ((last.close - last.open) / last.open) * 100;
-            metrics.institutionalCVD = initialCVD; // Set CVD from recovery
+            metrics.institutionalCVD = last.cvd; // Set to True Cumulative CVD
             
             // Calculate current Z-Score
             const prices = enrichedCandles.slice(-20).map(c => c.close);
@@ -475,47 +483,59 @@ export const useStore = create<StoreState>((set, get) => ({
         updatedLast.zScoreLower1 = bands.lower1;
         updatedLast.zScoreUpper2 = bands.upper2;
         updatedLast.zScoreLower2 = bands.lower2;
-        candles[candles.length - 1] = updatedLast;
         
-        // 2. Metrics
+        // 2. CVD Calculation (Cumulative)
+        // Estimate Delta for this specific candle
+        const candleDelta = ((candle.close - candle.open) / (candle.high - candle.low || 1)) * candle.volume;
+        
+        // Get previous cumulative CVD.
+        // If we updated an existing candle, prev is at index-2.
+        // If we pushed a new candle, prev is at index-2 (since current is at index-1).
+        const prevCvd = candles.length > 1 ? (candles[candles.length - 2].cvd || 0) : (state.market.metrics.institutionalCVD || 0);
+        const cumulativeCvd = prevCvd + candleDelta;
+        
+        updatedLast.delta = candleDelta;
+        updatedLast.cvd = cumulativeCvd;
+        candles[candles.length - 1] = updatedLast;
+
+        // 3. Metrics
         const priceChange = ((currentPrice - prevClose) / prevClose) * 100;
         const mean = prices.slice(-20).reduce((a, b) => a + b, 0) / 20;
         const stdDev = (bands.upper1 - mean);
         const zScore = stdDev === 0 ? 0 : (currentPrice - mean) / stdDev;
 
-        // 3. Advanced Statistics (Log Returns)
+        // 4. Advanced Statistics (Log Returns)
         const returns = prices.slice(1).map((p, i) => Math.log(p / prices[i]));
         const skewness = calculateSkewness(returns); // Last 50 candles returns
         const kurtosis = calculateKurtosis(returns);
 
-        // 4. Retail Sentiment Proxy (RSI)
+        // 5. Retail Sentiment Proxy (RSI)
         const rsi = calculateRSI(prices, 14); // 14 period RSI
         
-        // 5. Bayesian Proxy (Trend Confidence)
+        // 6. Bayesian Proxy (Trend Confidence)
         // Simple logic: If Price > SMA20 AND RSI is neutral/bullish, confidence is higher.
         const sma20 = mean; // Already calculated
         const trendScore = currentPrice > sma20 ? 0.6 : 0.4;
         const rsiMod = rsi > 70 ? -0.1 : (rsi < 30 ? 0.1 : 0); // Mean reversion drag
         const bayesian = Math.min(0.99, Math.max(0.01, trendScore + rsiMod));
 
-        // 6. Institutional CVD & Context (Whale Hunter)
+        // 7. Context Interpretation (Using Normalized Pressure, not Raw CVD)
         const avgVol = candles.slice(-20).reduce((a,c) => a + c.volume, 0) / 20;
-        const candleDelta = ((candle.close - candle.open) / (candle.high - candle.low || 1)) * candle.volume;
         // Normalize Delta to -100 to 100 relative to avg volume * 2 (aggressiveness factor)
-        const instCvd = Math.max(-100, Math.min(100, (candleDelta / (avgVol * 2 || 1)) * 100));
+        const pressureScore = Math.max(-100, Math.min(100, (candleDelta / (avgVol * 2 || 1)) * 100));
 
         // Derive Context (Absorption vs Distribution)
         let contextInterpretation: 'REAL STRENGTH' | 'REAL WEAKNESS' | 'ABSORPTION' | 'DISTRIBUTION' | 'NEUTRAL' = 'NEUTRAL';
         let divergence: 'NONE' | 'BULLISH_ABSORPTION' | 'BEARISH_DISTRIBUTION' = 'NONE';
-        const trend = instCvd > 20 ? 'UP' : instCvd < -20 ? 'DOWN' : 'FLAT';
+        const trend = pressureScore > 20 ? 'UP' : pressureScore < -20 ? 'DOWN' : 'FLAT';
 
-        if (priceChange > 0 && instCvd > 20) contextInterpretation = 'REAL STRENGTH';
-        else if (priceChange < 0 && instCvd < -20) contextInterpretation = 'REAL WEAKNESS';
-        else if (priceChange <= 0 && instCvd > 30) {
+        if (priceChange > 0 && pressureScore > 20) contextInterpretation = 'REAL STRENGTH';
+        else if (priceChange < 0 && pressureScore < -20) contextInterpretation = 'REAL WEAKNESS';
+        else if (priceChange <= 0 && pressureScore > 30) {
             contextInterpretation = 'ABSORPTION';
             divergence = 'BULLISH_ABSORPTION';
         }
-        else if (priceChange >= 0 && instCvd < -30) {
+        else if (priceChange >= 0 && pressureScore < -30) {
             contextInterpretation = 'DISTRIBUTION';
             divergence = 'BEARISH_DISTRIBUTION';
         }
@@ -559,9 +579,9 @@ export const useStore = create<StoreState>((set, get) => ({
                     skewness: parseFloat(skewness.toFixed(2)),
                     kurtosis: parseFloat(kurtosis.toFixed(2)),
                     bayesianPosterior: parseFloat(bayesian.toFixed(2)),
-                    institutionalCVD: parseFloat(instCvd.toFixed(0)),
+                    institutionalCVD: parseFloat(cumulativeCvd.toFixed(0)), // TRUE CUMULATIVE
                     cvdContext: {
-                        value: parseFloat(instCvd.toFixed(0)),
+                        value: parseFloat(pressureScore.toFixed(0)), // NORMALIZED PRESSURE (-100 to 100) for Gauge
                         trend,
                         divergence,
                         interpretation: contextInterpretation
