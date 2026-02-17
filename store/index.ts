@@ -381,8 +381,6 @@ export const useStore = create<StoreState>((set, get) => ({
 
     setMarketHistory: ({ candles, initialCVD }) => set(state => {
         // --- AUDIT FIX: Z-Score Band Calculation for ALL historical candles ---
-        // Prevents the chart from having 0-value bands for history
-        
         const enrichedCandles = candles.map((candle, i) => {
             if (i < 19) {
                 // Not enough data for bands yet, use % envelope as fallback
@@ -426,7 +424,6 @@ export const useStore = create<StoreState>((set, get) => ({
             }
         }
 
-        // --- AUDIT FIX: Persist CVD to prevent reset ---
         if (typeof localStorage !== 'undefined') {
             try {
                 localStorage.setItem(`cvd_${state.config.activeSymbol}`, initialCVD.toString());
@@ -581,7 +578,28 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
 
     processDepthUpdate: ({ asks, bids, metrics }) => set(state => {
-        const updatedMetrics = { ...state.market.metrics, ...metrics };
+        // --- AUDIT FIX: Order Flow Imbalance (OFI) Calculation ---
+        // Measures the imbalance between the best bid and best ask sizes.
+        // Value: -100 (Full Sell Pressure) to 100 (Full Buy Pressure)
+        let ofi = state.market.metrics.ofi;
+        
+        if (asks.length > 0 && bids.length > 0) {
+            const bestBidSize = bids[0].size; // Top of Bid Book
+            const bestAskSize = asks[0].size; // Top of Ask Book
+            const totalLiquidity = bestBidSize + bestAskSize;
+            
+            if (totalLiquidity > 0) {
+                // Normalized imbalance
+                ofi = ((bestBidSize - bestAskSize) / totalLiquidity) * 100;
+            }
+        }
+
+        const updatedMetrics = { 
+            ...state.market.metrics, 
+            ...metrics,
+            ofi // Inject calculated OFI
+        };
+        
         return {
             market: {
                 ...state.market,
@@ -728,11 +746,11 @@ export const useStore = create<StoreState>((set, get) => ({
             }
         };
 
-        const [daily, h4, h1, m15] = await Promise.all([
+        const [daily, h4, h1, m5] = await Promise.all([
             fetchTF('1d'), 
             fetchTF('4h'), 
             fetchTF('1h'), 
-            fetchTF('15m')
+            fetchTF('5m') // AUDIT FIX: Fetch 5m for M5 slot (was 15m)
         ]);
         
         set(s => ({
@@ -741,7 +759,7 @@ export const useStore = create<StoreState>((set, get) => ({
                 daily: daily || s.biasMatrix.daily,
                 h4: h4 || s.biasMatrix.h4,
                 h1: h1 || s.biasMatrix.h1,
-                m5: m15 || s.biasMatrix.m5,
+                m5: m5 || s.biasMatrix.m5,
                 isLoading: false,
                 lastUpdated: Date.now()
             }
