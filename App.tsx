@@ -19,11 +19,11 @@ import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Lock, RefreshCw, ServerOff } from 'lucide-react';
+import { Lock, RefreshCw, Loader2 } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
-import { calculateADX, generateMockCandles } from './utils/analytics'; 
+import { calculateADX } from './utils/analytics'; 
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -39,6 +39,7 @@ const App: React.FC = () => {
   const notifications = useStore(state => state.notifications);
   const [currentPeriod, setCurrentPeriod] = useState<PeriodType>('20-PERIOD');
   const [connectionError, setConnectionError] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   
   const {
       setHasEntered,
@@ -81,6 +82,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    let retryTimer: ReturnType<typeof setTimeout>;
+
     const fetchHistory = async () => {
         try {
             console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
@@ -130,27 +133,23 @@ const App: React.FC = () => {
             
             const candlesWithADX = calculateADX(formattedCandles, 14);
             setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
+            setIsLoading(false);
 
         } catch (e: any) {
             console.error(`History Fetch Failed: ${e.message}`);
             
-            // SIMULATION FALLBACK
-            if (!connectionError) {
-                setConnectionError(true);
-                addNotification({ 
-                    id: 'backend-fail', 
-                    type: 'warning', 
-                    title: 'System Offline', 
-                    message: `Backend unreachable (${e.message}). Switching to Simulation Mode.` 
-                });
-            }
-
-            // Generate realistic fallback data
-            const mockData = generateMockCandles(300); 
-            setMarketHistory({ candles: mockData, initialCVD: 0 });
+            setConnectionError(true);
+            setIsLoading(true);
+            
+            // Auto Retry
+            retryTimer = setTimeout(fetchHistory, 3000);
         }
     };
+
+    setIsLoading(true);
     fetchHistory();
+
+    return () => clearTimeout(retryTimer);
   }, [config.interval, config.activeSymbol]);
 
   useEffect(() => {
@@ -171,10 +170,9 @@ const App: React.FC = () => {
       return () => clearInterval(i);
   }, [config.activeSymbol, connectionError]);
 
-  // Websocket logic omitted for brevity (it handles its own connection errors)
-  // Re-adding essential WS code block below to ensure functionality
+  // Websocket logic
   useEffect(() => {
-      if (connectionError) return; // Don't try WS if backend/proxy is known bad, actually WS is separate usually but lets keep trying
+      if (connectionError) return; 
 
       let ws: WebSocket | null = null;
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -229,7 +227,7 @@ const App: React.FC = () => {
           if (ws) ws.close();
           if (reconnectTimer) clearTimeout(reconnectTimer);
       };
-  }, [config.interval, config.activeSymbol]);
+  }, [config.interval, config.activeSymbol, connectionError]);
 
   useEffect(() => {
       if (ai.lastScanTime === 0) return;
@@ -262,6 +260,30 @@ const App: React.FC = () => {
             >
                 <AuthOverlay />
             </motion.div>
+        ) : isLoading ? (
+             <motion.div
+                key="loader"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#09090b]"
+            >
+                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.05] pointer-events-none"></div>
+                
+                <div className="relative">
+                    <Loader2 size={48} className="text-brand-accent animate-spin" />
+                    <div className="absolute inset-0 blur-xl bg-brand-accent/20 animate-pulse"></div>
+                </div>
+                
+                <div className="mt-8 text-center space-y-2 relative z-10">
+                    <h2 className={`text-xl font-bold tracking-widest uppercase ${connectionError ? 'text-rose-500' : 'text-white'}`}>
+                        {connectionError ? "CONNECTION LOST" : "ESTABLISHING UPLINK"}
+                    </h2>
+                    <p className="text-zinc-500 font-mono text-xs">
+                        {connectionError ? `Retrying connection to ${config.activeSymbol}...` : `Syncing market data for ${config.activeSymbol}`}
+                    </p>
+                </div>
+            </motion.div>
         ) : (
             <motion.div 
                 key="app"
@@ -277,23 +299,6 @@ const App: React.FC = () => {
                 <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                     <Header />
                     
-                    {/* Connection Error Banner */}
-                    <AnimatePresence>
-                        {connectionError && (
-                            <motion.div 
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                className="bg-rose-500/10 border-b border-rose-500/20 px-4 py-1 flex items-center justify-center gap-2"
-                            >
-                                <ServerOff size={12} className="text-rose-500" />
-                                <span className="text-[10px] font-bold text-rose-500 uppercase tracking-widest">
-                                    BACKEND DISCONNECTED - RUNNING SIMULATION
-                                </span>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-
                     <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
                         {ui.activeTab === 'dashboard' && <DashboardView />}
                         {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
