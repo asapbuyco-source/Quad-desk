@@ -19,7 +19,7 @@ import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Lock, RefreshCw, Loader2 } from 'lucide-react';
+import { Lock, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
@@ -39,6 +39,7 @@ const App: React.FC = () => {
   const notifications = useStore(state => state.notifications);
   const [currentPeriod, setCurrentPeriod] = useState<PeriodType>('20-PERIOD');
   const [connectionError, setConnectionError] = useState<boolean>(false);
+  const [connectionErrorMessage, setConnectionErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
   const {
@@ -87,11 +88,14 @@ const App: React.FC = () => {
     const fetchHistory = async () => {
         try {
             console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
+            // Reset error state on new attempt
+            setConnectionErrorMessage('');
+            
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             
             // Handle 502/503 specifically
             if (res.status === 502 || res.status === 503) {
-                throw new Error("Backend Unavailable (502 Bad Gateway)");
+                throw new Error(`Backend Unavailable (HTTP ${res.status})`);
             }
 
             const contentType = res.headers.get("content-type");
@@ -108,6 +112,8 @@ const App: React.FC = () => {
 
             // Success path
             setConnectionError(false);
+            setConnectionErrorMessage('');
+            
             let runningCVD = 0;
             const cachedCVD = localStorage.getItem(`cvd_${config.activeSymbol}`);
             if (cachedCVD && !isNaN(parseFloat(cachedCVD))) {
@@ -139,6 +145,7 @@ const App: React.FC = () => {
             console.error(`History Fetch Failed: ${e.message}`);
             
             setConnectionError(true);
+            setConnectionErrorMessage(e.message || "Unknown Connection Error");
             setIsLoading(true);
             
             // Auto Retry
@@ -275,13 +282,31 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 blur-xl bg-brand-accent/20 animate-pulse"></div>
                 </div>
                 
-                <div className="mt-8 text-center space-y-2 relative z-10">
-                    <h2 className={`text-xl font-bold tracking-widest uppercase ${connectionError ? 'text-rose-500' : 'text-white'}`}>
-                        {connectionError ? "CONNECTION LOST" : "ESTABLISHING UPLINK"}
-                    </h2>
-                    <p className="text-zinc-500 font-mono text-xs">
-                        {connectionError ? `Retrying connection to ${config.activeSymbol}...` : `Syncing market data for ${config.activeSymbol}`}
-                    </p>
+                <div className="mt-8 text-center space-y-4 relative z-10">
+                    <div className="space-y-2">
+                        <h2 className={`text-xl font-bold tracking-widest uppercase ${connectionError ? 'text-rose-500' : 'text-white'}`}>
+                            {connectionError ? "CONNECTION LOST" : "ESTABLISHING UPLINK"}
+                        </h2>
+                        <p className="text-zinc-500 font-mono text-xs">
+                            {connectionError ? `Retrying connection to ${config.activeSymbol}...` : `Syncing market data for ${config.activeSymbol}`}
+                        </p>
+                    </div>
+
+                    {connectionError && (
+                        <motion.div 
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 max-w-xs mx-auto backdrop-blur-md"
+                        >
+                            <div className="flex items-center justify-center gap-2 text-rose-400 mb-1">
+                                <AlertTriangle size={12} />
+                                <span className="text-[10px] font-bold uppercase">Diagnostic Info</span>
+                            </div>
+                            <p className="text-xs font-mono text-rose-300 break-words">
+                                {connectionErrorMessage}
+                            </p>
+                        </motion.div>
+                    )}
                 </div>
             </motion.div>
         ) : (

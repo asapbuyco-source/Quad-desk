@@ -1,23 +1,16 @@
 
-import * as firebaseApp from "firebase/app";
-import * as firebaseAuth from "firebase/auth";
-import * as firebaseAnalytics from "firebase/analytics";
-import * as firebaseFirestore from "firebase/firestore";
-
-const { initializeApp, getApps, getApp } = firebaseApp;
-const { getAuth, GoogleAuthProvider } = firebaseAuth;
-const { getAnalytics, isSupported } = firebaseAnalytics;
-const { 
+import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, Auth } from "firebase/auth";
+import { getAnalytics, isSupported, Analytics } from "firebase/analytics";
+import { 
   getFirestore, 
   initializeFirestore, 
   persistentLocalCache, 
-  memoryLocalCache 
-} = firebaseFirestore;
+  memoryLocalCache,
+  Firestore
+} from "firebase/firestore";
 
-export type { FirebaseApp } from "firebase/app";
-export type { Auth, User } from "firebase/auth";
-export type { Analytics } from "firebase/analytics";
-export type { Firestore } from "firebase/firestore";
+export type { FirebaseApp, Auth, Analytics, Firestore };
 
 const firebaseConfig = {
   apiKey: "AIzaSyD6eNi5OkV8mwvaV-hAyvNjOD_gLznNgtg",
@@ -29,46 +22,58 @@ const firebaseConfig = {
   measurementId: "G-Y4JY39HZF3"
 };
 
-// Singleton pattern to handle HMR
-let app: firebaseApp.FirebaseApp;
-let db: firebaseFirestore.Firestore;
+// Singleton pattern to handle HMR (Hot Module Replacement)
+let app: FirebaseApp;
+let db: Firestore;
 
+// 1. Initialize App
 if (!getApps().length) {
   app = initializeApp(firebaseConfig);
 } else {
   app = getApp();
 }
 
-// Robust Firestore Initialization
-// 1. Try Persistence (Ideal)
-// 2. Fallback to Memory (If IndexedDB blocked/incognito)
-// 3. Fallback to Existing (If HMR re-run)
+// 2. Initialize Firestore
+// We use a robust initialization strategy to prevent "Service not available" or "Already Initialized" errors.
 try {
+    // Try to initialize with persistence (preferred)
     db = initializeFirestore(app, {
         localCache: persistentLocalCache()
     });
 } catch (error: any) {
-    try {
-        // Fallback: Use memory cache if persistence fails (common in restricted envs)
-        db = initializeFirestore(app, {
-            localCache: memoryLocalCache()
-        });
-    } catch (e2: any) {
-        // Fallback: If totally failed (e.g., already initialized), just get the existing instance
+    if (error.message && error.message.includes('already been started')) {
+        // If already started (e.g. fast refresh), just get the instance
+        db = getFirestore(app);
+    } else {
+        // If persistence fails (e.g. Incognito mode), fallback to memory
         try {
-            db = getFirestore(app);
-        } catch (e3) {
-            console.error("Firestore fatal initialization error:", e3);
-            throw e3;
+            db = initializeFirestore(app, {
+                localCache: memoryLocalCache()
+            });
+        } catch (e2: any) {
+            // If even memory init fails (rare), it might be already started
+            if (e2.message && e2.message.includes('already been started')) {
+                db = getFirestore(app);
+            } else {
+                console.error("Firestore Critical Init Error:", e2);
+                // Fallback to getFirestore which might throw if service is truly broken, 
+                // but at this point we have few options.
+                try {
+                    db = getFirestore(app);
+                } catch(e3) {
+                    console.error("Firestore Service Unavailable:", e3);
+                    // We don't crash here to allow Auth to potentially still work
+                }
+            }
         }
     }
 }
 
-const auth: firebaseAuth.Auth = getAuth(app);
+const auth: Auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
 // Initialize Analytics (Async)
-let analytics: firebaseAnalytics.Analytics | undefined;
+let analytics: Analytics | undefined;
 if (typeof window !== 'undefined') {
   isSupported().then(yes => {
     if (yes) {
