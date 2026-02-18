@@ -32,9 +32,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentP
       setInterval: setChartInterval, 
       startAiScan, 
       completeAiScan, 
-      addNotification,
-      refreshRegimeAnalysis,
-      refreshTacticalAnalysis 
+      addNotification 
   } = useStore();
 
   const [layers, setLayers] = useState({
@@ -51,16 +49,6 @@ const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentP
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
-  useEffect(() => {
-      refreshRegimeAnalysis();
-      refreshTacticalAnalysis();
-      const intervalId = window.setInterval(() => {
-          refreshRegimeAnalysis();
-          refreshTacticalAnalysis();
-      }, 5000);
-      return () => window.clearInterval(intervalId);
   }, []);
 
   const toggleLayer = (key: keyof typeof layers) => {

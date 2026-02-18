@@ -69,6 +69,8 @@ const App: React.FC = () => {
       processTradeTick,
       processDepthUpdate,
       refreshHeatmap,
+      refreshRegimeAnalysis,
+      refreshTacticalAnalysis,
       resetCvd
   } = useStore();
 
@@ -102,6 +104,19 @@ const App: React.FC = () => {
       const interval = setInterval(refreshHeatmap, 60000);
       return () => clearInterval(interval);
   }, [config.activeSymbol]);
+
+  // Global Analysis Loop (Regime & Tactical)
+  useEffect(() => {
+      // Run immediately
+      refreshRegimeAnalysis();
+      refreshTacticalAnalysis();
+      
+      const interval = setInterval(() => {
+          refreshRegimeAnalysis();
+          refreshTacticalAnalysis();
+      }, 5000); // 5 seconds
+      return () => clearInterval(interval);
+  }, [config.activeSymbol]); // Re-run if symbol changes
 
   // REST API History Fetcher (Kraken via Backend)
   useEffect(() => {
