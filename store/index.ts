@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { 
   MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel, 
   AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState, 
-  LiquidityState, RegimeState, AiTacticalState, ExpectedValueData
+  LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData
 } from '../types';
 import { MOCK_METRICS } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
@@ -11,7 +11,7 @@ import {
   signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
   signOut, updateProfile, User 
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface AppState {
   ui: {
@@ -243,7 +243,7 @@ export const useStore = create<AppState>((set, get) => ({
     get().refreshBiasMatrix();
   },
 
-  setMarketBands: (bands) => {
+  setMarketBands: (_bands) => {
     // Hooks into analytics internally
   },
 
@@ -338,7 +338,7 @@ export const useStore = create<AppState>((set, get) => ({
     } 
   })),
   updateAiCooldown: (seconds) => set(state => ({ ai: { ...state.ai, cooldownRemaining: seconds } })),
-  fetchOrderFlowAnalysis: async (data) => {
+  fetchOrderFlowAnalysis: async (_data) => {
       set(state => ({ ai: { ...state.ai, orderFlowAnalysis: { ...state.ai.orderFlowAnalysis, isLoading: true } } }));
       setTimeout(() => {
           set(state => ({ 
@@ -431,8 +431,8 @@ export const useStore = create<AppState>((set, get) => ({
       // Calculate dynamic bias based on current candles
       const candles = get().market.candles;
       
-      const calculateBiasForWindow = (windowSize: number) => {
-          if (candles.length < windowSize) return { bias: 'NEUTRAL' as const, sparkline: [50, 50, 50] };
+      const calculateBiasForWindow = (windowSize: number): TimeframeData => {
+          if (candles.length < windowSize) return { bias: 'NEUTRAL', sparkline: [50, 50, 50], lastUpdated: Date.now() };
           const slice = candles.slice(-windowSize);
           const closes = slice.map(c => c.close);
           const sma = closes.reduce((a, b) => a + b, 0) / windowSize;

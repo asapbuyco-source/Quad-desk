@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { OrderBookLevel } from '../types';
-import { ArrowDownUp, BoxSelect, Wind, Crosshair, AlertOctagon, Activity, Zap } from 'lucide-react';
+import { ArrowDownUp, BoxSelect, Wind, Crosshair, Zap } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 
 const motion = m as any;
