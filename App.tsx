@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
@@ -46,6 +45,8 @@ const App: React.FC = () => {
   
   // Local Order Book Buffer for Kraken Incremental Updates
   const orderBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
+  // Ref to store the LAST DISPATCHED book for delta calculation
+  const lastDispatchedBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
   
   // Issue #3: Candle Aggregation Refs
   const candleOpenRef = useRef<number | null>(null);
@@ -396,16 +397,29 @@ const App: React.FC = () => {
               // Wall Threshold: 2.5x Average (Heuristic)
               const wallThreshold = avgSize * 2.5;
 
-              return sorted.map(([price, size]) => ({
-                  price,
-                  size,
-                  total: 0, // Calculated in UI if needed
-                  classification: size > wallThreshold ? 'WALL' : 'NORMAL'
-              }));
+              // Previous Map for Delta tracking
+              const prevMap = isBid ? lastDispatchedBookRef.current.bids : lastDispatchedBookRef.current.asks;
+
+              return sorted.map(([price, size]) => {
+                  const prevSize = prevMap.get(price) || size; // If new level, assume same to avoid huge spikes
+                  const delta = size - prevSize;
+                  
+                  return {
+                    price,
+                    size,
+                    total: 0, // Calculated in UI if needed
+                    delta: delta, // LIQUIDITY DELTA
+                    classification: size > wallThreshold ? 'WALL' : 'NORMAL'
+                  };
+              });
           };
 
           const asks = classifyLevels(rawAsks, false);
           const bids = classifyLevels(rawBids, true);
+
+          // Update Last Dispatched for Next Cycle
+          lastDispatchedBookRef.current.asks = new Map(orderBookRef.current.asks);
+          lastDispatchedBookRef.current.bids = new Map(orderBookRef.current.bids);
 
           processDepthUpdate({ asks, bids, metrics: {} });
       };

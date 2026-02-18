@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
@@ -68,7 +67,7 @@ const BiasCard: React.FC<{
                 )}
             </div>
 
-            <div className="h-24 w-full relative z-10">
+            <div className="h-24 w-full relative z-10 min-h-[96px]">
                 {data ? (
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData}>
@@ -90,7 +89,6 @@ const BiasCard: React.FC<{
                 )}
             </div>
 
-            {/* Timestamps */}
             <div className="mt-4 pt-4 border-t border-white/5 flex justify-between items-center text-[10px] text-zinc-500 font-mono relative z-10">
                 <div className="flex items-center gap-1">
                     <Clock size={10} />
@@ -99,7 +97,6 @@ const BiasCard: React.FC<{
                 <span>TF: {label}</span>
             </div>
 
-            {/* Background Glow */}
             <div className={`absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-500 bg-gradient-to-br ${
                 data?.bias === 'BULL' ? 'from-emerald-500' : 
                 data?.bias === 'BEAR' ? 'from-rose-500' : 
@@ -110,14 +107,27 @@ const BiasCard: React.FC<{
 };
 
 const BiasMatrixView: React.FC = () => {
-  const { biasMatrix, refreshBiasMatrix, config: { activeSymbol } } = useStore();
+  const { biasMatrix, refreshBiasMatrix, market, config: { activeSymbol } } = useStore();
   const { daily, h4, h1, m5, isLoading } = biasMatrix;
 
   useEffect(() => {
     refreshBiasMatrix();
-    const interval = setInterval(refreshBiasMatrix, 30000); // 30s auto-refresh
+    const interval = setInterval(refreshBiasMatrix, 10000); // More frequent 10s auto-refresh
     return () => clearInterval(interval);
-  }, [activeSymbol]); // Refresh when symbol changes
+  }, [activeSymbol, market.candles.length]); // Also refresh when data points change
+
+  const getConfluence = () => {
+      if (!daily || !h4 || !h1) return "INSUFFICIENT DATA";
+      const biases = [daily.bias, h4.bias, h1.bias];
+      const bullCount = biases.filter(b => b === 'BULL').length;
+      const bearCount = biases.filter(b => b === 'BEAR').length;
+      
+      if (bullCount === 3) return "STRONG BULLISH CONFLUENCE";
+      if (bearCount === 3) return "STRONG BEARISH CONFLUENCE";
+      if (bullCount === 2) return "BULLISH BIAS (LOCKED)";
+      if (bearCount === 2) return "BEARISH BIAS (LOCKED)";
+      return "NEUTRAL / CHOP";
+  };
 
   return (
     <motion.div 
@@ -125,7 +135,6 @@ const BiasMatrixView: React.FC = () => {
         animate={{ opacity: 1 }}
         className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 max-w-7xl mx-auto pt-6"
     >
-        {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div className="flex items-center gap-4">
                 <div className="p-3 bg-brand-accent/20 rounded-xl text-brand-accent shadow-[0_0_20px_rgba(124,58,237,0.2)]">
@@ -152,7 +161,6 @@ const BiasMatrixView: React.FC = () => {
             </div>
         </div>
 
-        {/* Matrix Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <BiasCard label="DAILY" data={daily} delay={0.1} />
             <BiasCard label="H4" data={h4} delay={0.2} />
@@ -160,7 +168,6 @@ const BiasMatrixView: React.FC = () => {
             <BiasCard label="M5" data={m5} delay={0.4} />
         </div>
 
-        {/* Synthesis / Summary */}
         <div className="p-6 rounded-2xl bg-zinc-900/40 border border-white/5 relative overflow-hidden">
              <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="max-w-xl">
@@ -175,16 +182,14 @@ const BiasMatrixView: React.FC = () => {
                 <div className="flex items-center gap-4 px-6 py-4 rounded-xl bg-black/40 border border-white/5">
                     <div className="text-right">
                         <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Global State</div>
-                        <div className="text-xl font-bold text-white">
-                            {daily?.bias === h4?.bias && h4?.bias === 'BULL' ? 'STRONG UPTREND' :
-                             daily?.bias === h4?.bias && h4?.bias === 'BEAR' ? 'STRONG DOWNTREND' :
-                             'MIXED / CHOP'}
+                        <div className="text-xl font-bold text-white uppercase">
+                            {getConfluence()}
                         </div>
                     </div>
                     <div className={`w-2 h-12 rounded-full ${
-                         daily?.bias === h4?.bias && h4?.bias === 'BULL' ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]' :
-                         daily?.bias === h4?.bias && h4?.bias === 'BEAR' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.5)]' :
-                         'bg-amber-500'
+                         getConfluence().includes('BULLISH') ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]' :
+                         getConfluence().includes('BEARISH') ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.5)]' :
+                         'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]'
                     }`} />
                 </div>
              </div>

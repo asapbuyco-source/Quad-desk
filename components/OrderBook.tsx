@@ -1,7 +1,6 @@
-
 import React, { useMemo } from 'react';
 import { OrderBookLevel } from '../types';
-import { ArrowDownUp, BoxSelect, Wind, Crosshair, AlertOctagon } from 'lucide-react';
+import { ArrowDownUp, BoxSelect, Wind, Crosshair, AlertOctagon, Activity, Zap } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 
 const motion = m as any;
@@ -11,7 +10,7 @@ interface OrderBookProps {
   bids: OrderBookLevel[];
 }
 
-const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; maxVol: number }> = ({ level, type, maxVol }) => {
+const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; maxVol: number; maxDelta: number }> = ({ level, type, maxVol, maxDelta }) => {
   const depthWidth = Math.min((level.size / maxVol) * 100, 100);
   const isBid = type === 'bid';
   const { classification, delta } = level;
@@ -21,19 +20,15 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; maxVol: n
   const isHole = classification === 'HOLE';
   const isCluster = classification === 'CLUSTER';
   
-  // Delta Visualization
-  const hasSignificantDelta = delta && Math.abs(delta) > 5;
+  // Liquidity Delta Visualization
+  const absDelta = Math.abs(delta || 0);
+  const deltaWidth = maxDelta > 0 ? (absDelta / maxDelta) * 100 : 0;
   const isAdded = delta && delta > 0;
   
-  // Determine Delta Color
-  let deltaColor = 'text-slate-600';
-  if (hasSignificantDelta) {
-      if (isBid) {
-          deltaColor = isAdded ? 'text-emerald-400' : 'text-rose-500'; // Bid Added (Good) vs Bid Pulled (Bad)
-      } else {
-          deltaColor = isAdded ? 'text-rose-400' : 'text-emerald-500'; // Ask Added (Resist) vs Ask Pulled (Support)
-      }
-  }
+  // Power Color: Replenishment vs Cancellation
+  let powerColor = isAdded 
+    ? (isBid ? 'bg-emerald-500' : 'bg-rose-500') // Orders Added (Bids + / Asks +)
+    : (isBid ? 'bg-amber-500' : 'bg-blue-500');  // Orders Pulled (Bids - / Asks -)
 
   return (
     <div className={`
@@ -64,7 +59,6 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; maxVol: n
       )}
       
       <div className="flex items-center gap-3 z-10 w-24">
-         {/* Price with Contextual Styling */}
         <span className={`font-bold tracking-tight flex items-center gap-2 ${
             isWall ? (isBid ? 'text-emerald-300' : 'text-rose-300') :
             isHole ? 'text-zinc-600 font-normal' :
@@ -72,47 +66,32 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; maxVol: n
             isBid ? 'text-trade-bid' : 'text-trade-ask'
         }`}>
             {level.price.toFixed(2)}
-            {/* Icons */}
             {isWall && <BoxSelect size={10} strokeWidth={3} className="opacity-80" />}
             {isHole && <Wind size={10} className="opacity-50" />}
             {isCluster && <Crosshair size={10} className="animate-pulse" />}
         </span>
       </div>
       
-      {/* Classification Badges / Spoof Warning */}
-      <div className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none flex items-center gap-2">
-         {(isWall || isCluster) && (
-             <motion.div 
-                initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                className={`
-                px-2 py-[1px] rounded text-[8px] font-black tracking-[0.2em] uppercase border backdrop-blur-md shadow-lg flex items-center gap-1
-                ${isWall
-                    ? (isBid 
-                        ? 'bg-[#064e3b] border-emerald-500/50 text-emerald-400' 
-                        : 'bg-[#881337] border-rose-500/50 text-rose-400')
-                    : 'bg-[#451a03] border-amber-500/50 text-amber-500' // Cluster
-                }
-             `}>
-                {isWall ? 'WALL' : 'STOP'}
-             </motion.div>
-         )}
-         
-         {/* Spoof/Pull Indicator */}
-         {delta && delta < -50 && (
-             <motion.div 
-                initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-600 text-[8px] font-bold text-zinc-400 flex items-center gap-1"
-             >
-                 <AlertOctagon size={8} /> PULLED
-             </motion.div>
+      {/* POWER / DELTA COLUMN */}
+      <div className="absolute left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 w-12 h-4 justify-center">
+         {absDelta > 0.01 && (
+             <div className="flex-1 bg-white/5 h-1.5 rounded-full overflow-hidden flex relative">
+                 <div className="absolute inset-0 flex">
+                     <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${deltaWidth}%` }}
+                        className={`h-full ${powerColor} ${absDelta > maxDelta * 0.7 ? 'animate-pulse' : ''}`} 
+                     />
+                 </div>
+             </div>
          )}
       </div>
 
       <div className="flex items-center justify-end gap-3 z-10 min-w-[100px]">
           {/* Delta Indicator */}
-          {hasSignificantDelta && (
-             <span className={`text-[9px] font-bold ${deltaColor}`}>
-                 {delta > 0 ? '+' : ''}{delta.toFixed(0)}
+          {absDelta > 0.1 && (
+             <span className={`text-[9px] font-bold ${isAdded ? (isBid ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-600'}`}>
+                 {isAdded ? '+' : '-'}{absDelta.toFixed(1)}
              </span>
           )}
 
@@ -132,11 +111,25 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; maxVol: n
 
 const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
     
-  // Calculate average volume to determine rendering scales
-  const maxVol = useMemo(() => {
+  const { maxVol, maxDelta, netDelta } = useMemo(() => {
     const allLevels = [...asks, ...bids];
-    if (allLevels.length === 0) return 1000;
-    return Math.max(...allLevels.map(l => l.size));
+    if (allLevels.length === 0) return { maxVol: 1000, maxDelta: 0, netDelta: 0 };
+    
+    let net = 0;
+    let maxD = 0;
+    
+    allLevels.forEach(l => {
+        if (l.delta) {
+            net += l.delta;
+            if (Math.abs(l.delta) > maxD) maxD = Math.abs(l.delta);
+        }
+    });
+
+    return {
+        maxVol: Math.max(...allLevels.map(l => l.size)),
+        maxDelta: maxD,
+        netDelta: net
+    };
   }, [asks, bids]);
 
   return (
@@ -146,42 +139,50 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
             <ArrowDownUp size={16} className="text-brand-accent" />
             Depth Engine
         </h3>
-        <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-[10px] text-slate-500 font-mono uppercase">Live Deltas</span>
+        
+        <div className="flex items-center gap-4">
+            {Math.abs(netDelta) > 0.1 && (
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/10">
+                    <Zap size={10} className={netDelta > 0 ? 'text-emerald-400' : 'text-rose-400'} />
+                    <span className={`text-[10px] font-mono font-bold ${netDelta > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {netDelta > 0 ? '+' : ''}{netDelta.toFixed(1)}
+                    </span>
+                </div>
+            )}
+            <div className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-[10px] text-slate-500 font-mono uppercase">Liquidity Flux</span>
+            </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto font-mono scrollbar-hide py-2">
-        {/* Header */}
         <div className="flex justify-between px-4 pb-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider border-b border-white/5 mb-1">
             <span>Price (USD)</span>
+            <div className="absolute left-1/2 -translate-x-1/2 text-zinc-600">Power</div>
             <div className="flex gap-4">
-                <span>Delta</span>
+                <span>Flux</span>
                 <span>Size</span>
             </div>
         </div>
 
-        {/* Asks */}
         <div className="flex flex-col-reverse">
-            <AnimatePresence>
+            <AnimatePresence initial={false}>
             {asks.map((ask) => (
-                <OrderRow key={ask.price} level={ask} type="ask" maxVol={maxVol} />
+                <OrderRow key={ask.price} level={ask} type="ask" maxVol={maxVol} maxDelta={maxDelta} />
             ))}
             </AnimatePresence>
         </div>
 
-        {/* Spread */}
         <div className="py-2 my-1 bg-white/5 backdrop-blur-sm text-center border-y border-white/5 relative group">
             <div className="absolute inset-0 bg-brand-accent/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-            <span className="relative z-10 text-xs text-slate-400 font-medium group-hover:text-white transition-colors">Spread: 0.25 (0.01%)</span>
+            <span className="relative z-10 text-xs text-slate-400 font-medium group-hover:text-white transition-colors">Spread: Equilibrium</span>
         </div>
 
-        {/* Bids */}
         <div>
-            <AnimatePresence>
+            <AnimatePresence initial={false}>
             {bids.map((bid) => (
-                <OrderRow key={bid.price} level={bid} type="bid" maxVol={maxVol} />
+                <OrderRow key={bid.price} level={bid} type="bid" maxVol={maxVol} maxDelta={maxDelta} />
             ))}
             </AnimatePresence>
         </div>

@@ -1,4 +1,3 @@
-
 import { create } from 'zustand';
 import { 
   MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel, 
@@ -6,7 +5,7 @@ import {
   LiquidityState, RegimeState, AiTacticalState, ExpectedValueData
 } from '../types';
 import { MOCK_METRICS } from '../constants';
-import { analyzeRegime } from '../utils/analytics';
+import { analyzeRegime, calculateRSI } from '../utils/analytics';
 import { auth, googleProvider, db } from '../lib/firebase';
 import { 
   signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
@@ -72,7 +71,7 @@ interface AppState {
   alertLogs: any[];
   
   // CVD State
-  cvdBaseline: number; // Value at the close of the last finalized candle
+  cvdBaseline: number;
 
   setHasEntered: (val: boolean) => void;
   setActiveTab: (tab: string) => void;
@@ -86,7 +85,7 @@ interface AppState {
   
   setMarketHistory: (payload: { candles: CandleData[], initialCVD: number }) => void;
   setMarketBands: (bands: any) => void;
-  processWsTick: (tick: any, realDelta?: number) => void; // Added realDelta param
+  processWsTick: (tick: any, realDelta?: number) => void;
   processTradeTick: (trade: RecentTrade) => void;
   processDepthUpdate: (data: { asks: OrderBookLevel[], bids: OrderBookLevel[], metrics: any }) => void;
   refreshHeatmap: () => Promise<void>;
@@ -231,17 +230,21 @@ export const useStore = create<AppState>((set, get) => ({
   setBacktestDate: (date) => set(state => ({ config: { ...state.config, backtestDate: date } })),
   setAiModel: (model) => set(state => ({ config: { ...state.config, aiModel: model } })),
 
-  setMarketHistory: ({ candles, initialCVD }) => set(state => ({
-    cvdBaseline: initialCVD, // Initialize baseline
-    market: {
-        ...state.market,
-        candles,
-        metrics: { ...state.market.metrics, institutionalCVD: initialCVD }
-    }
-  })),
+  setMarketHistory: ({ candles, initialCVD }) => {
+    set(state => ({
+        cvdBaseline: initialCVD,
+        market: {
+            ...state.market,
+            candles,
+            metrics: { ...state.market.metrics, institutionalCVD: initialCVD }
+        }
+    }));
+    // Trigger bias update on history load
+    get().refreshBiasMatrix();
+  },
 
   setMarketBands: (bands) => {
-    // Hook to store bands data if needed
+    // Hooks into analytics internally
   },
 
   processWsTick: (tick, realDelta = 0) => set(state => {
@@ -252,17 +255,10 @@ export const useStore = create<AppState>((set, get) => ({
     let newCandles = candles;
     let newBaseline = state.cvdBaseline;
     
-    // Normalize tick time (ms) to candle time (seconds)
     const tickTimeSec = Math.floor(tick.t / 1000);
     
-    // Logic: 
-    // CVD = Baseline (End of last candle) + Delta (Current Candle)
-    // If we rely purely on 'realDelta' passed from App.tsx, it accumulates during the candle.
-    
     if (tickTimeSec === last.time) {
-        // UPDATE EXISTING CANDLE
         const updatedCvd = newBaseline + realDelta;
-        
         newCandles[newCandles.length - 1] = {
             ...last,
             close: tick.c,
@@ -273,12 +269,7 @@ export const useStore = create<AppState>((set, get) => ({
             cvd: updatedCvd 
         };
     } else if (tickTimeSec > last.time) {
-        // NEW CANDLE STARTED
-        // 1. Commit the last candle's delta to the baseline
         newBaseline = state.cvdBaseline + (last.delta || 0);
-        
-        // 2. Start new candle
-        // Note: realDelta passed here is for the *new* candle interval (reset by App.tsx)
         const newCvd = newBaseline + realDelta;
 
         const newCandle: CandleData = {
@@ -302,7 +293,7 @@ export const useStore = create<AppState>((set, get) => ({
     const metrics = {
         ...state.market.metrics,
         price: tick.c,
-        institutionalCVD: newBaseline + realDelta // Accurate live CVD
+        institutionalCVD: newBaseline + realDelta
     };
 
     return { 
@@ -375,19 +366,13 @@ export const useStore = create<AppState>((set, get) => ({
         get().addNotification({ id: Date.now().toString(), type: 'error', title: 'Auth Failed', message: e.message });
     }
   },
-  loginEmail: async (e, p) => {
-    await signInWithEmailAndPassword(auth, e, p);
-  },
+  loginEmail: async (e, p) => { await signInWithEmailAndPassword(auth, e, p); },
   registerEmail: async (e, p, n) => {
     const res = await createUserWithEmailAndPassword(auth, e, p);
-    if (res.user) {
-        await updateProfile(res.user, { displayName: n });
-    }
+    if (res.user) { await updateProfile(res.user, { displayName: n }); }
   },
   logout: async () => { await signOut(auth); },
-  updateUserProfile: async (data) => {
-      set(state => ({ config: { ...state.config, ...data } }));
-  },
+  updateUserProfile: async (data) => { set(state => ({ config: { ...state.config, ...data } })); },
   loadUserPreferences: async () => {
       try {
           const user = get().auth.user;
@@ -398,9 +383,7 @@ export const useStore = create<AppState>((set, get) => ({
       } catch(e) {}
   },
   toggleRegistration: (isOpen) => set(state => ({ auth: { ...state.auth, registrationOpen: isOpen } })),
-  initSystemConfig: () => {
-      // Mock init
-  },
+  initSystemConfig: () => {},
 
   openPosition: (params) => {
     const { entry, stop, target, direction } = params;
@@ -426,13 +409,11 @@ export const useStore = create<AppState>((set, get) => ({
       if (!pos) return {};
       const pnl = pos.direction === 'LONG' ? (price - pos.entry) * pos.size : (pos.entry - price) * pos.size;
       const r = pnl / pos.riskAmount;
-      
       const newStats = { ...state.trading.dailyStats };
       newStats.totalR += r;
       newStats.realizedPnL += pnl;
       if (r > 0) newStats.wins++; else newStats.losses++;
       newStats.tradesToday++;
-
       return {
           trading: {
               ...state.trading,
@@ -446,19 +427,43 @@ export const useStore = create<AppState>((set, get) => ({
 
   refreshBiasMatrix: async () => {
       set(state => ({ biasMatrix: { ...state.biasMatrix, isLoading: true } }));
-      setTimeout(() => {
-          set(state => ({
-              biasMatrix: {
-                  ...state.biasMatrix,
-                  isLoading: false,
-                  lastUpdated: Date.now(),
-                  daily: { bias: 'BULL', sparkline: [40,42,45,43,48,50], lastUpdated: Date.now() },
-                  h4: { bias: 'BULL', sparkline: [48,49,50,51,52,53], lastUpdated: Date.now() },
-                  h1: { bias: 'NEUTRAL', sparkline: [53,52,53,52,53,52], lastUpdated: Date.now() },
-                  m5: { bias: 'BEAR', sparkline: [52,51,50,49,48,47], lastUpdated: Date.now() },
-              }
-          }));
-      }, 1000);
+      
+      // Calculate dynamic bias based on current candles
+      const candles = get().market.candles;
+      
+      const calculateBiasForWindow = (windowSize: number) => {
+          if (candles.length < windowSize) return { bias: 'NEUTRAL' as const, sparkline: [50, 50, 50] };
+          const slice = candles.slice(-windowSize);
+          const closes = slice.map(c => c.close);
+          const sma = closes.reduce((a, b) => a + b, 0) / windowSize;
+          const current = closes[closes.length - 1];
+          const rsi = calculateRSI(closes, Math.min(14, windowSize - 1));
+          
+          let bias: 'BULL' | 'BEAR' | 'NEUTRAL' = 'NEUTRAL';
+          if (current > sma * 1.002 && rsi > 55) bias = 'BULL';
+          else if (current < sma * 0.998 && rsi < 45) bias = 'BEAR';
+
+          return { bias, sparkline: closes.slice(-20), lastUpdated: Date.now() };
+      };
+
+      // In a real app, these would fetch from different aggregations. 
+      // Here we derive them from the available minute candles for visualization.
+      const m5 = calculateBiasForWindow(15); 
+      const h1 = calculateBiasForWindow(30);
+      const h4 = calculateBiasForWindow(45);
+      const daily = calculateBiasForWindow(60);
+
+      set(state => ({
+          biasMatrix: {
+              ...state.biasMatrix,
+              isLoading: false,
+              lastUpdated: Date.now(),
+              daily,
+              h4,
+              h1,
+              m5,
+          }
+      }));
   },
   refreshLiquidityAnalysis: () => {
       set(state => ({ liquidity: { ...state.liquidity, lastUpdated: Date.now() } }));
@@ -466,7 +471,6 @@ export const useStore = create<AppState>((set, get) => ({
   refreshRegimeAnalysis: () => set(state => {
       const candles = state.market.candles;
       if (candles.length < 50) return {};
-      
       const analysis = analyzeRegime(candles);
       return {
           regime: {
@@ -478,13 +482,7 @@ export const useStore = create<AppState>((set, get) => ({
               volatilityPercentile: analysis.volatilityPercentile,
               lastUpdated: Date.now()
           },
-          market: {
-              ...state.market,
-              metrics: {
-                  ...state.market.metrics,
-                  regime: analysis.type
-              }
-          }
+          market: { ...state.market, metrics: { ...state.market.metrics, regime: analysis.type } }
       };
   }),
   refreshTacticalAnalysis: () => {
