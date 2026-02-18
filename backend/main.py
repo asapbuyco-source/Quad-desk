@@ -273,6 +273,7 @@ origins = [
     "http://localhost:3000",
     "https://quantdesk.netlify.app",
     "https://www.quantdesk.netlify.app",
+    "https://quandesk.netlify.app",
     FRONTEND_URL
 ]
 
