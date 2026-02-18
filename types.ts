@@ -1,9 +1,11 @@
 
 
 export type LiquidityType = 'WALL' | 'HOLE' | 'CLUSTER' | 'NORMAL';
-export type RegimeType = 'TRENDING' | 'MEAN_REVERTING' | 'HIGH_VOLATILITY';
-export type MarketRegimeType = "TRENDING" | "RANGING" | "EXPANDING" | "COMPRESSING" | "UNCERTAIN";
 export type PeriodType = '20-DAY' | '20-HOUR' | '20-PERIOD';
+
+// Unified Regime Types
+export type MarketRegimeType = "TRENDING" | "RANGING" | "EXPANDING" | "COMPRESSING" | "UNCERTAIN";
+export type RegimeType = MarketRegimeType | 'MEAN_REVERTING' | 'HIGH_VOLATILITY';
 
 export interface OrderBookLevel {
   price: number;
@@ -24,7 +26,7 @@ export interface RecentTrade {
 }
 
 export interface CandleData {
-  time: string | number;
+  time: number; // Changed from string | number to number for type safety
   open: number;
   high: number;
   low: number;

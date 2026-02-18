@@ -52,6 +52,7 @@ const App: React.FC = () => {
   const candleHighRef = useRef<number | null>(null);
   const candleLowRef = useRef<number | null>(null);
   const candleVolumeRef = useRef<number>(0);
+  const candleDeltaRef = useRef<number>(0); // NEW: Track real-time delta
   const lastCandleTimeRef = useRef<number>(0);
 
   const {
@@ -150,15 +151,14 @@ const App: React.FC = () => {
             setConnectionErrorMessage('');
             
             let runningCVD = 0;
-            const cachedCVD = localStorage.getItem(`cvd_${config.activeSymbol}`);
-            if (cachedCVD && !isNaN(parseFloat(cachedCVD))) {
-                runningCVD = parseFloat(cachedCVD);
-            }
-
+            // Removed localStorage cachedCVD priority to fix drift; rely on calculation from history data or 0
+            
             // Data comes as [time, open, high, low, close, volume]
             const formattedCandles: CandleData[] = data.map((k: any) => {
                 const vol = parseFloat(k[5]);
-                const delta = 0; // Estimation only possible with trade ticks
+                // Estimate historical delta since we don't have tick data
+                const delta = ((parseFloat(k[4]) - parseFloat(k[1])) / (parseFloat(k[2]) - parseFloat(k[3]) || 1)) * vol * 0.5; // Damped estimation
+                runningCVD += delta;
 
                 return {
                     time: k[0] / 1000,
@@ -179,6 +179,7 @@ const App: React.FC = () => {
             candleHighRef.current = null;
             candleLowRef.current = null;
             candleVolumeRef.current = 0;
+            candleDeltaRef.current = 0;
             
             setIsLoading(false);
 
@@ -234,7 +235,7 @@ const App: React.FC = () => {
           
           ws.onopen = () => { 
               retryCount = 0;
-              resetCvd(); // Reset CVD on reconnect to prevent double counting
+              resetCvd(); // Reset CVD on reconnect
               
               // Subscribe to Channels
               const subMsg = {
@@ -270,11 +271,12 @@ const App: React.FC = () => {
                       data.forEach((t: any) => {
                           const price = parseFloat(t[0]);
                           const vol = parseFloat(t[1]);
+                          const side = t[3] === 's' ? 'SELL' : 'BUY';
                           const trade: RecentTrade = {
                               id: `${t[2]}-${t[0]}`, // time-price as fake ID
                               price: price,
                               size: vol,
-                              side: t[3] === 's' ? 'SELL' : 'BUY',
+                              side: side,
                               time: parseFloat(t[2]) * 1000,
                               isWhale: (price * vol) > 50000
                           };
@@ -282,6 +284,9 @@ const App: React.FC = () => {
                           
                           // Issue #3: Accumulate volume for synthetic candle
                           candleVolumeRef.current += vol;
+                          // Real-time Delta Accumulation
+                          if (side === 'BUY') candleDeltaRef.current += vol;
+                          else candleDeltaRef.current -= vol;
                       });
                   }
 
@@ -299,6 +304,7 @@ const App: React.FC = () => {
                           candleHighRef.current = price;
                           candleLowRef.current = price;
                           candleVolumeRef.current = 0;
+                          candleDeltaRef.current = 0; // Reset Delta for new candle
                           lastCandleTimeRef.current = startTime;
                       }
 
@@ -316,9 +322,11 @@ const App: React.FC = () => {
                           h: candleHighRef.current, 
                           l: candleLowRef.current,
                           c: price, 
-                          v: candleVolumeRef.current // Use accumulated volume from trades
+                          v: candleVolumeRef.current 
                       };
-                      processWsTick(syntheticKline);
+                      
+                      // Pass the accumulated real delta to the store
+                      processWsTick(syntheticKline, candleDeltaRef.current);
                   }
 
                   // 3. Handle Book -> Depth

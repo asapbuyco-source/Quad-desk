@@ -1,3 +1,4 @@
+
 import { create } from 'zustand';
 import { 
   MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel, 
@@ -6,11 +7,12 @@ import {
 } from '../types';
 import { MOCK_METRICS } from '../constants';
 import { analyzeRegime } from '../utils/analytics';
-import { auth, googleProvider } from '../lib/firebase';
+import { auth, googleProvider, db } from '../lib/firebase';
 import { 
   signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
   signOut, updateProfile, User 
 } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AppState {
   ui: {
@@ -68,6 +70,9 @@ interface AppState {
   aiTactical: AiTacticalState;
   notifications: ToastMessage[];
   alertLogs: any[];
+  
+  // CVD State
+  cvdBaseline: number; // Value at the close of the last finalized candle
 
   setHasEntered: (val: boolean) => void;
   setActiveTab: (tab: string) => void;
@@ -81,7 +86,7 @@ interface AppState {
   
   setMarketHistory: (payload: { candles: CandleData[], initialCVD: number }) => void;
   setMarketBands: (bands: any) => void;
-  processWsTick: (tick: any) => void;
+  processWsTick: (tick: any, realDelta?: number) => void; // Added realDelta param
   processTradeTick: (trade: RecentTrade) => void;
   processDepthUpdate: (data: { asks: OrderBookLevel[], bids: OrderBookLevel[], metrics: any }) => void;
   refreshHeatmap: () => Promise<void>;
@@ -214,6 +219,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
   notifications: [],
   alertLogs: [],
+  cvdBaseline: 0,
 
   setHasEntered: (val) => set(state => ({ ui: { ...state.ui, hasEntered: val } })),
   setActiveTab: (tab) => set(state => ({ ui: { ...state.ui, activeTab: tab } })),
@@ -226,6 +232,7 @@ export const useStore = create<AppState>((set, get) => ({
   setAiModel: (model) => set(state => ({ config: { ...state.config, aiModel: model } })),
 
   setMarketHistory: ({ candles, initialCVD }) => set(state => ({
+    cvdBaseline: initialCVD, // Initialize baseline
     market: {
         ...state.market,
         candles,
@@ -237,27 +244,43 @@ export const useStore = create<AppState>((set, get) => ({
     // Hook to store bands data if needed
   },
 
-  processWsTick: (tick) => set(state => {
+  processWsTick: (tick, realDelta = 0) => set(state => {
     const candles = [...state.market.candles];
     if (candles.length === 0) return {};
 
     const last = candles[candles.length - 1];
     let newCandles = candles;
+    let newBaseline = state.cvdBaseline;
     
     // Normalize tick time (ms) to candle time (seconds)
     const tickTimeSec = Math.floor(tick.t / 1000);
     
+    // Logic: 
+    // CVD = Baseline (End of last candle) + Delta (Current Candle)
+    // If we rely purely on 'realDelta' passed from App.tsx, it accumulates during the candle.
+    
     if (tickTimeSec === last.time) {
-        // Update existing candle
+        // UPDATE EXISTING CANDLE
+        const updatedCvd = newBaseline + realDelta;
+        
         newCandles[newCandles.length - 1] = {
             ...last,
             close: tick.c,
             high: Math.max(last.high, tick.c),
             low: Math.min(last.low, tick.c),
-            volume: tick.v
+            volume: tick.v,
+            delta: realDelta,
+            cvd: updatedCvd 
         };
     } else if (tickTimeSec > last.time) {
-        // Push new candle
+        // NEW CANDLE STARTED
+        // 1. Commit the last candle's delta to the baseline
+        newBaseline = state.cvdBaseline + (last.delta || 0);
+        
+        // 2. Start new candle
+        // Note: realDelta passed here is for the *new* candle interval (reset by App.tsx)
+        const newCvd = newBaseline + realDelta;
+
         const newCandle: CandleData = {
             time: tickTimeSec,
             open: tick.o,
@@ -270,8 +293,8 @@ export const useStore = create<AppState>((set, get) => ({
             zScoreUpper2: last.zScoreUpper2,
             zScoreLower2: last.zScoreLower2,
             adx: last.adx,
-            cvd: last.cvd,
-            delta: 0
+            cvd: newCvd,
+            delta: realDelta
         };
         newCandles = [...candles.slice(1), newCandle];
     }
@@ -279,20 +302,19 @@ export const useStore = create<AppState>((set, get) => ({
     const metrics = {
         ...state.market.metrics,
         price: tick.c,
+        institutionalCVD: newBaseline + realDelta // Accurate live CVD
     };
 
-    return { market: { ...state.market, candles: newCandles, metrics } };
+    return { 
+        cvdBaseline: newBaseline,
+        market: { ...state.market, candles: newCandles, metrics } 
+    };
   }),
 
   processTradeTick: (trade) => set(state => {
       const trades = [trade, ...state.market.recentTrades].slice(0, 50);
-      const metrics = { ...state.market.metrics };
-      
-      if (trade.side === 'BUY') metrics.institutionalCVD += (trade.size);
-      else metrics.institutionalCVD -= (trade.size);
-
       return {
-          market: { ...state.market, recentTrades: trades, metrics }
+          market: { ...state.market, recentTrades: trades }
       };
   }),
 
@@ -301,7 +323,6 @@ export const useStore = create<AppState>((set, get) => ({
   })),
 
   refreshHeatmap: async () => {
-      // Simulate Heatmap Data
       const mockHeatmap = [
           { pair: 'ETH/USDT', zScore: 1.2, price: 3200 },
           { pair: 'SOL/USDT', zScore: -2.1, price: 145 },
@@ -311,6 +332,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   resetCvd: () => set(state => ({
+      cvdBaseline: 0,
       market: { ...state.market, metrics: { ...state.market.metrics, institutionalCVD: 0 } }
   })),
 
@@ -367,7 +389,13 @@ export const useStore = create<AppState>((set, get) => ({
       set(state => ({ config: { ...state.config, ...data } }));
   },
   loadUserPreferences: async () => {
-      // Mock load
+      try {
+          const user = get().auth.user;
+          if(user) {
+              const snap = await getDoc(doc(db, 'users', user.uid));
+              if(snap.exists()) set(s => ({ config: { ...s.config, ...snap.data().config } }));
+          }
+      } catch(e) {}
   },
   toggleRegistration: (isOpen) => set(state => ({ auth: { ...state.auth, registrationOpen: isOpen } })),
   initSystemConfig: () => {
