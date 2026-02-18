@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -309,7 +309,7 @@ def system_status():
     }
 
 @app.get("/history")
-async def get_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 300):
+async def get_history(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), interval: str = "1m", limit: int = 300):
     """
     Get historical candles from Kraken.
     """
@@ -317,7 +317,7 @@ async def get_history(symbol: str = "BTCUSDT", interval: str = "1m", limit: int 
     return data
 
 @app.get("/bands")
-async def get_bands(symbol: str = "BTCUSDT"):
+async def get_bands(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$")):
     """
     Calculates dynamic Z-Score bands based on Kraken data.
     """
@@ -341,7 +341,7 @@ async def get_bands(symbol: str = "BTCUSDT"):
     }
 
 @app.get("/analyze")
-async def analyze_market(symbol: str = "BTCUSDT", model: str = "gemini-3-flash-preview"):
+async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-3-flash-preview"):
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=503, detail="AI Service Config Missing")
 

@@ -68,7 +68,8 @@ const App: React.FC = () => {
       processWsTick,
       processTradeTick,
       processDepthUpdate,
-      refreshHeatmap
+      refreshHeatmap,
+      resetCvd
   } = useStore();
 
   const handlePeriodChange = (period: PeriodType) => {
@@ -218,6 +219,8 @@ const App: React.FC = () => {
           
           ws.onopen = () => { 
               retryCount = 0;
+              resetCvd(); // Reset CVD on reconnect to prevent double counting
+              
               // Subscribe to Channels
               const subMsg = {
                   event: "subscribe",

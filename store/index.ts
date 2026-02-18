@@ -7,17 +7,17 @@ import type {
     RecentTrade, 
     TradeSignal, 
     PriceLevel, 
-    AiScanResult,
-    ToastMessage,
-    Position,
-    DailyStats,
-    BiasMatrixState,
-    LiquidityState,
-    RegimeState,
-    AiTacticalState,
-    ExpectedValueData,
-    TimeframeData,
-    HeatmapItem
+    AiScanResult, 
+    ToastMessage, 
+    Position, 
+    DailyStats, 
+    BiasMatrixState, 
+    LiquidityState, 
+    RegimeState, 
+    AiTacticalState, 
+    ExpectedValueData, 
+    TimeframeData, 
+    HeatmapItem 
 } from '../types';
 import { 
     auth, 
@@ -47,10 +47,10 @@ type User = firebaseAuth.User;
 
 import { 
     calculateZScoreBands, 
-    analyzeRegime,
-    calculateRSI,
-    calculateSkewness,
-    calculateKurtosis
+    analyzeRegime, 
+    calculateRSI, 
+    calculateSkewness, 
+    calculateKurtosis 
 } from '../utils/analytics';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 
@@ -163,6 +163,7 @@ interface StoreState {
     addNotification: (toast: ToastMessage) => void;
     removeNotification: (id: string) => void;
     logAlert: (alert: any) => Promise<void>;
+    resetCvd: () => void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -1065,5 +1066,7 @@ export const useStore = create<StoreState>((set, get) => ({
         if (typeof localStorage !== 'undefined') {
             localStorage.setItem('quant-desk-alerts', JSON.stringify(updatedLogs));
         }
-    }
+    },
+
+    resetCvd: () => set({ cvdRunning: 0 })
 }));
