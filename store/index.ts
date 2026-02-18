@@ -660,7 +660,7 @@ export const useStore = create<StoreState>((set, get) => ({
         // Add current trade to buffer - Map 'size' from RecentTrade to 'volume' for buffer
         const newTradeForBuffer = {
             price: trade.price,
-            volume: trade.size,
+            volume: trade.size, // MAP SIZE TO VOLUME TO FIX TYPE ERROR
             side: trade.side,
             timestamp: now
         };

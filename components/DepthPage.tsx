@@ -41,9 +41,9 @@ const DepthRow: React.FC<{ level: OrderBookLevel; type: 'BID' | 'ASK'; maxVol: n
             relative flex items-center justify-between py-1 px-3 font-mono text-xs border-y border-transparent transition-colors group
             ${isWall 
                 ? (isBid 
-                    ? 'bg-emerald-500/10 border-emerald-500/30 my-0.5 shadow-[inset_0_0_15px_rgba(16,185,129,0.1)]' 
-                    : 'bg-rose-500/10 border-rose-500/30 my-0.5 shadow-[inset_0_0_15px_rgba(244,63,94,0.1)]')
-                : 'hover:bg-white/5'
+                    ? 'bg-emerald-500/10 border-y border-emerald-500/30 my-0.5 shadow-[inset_0_0_15px_rgba(16,185,129,0.1)] border-r-4 border-r-emerald-500' 
+                    : 'bg-rose-500/10 border-y border-rose-500/30 my-0.5 shadow-[inset_0_0_15px_rgba(244,63,94,0.1)] border-l-4 border-l-rose-500')
+                : 'hover:bg-white/5 border-x-4 border-x-transparent'
             }
         `}>
             {/* Background Depth Bar */}

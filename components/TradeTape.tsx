@@ -22,7 +22,9 @@ const TradeRow: React.FC<{ trade: RecentTrade }> = ({ trade }) => {
             exit={{ opacity: 0 }}
             className={`
                 flex items-center justify-between py-1.5 px-3 border-b border-white/5 text-xs font-mono
-                ${isWhale ? 'bg-amber-500/10' : 'hover:bg-white/5'}
+                ${isWhale 
+                    ? 'bg-amber-500/10 border-l-2 border-l-amber-500 shadow-[inset_10px_0_20px_-10px_rgba(245,158,11,0.2)]' 
+                    : 'hover:bg-white/5 border-l-2 border-l-transparent'}
             `}
         >
             <div className="flex items-center gap-2 w-1/3">
