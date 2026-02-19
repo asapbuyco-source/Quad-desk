@@ -1,61 +1,43 @@
-import { CandleData, MarketRegimeType, SweepEvent, BreakOfStructure, FairValueGap } from '../types';
+import { CandleData, MarketRegimeType } from '../types';
 
 export const generateMockCandles = (count: number, startPrice: number = 65000, intervalSeconds: number = 60): CandleData[] => {
-    // Legacy mock function - kept for fallback/testing
     let currentPrice = startPrice;
     const now = Math.floor(Date.now() / 1000);
     let currentTime = now - (count * intervalSeconds);
     const candles: CandleData[] = [];
-    
+    const trend = (Math.random() - 0.5) * 0.0001; 
+
     for (let i = 0; i < count; i++) {
         const time = currentTime + (i * intervalSeconds);
-        const change = (Math.random() - 0.5) * currentPrice * 0.002;
+        const volatility = currentPrice * 0.0015;
+        const change = ((Math.random() - 0.5) * volatility) + (currentPrice * trend);
         const open = currentPrice;
         const close = currentPrice + change;
-        const high = Math.max(open, close) + Math.random() * 10;
-        const low = Math.min(open, close) - Math.random() * 10;
-        
+        const high = Math.max(open, close) + (Math.random() * volatility * 0.5);
+        const low = Math.min(open, close) - (Math.random() * volatility * 0.5);
+        const volume = Math.random() * 50 + 20;
+        const mean = close;
+        const std = close * 0.005;
+
         candles.push({
-            time, open, high, low, close, volume: 100 + Math.random() * 500,
-            zScoreUpper1: 0, zScoreLower1: 0, zScoreUpper2: 0, zScoreLower2: 0,
-            adx: 25, delta: 0, cvd: 0
+            time,
+            open, high, low, close, volume,
+            zScoreUpper1: mean + std,
+            zScoreLower1: mean - std,
+            zScoreUpper2: mean + (std * 2),
+            zScoreLower2: mean - (std * 2),
+            adx: Math.random() * 40 + 10,
+            delta: (Math.random() - 0.5) * volume * 0.4,
+            cvd: 0 
         });
         currentPrice = close;
     }
-    return candles;
-};
-
-// --- Mathematical Indicators ---
-
-export const calculateBollingerBands = (data: CandleData[], period = 20, multiplier1 = 1.0, multiplier2 = 2.0): CandleData[] => {
-    if (data.length < period) return data;
-
-    const result = [...data];
     
-    for (let i = 0; i < data.length; i++) {
-        if (i < period - 1) {
-            // Not enough data yet
-            result[i].zScoreUpper1 = data[i].close;
-            result[i].zScoreLower1 = data[i].close;
-            result[i].zScoreUpper2 = data[i].close;
-            result[i].zScoreLower2 = data[i].close;
-            continue;
-        }
-
-        const slice = data.slice(i - period + 1, i + 1);
-        const closes = slice.map(c => c.close);
-        const mean = closes.reduce((acc, val) => acc + val, 0) / period;
-        
-        const squaredDiffs = closes.map(c => Math.pow(c - mean, 2));
-        const variance = squaredDiffs.reduce((acc, val) => acc + val, 0) / period;
-        const stdDev = Math.sqrt(variance);
-
-        result[i].zScoreUpper1 = mean + (stdDev * multiplier1);
-        result[i].zScoreLower1 = mean - (stdDev * multiplier1);
-        result[i].zScoreUpper2 = mean + (stdDev * multiplier2);
-        result[i].zScoreLower2 = mean - (stdDev * multiplier2);
-    }
-    return result;
+    let cvd = 0;
+    return candles.map(c => {
+        cvd += c.delta || 0;
+        return { ...c, cvd };
+    });
 };
 
 export const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
@@ -117,8 +99,8 @@ export const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
 };
 
 export const calculateRSI = (prices: number[], period = 14): number => {
-    if (prices.length < period + 1) return 50; // Fallback
-    
+    if (prices.length < period + 1) return 50;
+    const epsilon = 0.0000001; // Precision safety
     let gains = 0, losses = 0;
 
     for (let i = 1; i <= period; i++) {
@@ -137,7 +119,7 @@ export const calculateRSI = (prices: number[], period = 14): number => {
         avgLoss = (avgLoss * (period - 1) + l) / period;
     }
 
-    if (avgLoss === 0) return 100;
+    if (avgLoss <= epsilon) return 100;
     const rs = avgGain / avgLoss;
     return 100 - (100 / (1 + rs));
 };
@@ -155,107 +137,15 @@ export const calculateATR = (candles: CandleData[], period = 14): number => {
     return atr;
 };
 
-// --- Liquidity Logic ---
+interface RegimeAnalysisResult {
+    type: MarketRegimeType;
+    atr: number;
+    rangeSize: number;
+    trendDirection: "BULL" | "BEAR" | "NEUTRAL";
+    volatilityPercentile: number;
+}
 
-export const analyzeLiquidity = (candles: CandleData[]) => {
-    const sweeps: SweepEvent[] = [];
-    const bos: BreakOfStructure[] = [];
-    const fvg: FairValueGap[] = [];
-    
-    if (candles.length < 50) return { sweeps, bos, fvg };
-
-    // 1. Detect Local Pivots (Highs/Lows) with lookback 5
-    const lookback = 5;
-    const pivots: { index: number, price: number, type: 'HIGH' | 'LOW' }[] = [];
-
-    for (let i = lookback; i < candles.length - lookback; i++) {
-        const current = candles[i];
-        let isHigh = true;
-        let isLow = true;
-
-        for (let j = 1; j <= lookback; j++) {
-            if (candles[i-j].high > current.high || candles[i+j].high > current.high) isHigh = false;
-            if (candles[i-j].low < current.low || candles[i+j].low < current.low) isLow = false;
-        }
-
-        if (isHigh) pivots.push({ index: i, price: current.high, type: 'HIGH' });
-        if (isLow) pivots.push({ index: i, price: current.low, type: 'LOW' });
-    }
-
-    // 2. Detect Sweeps and BOS based on Pivots
-    // Scan recent candles (last 20) against prior pivots
-    const recentStart = candles.length - 20;
-    for (let i = recentStart; i < candles.length; i++) {
-        const c = candles[i];
-        
-        // Check against past pivots
-        pivots.forEach(p => {
-            if (p.index >= i) return; // Ignore future/current pivots
-
-            // Sweep High Logic: Price breaks High but closes below it
-            if (p.type === 'HIGH') {
-                if (c.high > p.price && c.close < p.price) {
-                    sweeps.push({ 
-                        id: `sw-h-${i}`, price: p.price, side: 'BUY', timestamp: i, candleTime: c.time 
-                    });
-                }
-                // BOS Bullish Logic: Price breaks High and closes above it
-                else if (c.close > p.price && c.open < p.price) { // simplified crossover check
-                     bos.push({ 
-                         id: `bos-h-${i}`, price: p.price, direction: 'BULLISH', timestamp: i, candleTime: c.time 
-                     });
-                }
-            }
-
-            // Sweep Low Logic: Price breaks Low but closes above it
-            if (p.type === 'LOW') {
-                if (c.low < p.price && c.close > p.price) {
-                    sweeps.push({ 
-                        id: `sw-l-${i}`, price: p.price, side: 'SELL', timestamp: i, candleTime: c.time 
-                    });
-                }
-                // BOS Bearish
-                else if (c.close < p.price && c.open > p.price) {
-                    bos.push({ 
-                        id: `bos-l-${i}`, price: p.price, direction: 'BEARISH', timestamp: i, candleTime: c.time 
-                    });
-                }
-            }
-        });
-    }
-
-    // 3. Detect FVGs (Last 50 candles)
-    for (let i = candles.length - 50; i < candles.length - 1; i++) {
-        if (i < 2) continue;
-        const prev = candles[i-1];
-        const next = candles[i+1];
-        const curr = candles[i];
-
-        // Bullish FVG: prev.high < next.low
-        if (prev.high < next.low) {
-            fvg.push({
-                id: `fvg-bull-${i}`, startPrice: prev.high, endPrice: next.low, direction: 'BULLISH', 
-                resolved: curr.low <= prev.high, timestamp: i, candleTime: curr.time
-            });
-        }
-        // Bearish FVG: prev.low > next.high
-        if (prev.low > next.high) {
-            fvg.push({
-                id: `fvg-bear-${i}`, startPrice: prev.low, endPrice: next.high, direction: 'BEARISH', 
-                resolved: curr.high >= prev.low, timestamp: i, candleTime: curr.time
-            });
-        }
-    }
-
-    // Filter duplicates and return distinct events (latest first)
-    return {
-        sweeps: sweeps.reverse().slice(0, 10),
-        bos: bos.reverse().slice(0, 10),
-        fvg: fvg.reverse().slice(0, 10)
-    };
-};
-
-export const analyzeRegime = (candles: CandleData[]) => {
+export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
     if (candles.length < 50) return { type: 'UNCERTAIN', atr: 0, rangeSize: 0, trendDirection: 'NEUTRAL', volatilityPercentile: 0 };
     const currentATR = calculateATR(candles, 14);
     const longTermATR = calculateATR(candles, 50);

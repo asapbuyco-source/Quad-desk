@@ -1,4 +1,5 @@
-import React from 'react';
+
+import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Target, Shield, Crosshair, CheckCircle2, XCircle, BrainCircuit, RefreshCw, ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
@@ -25,7 +26,11 @@ const AITacticalPage: React.FC = () => {
     const { aiTactical, refreshTacticalAnalysis } = useStore();
     const { probability, scenario, entryLevel, stopLevel, exitLevel, confidenceFactors, lastUpdated, symbol } = aiTactical;
 
-    // Manual refresh is available via button. Analysis handled globally.
+    useEffect(() => {
+        refreshTacticalAnalysis();
+        const interval = setInterval(refreshTacticalAnalysis, 5000); // 5s refresh for tactical
+        return () => clearInterval(interval);
+    }, []);
 
     // Visual Config
     let color = 'text-zinc-400';
