@@ -545,7 +545,6 @@ export const useStore = create<AppState>((set, get) => ({
       };
   }),
   refreshTacticalAnalysis: () => set(state => {
-       const bias = state.biasMatrix.h1?.bias || 'NEUTRAL';
        const matrix = state.biasMatrix;
        const regimeType = state.regime.regimeType;
        const trendDir = state.regime.trendDirection;
