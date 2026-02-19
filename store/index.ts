@@ -3,7 +3,7 @@ import {
   MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel, 
   AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState, 
   LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-  BiasType, RegimeType
+  BiasType, RegimeType, MarketRegimeType
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI, calculateBollingerBands, analyzeLiquidity } from '../utils/analytics';
@@ -560,7 +560,7 @@ export const useStore = create<AppState>((set, get) => ({
       // Execute actual liquidity analysis from utils
       const { candles } = get().market;
       const { sweeps, bos, fvg } = analyzeLiquidity(candles);
-      set(state => ({ 
+      set(() => ({ 
           liquidity: { 
               sweeps, 
               bos, 
@@ -576,7 +576,7 @@ export const useStore = create<AppState>((set, get) => ({
       return {
           regime: {
               ...state.regime,
-              regimeType: analysis.type,
+              regimeType: analysis.type as MarketRegimeType,
               trendDirection: analysis.trendDirection,
               atr: analysis.atr,
               rangeSize: analysis.rangeSize,
