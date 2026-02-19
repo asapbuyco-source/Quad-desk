@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Target, Shield, Crosshair, CheckCircle2, XCircle, BrainCircuit, RefreshCw, ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';

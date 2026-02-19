@@ -75,20 +75,6 @@ state = {
     }
 }
 
-VALID_AI_MODELS = [
-    "gemini-2.0-flash-exp",
-    "gemini-3-flash-preview",
-    "gemini-3-pro-preview",
-    "gemini-1.5-flash", # Keeping as fallback
-    "gemini-1.5-pro"
-]
-
-def sanitize_model(model_name: str) -> str:
-    """Safeguard against invalid or legacy model names from frontend."""
-    if model_name in VALID_AI_MODELS:
-        return model_name
-    return "gemini-3-flash-preview"
-
 # --- Pydantic Models ---
 
 class AlertSnapshot(BaseModel):
@@ -150,9 +136,8 @@ class AlertConfigPayload(BaseModel):
 # --- Helper Functions ---
 
 async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
-    """Fetches historical k-lines from Binance US REST API (US Compliant)."""
-    # SWITCHED TO BINANCE.US TO FIX 451 ERRORS
-    url = "https://api.binance.us/api/v3/klines"
+    """Fetches historical k-lines from Binance REST API."""
+    url = "https://api.binance.com/api/v3/klines"
     params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
     async with httpx.AsyncClient() as client:
         try:
@@ -181,7 +166,7 @@ async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
-    logger.info("🚀 Quant Desk Backend Active (Region: US-West).")
+    logger.info("🚀 Quant Desk Backend Active.")
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -224,7 +209,7 @@ async def get_heatmap():
     return results
 
 @app.get("/analyze")
-async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-3-flash-preview"):
+async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-1.5-flash"):
     klines = await fetch_binance_candles(symbol, "15m", 30)
     if not klines: raise HTTPException(status_code=502, detail="Upstream Down")
     
@@ -250,8 +235,7 @@ async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), 
 
     try:
         # Use valid model name
-        safe_model = sanitize_model(model)
-        gen_model = genai.GenerativeModel(safe_model)
+        gen_model = genai.GenerativeModel(model if "gemini" in model else "gemini-1.5-flash")
         response = await gen_model.generate_content_async(prompt)
         text = response.text.replace('```json', '').replace('```', '').strip()
         # Clean potential markdown wrapping
@@ -271,7 +255,7 @@ async def analyze_order_flow(req: AnalysisRequest):
         return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.5, "flow_type": "NEUTRAL"}
     prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output only: {{verdict:str, confidence:num, explanation:str, flow_type:str}}"
     try:
-        model = genai.GenerativeModel("gemini-3-flash-preview")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = await model.generate_content_async(prompt)
         text = response.text.replace('```json', '').replace('```', '').strip()
         if "{" in text:
@@ -281,7 +265,7 @@ async def analyze_order_flow(req: AnalysisRequest):
         return {"verdict": "NEUTRAL", "explanation": "Synthesis failed.", "confidence": 0, "flow_type": "Unknown"}
 
 @app.get("/market-intelligence")
-async def get_market_intel(model: str = "gemini-3-flash-preview"):
+async def get_market_intel(model: str = "gemini-1.5-flash"):
     now = datetime.now().timestamp() * 1000
     cache = state["market_intel_cache"]
     if cache["data"] and (now - cache["timestamp"] < 600000): return cache["data"]
@@ -302,8 +286,7 @@ async def get_market_intel(model: str = "gemini-3-flash-preview"):
         headlines = "\n".join([f"- {a['title']}" for a in articles])
         prompt = f"Read: {headlines}\nOutput JSON only: {{main_narrative:str, whale_impact:High|Medium|Low, ai_sentiment_score:num}}"
         try:
-            safe_model = sanitize_model(model)
-            gen_model = genai.GenerativeModel(safe_model)
+            gen_model = genai.GenerativeModel(model)
             resp = await gen_model.generate_content_async(prompt)
             text = resp.text.replace('```json', '').replace('```', '').strip()
             if "{" in text:

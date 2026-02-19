@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { User, LogOut, X, BrainCircuit, Cpu, MessageSquare, Save, Lock, History, Send, Loader } from 'lucide-react';
@@ -7,9 +8,9 @@ import { API_BASE_URL } from '../constants';
 const motion = m as any;
 
 const AI_MODELS = [
-    { id: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash', desc: 'Efficient & Multimodal' },
-    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', desc: 'Next-Gen Speed (Preview)' },
-    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'Advanced Reasoning (Preview)' },
+    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'High Reasoning (Complex Tasks)' },
+    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', desc: 'Low Latency (Fast)' },
+    { id: 'gemini-flash-latest', label: 'Gemini Flash', desc: 'Standard Flash' },
 ];
 
 const ProfileOverlay: React.FC = () => {

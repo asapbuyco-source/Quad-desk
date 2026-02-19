@@ -3,7 +3,7 @@ import {
   MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel, 
   AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState, 
   LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-  BiasType, RegimeType, MarketRegimeType
+  BiasType
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI, calculateBollingerBands, analyzeLiquidity } from '../utils/analytics';
@@ -132,7 +132,7 @@ export const useStore = create<AppState>((set, get) => ({
     isBacktest: false,
     playbackSpeed: 1,
     backtestDate: new Date().toISOString().split('T')[0],
-    aiModel: 'gemini-3-flash-preview',
+    aiModel: 'gemini-1.5-flash',
     telegramBotToken: '',
     telegramChatId: '',
   },
@@ -349,6 +349,9 @@ export const useStore = create<AppState>((set, get) => ({
         divergence = 'BEARISH_DISTRIBUTION';
     }
 
+    // Calc Z-Score for Metrics (Price deviation from Mean)
+    const zScore = (tick.c - newCandles[newCandles.length-1].zScoreUpper1 + newCandles[newCandles.length-1].zScoreLower1) / 2; // Rough approx or use actual band diff
+
     return { 
         cvdBaseline: newCvdBaseline,
         market: { 
@@ -560,7 +563,7 @@ export const useStore = create<AppState>((set, get) => ({
       // Execute actual liquidity analysis from utils
       const { candles } = get().market;
       const { sweeps, bos, fvg } = analyzeLiquidity(candles);
-      set(() => ({ 
+      set(state => ({ 
           liquidity: { 
               sweeps, 
               bos, 
@@ -576,14 +579,14 @@ export const useStore = create<AppState>((set, get) => ({
       return {
           regime: {
               ...state.regime,
-              regimeType: analysis.type as MarketRegimeType,
-              trendDirection: analysis.trendDirection as "BULL" | "BEAR" | "NEUTRAL",
+              regimeType: analysis.type,
+              trendDirection: analysis.trendDirection,
               atr: analysis.atr,
               rangeSize: analysis.rangeSize,
               volatilityPercentile: analysis.volatilityPercentile,
               lastUpdated: Date.now()
           },
-          market: { ...state.market, metrics: { ...state.market.metrics, regime: analysis.type as RegimeType } }
+          market: { ...state.market, metrics: { ...state.market.metrics, regime: analysis.type } }
       };
   }),
   refreshTacticalAnalysis: () => set(state => {
