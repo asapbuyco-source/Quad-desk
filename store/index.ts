@@ -239,13 +239,10 @@ export const useStore = create<AppState>((set, get) => ({
             metrics: { ...state.market.metrics, institutionalCVD: initialCVD }
         }
     }));
-    // Trigger bias update on history load
     get().refreshBiasMatrix();
   },
 
-  setMarketBands: (_bands) => {
-    // Hooks into analytics internally
-  },
+  setMarketBands: (_bands) => {},
 
   processWsTick: (tick, realDelta = 0) => set(state => {
     const candles = [...state.market.candles];
@@ -253,12 +250,13 @@ export const useStore = create<AppState>((set, get) => ({
 
     const last = candles[candles.length - 1];
     let newCandles = candles;
-    let newBaseline = state.cvdBaseline;
     
+    // Binance 't' is start time in ms. System expects time in seconds.
     const tickTimeSec = Math.floor(tick.t / 1000);
     
     if (tickTimeSec === last.time) {
-        const updatedCvd = newBaseline + realDelta;
+        // Update current candle
+        const updatedCvd = state.cvdBaseline + realDelta;
         newCandles[newCandles.length - 1] = {
             ...last,
             close: tick.c,
@@ -269,8 +267,10 @@ export const useStore = create<AppState>((set, get) => ({
             cvd: updatedCvd 
         };
     } else if (tickTimeSec > last.time) {
-        newBaseline = state.cvdBaseline + (last.delta || 0);
-        const newCvd = newBaseline + realDelta;
+        // New candle started
+        // Baseline for next candle includes the final delta of the closed one
+        const updatedBaseline = state.cvdBaseline + (last.delta || 0);
+        const newCvd = updatedBaseline + realDelta;
 
         const newCandle: CandleData = {
             time: tickTimeSec,
@@ -279,7 +279,7 @@ export const useStore = create<AppState>((set, get) => ({
             low: tick.l,
             close: tick.c,
             volume: tick.v,
-            zScoreUpper1: last.zScoreUpper1,
+            zScoreUpper1: last.zScoreUpper1, // Indicators will be recalculated in analysis loop
             zScoreLower1: last.zScoreLower1,
             zScoreUpper2: last.zScoreUpper2,
             zScoreLower2: last.zScoreLower2,
@@ -288,17 +288,23 @@ export const useStore = create<AppState>((set, get) => ({
             delta: realDelta
         };
         newCandles = [...candles.slice(1), newCandle];
+        
+        return { 
+            cvdBaseline: updatedBaseline,
+            market: { 
+                ...state.market, 
+                candles: newCandles,
+                metrics: { ...state.market.metrics, price: tick.c, institutionalCVD: newCvd }
+            } 
+        };
     }
     
-    const metrics = {
-        ...state.market.metrics,
-        price: tick.c,
-        institutionalCVD: newBaseline + realDelta
-    };
-
     return { 
-        cvdBaseline: newBaseline,
-        market: { ...state.market, candles: newCandles, metrics } 
+        market: { 
+            ...state.market, 
+            candles: newCandles,
+            metrics: { ...state.market.metrics, price: tick.c, institutionalCVD: state.cvdBaseline + realDelta }
+        } 
     };
   }),
 
@@ -427,8 +433,6 @@ export const useStore = create<AppState>((set, get) => ({
 
   refreshBiasMatrix: async () => {
       set(state => ({ biasMatrix: { ...state.biasMatrix, isLoading: true } }));
-      
-      // Calculate dynamic bias based on current candles
       const candles = get().market.candles;
       
       const calculateBiasForWindow = (windowSize: number): TimeframeData => {
@@ -446,22 +450,15 @@ export const useStore = create<AppState>((set, get) => ({
           return { bias, sparkline: closes.slice(-20), lastUpdated: Date.now() };
       };
 
-      // In a real app, these would fetch from different aggregations. 
-      // Here we derive them from the available minute candles for visualization.
-      const m5 = calculateBiasForWindow(15); 
-      const h1 = calculateBiasForWindow(30);
-      const h4 = calculateBiasForWindow(45);
-      const daily = calculateBiasForWindow(60);
-
       set(state => ({
           biasMatrix: {
               ...state.biasMatrix,
               isLoading: false,
               lastUpdated: Date.now(),
-              daily,
-              h4,
-              h1,
-              m5,
+              daily: calculateBiasForWindow(60),
+              h4: calculateBiasForWindow(45),
+              h1: calculateBiasForWindow(30),
+              m5: calculateBiasForWindow(15),
           }
       }));
   },

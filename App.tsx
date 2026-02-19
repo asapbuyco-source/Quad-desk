@@ -10,7 +10,7 @@ import BiasMatrixView from './components/BiasMatrixView';
 import LiquidityPage from './components/LiquidityPage';
 import RegimePage from './components/RegimePage';
 import AITacticalPage from './components/AITacticalPage';
-import DepthPage from './components/DepthPage'; // Import DepthPage
+import DepthPage from './components/DepthPage';
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl'; 
@@ -24,7 +24,6 @@ import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX } from './utils/analytics'; 
-import { toKrakenSymbol, getIntervalMs } from './utils/symbolMapping';
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -43,18 +42,11 @@ const App: React.FC = () => {
   const [connectionErrorMessage, setConnectionErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
-  // Local Order Book Buffer for Kraken Incremental Updates
-  const orderBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
-  // Ref to store the LAST DISPATCHED book for delta calculation
+  // Ref for last dispatched book for delta calculation
   const lastDispatchedBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
   
-  // Issue #3: Candle Aggregation Refs
-  const candleOpenRef = useRef<number | null>(null);
-  const candleHighRef = useRef<number | null>(null);
-  const candleLowRef = useRef<number | null>(null);
-  const candleVolumeRef = useRef<number>(0);
-  const candleDeltaRef = useRef<number>(0); // NEW: Track real-time delta
-  const lastCandleTimeRef = useRef<number>(0);
+  // Real-time delta tracker
+  const candleDeltaRef = useRef<number>(0);
 
   const {
       setHasEntered,
@@ -82,7 +74,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     initSystemConfig();
-
     const unsubscribe = onAuthStateChanged(auth, (user) => {
         if (user) {
             setUser(user);
@@ -100,67 +91,39 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Issue #6: Poll Heatmap
   useEffect(() => {
       refreshHeatmap();
       const interval = setInterval(refreshHeatmap, 60000);
       return () => clearInterval(interval);
   }, [config.activeSymbol]);
 
-  // Global Analysis Loop (Regime & Tactical)
   useEffect(() => {
-      // Run immediately
       refreshRegimeAnalysis();
       refreshTacticalAnalysis();
-      
       const interval = setInterval(() => {
           refreshRegimeAnalysis();
           refreshTacticalAnalysis();
-      }, 5000); // 5 seconds
+      }, 5000);
       return () => clearInterval(interval);
-  }, [config.activeSymbol]); // Re-run if symbol changes
+  }, [config.activeSymbol]);
 
-  // REST API History Fetcher (Kraken via Backend)
+  // REST API History Fetcher (Backend -> Kraken)
   useEffect(() => {
     let retryTimer: ReturnType<typeof setTimeout>;
-
     const fetchHistory = async () => {
         try {
-            console.log(`📡 Connecting to Backend: ${API_BASE_URL}`);
+            console.log(`📡 Fetching History Context: ${config.activeSymbol}`);
             setConnectionErrorMessage('');
-            
-            // Backend maps symbol/interval to Kraken format
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
-            
-            if (res.status === 502 || res.status === 503) {
-                throw new Error(`Backend Unavailable (HTTP ${res.status})`);
-            }
-
-            const contentType = res.headers.get("content-type");
-            if (contentType && contentType.includes("text/html")) {
-                throw new Error("Invalid API Response (Received HTML, likely error page)");
-            }
-
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
-            
             const data = await res.json();
-            
             if (data.error) throw new Error(data.error);
-            if (!Array.isArray(data)) throw new Error("Invalid data format received");
-
-            setConnectionError(false);
-            setConnectionErrorMessage('');
             
             let runningCVD = 0;
-            // Removed localStorage cachedCVD priority to fix drift; rely on calculation from history data or 0
-            
-            // Data comes as [time, open, high, low, close, volume]
             const formattedCandles: CandleData[] = data.map((k: any) => {
                 const vol = parseFloat(k[5]);
-                // Estimate historical delta since we don't have tick data
-                const delta = ((parseFloat(k[4]) - parseFloat(k[1])) / (parseFloat(k[2]) - parseFloat(k[3]) || 1)) * vol * 0.5; // Damped estimation
+                const delta = ((parseFloat(k[4]) - parseFloat(k[1])) / (parseFloat(k[2]) - parseFloat(k[3]) || 1)) * vol * 0.5;
                 runningCVD += delta;
-
                 return {
                     time: k[0] / 1000,
                     open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]), volume: vol,
@@ -174,201 +137,108 @@ const App: React.FC = () => {
             
             const candlesWithADX = calculateADX(formattedCandles, 14);
             setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
-            
-            // Reset aggregation refs on new history load
-            candleOpenRef.current = null;
-            candleHighRef.current = null;
-            candleLowRef.current = null;
-            candleVolumeRef.current = 0;
             candleDeltaRef.current = 0;
-            
             setIsLoading(false);
-
+            setConnectionError(false);
         } catch (e: any) {
             console.error(`History Fetch Failed: ${e.message}`);
-            
             setConnectionError(true);
             setConnectionErrorMessage(e.message || "Unknown Connection Error");
             setIsLoading(true);
             retryTimer = setTimeout(fetchHistory, 3000);
         }
     };
-
     setIsLoading(true);
     fetchHistory();
-
     return () => clearTimeout(retryTimer);
   }, [config.interval, config.activeSymbol]);
 
-  // Bands Fetcher
-  useEffect(() => {
-      const fetchBands = async () => {
-          if (connectionError) return;
-          try {
-              const res = await fetch(`${API_BASE_URL}/bands?symbol=${config.activeSymbol}`);
-              if (res.ok) {
-                   const data = await res.json();
-                   if (!data.error) setMarketBands(data);
-              }
-          } catch(e) {
-              // Silent fail
-          }
-      };
-      fetchBands();
-      const i = setInterval(fetchBands, 60000);
-      return () => clearInterval(i);
-  }, [config.activeSymbol, connectionError]);
-
-  // Kraken WebSocket Logic
+  // Combined Binance WebSocket Logic (High-Frequency)
   useEffect(() => {
       if (connectionError) return; 
 
       let ws: WebSocket | null = null;
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-      let depthThrottle: ReturnType<typeof setTimeout> | null = null;
       let retryCount = 0;
       const MAX_RETRIES = 5;
       
       const connect = () => {
-          // Kraken Public Websocket
-          ws = new WebSocket('wss://ws.kraken.com');
-          const krakenSymbol = toKrakenSymbol(config.activeSymbol, false); // "XBT/USDT"
+          const symbol = config.activeSymbol.toLowerCase();
+          const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
+          const interval = intervalMapping[config.interval] || '1m';
+          
+          // Combined stream for kline, trade, and depth
+          const streams = [
+              `${symbol}@kline_${interval}`,
+              `${symbol}@trade`,
+              `${symbol}@depth20@100ms`
+          ].join('/');
+          
+          ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
           
           ws.onopen = () => { 
               retryCount = 0;
-              resetCvd(); // Reset CVD on reconnect
-              
-              // Subscribe to Channels
-              const subMsg = {
-                  event: "subscribe",
-                  pair: [krakenSymbol],
-                  subscription: {} as any
-              };
-              
-              // 1. Ticker
-              ws?.send(JSON.stringify({ ...subMsg, subscription: { name: "ticker" } }));
-              // 2. Trade
-              ws?.send(JSON.stringify({ ...subMsg, subscription: { name: "trade" } }));
-              // 3. Book (Depth 25)
-              ws?.send(JSON.stringify({ ...subMsg, subscription: { name: "book", depth: 25 } }));
+              resetCvd(); 
           };
 
           ws.onmessage = (event) => {
-              const msg = JSON.parse(event.data);
-              
-              // Handle Heartbeat
-              if (msg.event === 'heartbeat' || msg.event === 'systemStatus' || msg.event === 'subscriptionStatus') {
-                  return;
+              const payload = JSON.parse(event.data);
+              const stream = payload.stream;
+              const data = payload.data;
+
+              // 1. Kline Update (Visual Chart Core)
+              if (stream.includes('@kline')) {
+                  const k = data.k;
+                  const tick = {
+                      t: k.t,
+                      o: parseFloat(k.o),
+                      h: parseFloat(k.h),
+                      l: parseFloat(k.l),
+                      c: parseFloat(k.c),
+                      v: parseFloat(k.v)
+                  };
+                  // Logic: Delta can be derived from Taker Buy Volume in Binance Klines
+                  // delta = buyVolume - (totalVolume - buyVolume) = 2 * buyVolume - totalVolume
+                  const buyVol = parseFloat(k.V);
+                  const totalVol = parseFloat(k.v);
+                  const klineDelta = (2 * buyVol) - totalVol;
+                  
+                  processWsTick(tick, klineDelta);
               }
 
-              // Kraken sends data as Array: [channelID, data, channelName, pair]
-              if (Array.isArray(msg)) {
-                  const channelName = msg[2];
-                  const data = msg[1];
+              // 2. Trade Update (Tape & Aggressive Flow)
+              else if (stream.includes('@trade')) {
+                  const trade: RecentTrade = {
+                      id: data.t.toString(),
+                      price: parseFloat(data.p),
+                      size: parseFloat(data.q),
+                      side: data.m ? 'SELL' : 'BUY', // m=true means buyer is maker (it was a sell)
+                      time: data.T,
+                      isWhale: (parseFloat(data.p) * parseFloat(data.q)) > 50000
+                  };
+                  processTradeTick(trade);
+              }
 
-                  // 1. Handle Trade -> Tape & Candle Volume
-                  if (channelName === 'trade') {
-                      // data is array of trades: [[price, vol, time, side, type, misc], ...]
-                      data.forEach((t: any) => {
-                          const price = parseFloat(t[0]);
-                          const vol = parseFloat(t[1]);
-                          const side = t[3] === 's' ? 'SELL' : 'BUY';
-                          const trade: RecentTrade = {
-                              id: `${t[2]}-${t[0]}`, // time-price as fake ID
-                              price: price,
-                              size: vol,
-                              side: side,
-                              time: parseFloat(t[2]) * 1000,
-                              isWhale: (price * vol) > 50000
-                          };
-                          processTradeTick(trade);
-                          
-                          // Issue #3: Accumulate volume for synthetic candle
-                          candleVolumeRef.current += vol;
-                          // Real-time Delta Accumulation
-                          if (side === 'BUY') candleDeltaRef.current += vol;
-                          else candleDeltaRef.current -= vol;
-                      });
-                  }
+              // 3. Depth Update (Order Book Deltas)
+              else if (stream.includes('@depth')) {
+                  const asks: OrderBookLevel[] = data.asks.map((a: any) => {
+                      const price = parseFloat(a[0]);
+                      const size = parseFloat(a[1]);
+                      const prevSize = lastDispatchedBookRef.current.asks.get(price) || size;
+                      return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
+                  });
+                  const bids: OrderBookLevel[] = data.bids.map((b: any) => {
+                      const price = parseFloat(b[0]);
+                      const size = parseFloat(b[1]);
+                      const prevSize = lastDispatchedBookRef.current.bids.get(price) || size;
+                      return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
+                  });
 
-                  // 2. Handle Ticker -> Synthetic Kline
-                  else if (channelName === 'ticker') {
-                      // data format: { c: [price, vol], ... }
-                      const price = parseFloat(data.c[0]);
-                      const time = Date.now();
-                      const intervalMs = getIntervalMs(config.interval);
-                      const startTime = Math.floor(time / intervalMs) * intervalMs;
-
-                      // Reset refs if new candle started
-                      if (startTime !== lastCandleTimeRef.current) {
-                          candleOpenRef.current = price;
-                          candleHighRef.current = price;
-                          candleLowRef.current = price;
-                          candleVolumeRef.current = 0;
-                          candleDeltaRef.current = 0; // Reset Delta for new candle
-                          lastCandleTimeRef.current = startTime;
-                      }
-
-                      // Initialize if null (e.g. first tick after load)
-                      if (candleOpenRef.current === null) candleOpenRef.current = price;
-                      
-                      // Update High/Low
-                      if (candleHighRef.current === null || price > candleHighRef.current) candleHighRef.current = price;
-                      if (candleLowRef.current === null || price < candleLowRef.current) candleLowRef.current = price;
-
-                      // Synthetic candle update
-                      const syntheticKline = {
-                          t: startTime,
-                          o: candleOpenRef.current, 
-                          h: candleHighRef.current, 
-                          l: candleLowRef.current,
-                          c: price, 
-                          v: candleVolumeRef.current 
-                      };
-                      
-                      // Pass the accumulated real delta to the store
-                      processWsTick(syntheticKline, candleDeltaRef.current);
-                  }
-
-                  // 3. Handle Book -> Depth
-                  else if (channelName.startsWith('book')) {
-                      // Snapshot: contains 'as' (asks) and 'bs' (bids)
-                      if (data.as || data.bs) {
-                          orderBookRef.current.asks.clear();
-                          orderBookRef.current.bids.clear();
-                          
-                          if (data.as) data.as.forEach((x: any) => orderBookRef.current.asks.set(parseFloat(x[0]), parseFloat(x[1])));
-                          if (data.bs) data.bs.forEach((x: any) => orderBookRef.current.bids.set(parseFloat(x[0]), parseFloat(x[1])));
-                          
-                          dispatchDepth();
-                      } 
-                      // Update: contains 'a' or 'b' or both
-                      else {
-                          if (data.a) {
-                              data.a.forEach((x: any) => {
-                                  const price = parseFloat(x[0]);
-                                  const size = parseFloat(x[1]);
-                                  if (size === 0) orderBookRef.current.asks.delete(price);
-                                  else orderBookRef.current.asks.set(price, size);
-                              });
-                          }
-                          if (data.b) {
-                              data.b.forEach((x: any) => {
-                                  const price = parseFloat(x[0]);
-                                  const size = parseFloat(x[1]);
-                                  if (size === 0) orderBookRef.current.bids.delete(price);
-                                  else orderBookRef.current.bids.set(price, size);
-                              });
-                          }
-
-                          if (!depthThrottle) {
-                              depthThrottle = setTimeout(() => {
-                                  dispatchDepth();
-                                  depthThrottle = null;
-                              }, 200);
-                          }
-                      }
-                  }
+                  // Update cache for next delta cycle
+                  data.asks.forEach((a: any) => lastDispatchedBookRef.current.asks.set(parseFloat(a[0]), parseFloat(a[1])));
+                  data.bids.forEach((b: any) => lastDispatchedBookRef.current.bids.set(parseFloat(b[0]), parseFloat(b[1])));
+                  
+                  processDepthUpdate({ asks, bids, metrics: {} });
               }
           };
           
@@ -381,54 +251,10 @@ const App: React.FC = () => {
           };
       };
 
-      const dispatchDepth = () => {
-          const rawAsks = Array.from(orderBookRef.current.asks.entries()) as [number, number][];
-          const rawBids = Array.from(orderBookRef.current.bids.entries()) as [number, number][];
-
-          // Helper to classify liquidity
-          const classifyLevels = (levels: [number, number][], isBid: boolean): OrderBookLevel[] => {
-              // Sort
-              const sorted = levels.sort((a, b) => isBid ? b[0] - a[0] : a[0] - b[0]).slice(0, 20);
-              if (sorted.length === 0) return [];
-
-              // Calculate stats for Wall detection
-              const sizes = sorted.map(l => l[1]);
-              const avgSize = sizes.reduce((a, b) => a + b, 0) / sizes.length;
-              // Wall Threshold: 2.5x Average (Heuristic)
-              const wallThreshold = avgSize * 2.5;
-
-              // Previous Map for Delta tracking
-              const prevMap = isBid ? lastDispatchedBookRef.current.bids : lastDispatchedBookRef.current.asks;
-
-              return sorted.map(([price, size]) => {
-                  const prevSize = prevMap.get(price) || size; // If new level, assume same to avoid huge spikes
-                  const delta = size - prevSize;
-                  
-                  return {
-                    price,
-                    size,
-                    total: 0, // Calculated in UI if needed
-                    delta: delta, // LIQUIDITY DELTA
-                    classification: size > wallThreshold ? 'WALL' : 'NORMAL'
-                  };
-              });
-          };
-
-          const asks = classifyLevels(rawAsks, false);
-          const bids = classifyLevels(rawBids, true);
-
-          // Update Last Dispatched for Next Cycle
-          lastDispatchedBookRef.current.asks = new Map(orderBookRef.current.asks);
-          lastDispatchedBookRef.current.bids = new Map(orderBookRef.current.bids);
-
-          processDepthUpdate({ asks, bids, metrics: {} });
-      };
-      
       connect();
       return () => {
           if (ws) ws.close();
           if (reconnectTimer) clearTimeout(reconnectTimer);
-          if (depthThrottle) clearTimeout(depthThrottle);
       };
   }, [config.interval, config.activeSymbol, connectionError]);
 
@@ -446,87 +272,28 @@ const App: React.FC = () => {
     <div className={`h-screen h-[100dvh] w-screen bg-transparent text-slate-200 font-sans overflow-hidden ${market.metrics.circuitBreakerTripped ? 'grayscale opacity-80' : ''}`}>
       <AnimatePresence mode='wait'>
         {!ui.hasEntered ? (
-            <motion.div
-                key="landing"
-                exit={{ opacity: 0, y: -50, transition: { duration: 0.5 } }}
-                className="absolute inset-0 z-50"
-            >
+            <motion.div key="landing" exit={{ opacity: 0, y: -50 }} className="absolute inset-0 z-50">
                 <LandingPage onEnter={() => setHasEntered(true)} />
             </motion.div>
         ) : !authState.user ? (
-            <motion.div
-                key="auth"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 z-50"
-            >
+            <motion.div key="auth" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-50">
                 <AuthOverlay />
             </motion.div>
         ) : isLoading ? (
-             <motion.div
-                key="loader"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#09090b]"
-            >
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.05] pointer-events-none"></div>
-                
-                <div className="relative">
-                    <Loader2 size={48} className="text-brand-accent animate-spin" />
-                    <div className="absolute inset-0 blur-xl bg-brand-accent/20 animate-pulse"></div>
-                </div>
-                
-                <div className="mt-8 text-center space-y-4 relative z-10 px-4">
-                    <div className="space-y-2">
-                        <h2 className={`text-xl font-bold tracking-widest uppercase ${connectionError ? 'text-rose-500' : 'text-white'}`}>
-                            {connectionError ? "CONNECTION LOST" : "ESTABLISHING UPLINK"}
-                        </h2>
-                        <p className="text-zinc-500 font-mono text-xs">
-                            {connectionError ? `Retrying connection to ${config.activeSymbol}...` : `Syncing market data for ${config.activeSymbol}`}
-                        </p>
-                    </div>
-
-                    {connectionError && (
-                        <motion.div 
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 max-w-xs mx-auto backdrop-blur-md"
-                        >
-                            <div className="flex items-center justify-center gap-2 text-rose-400 mb-1">
-                                {connectionErrorMessage.includes('502') ? <ServerCrash size={12} /> : <AlertTriangle size={12} />}
-                                <span className="text-[10px] font-bold uppercase">
-                                    {connectionErrorMessage.includes('502') ? 'Server Unavailable' : 'Diagnostic Info'}
-                                </span>
-                            </div>
-                            <p className="text-xs font-mono text-rose-300 break-words">
-                                {connectionErrorMessage}
-                            </p>
-                            {connectionErrorMessage.includes('Failed to fetch') && (
-                                <p className="text-[10px] text-rose-400/70 mt-2">
-                                    Is the backend running? Check port 8000.
-                                </p>
-                            )}
-                        </motion.div>
-                    )}
+             <motion.div key="loader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#09090b]">
+                <Loader2 size={48} className="text-brand-accent animate-spin" />
+                <div className="mt-8 text-center px-4">
+                    <h2 className="text-xl font-bold tracking-widest uppercase">SYNCHRONIZING CHRONOS</h2>
+                    <p className="text-zinc-500 font-mono text-xs">Uplinking to Binance & Kraken...</p>
                 </div>
             </motion.div>
         ) : (
-            <motion.div 
-                key="app"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.8 }}
-                className="flex h-full w-full"
-            >
+            <motion.div key="app" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }} className="flex h-full w-full">
                 <NavBar activeTab={ui.activeTab} setActiveTab={setActiveTab} />
                 <AdminControl />
                 <AlertEngine />
-
                 <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                     <Header />
-                    
                     <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
                         {ui.activeTab === 'dashboard' && <DashboardView />}
                         {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
@@ -539,20 +306,12 @@ const App: React.FC = () => {
                         {ui.activeTab === 'intel' && <IntelView />}
                         {ui.activeTab === 'guide' && <GuideView />}
                     </main>
-
                     {market.metrics.circuitBreakerTripped && (
                         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
-                            <motion.div 
-                                initial={{ scale: 0.9, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                className="p-10 border-2 border-red-600 bg-[#09090b] rounded-2xl text-center shadow-[0_0_100px_rgba(220,38,38,0.3)] max-w-md w-full relative overflow-hidden"
-                            >
+                            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="p-10 border-2 border-red-600 bg-[#09090b] rounded-2xl text-center shadow-[0_0_100px_rgba(220,38,38,0.3)]">
                                 <Lock size={64} className="mx-auto mb-6 text-red-600" />
-                                <h1 className="text-3xl font-black text-white mb-2 tracking-tight">CIRCUIT BREAKER</h1>
-                                <p className="text-lg text-red-500 font-mono mb-8 font-bold">DAILY LOSS LIMIT EXCEEDED</p>
-                                <button disabled className="w-full py-3 bg-zinc-800 text-zinc-500 rounded-lg font-bold text-sm cursor-not-allowed flex items-center justify-center gap-2">
-                                    <RefreshCw size={14} /> EXECUTION PAUSED
-                                </button>
+                                <h1 className="text-3xl font-black text-white mb-2 uppercase">Circuit Breaker</h1>
+                                <p className="text-lg text-red-500 font-mono mb-8 font-bold">LOSS LIMIT REACHED</p>
                             </motion.div>
                         </div>
                     )}
