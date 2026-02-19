@@ -150,8 +150,9 @@ class AlertConfigPayload(BaseModel):
 # --- Helper Functions ---
 
 async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
-    """Fetches historical k-lines from Binance REST API."""
-    url = "https://api.binance.com/api/v3/klines"
+    """Fetches historical k-lines from Binance US REST API (US Compliant)."""
+    # SWITCHED TO BINANCE.US TO FIX 451 ERRORS
+    url = "https://api.binance.us/api/v3/klines"
     params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
     async with httpx.AsyncClient() as client:
         try:
@@ -180,7 +181,7 @@ async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
-    logger.info("🚀 Quant Desk Backend Active.")
+    logger.info("🚀 Quant Desk Backend Active (Region: US-West).")
     yield
 
 app = FastAPI(lifespan=lifespan)

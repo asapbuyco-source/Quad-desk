@@ -175,7 +175,8 @@ const App: React.FC = () => {
               `${symbol}@depth20@100ms`
           ].join('/');
           
-          const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+          // SWITCHED TO BINANCE.US TO FIX 451 ERRORS
+          const ws = new WebSocket(`wss://stream.binance.us:9443/stream?streams=${streams}`);
           wsRef.current = ws;
           
           ws.onopen = () => { 
