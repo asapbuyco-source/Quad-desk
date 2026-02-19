@@ -150,7 +150,7 @@ class AlertConfigPayload(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
-    # Start the Market Data Engine (Connects to Binance US WS)
+    # Start the Market Data Engine (Connects to Binance WS)
     await market_service.start()
     yield
     # Cleanup
@@ -158,7 +158,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-origins = [FRONTEND_URL]
+origins = [
+    "http://localhost:5173", # Local Vite
+    "http://localhost:3000",
+    "http://127.0.0.1:8000",
+    FRONTEND_URL
+]
 if FRONTEND_URL == "*":
     origins = ["*"]
 
@@ -174,7 +179,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "timestamp": time.time()}
+    return {"status": "ok", "timestamp": time.time(), "market_data_initialized": market_service.initialized}
 
 @app.get("/history")
 async def get_history(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), interval: str = "1m", limit: int = 300):
@@ -303,7 +308,7 @@ def system_status():
         "threads": process.num_threads(), "autonomous_active": state["autonomous_active"], "logs": list(log_buffer)
     }
 
-# --- Alert Endpoints (Unchanged logic, just imports clean up) ---
+# --- Alert Endpoints ---
 
 @app.get("/alerts/status")
 def get_alert_status():
@@ -322,7 +327,6 @@ def configure_alerts(config: AlertConfigPayload):
 
 @app.post("/alerts/evaluate")
 async def evaluate_alerts(snapshot: AlertSnapshot):
-    # (Same alert logic as before)
     score = 0
     conditions = []
     

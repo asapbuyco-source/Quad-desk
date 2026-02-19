@@ -33,14 +33,16 @@ class MarketDataService:
         self.initialized = True
 
     async def start(self):
-        """Initializes session, performs backfill, and starts WS loop."""
+        """Initializes session and starts data ingestion tasks."""
         self.running = True
-        self.session = aiohttp.ClientSession()
+        # Set a reasonable timeout for external requests to prevent hanging
+        timeout = aiohttp.ClientTimeout(total=10)
+        self.session = aiohttp.ClientSession(timeout=timeout)
         
         logger.info(f"🚀 Starting Market Data Engine for {len(Config.SYMBOLS)} symbols")
         
-        # 1. Parallel REST Backfill
-        await self._perform_initial_backfill()
+        # 1. Start Backfill in BACKGROUND to avoid blocking server startup (Critical for Health Checks)
+        asyncio.create_task(self._perform_initial_backfill())
         
         # 2. Start Async WebSocket Loop
         self.ws_task = asyncio.create_task(self._ws_loop())
@@ -70,15 +72,18 @@ class MarketDataService:
 
     async def _perform_initial_backfill(self):
         """Fetches history for all symbols/intervals."""
+        logger.info("⏳ Starting background data backfill...")
         tasks = []
         for symbol in Config.SYMBOLS:
             for interval in Config.INTERVALS:
                 tasks.append(self._backfill_single(symbol, interval))
         
-        await asyncio.gather(*tasks)
+        # Use return_exceptions=True to prevent one failure from stopping the rest
+        await asyncio.gather(*tasks, return_exceptions=True)
         logger.info("✅ Initial Backfill Complete")
 
     async def _backfill_single(self, symbol: str, interval: str):
+        if not self.session: return
         try:
             url = f"{Config.REST_URL}/klines"
             params = {
@@ -101,9 +106,9 @@ class MarketDataService:
                     async with self.lock:
                         self.store[symbol][interval].extend(formatted)
                 else:
-                    logger.warning(f"⚠️ Backfill failed for {symbol} {interval}: {resp.status}")
+                    logger.warning(f"⚠️ Backfill failed for {symbol} {interval}: HTTP {resp.status}")
         except Exception as e:
-            logger.error(f"❌ Error backfilling {symbol} {interval}: {e}")
+            logger.error(f"❌ Error backfilling {symbol} {interval}: {str(e)}")
 
     async def _ws_loop(self):
         """Main WebSocket loop with auto-reconnect."""
@@ -118,6 +123,10 @@ class MarketDataService:
 
         while self.running:
             try:
+                if not self.session:
+                    await asyncio.sleep(1)
+                    continue
+
                 async with self.session.ws_connect(ws_url) as ws:
                     logger.info(f"⚡ WebSocket Stream Connected ({len(streams)} streams)")
                     
@@ -158,7 +167,8 @@ class MarketDataService:
         async with self.lock:
             buffer = self.store[symbol][interval]
             
-            if not buffer:
+            # Initialize buffer if empty
+            if len(buffer) == 0:
                 buffer.append(candle)
                 return
 
