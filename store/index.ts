@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { 
   MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel, 
   AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState, 
-  LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData
+  LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
+  BiasType
 } from '../types';
 import { MOCK_METRICS } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';

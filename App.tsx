@@ -19,7 +19,7 @@ import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Lock, RefreshCw, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
@@ -39,7 +39,6 @@ const App: React.FC = () => {
   const notifications = useStore(state => state.notifications);
   const [currentPeriod, setCurrentPeriod] = useState<PeriodType>('20-PERIOD');
   const [connectionError, setConnectionError] = useState<boolean>(false);
-  const [connectionErrorMessage, setConnectionErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
   const lastDispatchedBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
@@ -49,7 +48,6 @@ const App: React.FC = () => {
       setHasEntered,
       setActiveTab,
       setMarketHistory,
-      setMarketBands,
       updateAiCooldown,
       addNotification,
       removeNotification,
@@ -61,8 +59,7 @@ const App: React.FC = () => {
       processDepthUpdate,
       refreshHeatmap,
       refreshRegimeAnalysis,
-      refreshTacticalAnalysis,
-      resetCvd
+      refreshTacticalAnalysis
   } = useStore();
 
   const handlePeriodChange = (period: PeriodType) => {
@@ -108,7 +105,6 @@ const App: React.FC = () => {
     let retryTimer: ReturnType<typeof setTimeout>;
     const fetchHistory = async () => {
         try {
-            setConnectionErrorMessage('');
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             const data = await res.json();
@@ -145,7 +141,6 @@ const App: React.FC = () => {
             setConnectionError(false);
         } catch (e: any) {
             setConnectionError(true);
-            setConnectionErrorMessage(e.message || "Unknown Connection Error");
             setIsLoading(true);
             retryTimer = setTimeout(fetchHistory, 5000);
         }
