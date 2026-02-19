@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useStore } from '../store';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { ArrowDown, ArrowUp, Mountain, BoxSelect, Scale } from 'lucide-react';
+import { ArrowDown, ArrowUp, Mountain, Activity, BoxSelect, Scale } from 'lucide-react';
 import { motion as m } from 'framer-motion';
 import { OrderBookLevel } from '../types';
 
@@ -53,9 +53,11 @@ const DepthPage: React.FC = () => {
     const { asks, bids, metrics } = useStore(state => state.market);
     const { activeSymbol } = useStore(state => state.config);
 
-    const { chartData, maxVol, bidTotal, askTotal, imbalance } = useMemo(() => {
+    const { chartData, maxVol, bidTotal, askTotal, imbalance, walls } = useMemo(() => {
         const sortedBids = [...bids].sort((a, b) => b.price - a.price); 
         const sortedAsks = [...asks].sort((a, b) => a.price - b.price); 
+
+        const identifiedWalls = [...asks, ...bids].filter(l => l.classification === 'WALL');
 
         let bidAcc = 0;
         const bidPoints = sortedBids.map(b => {
@@ -79,7 +81,8 @@ const DepthPage: React.FC = () => {
             maxVol: Math.max(...bids.map(b => b.size), ...asks.map(a => a.size), 1), 
             bidTotal: bTotal, 
             askTotal: aTotal,
-            imbalance: imb 
+            imbalance: imb,
+            walls: identifiedWalls
         };
     }, [asks, bids]);
 
@@ -95,6 +98,19 @@ const DepthPage: React.FC = () => {
                         <defs><linearGradient id="colorBid" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient><linearGradient id="colorAsk" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/><stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/></linearGradient></defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} /><XAxis dataKey="price" type="number" domain={['dataMin', 'dataMax']} hide /><YAxis hide /><Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }} />
                         {metrics.price > 0 && <ReferenceLine x={metrics.price} stroke="#71717a" strokeDasharray="3 3" label={{ position: 'top', value: 'SPOT', fill: '#71717a', fontSize: 10 }} />}
+                        
+                        {/* Integrated Walls on Chart */}
+                        {walls.map((wall, i) => (
+                            <ReferenceLine 
+                                key={i} 
+                                x={wall.price} 
+                                stroke={asks.some(a => a.price === wall.price) ? '#f43f5e' : '#10b981'} 
+                                strokeWidth={2} 
+                                strokeDasharray="5 5" 
+                                opacity={0.4}
+                            />
+                        ))}
+
                         <Area type="stepAfter" dataKey="bidDepth" stroke="#10b981" fillOpacity={1} fill="url(#colorBid)" name="Bids" connectNulls /><Area type="stepBefore" dataKey="askDepth" stroke="#f43f5e" fillOpacity={1} fill="url(#colorAsk)" name="Asks" connectNulls />
                     </AreaChart>
                 </ResponsiveContainer>

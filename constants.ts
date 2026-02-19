@@ -1,55 +1,48 @@
-
 import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem, TradeSignal, PriceLevel } from './types';
 
 export const APP_NAME = "QUANT DESK";
 
-// Backend API URL
-// Logic: Check LocalStorage -> Check Env Var -> Check Localhost -> Fallback to Production
 const getApiUrl = () => {
-    let url = 'https://quant-desk-backend-production.up.railway.app'; // Default Production
-    
+    let url = 'https://quant-desk-backend-production.up.railway.app'; 
     if (typeof window !== 'undefined') {
         const stored = localStorage.getItem('VITE_API_URL');
-        
-        // 1. Priority: Local Storage Override
         if (stored && stored.startsWith('http')) {
             url = stored;
         } 
-        // 2. Priority: Environment Variable
         else if ((import.meta as any).env?.VITE_API_URL) {
             url = (import.meta as any).env.VITE_API_URL;
         } 
-        // 3. Priority: Localhost Auto-Detect (Fixes 502s locally)
         else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
              url = 'http://localhost:8000'; 
         }
     }
-    
-    // Strip trailing slash if present
     return url.replace(/\/$/, "");
 };
 
 export const API_BASE_URL = getApiUrl();
 
-console.log('🔗 API Base URL:', API_BASE_URL);
-
-// INITIAL DEFAULT STATE - All values are 0/Neutral until live data flows in.
 export const MOCK_METRICS: MarketMetrics = {
-  pair: "BTC/USDT",
+  pair: "---/---",
   price: 0,
   change: 0,
-  session: "GLOBAL",
+  session: "CONNECTING",
   safetyStatus: "INITIALIZING",
-  regime: "MEAN_REVERTING",
-  retailSentiment: 50, // Neutral 50%
-  institutionalCVD: 0, // Neutral
+  regime: "UNCERTAIN",
+  retailSentiment: 50,
+  institutionalCVD: 0,
   zScore: 0,
   toxicity: 0,
   ofi: 0,
   heatmap: [],
   bayesianPosterior: 0.5,
   skewness: 0,
-  kurtosis: 0
+  kurtosis: 0,
+  cvdContext: {
+      trend: 'FLAT',
+      divergence: 'NONE',
+      interpretation: 'NEUTRAL',
+      value: 0
+  }
 };
 
 export const CHECKLIST_ITEMS: SentinelChecklist[] = [
@@ -61,16 +54,16 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       requiredRegime: ['MEAN_REVERTING', 'HIGH_VOLATILITY'], 
       details: {
           formula: "Z = (P - μ) / σ",
-          explanation: "The Z-Score measures how many standard deviations the current price (P) is from the mean (μ). A score beyond ±2.0 indicates a statistically significant deviation.",
+          explanation: "Measures statistical deviation from the VWAP mean. Scores > ±2.0 imply extreme dislocation.",
           variables: [
               { label: "P (Price)", value: "--", unit: "USD", description: "Current execution price" },
               { label: "μ (VWAP)", value: "--", unit: "USD", description: "Volume Weighted Average Price" },
-              { label: "σ (Std Dev)", value: "--", unit: "USD", description: "Volatility of the last 20 periods" }
+              { label: "σ (Std Dev)", value: "--", unit: "USD", description: "Standard deviation of returns" }
           ],
           thresholds: {
-              pass: "|Z| > 2.0 (Significant Dislocation)",
+              pass: "|Z| > 2.0 (Significant)",
               warning: "1.5 < |Z| < 2.0 (Developing)",
-              fail: "|Z| < 1.5 (Noise / Range Bound)"
+              fail: "|Z| < 1.5 (Noise)"
           }
       }
   },
@@ -82,8 +75,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       requiredRegime: ['TRENDING'], 
       details: {
           formula: "P(A|B) = [P(B|A) * P(A)] / P(B)",
-          // Issue #11: Update description to match implementation
-          explanation: "Updates the probability of a 'Trend Continuation' based on Trend Strength and RSI divergence/confirmation.",
+          explanation: "Updates the probability of trend continuation based on momentum and volume confirmation.",
           variables: [
               { label: "P(A) Prior", value: "0.50", unit: "", description: "Initial belief" },
               { label: "Trend Strength", value: "--", unit: "", description: "Momentum Factor" },
@@ -103,16 +95,16 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       value: 'WAIT',
       details: {
           formula: "RSI(14) Proxy",
-          explanation: "Uses Relative Strength Index (RSI) as a proxy for retail sentiment. Extreme readings (>70% or <30%) often precede liquidity flushes.",
+          explanation: "Uses RSI extremes to identify retail exhaustion points before institutional sweeps.",
           variables: [
               { label: "RSI", value: "--", unit: "", description: "Momentum Oscillator" },
               { label: "Bias", value: "--", unit: "", description: "Directional Bias" },
               { label: "State", value: "Neutral", unit: "", description: "Market State" }
           ],
           thresholds: {
-              pass: "RSI < 30 (Oversold) or RSI > 70 (Overbought)",
+              pass: "RSI < 30 or RSI > 70",
               warning: "30 < RSI < 40 or 60 < RSI < 70",
-              fail: "40 < RSI < 60 (Neutral/No Edge)"
+              fail: "40 < RSI < 60 (Neutral)"
           }
       }
   },
@@ -124,7 +116,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       requiredRegime: ['HIGH_VOLATILITY', 'TRENDING'], 
       details: {
           formula: "γ = E[(X - μ)/σ]^3",
-          explanation: "Measures the asymmetry of the return distribution. Negative skew implies frequent small gains but rare, large losses (Tail Risk).",
+          explanation: "Measures asymmetry of return distribution. Negative skew identifies tail risk hazards.",
           variables: [
               { label: "Returns", value: "30", unit: "periods", description: "Sample Size" },
               { label: "Kurtosis", value: "--", unit: "", description: "Fat-tailedness" }
@@ -143,7 +135,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
       value: 'WAIT',
       details: {
           formula: "E[X] = (P_win * $Win) - (P_loss * $Loss)",
-          explanation: "Expected Value (Expectancy) of the trade setup. We require a Risk:Reward ratio where the potential upside significantly outweighs the downside.",
+          explanation: "Mathematical expectancy of the setup based on targeted risk/reward profile.",
           variables: [
               { label: "P_win", value: "--", unit: "%", description: "Estimated Win Probability" },
               { label: "$Win", value: "--", unit: "USD", description: "Potential Gain" },

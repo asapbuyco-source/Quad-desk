@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { MarketMetrics } from '../types';
 import { Activity, Skull, TrendingUp, Anchor, BarChart2, ArrowRight, TrendingDown, Waves, Zap } from 'lucide-react';
@@ -164,16 +163,14 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
   // Determine OFI State
   const ofiColor = metrics.ofi > 0 ? "text-trade-bid" : metrics.ofi < 0 ? "text-trade-ask" : "text-slate-500";
   const ofiBg = metrics.ofi > 0 ? "bg-trade-bid" : metrics.ofi < 0 ? "bg-trade-ask" : "bg-slate-500";
-  const dominanceLabel = metrics.ofi > 50 ? "Aggressive Buying" : metrics.ofi < -50 ? "Aggressive Selling" : "Balanced Flow";
+  const dominanceLabel = Math.abs(metrics.ofi) > 50 ? (metrics.ofi > 0 ? "Aggressive Buying" : "Aggressive Selling") : "Balanced Flow";
   
   let signalState = "NEUTRAL";
-  if (Math.abs(metrics.ofi) > 50) {
+  if (Math.abs(metrics.ofi) > 30) {
       if (metrics.ofi > 0) {
-          if (metrics.change > 0) signalState = "VALIDATION (BULL)";
-          else signalState = "ABSORPTION (BEAR)";
+          signalState = "VALIDATION (BULL)";
       } else {
-          if (metrics.change < 0) signalState = "VALIDATION (BEAR)";
-          else signalState = "ABSORPTION (BULL)";
+          signalState = "VALIDATION (BEAR)";
       }
   }
 
@@ -197,7 +194,7 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
             <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                     <Activity size={12} className={ofiColor} />
-                    Imbalance (OFI)
+                    Book Imbalance
                 </span>
                 <span className={`text-[10px] font-bold font-mono mt-1 ${ofiColor} bg-white/5 px-1.5 py-0.5 rounded w-fit`}>
                     {dominanceLabel}
@@ -205,10 +202,9 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
             </div>
             <div className="flex flex-col items-end">
                 <span className={`text-2xl font-mono font-bold ${ofiColor}`}>
-                    {metrics.ofi > 0 ? '+' : ''}{metrics.ofi.toFixed(0)}
+                    {metrics.ofi > 0 ? '+' : ''}{metrics.ofi.toFixed(1)}%
                 </span>
-                {/* Issue #7: Fix label to "IMBALANCE %" */}
-                <span className="text-[9px] text-slate-500 font-mono">IMBALANCE %</span>
+                <span className="text-[9px] text-slate-500 font-mono">NET PRESSURE</span>
             </div>
          </div>
          
@@ -216,7 +212,7 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
             {/* Split Bar Gauge */}
             <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden relative flex">
                  <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/20 z-20"></div>
-                 {/* Fill - Issue #7: Fix gauge calculation */}
+                 {/* Fill */}
                  <motion.div 
                     animate={{ 
                         left: metrics.ofi > 0 ? '50%' : 'auto',
@@ -239,7 +235,6 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
              </div>
              <div className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
                  signalState.includes("VALIDATION") ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400" :
-                 signalState.includes("ABSORPTION") ? "border-amber-500/20 bg-amber-500/10 text-amber-400" :
                  "border-zinc-700 bg-zinc-800 text-zinc-400"
              }`}>
                 {signalState}

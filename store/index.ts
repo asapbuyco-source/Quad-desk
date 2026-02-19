@@ -5,7 +5,7 @@ import {
   LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
   BiasType
 } from '../types';
-import { MOCK_METRICS } from '../constants';
+import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
 import { auth, googleProvider, db } from '../lib/firebase';
 import { 
@@ -252,8 +252,6 @@ export const useStore = create<AppState>((set, get) => ({
     let newCandles = candles;
     
     const tickTimeSec = Math.floor(tick.t / 1000);
-    
-    // Prevent backward updates due to network race conditions
     if (tickTimeSec < last.time) return {};
 
     if (tickTimeSec === last.time) {
@@ -288,12 +286,46 @@ export const useStore = create<AppState>((set, get) => ({
         };
         newCandles = [...candles.slice(1), newCandle];
         
+        // --- CVD Divergence Analysis ---
+        const window = newCandles.slice(-10);
+        const firstPrice = window[0].close;
+        const lastPrice = window[window.length-1].close;
+        const firstCvd = window[0].cvd || 0;
+        const lastCvd = window[window.length-1].cvd || 0;
+        
+        const priceDelta = lastPrice - firstPrice;
+        const cvdDelta = lastCvd - firstCvd;
+
+        let interpretation: any = 'NEUTRAL';
+        let divergence: any = 'NONE';
+        
+        if (priceDelta > 0 && cvdDelta > 0) interpretation = 'REAL STRENGTH';
+        else if (priceDelta < 0 && cvdDelta < 0) interpretation = 'REAL WEAKNESS';
+        else if (priceDelta <= 0 && cvdDelta > 0) {
+            interpretation = 'ABSORPTION';
+            divergence = 'BULLISH_ABSORPTION';
+        }
+        else if (priceDelta >= 0 && cvdDelta < 0) {
+            interpretation = 'DISTRIBUTION';
+            divergence = 'BEARISH_DISTRIBUTION';
+        }
+
         return { 
             cvdBaseline: updatedBaseline,
             market: { 
                 ...state.market, 
                 candles: newCandles,
-                metrics: { ...state.market.metrics, price: tick.c, institutionalCVD: newCvd }
+                metrics: { 
+                    ...state.market.metrics, 
+                    price: tick.c, 
+                    institutionalCVD: newCvd,
+                    cvdContext: {
+                        trend: cvdDelta > 0 ? 'UP' : 'DOWN',
+                        divergence,
+                        interpretation,
+                        value: (cvdDelta / (tick.v || 1)) * 100
+                    }
+                }
             } 
         };
     }
@@ -302,7 +334,7 @@ export const useStore = create<AppState>((set, get) => ({
         market: { 
             ...state.market, 
             candles: newCandles,
-            metrics: { ...state.market.metrics, price: tick.c, institutionalCVD: state.cvdBaseline + realDelta }
+            metrics: { ...state.market.metrics, price: tick.c }
         } 
     };
   }),
@@ -314,17 +346,42 @@ export const useStore = create<AppState>((set, get) => ({
       };
   }),
 
-  processDepthUpdate: ({ asks, bids }) => set(state => ({
-      market: { ...state.market, asks, bids }
-  })),
+  processDepthUpdate: ({ asks, bids }) => set(state => {
+      const bidVol = bids.reduce((acc, b) => acc + b.size, 0);
+      const askVol = asks.reduce((acc, a) => acc + a.size, 0);
+      const totalVol = bidVol + askVol;
+      const imbalance = totalVol > 0 ? ((bidVol - askVol) / totalVol) * 100 : 0;
+
+      const allLevels = [...asks, ...bids];
+      const meanSize = allLevels.length > 0 ? allLevels.reduce((acc, l) => acc + l.size, 0) / allLevels.length : 0;
+      const threshold = meanSize * 2.5;
+
+      const classify = (l: OrderBookLevel) => {
+          if (l.size > threshold) return 'WALL';
+          if (l.size < meanSize * 0.1) return 'HOLE';
+          return 'NORMAL';
+      };
+
+      return {
+          market: { 
+              ...state.market, 
+              asks: asks.map(a => ({ ...a, classification: classify(a) as any })), 
+              bids: bids.map(b => ({ ...b, classification: classify(b) as any })),
+              metrics: { ...state.market.metrics, ofi: imbalance }
+          }
+      };
+  }),
 
   refreshHeatmap: async () => {
-      const mockHeatmap = [
-          { pair: 'ETH/USDT', zScore: 1.2, price: 3200 },
-          { pair: 'SOL/USDT', zScore: -2.1, price: 145 },
-          { pair: 'BNB/USDT', zScore: 0.5, price: 590 },
-      ];
-      set(state => ({ market: { ...state.market, metrics: { ...state.market.metrics, heatmap: mockHeatmap } } }));
+      try {
+          const res = await fetch(`${API_BASE_URL}/heatmap`);
+          if (res.ok) {
+              const heatmap = await res.json();
+              set(state => ({ market: { ...state.market, metrics: { ...state.market.metrics, heatmap } } }));
+          }
+      } catch (e) {
+          console.warn("Heatmap fetch failed");
+      }
   },
 
   resetCvd: () => set(state => ({
@@ -343,31 +400,39 @@ export const useStore = create<AppState>((set, get) => ({
     } 
   })),
   updateAiCooldown: (seconds) => set(state => ({ ai: { ...state.ai, cooldownRemaining: seconds } })),
-  fetchOrderFlowAnalysis: async (_data) => {
+  
+  fetchOrderFlowAnalysis: async (payload) => {
       set(state => ({ ai: { ...state.ai, orderFlowAnalysis: { ...state.ai.orderFlowAnalysis, isLoading: true } } }));
-      setTimeout(() => {
-          set(state => ({ 
-              ai: { 
-                  ...state.ai, 
-                  orderFlowAnalysis: { 
-                      isLoading: false, 
-                      verdict: 'BULLISH', 
-                      confidence: 0.85, 
-                      explanation: 'Strong aggressive buying absorbed by passive sellers, leading to a breakout.', 
-                      flowType: 'ABSORPTION', 
-                      timestamp: Date.now() 
+      try {
+          const res = await fetch(`${API_BASE_URL}/analyze/flow`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+              const analysis = await res.json();
+              set(state => ({ 
+                  ai: { 
+                      ...state.ai, 
+                      orderFlowAnalysis: { 
+                          isLoading: false, 
+                          verdict: analysis.verdict, 
+                          confidence: analysis.confidence, 
+                          explanation: analysis.explanation, 
+                          flowType: analysis.flow_type, 
+                          timestamp: Date.now() 
+                      } 
                   } 
-              } 
-          }));
-      }, 2000);
+              }));
+          }
+      } catch (e) {
+          set(state => ({ ai: { ...state.ai, orderFlowAnalysis: { ...state.ai.orderFlowAnalysis, isLoading: false } } }));
+      }
   },
 
   setUser: (user) => set(state => ({ auth: { ...state.auth, user } })),
   signInGoogle: async () => {
-    try {
-        await signInWithPopup(auth, googleProvider);
-    } catch (e: any) {
-        console.error(e);
+    try { await signInWithPopup(auth, googleProvider); } catch (e: any) {
         get().addNotification({ id: Date.now().toString(), type: 'error', title: 'Auth Failed', message: e.message });
     }
   },
@@ -396,21 +461,12 @@ export const useStore = create<AppState>((set, get) => ({
     const stopDistance = Math.abs(entry - stop);
     const size = stopDistance > 0 ? riskAmount / stopDistance : 0;
     
-    const newPos: Position = {
+    set(state => ({ trading: { ...state.trading, activePosition: {
         id: Date.now().toString(),
         symbol: get().config.activeSymbol,
-        direction,
-        entry,
-        stop,
-        target,
-        size,
-        riskAmount,
-        isOpen: true,
-        openTime: Date.now(),
-        floatingR: 0,
-        unrealizedPnL: 0
-    };
-    set(state => ({ trading: { ...state.trading, activePosition: newPos } }));
+        direction, entry, stop, target, size, riskAmount,
+        isOpen: true, openTime: Date.now(), floatingR: 0, unrealizedPnL: 0
+    } } }));
   },
   closePosition: (price) => set(state => {
       const pos = state.trading.activePosition;
@@ -423,12 +479,7 @@ export const useStore = create<AppState>((set, get) => ({
       if (r > 0) newStats.wins++; else newStats.losses++;
       newStats.tradesToday++;
       return {
-          trading: {
-              ...state.trading,
-              activePosition: null,
-              accountSize: state.trading.accountSize + pnl,
-              dailyStats: newStats
-          }
+          trading: { ...state.trading, activePosition: null, accountSize: state.trading.accountSize + pnl, dailyStats: newStats }
       };
   }),
   setRiskPercent: (pct) => set(state => ({ trading: { ...state.trading, riskPercent: pct } })),
@@ -443,19 +494,25 @@ export const useStore = create<AppState>((set, get) => ({
           }
           const slice = candles.slice(-windowSize);
           const closes = slice.map(c => c.close);
-          const sma = closes.reduce((a, b) => a + b, 0) / windowSize;
-          const current = closes[closes.length - 1];
           const rsi = calculateRSI(closes, 14);
+          
+          // Safety: ensure SMA calculation has data
+          const sma = closes.length > 0 ? (closes.reduce((a, b) => a + b, 0) / closes.length) : 0;
+          const current = closes.length > 0 ? (closes[closes.length - 1] ?? 0) : 0;
           
           let bias: BiasType = 'NEUTRAL';
           if (current > sma && rsi > 55) bias = 'BULL';
           else if (current < sma && rsi < 45) bias = 'BEAR';
 
-          return { bias, sparkline: closes.slice(-20), lastUpdated: Date.now() };
+          return { 
+              bias, 
+              sparkline: closes.slice(-20), 
+              lastUpdated: Date.now() 
+          };
       };
 
-      set(state => ({
-          biasMatrix: {
+      set(state => {
+          const updatedBiasMatrix: BiasMatrixState = {
               ...state.biasMatrix,
               isLoading: false,
               lastUpdated: Date.now(),
@@ -463,8 +520,9 @@ export const useStore = create<AppState>((set, get) => ({
               h4: calculateBiasForWindow(45),
               h1: calculateBiasForWindow(30),
               m5: calculateBiasForWindow(15),
-          }
-      }));
+          };
+          return { biasMatrix: updatedBiasMatrix };
+      });
   },
   refreshLiquidityAnalysis: () => {
       set(state => ({ liquidity: { ...state.liquidity, lastUpdated: Date.now() } }));
@@ -486,17 +544,63 @@ export const useStore = create<AppState>((set, get) => ({
           market: { ...state.market, metrics: { ...state.market.metrics, regime: analysis.type } }
       };
   }),
-  refreshTacticalAnalysis: () => {
-       set(state => ({
+  refreshTacticalAnalysis: () => set(state => {
+       const bias = state.biasMatrix.h1?.bias || 'NEUTRAL';
+       const matrix = state.biasMatrix;
+       const regimeType = state.regime.regimeType;
+       const trendDir = state.regime.trendDirection;
+       const ofi = state.market.metrics.ofi;
+       
+       let prob = 50;
+       let scenario: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+
+       // Algorithmic Confluence Scoring
+       let bullScore = 0;
+       if (matrix.daily?.bias === 'BULL') bullScore += 10;
+       if (matrix.h4?.bias === 'BULL') bullScore += 10;
+       if (matrix.h1?.bias === 'BULL') bullScore += 10;
+       if (regimeType === 'TRENDING' && trendDir === 'BULL') bullScore += 30;
+       if (ofi > 20) bullScore += 20;
+       if (state.liquidity.sweeps.length > 0 && state.liquidity.sweeps[0].side === 'SELL') bullScore += 20;
+
+       let bearScore = 0;
+       if (matrix.daily?.bias === 'BEAR') bearScore += 10;
+       if (matrix.h4?.bias === 'BEAR') bearScore += 10;
+       if (matrix.h1?.bias === 'BEAR') bearScore += 10;
+       if (regimeType === 'TRENDING' && trendDir === 'BEAR') bearScore += 30;
+       if (ofi < -20) bearScore += 20;
+       if (state.liquidity.sweeps.length > 0 && state.liquidity.sweeps[0].side === 'BUY') bearScore += 20;
+
+       if (bullScore > bearScore) {
+           prob = 50 + (bullScore / 2);
+           scenario = 'BULLISH';
+       } else if (bearScore > bullScore) {
+           prob = 50 + (bearScore / 2);
+           scenario = 'BEARISH';
+       }
+
+       const currentPrice = state.market.metrics.price;
+       const atr = state.regime.atr || currentPrice * 0.005;
+
+       return {
            aiTactical: {
                ...state.aiTactical,
+               symbol: state.config.activeSymbol,
                lastUpdated: Date.now(),
-               probability: 65,
-               scenario: 'BULLISH',
-               confidenceFactors: { ...state.aiTactical.confidenceFactors, aiScore: 0.8 }
+               probability: Math.min(prob, 95),
+               scenario,
+               entryLevel: currentPrice,
+               stopLevel: scenario === 'BULLISH' ? currentPrice - (atr * 1.5) : currentPrice + (atr * 1.5),
+               exitLevel: scenario === 'BULLISH' ? currentPrice + (atr * 3) : currentPrice - (atr * 3),
+               confidenceFactors: { 
+                   biasAlignment: bullScore > 20 || bearScore > 20,
+                   liquidityAgreement: state.liquidity.sweeps.length > 0,
+                   regimeAgreement: regimeType === 'TRENDING',
+                   aiScore: Math.min(prob / 100, 1)
+               }
            }
-       }));
-  },
+       };
+  }),
 
   addNotification: (toast) => set(state => ({ notifications: [...state.notifications, toast] })),
   removeNotification: (id) => set(state => ({ notifications: state.notifications.filter(n => n.id !== id) })),
