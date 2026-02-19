@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Target, Shield, Crosshair, CheckCircle2, XCircle, BrainCircuit, RefreshCw, ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
@@ -25,8 +25,7 @@ const AITacticalPage: React.FC = () => {
     const { aiTactical, refreshTacticalAnalysis } = useStore();
     const { probability, scenario, entryLevel, stopLevel, exitLevel, confidenceFactors, lastUpdated, symbol } = aiTactical;
 
-    // UseEffect removed: Analysis is now handled globally in App.tsx to prevent duplication.
-    // Manual refresh is still available via button.
+    // Manual refresh is available via button. Analysis handled globally.
 
     // Visual Config
     let color = 'text-zinc-400';
