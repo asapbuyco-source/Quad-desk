@@ -19,7 +19,7 @@ import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
@@ -320,6 +320,17 @@ const App: React.FC = () => {
                 <AdminControl />
                 <AlertEngine />
                 <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+                    
+                    {/* Connection Status Banner (Fixes TS6133 Unused Variable) */}
+                    {connectionError && (
+                        <div className="bg-amber-500/10 border-b border-amber-500/20 w-full py-0.5 text-center z-50 backdrop-blur-sm">
+                            <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest flex items-center justify-center gap-2">
+                                <AlertTriangle size={10} className="fill-current" />
+                                DATA FEED DEGRADED — SIMULATION MODE ACTIVE
+                            </span>
+                        </div>
+                    )}
+
                     <Header />
                     <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
                         {ui.activeTab === 'dashboard' && <DashboardView />}
