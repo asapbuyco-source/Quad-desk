@@ -3,7 +3,7 @@
 
 **Next-gen institutional market terminal with sentinel logic and real-time order flow analytics.**
 
-The Quant Desk Terminal is a high-performance React application designed for low-latency financial visualization. It integrates real-time WebSocket data from **Binance US** with advanced AI analysis powered by Google Gemini 3.
+The Quant Desk Terminal is a high-performance React application designed for low-latency financial visualization. It integrates real-time WebSocket data from Kraken with advanced AI analysis powered by Google Gemini 3.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ graph TD
     end
     
     subgraph Data [Data Sources]
-        Binance[Binance US WebSocket]
+        Kraken[Kraken WebSocket]
         Backend[FastAPI Python Backend]
     end
     
@@ -30,23 +30,22 @@ graph TD
         Sentinel[Sentinel Logic Engine]
     end
     
-    Binance --> |Stream| WS
+    Kraken --> |Stream| WS
     WS --> State
     State --> Chart
     Hooks --> Chart
     
     Backend --> |HTTP Poll| Client
     Backend <--> Gemini
-    Backend <--> Binance
     Backend -.-> |Alerts| User
 ```
 
 ## Key Components
 
 ### `App.tsx`
-The central controller. Manages global state via `useReducer`, handles WebSocket connections to **Binance US**, and coordinates the backtesting engine.
+The central controller. Manages global state via `useReducer`, handles WebSocket connections to Kraken, and coordinates the backtesting engine.
 *   **State Management**: Monolithic reducer for atomic updates of market data.
-*   **Data Ingestion**: Direct WebSocket connection to `wss://stream.binance.us:9443`.
+*   **Data Ingestion**: Direct WebSocket connection to `wss://ws.kraken.com`.
 *   **Simulation Engine**: A robust synthetic data generator used for backtesting strategies and fallback scenarios when live feeds are interrupted.
 *   **ADX Logic**: Contains an optimized `O(N)` implementation of the Average Directional Index using Wilder's Smoothing.
 
@@ -66,7 +65,7 @@ Custom hooks for chart lifecycle management.
 
 ## API Documentation
 
-The frontend expects a backend running on `http://localhost:8000` (or production URL).
+The frontend expects a backend running on `http://localhost:8000`.
 
 ### `GET /analyze`
 Triggers a Gemini 3 Pro analysis of the current market structure based on recent candle history.
@@ -82,8 +81,9 @@ Fetches news and sentiment analysis using Gemini 3 Flash.
     *   `articles`: Array of news items.
     *   `intelligence`: Object containing `main_narrative` and `ai_sentiment_score`.
 
-### `GET /history`
-Proxies historical candle data from Binance US REST API to ensure alignment with WebSocket streams.
+### `GET /bands`
+Retrieves calculated Z-Score volatility bands based on the last 50 periods.
+*   **Response**: Object containing `upper_1`, `lower_1`, `upper_2`, `lower_2`.
 
 ## Setup
 

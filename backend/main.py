@@ -5,6 +5,7 @@ import json
 import time
 import psutil
 import numpy as np
+import httpx
 from collections import deque
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
@@ -17,7 +18,6 @@ from pydantic import BaseModel
 import google.generativeai as genai
 from dotenv import load_dotenv
 from newsapi import NewsApiClient
-from market_data import market_service  # New Import
 
 load_dotenv()
 
@@ -79,11 +79,12 @@ VALID_AI_MODELS = [
     "gemini-2.0-flash-exp",
     "gemini-3-flash-preview",
     "gemini-3-pro-preview",
-    "gemini-1.5-flash",
+    "gemini-1.5-flash", # Keeping as fallback
     "gemini-1.5-pro"
 ]
 
 def sanitize_model(model_name: str) -> str:
+    """Safeguard against invalid or legacy model names from frontend."""
     if model_name in VALID_AI_MODELS:
         return model_name
     return "gemini-3-flash-preview"
@@ -96,6 +97,7 @@ class AlertSnapshot(BaseModel):
     zScore: float
     tacticalProbability: float
     aiScore: float
+    # Flexible extra fields for frontend state snapshots
     skewness: Optional[float] = 0
     bayesianPosterior: Optional[float] = 0.5
     expectedValueRR: Optional[float] = 0
@@ -145,25 +147,46 @@ class AlertConfigPayload(BaseModel):
     telegram_bot_token: Optional[str]
     telegram_chat_id: Optional[str]
 
+# --- Helper Functions ---
+
+async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
+    """Fetches historical k-lines from Binance US REST API (US Compliant)."""
+    # SWITCHED TO BINANCE.US TO FIX 451 ERRORS
+    url = "https://api.binance.us/api/v3/klines"
+    params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, params=params, timeout=10.0)
+            resp.raise_for_status()
+            data = resp.json()
+            # Binance Format: [t, o, h, l, c, v, T, q, n, V, Q, B]
+            # Map to consistent internal format: [time_ms, open, high, low, close, volume]
+            formatted_data = []
+            for d in data:
+                formatted_data.append([
+                    int(d[0]),          # Open time
+                    float(d[1]),        # Open
+                    float(d[2]),        # High
+                    float(d[3]),        # Low
+                    float(d[4]),        # Close
+                    float(d[5])         # Volume
+                ])
+            return formatted_data
+        except Exception as e:
+            logger.error(f"Binance Fetch Error: {e}")
+            return []
+
 # --- Lifespan & App ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
-    # Start the Market Data Engine (Connects to Binance WS)
-    await market_service.start()
+    logger.info("🚀 Quant Desk Backend Active (Region: US-West).")
     yield
-    # Cleanup
-    await market_service.stop()
 
 app = FastAPI(lifespan=lifespan)
 
-origins = [
-    "http://localhost:5173", # Local Vite
-    "http://localhost:3000",
-    "http://127.0.0.1:8000",
-    FRONTEND_URL
-]
+origins = [FRONTEND_URL]
 if FRONTEND_URL == "*":
     origins = ["*"]
 
@@ -179,21 +202,19 @@ app.add_middleware(
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "timestamp": time.time(), "market_data_initialized": market_service.initialized}
+    return {"status": "ok", "timestamp": time.time()}
 
 @app.get("/history")
 async def get_history(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), interval: str = "1m", limit: int = 300):
-    # Fetch from In-Memory Store (Fast)
-    return await market_service.get_candles(symbol, interval, limit)
+    return await fetch_binance_candles(symbol, interval, limit)
 
 @app.get("/heatmap")
 async def get_heatmap():
-    # Real-time Z-Score calculation using In-Memory Data
+    # Real-time Z-Score calculation using Binance data
     pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
     results = []
     for p in pairs:
-        # Uses 1h interval for macro heatmap
-        klines = await market_service.get_candles(p, "1h", 21)
+        klines = await fetch_binance_candles(p, "1h", 21)
         if len(klines) < 21: continue
         closes = [x[4] for x in klines]
         mean = np.mean(closes[:-1])
@@ -204,15 +225,8 @@ async def get_heatmap():
 
 @app.get("/analyze")
 async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-3-flash-preview"):
-    # Uses 15m interval for AI Analysis
-    klines = await market_service.get_candles(symbol, "15m", 30)
-    
-    if not klines: 
-        # Fallback to 1m if 15m not ready yet
-        klines = await market_service.get_candles(symbol, "1m", 30)
-        
-    if not klines:
-        raise HTTPException(status_code=503, detail="Market Data Initializing")
+    klines = await fetch_binance_candles(symbol, "15m", 30)
+    if not klines: raise HTTPException(status_code=502, detail="Upstream Down")
     
     current_price = float(klines[-1][4])
     high = max([x[2] for x in klines])
@@ -235,10 +249,12 @@ async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), 
     prompt = f"HFT Algo: Analyze OHLCV for {symbol}.\n{prices_str}\nOutput JSON only: {{support:[num], resistance:[num], decision_price:num, verdict:ENTRY|EXIT|WAIT, confidence:0-1, analysis:str, risk_reward_ratio:num}}"
 
     try:
+        # Use valid model name
         safe_model = sanitize_model(model)
         gen_model = genai.GenerativeModel(safe_model)
         response = await gen_model.generate_content_async(prompt)
         text = response.text.replace('```json', '').replace('```', '').strip()
+        # Clean potential markdown wrapping
         if "{" in text:
             text = text[text.find("{"):text.rfind("}")+1]
         return json.loads(text)
@@ -273,6 +289,7 @@ async def get_market_intel(model: str = "gemini-3-flash-preview"):
     articles = []
     if newsapi:
         try:
+            # Using thread executor for blocking NewsAPI call
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(None, lambda: newsapi.get_everything(q="crypto market", language="en", sort_by="publishedAt", page_size=5))
             articles = response.get('articles', [])
@@ -321,15 +338,21 @@ def configure_alerts(config: AlertConfigPayload):
         state["alert_config"]["bot_token"] = config.telegram_bot_token
     if config.telegram_chat_id:
         state["alert_config"]["chat_id"] = config.telegram_chat_id
+    # Enable autonomous if creds present
     if state["alert_config"]["bot_token"] and state["alert_config"]["chat_id"]:
         state["autonomous_active"] = True
     return {"status": "updated", "autonomous_active": state["autonomous_active"]}
 
 @app.post("/alerts/evaluate")
 async def evaluate_alerts(snapshot: AlertSnapshot):
+    """
+    Evaluates market conditions sent by frontend to determine if an alert is needed.
+    Acts as the brain for the frontend alert loop.
+    """
     score = 0
     conditions = []
     
+    # Logic: Basic scoring engine
     if abs(snapshot.zScore) > 2.0:
         score += 2
         conditions.append(f"Z-Score Extreme: {snapshot.zScore:.2f}")
@@ -363,7 +386,6 @@ async def evaluate_alerts(snapshot: AlertSnapshot):
 
 @app.post("/alerts/send-telegram")
 async def send_telegram(payload: TelegramPayload):
-    import httpx # Local import for alert sending
     token = payload.botToken or state["alert_config"]["bot_token"]
     chat_id = payload.chatId or state["alert_config"]["chat_id"]
     
@@ -393,6 +415,7 @@ async def send_telegram(payload: TelegramPayload):
 
 @app.post("/alerts/test")
 async def test_alert(payload: TelegramPayload):
+    # Reuse send logic
     payload.reasoning = "Test Alert from Quant Desk Profile Config."
     return await send_telegram(payload)
 

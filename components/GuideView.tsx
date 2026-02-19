@@ -91,7 +91,7 @@ const GuideView: React.FC = () => {
                 title="Technical Toolkit" 
                 colorClass="border-blue-500/20 shadow-[0_0_20px_rgba(59,130,246,0.05)]"
             >
-                <p>Professional-grade visualization tools overlaid on live Binance US data.</p>
+                <p>Professional-grade visualization tools overlaid on live Binance data.</p>
                 <ul className="list-disc pl-4 space-y-1 mt-2 text-slate-500">
                     <li><strong className="text-white">AI Bands:</strong> Dynamic Z-Score volatility bands (Mean Reversion). Outer bands represent 2.5σ deviations.</li>
                     <li><strong className="text-white">ADX Trend:</strong> Real-time Average Directional Index calculation to gauge trend strength vs ranging conditions.</li>
@@ -120,7 +120,7 @@ const GuideView: React.FC = () => {
             >
                 <p>Global settings to manage the terminal environment.</p>
                 <ul className="list-disc pl-4 space-y-1 mt-2 text-slate-500">
-                    <li><strong className="text-white">Replay Mode:</strong> Toggles between Live Binance US Websocket feed and a historical simulation loop for backtesting strategies.</li>
+                    <li><strong className="text-white">Replay Mode:</strong> Toggles between Live Binance Websocket feed and a historical simulation loop for backtesting strategies.</li>
                     <li><strong className="text-white">Timeframes:</strong> Switch between 1m, 5m, 15m, 1h, 4h, 1d candles to change the scope of analysis.</li>
                 </ul>
             </GuideCard>

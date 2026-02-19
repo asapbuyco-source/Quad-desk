@@ -19,11 +19,11 @@ import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
-import { calculateADX, generateMockCandles } from './utils/analytics'; 
+import { calculateADX } from './utils/analytics'; 
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -101,22 +101,11 @@ const App: React.FC = () => {
   }, [config.activeSymbol]);
 
   useEffect(() => {
-    let isMounted = true;
+    let retryTimer: ReturnType<typeof setTimeout>;
     const fetchHistory = async () => {
-        if (!isMounted) return;
-        setIsLoading(true);
-        
         try {
-            // Timeout controller to prevent hanging requests
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 8000);
-
             // Using Binance REST via Backend proxy to align prices
-            const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-
+            const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             const data = await res.json();
             if (!Array.isArray(data)) throw new Error("Invalid history data format");
@@ -148,41 +137,23 @@ const App: React.FC = () => {
             
             // Calculate ADX once on load
             const candlesWithADX = calculateADX(formattedCandles, 14);
-            if (isMounted) {
-                setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
-                setIsLoading(false);
-                setConnectionError(false);
-            }
+            setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
+            setIsLoading(false);
+            setConnectionError(false);
         } catch (e: any) {
-            console.warn("History Fetch Error:", e);
-            
-            // FALLBACK TO SIMULATED DATA TO PREVENT INFINITE LOADING
-            if (isMounted) {
-                addNotification({
-                    id: 'history-fail',
-                    type: 'warning',
-                    title: 'Data Feed Degraded',
-                    message: 'Backend unreachable. Initializing with localized simulation data.'
-                });
-
-                const mocks = generateMockCandles(100, 95000, 60); 
-                const candlesWithADX = calculateADX(mocks, 14);
-                setMarketHistory({ candles: candlesWithADX, initialCVD: 0 });
-                
-                setConnectionError(true);
-                setIsLoading(false); // Force loading to finish
-            }
+            console.error("History Fetch Error:", e);
+            setConnectionError(true);
+            setIsLoading(true);
+            retryTimer = setTimeout(fetchHistory, 5000);
         }
     };
-
+    setIsLoading(true);
     fetchHistory();
-    
-    return () => { isMounted = false; };
+    return () => clearTimeout(retryTimer);
   }, [config.interval, config.activeSymbol]);
 
   useEffect(() => {
-      // Allow connection even if there was an initial error, as WS might still work
-      if (isLoading) return; 
+      if (connectionError || isLoading) return; 
 
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
       let retryCount = 0;
@@ -283,7 +254,7 @@ const App: React.FC = () => {
           if (wsRef.current) wsRef.current.close();
           if (reconnectTimer) clearTimeout(reconnectTimer);
       };
-  }, [config.interval, config.activeSymbol, isLoading]);
+  }, [config.interval, config.activeSymbol, connectionError, isLoading]);
 
   useEffect(() => {
       if (ai.lastScanTime === 0) return;
@@ -320,17 +291,6 @@ const App: React.FC = () => {
                 <AdminControl />
                 <AlertEngine />
                 <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-                    
-                    {/* Connection Status Banner (Fixes TS6133 Unused Variable) */}
-                    {connectionError && (
-                        <div className="bg-amber-500/10 border-b border-amber-500/20 w-full py-0.5 text-center z-50 backdrop-blur-sm">
-                            <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest flex items-center justify-center gap-2">
-                                <AlertTriangle size={10} className="fill-current" />
-                                DATA FEED DEGRADED — SIMULATION MODE ACTIVE
-                            </span>
-                        </div>
-                    )}
-
                     <Header />
                     <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
                         {ui.activeTab === 'dashboard' && <DashboardView />}
