@@ -577,7 +577,7 @@ export const useStore = create<AppState>((set, get) => ({
           regime: {
               ...state.regime,
               regimeType: analysis.type as MarketRegimeType,
-              trendDirection: analysis.trendDirection,
+              trendDirection: analysis.trendDirection as "BULL" | "BEAR" | "NEUTRAL",
               atr: analysis.atr,
               rangeSize: analysis.rangeSize,
               volatilityPercentile: analysis.volatilityPercentile,
