@@ -3,7 +3,7 @@ import {
   MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel, 
   AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState, 
   LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-  BiasType
+  BiasType, RegimeType
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI, calculateBollingerBands, analyzeLiquidity } from '../utils/analytics';
@@ -349,9 +349,6 @@ export const useStore = create<AppState>((set, get) => ({
         divergence = 'BEARISH_DISTRIBUTION';
     }
 
-    // Calc Z-Score for Metrics (Price deviation from Mean)
-    const zScore = (tick.c - newCandles[newCandles.length-1].zScoreUpper1 + newCandles[newCandles.length-1].zScoreLower1) / 2; // Rough approx or use actual band diff
-
     return { 
         cvdBaseline: newCvdBaseline,
         market: { 
@@ -586,7 +583,7 @@ export const useStore = create<AppState>((set, get) => ({
               volatilityPercentile: analysis.volatilityPercentile,
               lastUpdated: Date.now()
           },
-          market: { ...state.market, metrics: { ...state.market.metrics, regime: analysis.type } }
+          market: { ...state.market, metrics: { ...state.market.metrics, regime: analysis.type as RegimeType } }
       };
   }),
   refreshTacticalAnalysis: () => set(state => {
