@@ -70,7 +70,6 @@ interface AppState {
   notifications: ToastMessage[];
   alertLogs: any[];
   
-  // CVD State
   cvdBaseline: number;
 
   setHasEntered: (val: boolean) => void;
@@ -251,11 +250,12 @@ export const useStore = create<AppState>((set, get) => ({
     const last = candles[candles.length - 1];
     let newCandles = candles;
     
-    // Binance 't' is start time in ms. System expects time in seconds.
     const tickTimeSec = Math.floor(tick.t / 1000);
     
+    // Prevent backward updates due to network race conditions
+    if (tickTimeSec < last.time) return {};
+
     if (tickTimeSec === last.time) {
-        // Update current candle
         const updatedCvd = state.cvdBaseline + realDelta;
         newCandles[newCandles.length - 1] = {
             ...last,
@@ -267,8 +267,6 @@ export const useStore = create<AppState>((set, get) => ({
             cvd: updatedCvd 
         };
     } else if (tickTimeSec > last.time) {
-        // New candle started
-        // Baseline for next candle includes the final delta of the closed one
         const updatedBaseline = state.cvdBaseline + (last.delta || 0);
         const newCvd = updatedBaseline + realDelta;
 
@@ -279,7 +277,7 @@ export const useStore = create<AppState>((set, get) => ({
             low: tick.l,
             close: tick.c,
             volume: tick.v,
-            zScoreUpper1: last.zScoreUpper1, // Indicators will be recalculated in analysis loop
+            zScoreUpper1: last.zScoreUpper1,
             zScoreLower1: last.zScoreLower1,
             zScoreUpper2: last.zScoreUpper2,
             zScoreLower2: last.zScoreLower2,
@@ -393,7 +391,10 @@ export const useStore = create<AppState>((set, get) => ({
 
   openPosition: (params) => {
     const { entry, stop, target, direction } = params;
-    const size = (get().trading.accountSize * (get().trading.riskPercent / 100)) / Math.abs(entry - stop);
+    const riskAmount = get().trading.accountSize * (get().trading.riskPercent / 100);
+    const stopDistance = Math.abs(entry - stop);
+    const size = stopDistance > 0 ? riskAmount / stopDistance : 0;
+    
     const newPos: Position = {
         id: Date.now().toString(),
         symbol: get().config.activeSymbol,
@@ -402,7 +403,7 @@ export const useStore = create<AppState>((set, get) => ({
         stop,
         target,
         size,
-        riskAmount: get().trading.accountSize * (get().trading.riskPercent / 100),
+        riskAmount,
         isOpen: true,
         openTime: Date.now(),
         floatingR: 0,
@@ -436,16 +437,18 @@ export const useStore = create<AppState>((set, get) => ({
       const candles = get().market.candles;
       
       const calculateBiasForWindow = (windowSize: number): TimeframeData => {
-          if (candles.length < windowSize) return { bias: 'NEUTRAL', sparkline: [50, 50, 50], lastUpdated: Date.now() };
+          if (candles.length < Math.max(windowSize, 20)) {
+              return { bias: 'NEUTRAL', sparkline: new Array(20).fill(50), lastUpdated: Date.now() };
+          }
           const slice = candles.slice(-windowSize);
           const closes = slice.map(c => c.close);
           const sma = closes.reduce((a, b) => a + b, 0) / windowSize;
           const current = closes[closes.length - 1];
-          const rsi = calculateRSI(closes, Math.min(14, windowSize - 1));
+          const rsi = calculateRSI(closes, 14);
           
-          let bias: 'BULL' | 'BEAR' | 'NEUTRAL' = 'NEUTRAL';
-          if (current > sma * 1.002 && rsi > 55) bias = 'BULL';
-          else if (current < sma * 0.998 && rsi < 45) bias = 'BEAR';
+          let bias: BiasType = 'NEUTRAL';
+          if (current > sma && rsi > 55) bias = 'BULL';
+          else if (current < sma && rsi < 45) bias = 'BEAR';
 
           return { bias, sparkline: closes.slice(-20), lastUpdated: Date.now() };
       };

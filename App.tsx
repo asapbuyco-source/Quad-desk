@@ -19,7 +19,7 @@ import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Lock, RefreshCw, Loader2, AlertTriangle, ServerCrash } from 'lucide-react';
+import { Lock, RefreshCw, Loader2 } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
@@ -42,11 +42,8 @@ const App: React.FC = () => {
   const [connectionErrorMessage, setConnectionErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
-  // Ref for last dispatched book for delta calculation
   const lastDispatchedBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
-  
-  // Real-time delta tracker
-  const candleDeltaRef = useRef<number>(0);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const {
       setHasEntered,
@@ -82,7 +79,7 @@ const App: React.FC = () => {
                 id: 'auth-success',
                 type: 'success',
                 title: 'Identity Verified',
-                message: `Welcome back, ${user.displayName?.split(' ')[0] || 'Operator'}. Uplink established.`
+                message: `Welcome back, Operator. Uplink established.`
             });
         } else {
             setUser(null);
@@ -107,45 +104,50 @@ const App: React.FC = () => {
       return () => clearInterval(interval);
   }, [config.activeSymbol]);
 
-  // REST API History Fetcher (Backend -> Kraken)
   useEffect(() => {
     let retryTimer: ReturnType<typeof setTimeout>;
     const fetchHistory = async () => {
         try {
-            console.log(`📡 Fetching History Context: ${config.activeSymbol}`);
             setConnectionErrorMessage('');
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             const data = await res.json();
-            if (data.error) throw new Error(data.error);
+            if (!Array.isArray(data)) throw new Error("Invalid history data format");
             
             let runningCVD = 0;
             const formattedCandles: CandleData[] = data.map((k: any) => {
-                const vol = parseFloat(k[5]);
-                const delta = ((parseFloat(k[4]) - parseFloat(k[1])) / (parseFloat(k[2]) - parseFloat(k[3]) || 1)) * vol * 0.5;
+                const vol = parseFloat(k[5]) || 0;
+                const close = parseFloat(k[4]) || 0;
+                const open = parseFloat(k[1]) || 0;
+                const high = parseFloat(k[2]) || 0;
+                const low = parseFloat(k[3]) || 0;
+                
+                // Refined historical delta estimation
+                const delta = high === low ? 0 : ((close - open) / (high - low)) * vol;
                 runningCVD += delta;
+                
                 return {
                     time: k[0] / 1000,
-                    open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]), volume: vol,
-                    delta: delta,
+                    open, high, low, close, volume: vol,
+                    delta,
                     cvd: runningCVD,
                     zScoreUpper1: 0, zScoreLower1: 0,
                     zScoreUpper2: 0, zScoreLower2: 0,
                     adx: 0 
                 };
-            }).filter((c: CandleData) => !isNaN(c.close));
+            }).filter((c: CandleData) => !isNaN(c.close) && c.close > 0);
+            
+            if (formattedCandles.length === 0) throw new Error("No valid candle data received");
             
             const candlesWithADX = calculateADX(formattedCandles, 14);
             setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
-            candleDeltaRef.current = 0;
             setIsLoading(false);
             setConnectionError(false);
         } catch (e: any) {
-            console.error(`History Fetch Failed: ${e.message}`);
             setConnectionError(true);
             setConnectionErrorMessage(e.message || "Unknown Connection Error");
             setIsLoading(true);
-            retryTimer = setTimeout(fetchHistory, 3000);
+            retryTimer = setTimeout(fetchHistory, 5000);
         }
     };
     setIsLoading(true);
@@ -153,32 +155,32 @@ const App: React.FC = () => {
     return () => clearTimeout(retryTimer);
   }, [config.interval, config.activeSymbol]);
 
-  // Combined Binance WebSocket Logic (High-Frequency)
   useEffect(() => {
-      if (connectionError) return; 
+      if (connectionError || isLoading) return; 
 
-      let ws: WebSocket | null = null;
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
       let retryCount = 0;
-      const MAX_RETRIES = 5;
+      const MAX_RETRIES = 10;
       
       const connect = () => {
+          if (wsRef.current) wsRef.current.close();
+          
           const symbol = config.activeSymbol.toLowerCase();
           const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
           const interval = intervalMapping[config.interval] || '1m';
           
-          // Combined stream for kline, trade, and depth
           const streams = [
               `${symbol}@kline_${interval}`,
               `${symbol}@trade`,
               `${symbol}@depth20@100ms`
           ].join('/');
           
-          ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+          const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+          wsRef.current = ws;
           
           ws.onopen = () => { 
               retryCount = 0;
-              resetCvd(); 
+              console.log(`✅ WebSocket Connected: ${streams}`);
           };
 
           ws.onmessage = (event) => {
@@ -186,7 +188,6 @@ const App: React.FC = () => {
               const stream = payload.stream;
               const data = payload.data;
 
-              // 1. Kline Update (Visual Chart Core)
               if (stream.includes('@kline')) {
                   const k = data.k;
                   const tick = {
@@ -197,44 +198,36 @@ const App: React.FC = () => {
                       c: parseFloat(k.c),
                       v: parseFloat(k.v)
                   };
-                  // Logic: Delta can be derived from Taker Buy Volume in Binance Klines
-                  // delta = buyVolume - (totalVolume - buyVolume) = 2 * buyVolume - totalVolume
                   const buyVol = parseFloat(k.V);
                   const totalVol = parseFloat(k.v);
                   const klineDelta = (2 * buyVol) - totalVol;
-                  
                   processWsTick(tick, klineDelta);
               }
-
-              // 2. Trade Update (Tape & Aggressive Flow)
               else if (stream.includes('@trade')) {
                   const trade: RecentTrade = {
                       id: data.t.toString(),
                       price: parseFloat(data.p),
                       size: parseFloat(data.q),
-                      side: data.m ? 'SELL' : 'BUY', // m=true means buyer is maker (it was a sell)
+                      side: data.m ? 'SELL' : 'BUY',
                       time: data.T,
                       isWhale: (parseFloat(data.p) * parseFloat(data.q)) > 50000
                   };
                   processTradeTick(trade);
               }
-
-              // 3. Depth Update (Order Book Deltas)
               else if (stream.includes('@depth')) {
                   const asks: OrderBookLevel[] = data.asks.map((a: any) => {
                       const price = parseFloat(a[0]);
                       const size = parseFloat(a[1]);
-                      const prevSize = lastDispatchedBookRef.current.asks.get(price) || size;
+                      const prevSize = lastDispatchedBookRef.current.asks.get(price) ?? size;
                       return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
                   });
                   const bids: OrderBookLevel[] = data.bids.map((b: any) => {
                       const price = parseFloat(b[0]);
                       const size = parseFloat(b[1]);
-                      const prevSize = lastDispatchedBookRef.current.bids.get(price) || size;
+                      const prevSize = lastDispatchedBookRef.current.bids.get(price) ?? size;
                       return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
                   });
 
-                  // Update cache for next delta cycle
                   data.asks.forEach((a: any) => lastDispatchedBookRef.current.asks.set(parseFloat(a[0]), parseFloat(a[1])));
                   data.bids.forEach((b: any) => lastDispatchedBookRef.current.bids.set(parseFloat(b[0]), parseFloat(b[1])));
                   
@@ -244,19 +237,23 @@ const App: React.FC = () => {
           
           ws.onclose = () => {
               if (retryCount < MAX_RETRIES) {
-                   const delay = Math.min(1000 * Math.pow(1.5, retryCount), 10000);
+                   const delay = Math.min(1000 * Math.pow(1.5, retryCount), 15000);
                    retryCount++;
                    reconnectTimer = setTimeout(connect, delay);
                }
+          };
+
+          ws.onerror = (e) => {
+              console.error("WebSocket Error:", e);
           };
       };
 
       connect();
       return () => {
-          if (ws) ws.close();
+          if (wsRef.current) wsRef.current.close();
           if (reconnectTimer) clearTimeout(reconnectTimer);
       };
-  }, [config.interval, config.activeSymbol, connectionError]);
+  }, [config.interval, config.activeSymbol, connectionError, isLoading]);
 
   useEffect(() => {
       if (ai.lastScanTime === 0) return;
@@ -280,11 +277,11 @@ const App: React.FC = () => {
                 <AuthOverlay />
             </motion.div>
         ) : isLoading ? (
-             <motion.div key="loader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#09090b]">
+             <motion.div key="loader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#09090b]">
                 <Loader2 size={48} className="text-brand-accent animate-spin" />
                 <div className="mt-8 text-center px-4">
                     <h2 className="text-xl font-bold tracking-widest uppercase">SYNCHRONIZING CHRONOS</h2>
-                    <p className="text-zinc-500 font-mono text-xs">Uplinking to Binance & Kraken...</p>
+                    <p className="text-zinc-500 font-mono text-xs">Uplinking to Data Grids...</p>
                 </div>
             </motion.div>
         ) : (
@@ -306,15 +303,6 @@ const App: React.FC = () => {
                         {ui.activeTab === 'intel' && <IntelView />}
                         {ui.activeTab === 'guide' && <GuideView />}
                     </main>
-                    {market.metrics.circuitBreakerTripped && (
-                        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
-                            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="p-10 border-2 border-red-600 bg-[#09090b] rounded-2xl text-center shadow-[0_0_100px_rgba(220,38,38,0.3)]">
-                                <Lock size={64} className="mx-auto mb-6 text-red-600" />
-                                <h1 className="text-3xl font-black text-white mb-2 uppercase">Circuit Breaker</h1>
-                                <p className="text-lg text-red-500 font-mono mb-8 font-bold">LOSS LIMIT REACHED</p>
-                            </motion.div>
-                        </div>
-                    )}
                 </div>
             </motion.div>
         )}
