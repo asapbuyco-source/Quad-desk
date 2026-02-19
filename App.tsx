@@ -23,7 +23,7 @@ import { Loader2 } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
-import { calculateADX } from './utils/analytics'; 
+import { calculateADX, generateMockCandles } from './utils/analytics'; 
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -101,11 +101,22 @@ const App: React.FC = () => {
   }, [config.activeSymbol]);
 
   useEffect(() => {
-    let retryTimer: ReturnType<typeof setTimeout>;
+    let isMounted = true;
     const fetchHistory = async () => {
+        if (!isMounted) return;
+        setIsLoading(true);
+        
         try {
+            // Timeout controller to prevent hanging requests
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
+
             // Using Binance REST via Backend proxy to align prices
-            const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
+            const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             const data = await res.json();
             if (!Array.isArray(data)) throw new Error("Invalid history data format");
@@ -137,23 +148,41 @@ const App: React.FC = () => {
             
             // Calculate ADX once on load
             const candlesWithADX = calculateADX(formattedCandles, 14);
-            setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
-            setIsLoading(false);
-            setConnectionError(false);
+            if (isMounted) {
+                setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
+                setIsLoading(false);
+                setConnectionError(false);
+            }
         } catch (e: any) {
-            console.error("History Fetch Error:", e);
-            setConnectionError(true);
-            setIsLoading(true);
-            retryTimer = setTimeout(fetchHistory, 5000);
+            console.warn("History Fetch Error:", e);
+            
+            // FALLBACK TO SIMULATED DATA TO PREVENT INFINITE LOADING
+            if (isMounted) {
+                addNotification({
+                    id: 'history-fail',
+                    type: 'warning',
+                    title: 'Data Feed Degraded',
+                    message: 'Backend unreachable. Initializing with localized simulation data.'
+                });
+
+                const mocks = generateMockCandles(100, 95000, 60); 
+                const candlesWithADX = calculateADX(mocks, 14);
+                setMarketHistory({ candles: candlesWithADX, initialCVD: 0 });
+                
+                setConnectionError(true);
+                setIsLoading(false); // Force loading to finish
+            }
         }
     };
-    setIsLoading(true);
+
     fetchHistory();
-    return () => clearTimeout(retryTimer);
+    
+    return () => { isMounted = false; };
   }, [config.interval, config.activeSymbol]);
 
   useEffect(() => {
-      if (connectionError || isLoading) return; 
+      // Allow connection even if there was an initial error, as WS might still work
+      if (isLoading) return; 
 
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
       let retryCount = 0;
@@ -254,7 +283,7 @@ const App: React.FC = () => {
           if (wsRef.current) wsRef.current.close();
           if (reconnectTimer) clearTimeout(reconnectTimer);
       };
-  }, [config.interval, config.activeSymbol, connectionError, isLoading]);
+  }, [config.interval, config.activeSymbol, isLoading]);
 
   useEffect(() => {
       if (ai.lastScanTime === 0) return;
