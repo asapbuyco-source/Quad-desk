@@ -5,7 +5,6 @@ import json
 import time
 import psutil
 import numpy as np
-import pandas as pd
 import httpx
 from collections import deque
 from datetime import datetime, timedelta
@@ -55,7 +54,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quantdesk.netlify.app")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "*")
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -76,12 +75,48 @@ state = {
     }
 }
 
+VALID_AI_MODELS = [
+    "gemini-2.0-flash-exp",
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+    "gemini-1.5-flash", # Keeping as fallback
+    "gemini-1.5-pro"
+]
+
+def sanitize_model(model_name: str) -> str:
+    """Safeguard against invalid or legacy model names from frontend."""
+    if model_name in VALID_AI_MODELS:
+        return model_name
+    return "gemini-3-flash-preview"
+
+# --- Pydantic Models ---
+
 class AlertSnapshot(BaseModel):
     symbol: str
     price: float
     zScore: float
     tacticalProbability: float
     aiScore: float
+    # Flexible extra fields for frontend state snapshots
+    skewness: Optional[float] = 0
+    bayesianPosterior: Optional[float] = 0.5
+    expectedValueRR: Optional[float] = 0
+    biasAlignment: Optional[bool] = False
+    liquidityAgreement: Optional[bool] = False
+    regimeAgreement: Optional[bool] = False
+    sweeps: Optional[List[Any]] = []
+    bosDirection: Optional[str] = None
+    regimeType: Optional[str] = "UNCERTAIN"
+    trendDirection: Optional[str] = "NEUTRAL"
+    volatilityPercentile: Optional[float] = 0
+    institutionalCVD: Optional[float] = 0
+    ofi: Optional[float] = 0
+    toxicity: Optional[float] = 0
+    retailSentiment: Optional[float] = 50
+    dailyBias: Optional[str] = "NEUTRAL"
+    h4Bias: Optional[str] = "NEUTRAL"
+    h1Bias: Optional[str] = "NEUTRAL"
+
     class Config:
         extra = "allow"
 
@@ -93,6 +128,8 @@ class TelegramPayload(BaseModel):
     stop: float
     target: float
     reasoning: str
+    rrRatio: Optional[float] = 0
+    conditions: Optional[List[str]] = []
     botToken: Optional[str] = None
     chatId: Optional[str] = None
 
@@ -105,43 +142,40 @@ class AnalysisRequest(BaseModel):
     cvdTrend: str
     candleCount: int
 
-def map_symbol_to_kraken(symbol: str) -> str:
-    base = ""
-    quote = ""
-    if symbol.startswith("BTC"): base = "XBT"
-    elif symbol.startswith("ETH"): base = "ETH"
-    elif symbol.startswith("SOL"): base = "SOL"
-    else: base = symbol[:3] 
-    if symbol.endswith("USDT"): quote = "USDT"
-    elif symbol.endswith("USD"): quote = "USD"
-    else: quote = "USD"
-    return f"{base}{quote}"
+class AlertConfigPayload(BaseModel):
+    symbol: str
+    telegram_bot_token: Optional[str]
+    telegram_chat_id: Optional[str]
 
-def map_interval_to_kraken(interval: str) -> int:
-    mapping = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
-    return mapping.get(interval, 1)
+# --- Helper Functions ---
 
-async def fetch_kraken_candles(symbol: str, interval: str, limit: int = 300):
-    pair = map_symbol_to_kraken(symbol)
-    kraken_interval = map_interval_to_kraken(interval)
-    url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": pair, "interval": kraken_interval}
+async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
+    """Fetches historical k-lines from Binance REST API."""
+    url = "https://api.binance.com/api/v3/klines"
+    params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
     async with httpx.AsyncClient() as client:
         try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = await client.get(url, params=params, headers=headers, timeout=10.0)
+            resp = await client.get(url, params=params, timeout=10.0)
             resp.raise_for_status()
             data = resp.json()
-            if data.get("error"):
-                return []
-            result = data.get("result", {})
-            ohlc_list = next((v for k, v in result.items() if isinstance(v, list)), [])
+            # Binance Format: [t, o, h, l, c, v, T, q, n, V, Q, B]
+            # Map to consistent internal format: [time_ms, open, high, low, close, volume]
             formatted_data = []
-            for d in ohlc_list:
-                formatted_data.append([int(d[0]) * 1000, float(d[1]), float(d[2]), float(d[3]), float(d[4]), float(d[6])])
-            return sorted(formatted_data, key=lambda x: x[0])[-limit:]
-        except Exception:
+            for d in data:
+                formatted_data.append([
+                    int(d[0]),          # Open time
+                    float(d[1]),        # Open
+                    float(d[2]),        # High
+                    float(d[3]),        # Low
+                    float(d[4]),        # Close
+                    float(d[5])         # Volume
+                ])
+            return formatted_data
+        except Exception as e:
+            logger.error(f"Binance Fetch Error: {e}")
             return []
+
+# --- Lifespan & App ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -150,29 +184,47 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+origins = [FRONTEND_URL]
+if FRONTEND_URL == "*":
+    origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Routes ---
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "timestamp": time.time()}
 
 @app.get("/history")
 async def get_history(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), interval: str = "1m", limit: int = 300):
-    return await fetch_kraken_candles(symbol, interval, limit)
+    return await fetch_binance_candles(symbol, interval, limit)
 
 @app.get("/heatmap")
 async def get_heatmap():
-    pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    # Real-time Z-Score calculation using Binance data
+    pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
     results = []
     for p in pairs:
-        klines = await fetch_kraken_candles(p, "1h", 21)
+        klines = await fetch_binance_candles(p, "1h", 21)
         if len(klines) < 21: continue
         closes = [x[4] for x in klines]
         mean = np.mean(closes[:-1])
         std = np.std(closes[:-1])
-        z = (closes[-1] - mean) / (std or 1)
+        z = (closes[-1] - mean) / (std or 1e-6)
         results.append({"pair": p, "zScore": float(z), "price": float(closes[-1])})
     return results
 
 @app.get("/analyze")
 async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-3-flash-preview"):
-    klines = await fetch_kraken_candles(symbol, "15m", 30)
+    klines = await fetch_binance_candles(symbol, "15m", 30)
     if not klines: raise HTTPException(status_code=502, detail="Upstream Down")
     
     current_price = float(klines[-1][4])
@@ -193,14 +245,20 @@ async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), 
         }
 
     prices_str = "\n".join([f"T:{x[0]} O:{x[1]} H:{x[2]} L:{x[3]} C:{x[4]}" for x in klines])
-    prompt = f"HFT Algo: Analyze OHLCV for {symbol}.\n{prices_str}\nOutput JSON: {{support:[num], resistance:[num], decision_price:num, verdict:ENTRY|EXIT|WAIT, confidence:0-1, analysis:str, risk_reward_ratio:num}}"
+    prompt = f"HFT Algo: Analyze OHLCV for {symbol}.\n{prices_str}\nOutput JSON only: {{support:[num], resistance:[num], decision_price:num, verdict:ENTRY|EXIT|WAIT, confidence:0-1, analysis:str, risk_reward_ratio:num}}"
 
     try:
-        gen_model = genai.GenerativeModel(model)
+        # Use valid model name
+        safe_model = sanitize_model(model)
+        gen_model = genai.GenerativeModel(safe_model)
         response = await gen_model.generate_content_async(prompt)
         text = response.text.replace('```json', '').replace('```', '').strip()
+        # Clean potential markdown wrapping
+        if "{" in text:
+            text = text[text.find("{"):text.rfind("}")+1]
         return json.loads(text)
-    except Exception:
+    except Exception as e:
+        logger.error(f"AI Analysis Failed: {e}")
         return {
             "support": [s1], "resistance": [r1], "decision_price": pivot,
             "verdict": "WAIT", "confidence": 0.5, "analysis": "Degraded Mode: Pivot Logic Applied."
@@ -210,36 +268,49 @@ async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), 
 async def analyze_order_flow(req: AnalysisRequest):
     if not GEMINI_API_KEY:
         return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.5, "flow_type": "NEUTRAL"}
-    prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output: {{verdict:str, confidence:num, explanation:str, flow_type:str}}"
+    prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output only: {{verdict:str, confidence:num, explanation:str, flow_type:str}}"
     try:
         model = genai.GenerativeModel("gemini-3-flash-preview")
         response = await model.generate_content_async(prompt)
         text = response.text.replace('```json', '').replace('```', '').strip()
+        if "{" in text:
+            text = text[text.find("{"):text.rfind("}")+1]
         return json.loads(text)
     except Exception:
-        return {"verdict": "NEUTRAL", "explanation": "Synthesis failed.", "confidence": 0}
+        return {"verdict": "NEUTRAL", "explanation": "Synthesis failed.", "confidence": 0, "flow_type": "Unknown"}
 
 @app.get("/market-intelligence")
 async def get_market_intel(model: str = "gemini-3-flash-preview"):
     now = datetime.now().timestamp() * 1000
     cache = state["market_intel_cache"]
     if cache["data"] and (now - cache["timestamp"] < 600000): return cache["data"]
+    
     articles = []
     if newsapi:
         try:
-            response = newsapi.get_everything(q="crypto market", language="en", sort_by="publishedAt", page_size=5)
+            # Using thread executor for blocking NewsAPI call
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: newsapi.get_everything(q="crypto market", language="en", sort_by="publishedAt", page_size=5))
             articles = response.get('articles', [])
-        except Exception: pass
+        except Exception as e:
+            logger.error(f"NewsAPI Error: {e}")
+
     intelligence = {"main_narrative": "Structural consolidation identified across primary pairs.", "whale_impact": "Medium", "ai_sentiment_score": 0.0}
+    
     if GEMINI_API_KEY and articles:
         headlines = "\n".join([f"- {a['title']}" for a in articles])
-        prompt = f"Read: {headlines}\nOutput JSON: {{main_narrative:str, whale_impact:High|Medium|Low, ai_sentiment_score:num}}"
+        prompt = f"Read: {headlines}\nOutput JSON only: {{main_narrative:str, whale_impact:High|Medium|Low, ai_sentiment_score:num}}"
         try:
-            gen_model = genai.GenerativeModel(model)
+            safe_model = sanitize_model(model)
+            gen_model = genai.GenerativeModel(safe_model)
             resp = await gen_model.generate_content_async(prompt)
             text = resp.text.replace('```json', '').replace('```', '').strip()
+            if "{" in text:
+                text = text[text.find("{"):text.rfind("}")+1]
             intelligence = json.loads(text)
-        except Exception: pass
+        except Exception as e:
+            logger.error(f"Gemini Intel Error: {e}")
+
     result = {"articles": articles, "intelligence": intelligence, "timestamp": now}
     state["market_intel_cache"] = {"data": result, "timestamp": now}
     return result
@@ -252,6 +323,100 @@ def system_status():
         "cpu_percent": psutil.cpu_percent(), "memory_mb": process.memory_info().rss / 1024 / 1024,
         "threads": process.num_threads(), "autonomous_active": state["autonomous_active"], "logs": list(log_buffer)
     }
+
+# --- Alert Endpoints ---
+
+@app.get("/alerts/status")
+def get_alert_status():
+    return {"autonomous_mode": state["autonomous_active"], "config": state["alert_config"]}
+
+@app.post("/alerts/configure")
+def configure_alerts(config: AlertConfigPayload):
+    state["alert_config"]["symbol"] = config.symbol
+    if config.telegram_bot_token:
+        state["alert_config"]["bot_token"] = config.telegram_bot_token
+    if config.telegram_chat_id:
+        state["alert_config"]["chat_id"] = config.telegram_chat_id
+    # Enable autonomous if creds present
+    if state["alert_config"]["bot_token"] and state["alert_config"]["chat_id"]:
+        state["autonomous_active"] = True
+    return {"status": "updated", "autonomous_active": state["autonomous_active"]}
+
+@app.post("/alerts/evaluate")
+async def evaluate_alerts(snapshot: AlertSnapshot):
+    """
+    Evaluates market conditions sent by frontend to determine if an alert is needed.
+    Acts as the brain for the frontend alert loop.
+    """
+    score = 0
+    conditions = []
+    
+    # Logic: Basic scoring engine
+    if abs(snapshot.zScore) > 2.0:
+        score += 2
+        conditions.append(f"Z-Score Extreme: {snapshot.zScore:.2f}")
+    
+    if snapshot.tacticalProbability > 75:
+        score += 2
+        conditions.append(f"AI Probability: {snapshot.tacticalProbability}%")
+        
+    if snapshot.biasAlignment:
+        score += 1
+        conditions.append("Bias Alignment")
+        
+    if snapshot.institutionalCVD != 0 and (snapshot.institutionalCVD > 0) == (snapshot.trendDirection == 'BULL'):
+        score += 1
+        conditions.append("CVD Confirmation")
+
+    should_alert = score >= 4
+    
+    analysis = None
+    if should_alert:
+        analysis = {
+            "direction": "LONG" if snapshot.trendDirection == 'BULL' else "SHORT",
+            "confidence": min(score / 6, 0.99),
+            "entry": snapshot.price,
+            "stop": snapshot.price * 0.98 if snapshot.trendDirection == 'BULL' else snapshot.price * 1.02,
+            "target": snapshot.price * 1.04 if snapshot.trendDirection == 'BULL' else snapshot.price * 0.96,
+            "reasoning": f"Confluence of factors: {', '.join(conditions)}"
+        }
+
+    return {"shouldAlert": should_alert, "score": score, "passedConditions": conditions, "aiAnalysis": analysis}
+
+@app.post("/alerts/send-telegram")
+async def send_telegram(payload: TelegramPayload):
+    token = payload.botToken or state["alert_config"]["bot_token"]
+    chat_id = payload.chatId or state["alert_config"]["chat_id"]
+    
+    if not token or not chat_id:
+        raise HTTPException(status_code=400, detail="Missing Telegram credentials")
+    
+    icon = "🟢" if payload.direction == "LONG" else "🔴"
+    msg = (
+        f"{icon} *QUANT DESK ALERT: {payload.symbol}*\n"
+        f"**Direction:** {payload.direction}\n"
+        f"**Confidence:** {int(payload.confidence * 100)}%\n"
+        f"**Entry:** {payload.entry:.2f}\n"
+        f"**Stop:** {payload.stop:.2f}\n"
+        f"**Target:** {payload.target:.2f} (R:R {payload.rrRatio:.2f})\n\n"
+        f"_{payload.reasoning}_"
+    )
+    
+    telegram_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(telegram_url, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
+            resp.raise_for_status()
+            return {"status": "sent"}
+        except Exception as e:
+            logger.error(f"Telegram Send Error: {e}")
+            raise HTTPException(status_code=502, detail=str(e))
+
+@app.post("/alerts/test")
+async def test_alert(payload: TelegramPayload):
+    # Reuse send logic
+    payload.reasoning = "Test Alert from Quant Desk Profile Config."
+    return await send_telegram(payload)
 
 if __name__ == "__main__":
     import uvicorn

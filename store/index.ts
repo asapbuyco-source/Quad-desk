@@ -6,7 +6,7 @@ import {
   BiasType
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
-import { analyzeRegime, calculateRSI } from '../utils/analytics';
+import { analyzeRegime, calculateRSI, calculateBollingerBands, analyzeLiquidity } from '../utils/analytics';
 import { auth, googleProvider, db } from '../lib/firebase';
 import { 
   signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
@@ -231,11 +231,14 @@ export const useStore = create<AppState>((set, get) => ({
   setAiModel: (model) => set(state => ({ config: { ...state.config, aiModel: model } })),
 
   setMarketHistory: ({ candles, initialCVD }) => {
+    // 1. Calculate Bands for History
+    const bands = calculateBollingerBands(candles, 20);
+    
     set(state => ({
         cvdBaseline: initialCVD,
         market: {
             ...state.market,
-            candles,
+            candles: bands,
             metrics: { ...state.market.metrics, institutionalCVD: initialCVD }
         }
     }));
@@ -249,13 +252,40 @@ export const useStore = create<AppState>((set, get) => ({
     if (candles.length === 0) return {};
 
     const last = candles[candles.length - 1];
-    let newCandles = candles;
-    
     const tickTimeSec = Math.floor(tick.t / 1000);
+    
+    // Ignore out-of-order ticks
     if (tickTimeSec < last.time) return {};
 
+    // Helper to calculate bands for a single candle context (simplified for performance)
+    // For rigorous accuracy, we recalculate the last window.
+    const updateBands = (list: CandleData[]) => {
+        const windowSize = 20;
+        if (list.length < windowSize) return list;
+        
+        // Only update the last candle's bands
+        const subset = list.slice(-windowSize);
+        const closes = subset.map(c => c.close);
+        const mean = closes.reduce((a, b) => a + b, 0) / windowSize;
+        const variance = closes.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / windowSize;
+        const std = Math.sqrt(variance);
+        
+        const lastIdx = list.length - 1;
+        list[lastIdx].zScoreUpper1 = mean + std;
+        list[lastIdx].zScoreLower1 = mean - std;
+        list[lastIdx].zScoreUpper2 = mean + (std * 2);
+        list[lastIdx].zScoreLower2 = mean - (std * 2);
+        
+        return list;
+    };
+
+    let newCandles = candles;
+    let newCvdBaseline = state.cvdBaseline;
+
     if (tickTimeSec === last.time) {
+        // UPDATE CURRENT CANDLE
         const updatedCvd = state.cvdBaseline + realDelta;
+        
         newCandles[newCandles.length - 1] = {
             ...last,
             close: tick.c,
@@ -265,9 +295,15 @@ export const useStore = create<AppState>((set, get) => ({
             delta: realDelta,
             cvd: updatedCvd 
         };
+        
+        // Recalculate bands for the live candle
+        newCandles = updateBands(newCandles);
+
     } else if (tickTimeSec > last.time) {
-        const updatedBaseline = state.cvdBaseline + (last.delta || 0);
-        const newCvd = updatedBaseline + realDelta;
+        // NEW CANDLE
+        // 1. Commit the previous candle's delta to the baseline
+        newCvdBaseline = state.cvdBaseline + (last.delta || 0);
+        const newCvd = newCvdBaseline + realDelta;
 
         const newCandle: CandleData = {
             time: tickTimeSec,
@@ -276,65 +312,63 @@ export const useStore = create<AppState>((set, get) => ({
             low: tick.l,
             close: tick.c,
             volume: tick.v,
-            zScoreUpper1: last.zScoreUpper1,
+            zScoreUpper1: last.zScoreUpper1, // inherit previous bands initially
             zScoreLower1: last.zScoreLower1,
             zScoreUpper2: last.zScoreUpper2,
             zScoreLower2: last.zScoreLower2,
-            adx: last.adx,
+            adx: last.adx, // ADX calculation is heavy, maybe do it less frequently or in separate loop
             cvd: newCvd,
             delta: realDelta
         };
-        newCandles = [...candles.slice(1), newCandle];
         
-        // --- CVD Divergence Analysis ---
-        const window = newCandles.slice(-10);
-        const firstPrice = window[0].close;
-        const lastPrice = window[window.length-1].close;
-        const firstCvd = window[0].cvd || 0;
-        const lastCvd = window[window.length-1].cvd || 0;
-        
-        const priceDelta = lastPrice - firstPrice;
-        const cvdDelta = lastCvd - firstCvd;
-
-        let interpretation: any = 'NEUTRAL';
-        let divergence: any = 'NONE';
-        
-        if (priceDelta > 0 && cvdDelta > 0) interpretation = 'REAL STRENGTH';
-        else if (priceDelta < 0 && cvdDelta < 0) interpretation = 'REAL WEAKNESS';
-        else if (priceDelta <= 0 && cvdDelta > 0) {
-            interpretation = 'ABSORPTION';
-            divergence = 'BULLISH_ABSORPTION';
-        }
-        else if (priceDelta >= 0 && cvdDelta < 0) {
-            interpretation = 'DISTRIBUTION';
-            divergence = 'BEARISH_DISTRIBUTION';
-        }
-
-        return { 
-            cvdBaseline: updatedBaseline,
-            market: { 
-                ...state.market, 
-                candles: newCandles,
-                metrics: { 
-                    ...state.market.metrics, 
-                    price: tick.c, 
-                    institutionalCVD: newCvd,
-                    cvdContext: {
-                        trend: cvdDelta > 0 ? 'UP' : 'DOWN',
-                        divergence,
-                        interpretation,
-                        value: (cvdDelta / (tick.v || 1)) * 100
-                    }
-                }
-            } 
-        };
+        newCandles = [...candles.slice(1), newCandle]; // Keep fixed size roughly
+        newCandles = updateBands(newCandles);
     }
     
+    // --- CVD Divergence Analysis ---
+    const window = newCandles.slice(-10);
+    const firstPrice = window[0].close;
+    const lastPrice = window[window.length-1].close;
+    const firstCvd = window[0].cvd || 0;
+    const lastCvd = window[window.length-1].cvd || 0;
+    
+    const priceDelta = lastPrice - firstPrice;
+    const cvdDelta = lastCvd - firstCvd;
+
+    let interpretation: any = 'NEUTRAL';
+    let divergence: any = 'NONE';
+    
+    if (priceDelta > 0 && cvdDelta > 0) interpretation = 'REAL STRENGTH';
+    else if (priceDelta < 0 && cvdDelta < 0) interpretation = 'REAL WEAKNESS';
+    else if (priceDelta <= 0 && cvdDelta > 0) {
+        interpretation = 'ABSORPTION';
+        divergence = 'BULLISH_ABSORPTION';
+    }
+    else if (priceDelta >= 0 && cvdDelta < 0) {
+        interpretation = 'DISTRIBUTION';
+        divergence = 'BEARISH_DISTRIBUTION';
+    }
+
+    // Calc Z-Score for Metrics (Price deviation from Mean)
+    const zScore = (tick.c - newCandles[newCandles.length-1].zScoreUpper1 + newCandles[newCandles.length-1].zScoreLower1) / 2; // Rough approx or use actual band diff
+
     return { 
+        cvdBaseline: newCvdBaseline,
         market: { 
             ...state.market, 
             candles: newCandles,
-            metrics: { ...state.market.metrics, price: tick.c }
+            metrics: { 
+                ...state.market.metrics, 
+                price: tick.c, 
+                zScore: (tick.c - ((newCandles[newCandles.length-1].zScoreUpper1 + newCandles[newCandles.length-1].zScoreLower1) / 2)) / ((newCandles[newCandles.length-1].zScoreUpper1 - newCandles[newCandles.length-1].zScoreLower1) / 2 || 1), // Real Z-Score
+                institutionalCVD: newCandles[newCandles.length-1].cvd || 0,
+                cvdContext: {
+                    trend: cvdDelta > 0 ? 'UP' : 'DOWN',
+                    divergence,
+                    interpretation,
+                    value: (cvdDelta / (tick.v || 1)) * 100
+                }
+            }
         } 
     };
   }),
@@ -488,15 +522,14 @@ export const useStore = create<AppState>((set, get) => ({
       set(state => ({ biasMatrix: { ...state.biasMatrix, isLoading: true } }));
       const candles = get().market.candles;
       
-      const calculateBiasForWindow = (windowSize: number): TimeframeData => {
-          if (candles.length < Math.max(windowSize, 20)) {
+      const calculateBiasForWindow = (candleCount: number): TimeframeData => {
+          if (candles.length < candleCount) {
               return { bias: 'NEUTRAL', sparkline: new Array(20).fill(50), lastUpdated: Date.now() };
           }
-          const slice = candles.slice(-windowSize);
+          const slice = candles.slice(-candleCount);
           const closes = slice.map(c => c.close);
           const rsi = calculateRSI(closes, 14);
           
-          // Safety: ensure SMA calculation has data
           const sma = closes.length > 0 ? (closes.reduce((a, b) => a + b, 0) / closes.length) : 0;
           const current = closes.length > 0 ? (closes[closes.length - 1] ?? 0) : 0;
           
@@ -512,20 +545,32 @@ export const useStore = create<AppState>((set, get) => ({
       };
 
       set(state => {
+          // Dynamic windows based on loaded history (assuming 1m interval for now as base)
+          // M5 = 5 candles, H1 = 60, H4 = 240, Daily = ~1440 (clipped by max history)
           const updatedBiasMatrix: BiasMatrixState = {
               ...state.biasMatrix,
               isLoading: false,
               lastUpdated: Date.now(),
-              daily: calculateBiasForWindow(60),
-              h4: calculateBiasForWindow(45),
-              h1: calculateBiasForWindow(30),
-              m5: calculateBiasForWindow(15),
+              m5: calculateBiasForWindow(5),
+              h1: calculateBiasForWindow(60),
+              h4: calculateBiasForWindow(240),
+              daily: calculateBiasForWindow(Math.min(1440, candles.length)),
           };
           return { biasMatrix: updatedBiasMatrix };
       });
   },
   refreshLiquidityAnalysis: () => {
-      set(state => ({ liquidity: { ...state.liquidity, lastUpdated: Date.now() } }));
+      // Execute actual liquidity analysis from utils
+      const { candles } = get().market;
+      const { sweeps, bos, fvg } = analyzeLiquidity(candles);
+      set(state => ({ 
+          liquidity: { 
+              sweeps, 
+              bos, 
+              fvg, 
+              lastUpdated: Date.now() 
+          } 
+      }));
   },
   refreshRegimeAnalysis: () => set(state => {
       const candles = state.market.candles;

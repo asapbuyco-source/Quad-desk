@@ -92,8 +92,7 @@ const App: React.FC = () => {
   }, [config.activeSymbol]);
 
   useEffect(() => {
-      refreshRegimeAnalysis();
-      refreshTacticalAnalysis();
+      // Global analysis loop - runs regardless of active tab
       const interval = setInterval(() => {
           refreshRegimeAnalysis();
           refreshTacticalAnalysis();
@@ -105,6 +104,7 @@ const App: React.FC = () => {
     let retryTimer: ReturnType<typeof setTimeout>;
     const fetchHistory = async () => {
         try {
+            // Using Binance REST via Backend proxy to align prices
             const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             const data = await res.json();
@@ -127,7 +127,7 @@ const App: React.FC = () => {
                     open, high, low, close, volume: vol,
                     delta,
                     cvd: runningCVD,
-                    zScoreUpper1: 0, zScoreLower1: 0,
+                    zScoreUpper1: 0, zScoreLower1: 0, // Will be calculated in setMarketHistory
                     zScoreUpper2: 0, zScoreLower2: 0,
                     adx: 0 
                 };
@@ -135,11 +135,13 @@ const App: React.FC = () => {
             
             if (formattedCandles.length === 0) throw new Error("No valid candle data received");
             
+            // Calculate ADX once on load
             const candlesWithADX = calculateADX(formattedCandles, 14);
             setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
             setIsLoading(false);
             setConnectionError(false);
         } catch (e: any) {
+            console.error("History Fetch Error:", e);
             setConnectionError(true);
             setIsLoading(true);
             retryTimer = setTimeout(fetchHistory, 5000);
@@ -160,6 +162,9 @@ const App: React.FC = () => {
       const connect = () => {
           if (wsRef.current) wsRef.current.close();
           
+          // Reset Depth Maps on reconnect to prevent stale deltas
+          lastDispatchedBookRef.current = { asks: new Map(), bids: new Map() };
+
           const symbol = config.activeSymbol.toLowerCase();
           const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
           const interval = intervalMapping[config.interval] || '1m';

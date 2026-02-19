@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { ShieldAlert, ToggleLeft, ToggleRight, X, Activity, Server, Cpu, Terminal, RefreshCw, AlertTriangle } from 'lucide-react';
@@ -41,19 +40,25 @@ const SystemMonitor: React.FC = () => {
         }
     };
 
-    // Auto-poll with dynamic interval
+    // Auto-poll with dynamic interval and safe cleanup
     useEffect(() => {
-        fetchStatus();
+        let isMounted = true;
         let timeoutId: ReturnType<typeof setTimeout>;
-        
-        const loop = () => {
-            timeoutId = setTimeout(() => {
-                fetchStatus().then(loop);
-            }, pollInterval);
+
+        const loop = async () => {
+            if (!isMounted) return;
+            await fetchStatus();
+            if (isMounted) {
+                timeoutId = setTimeout(loop, pollInterval);
+            }
         };
         
         loop();
-        return () => clearTimeout(timeoutId);
+        
+        return () => {
+            isMounted = false;
+            clearTimeout(timeoutId);
+        };
     }, [pollInterval]);
 
     useEffect(() => {

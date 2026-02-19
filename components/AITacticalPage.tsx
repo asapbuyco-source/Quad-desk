@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
@@ -26,11 +25,8 @@ const AITacticalPage: React.FC = () => {
     const { aiTactical, refreshTacticalAnalysis } = useStore();
     const { probability, scenario, entryLevel, stopLevel, exitLevel, confidenceFactors, lastUpdated, symbol } = aiTactical;
 
-    useEffect(() => {
-        refreshTacticalAnalysis();
-        const interval = setInterval(refreshTacticalAnalysis, 5000); // 5s refresh for tactical
-        return () => clearInterval(interval);
-    }, []);
+    // UseEffect removed: Analysis is now handled globally in App.tsx to prevent duplication.
+    // Manual refresh is still available via button.
 
     // Visual Config
     let color = 'text-zinc-400';
