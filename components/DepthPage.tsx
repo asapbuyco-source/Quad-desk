@@ -41,9 +41,27 @@ const DepthRow: React.FC<{ level: OrderBookLevel; type: 'BID' | 'ASK'; maxVol: n
         <div className={`relative flex items-center justify-between py-1 px-3 font-mono text-xs border-y border-transparent transition-colors group ${isWall ? (isBid ? 'bg-emerald-500/10 border-y border-emerald-500/30 border-r-4 border-r-emerald-500' : 'bg-rose-500/10 border-y border-rose-500/30 border-l-4 border-l-rose-500') : 'hover:bg-white/5 border-x-4 border-x-transparent'}`}>
             <div className={`absolute top-0 bottom-0 ${isBid ? 'right-0 bg-emerald-500' : 'left-0 bg-rose-500'} opacity-10 transition-all duration-500`} style={{ width: `${percent}%` }} />
             {isBid ? (
-                <><div className="flex items-center gap-2 relative z-10 w-1/3"><span className={`font-bold ${level.size > maxVol * 0.8 ? 'text-white' : 'text-zinc-400'}`}>{level.size.toLocaleString()}</span>{isWall && <BoxSelect size={12} className="text-emerald-500 animate-pulse" />}</div><div className="relative z-10 text-emerald-400 font-bold w-1/3 text-right">{level.price.toFixed(2)}</div><div className="relative z-10 text-zinc-600 text-[10px] w-1/3 text-right">{(level.price * level.size).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</div></>
+                <><div className="flex items-center gap-2 relative z-10 w-1/3">
+                    <span className={`font-bold ${level.size > maxVol * 0.8 ? 'text-white' : 'text-zinc-400'}`}>{level.size.toLocaleString()}</span>
+                    {isWall && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black tracking-widest border bg-emerald-500/20 border-emerald-500/50 text-emerald-300 animate-pulse">
+                            <BoxSelect size={8} strokeWidth={3} />WALL
+                        </span>
+                    )}
+                </div>
+                    <div className="relative z-10 text-emerald-400 font-bold w-1/3 text-right">{level.price.toFixed(2)}</div>
+                    <div className="relative z-10 text-zinc-600 text-[10px] w-1/3 text-right">{(level.price * level.size).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</div></>
             ) : (
-                <><div className="relative z-10 text-rose-400 font-bold w-1/3 text-left">{level.price.toFixed(2)}</div><div className="flex items-center justify-end gap-2 relative z-10 w-1/3">{isWall && <BoxSelect size={12} className="text-rose-500 animate-pulse" />}<span className={`font-bold ${level.size > maxVol * 0.8 ? 'text-white' : 'text-zinc-400'}`}>{level.size.toLocaleString()}</span></div><div className="relative z-10 text-zinc-600 text-[10px] w-1/3 text-left pl-2">{(level.price * level.size).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</div></>
+                <><div className="relative z-10 text-rose-400 font-bold w-1/3 text-left">{level.price.toFixed(2)}</div>
+                    <div className="flex items-center justify-end gap-2 relative z-10 w-1/3">
+                        {isWall && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black tracking-widest border bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse">
+                                <BoxSelect size={8} strokeWidth={3} />WALL
+                            </span>
+                        )}
+                        <span className={`font-bold ${level.size > maxVol * 0.8 ? 'text-white' : 'text-zinc-400'}`}>{level.size.toLocaleString()}</span>
+                    </div>
+                    <div className="relative z-10 text-zinc-600 text-[10px] w-1/3 text-left pl-2">{(level.price * level.size).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</div></>
             )}
         </div>
     );
@@ -54,8 +72,8 @@ const DepthPage: React.FC = () => {
     const { activeSymbol } = useStore(state => state.config);
 
     const { chartData, maxVol, bidTotal, askTotal, imbalance, walls } = useMemo(() => {
-        const sortedBids = [...bids].sort((a, b) => b.price - a.price); 
-        const sortedAsks = [...asks].sort((a, b) => a.price - b.price); 
+        const sortedBids = [...bids].sort((a, b) => b.price - a.price);
+        const sortedAsks = [...asks].sort((a, b) => a.price - b.price);
 
         const identifiedWalls = [...asks, ...bids].filter(l => l.classification === 'WALL');
 
@@ -76,10 +94,10 @@ const DepthPage: React.FC = () => {
         const total = bTotal + aTotal;
         const imb = total > 0 ? ((bTotal - aTotal) / total) * 100 : 0;
 
-        return { 
-            chartData: [...bidPoints, ...askPoints], 
-            maxVol: Math.max(...bids.map(b => b.size), ...asks.map(a => a.size), 1), 
-            bidTotal: bTotal, 
+        return {
+            chartData: [...bidPoints, ...askPoints],
+            maxVol: Math.max(...bids.map(b => b.size), ...asks.map(a => a.size), 1),
+            bidTotal: bTotal,
             askTotal: aTotal,
             imbalance: imb,
             walls: identifiedWalls
@@ -95,18 +113,18 @@ const DepthPage: React.FC = () => {
             <div className="h-64 shrink-0 bg-zinc-900/40 border border-white/5 rounded-2xl p-4 mb-6 relative overflow-hidden">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
-                        <defs><linearGradient id="colorBid" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient><linearGradient id="colorAsk" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/><stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/></linearGradient></defs>
+                        <defs><linearGradient id="colorBid" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3} /><stop offset="95%" stopColor="#10b981" stopOpacity={0} /></linearGradient><linearGradient id="colorAsk" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3} /><stop offset="95%" stopColor="#f43f5e" stopOpacity={0} /></linearGradient></defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} /><XAxis dataKey="price" type="number" domain={['dataMin', 'dataMax']} hide /><YAxis hide /><Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }} />
                         {metrics.price > 0 && <ReferenceLine x={metrics.price} stroke="#71717a" strokeDasharray="3 3" label={{ position: 'top', value: 'SPOT', fill: '#71717a', fontSize: 10 }} />}
-                        
+
                         {/* Integrated Walls on Chart */}
                         {walls.map((wall, i) => (
-                            <ReferenceLine 
-                                key={i} 
-                                x={wall.price} 
-                                stroke={asks.some(a => a.price === wall.price) ? '#f43f5e' : '#10b981'} 
-                                strokeWidth={2} 
-                                strokeDasharray="5 5" 
+                            <ReferenceLine
+                                key={i}
+                                x={wall.price}
+                                stroke={asks.some(a => a.price === wall.price) ? '#f43f5e' : '#10b981'}
+                                strokeWidth={2}
+                                strokeDasharray="5 5"
                                 opacity={0.4}
                             />
                         ))}
