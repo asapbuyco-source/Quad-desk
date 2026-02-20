@@ -57,13 +57,13 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
   // Calculate dynamic checklist statuses and detailed variables based on live metrics
   const dynamicChecklist = checklist.map(item => {
       // Deep clone details to update variables safely
-      let details = item.details ? { 
+      const details = item.details ? { 
           ...item.details, 
           variables: item.details.variables.map(v => ({...v})) 
       } : undefined;
 
       switch(item.id) {
-          case '1': // Dislocation (Z-Score)
+          case '1': { // Dislocation (Z-Score)
               const zVal = Math.abs(metrics.zScore);
               
               if (details && details.variables) {
@@ -78,8 +78,9 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                   status: zVal > 2.0 ? 'pass' : (zVal > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
                   details
               };
+          }
 
-          case '2': // Bayesian Posterior
+          case '2': { // Bayesian Posterior
               const bayesian = metrics.bayesianPosterior || 0.5;
               
               if (details && details.variables) {
@@ -97,8 +98,9 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                   status: bayesian > 0.6 ? 'pass' : (bayesian > 0.4 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
                   details
               };
+          }
           
-          case '3': // Sentiment Washout (RSI Based)
+          case '3': { // Sentiment Washout (RSI Based)
               const rsi = metrics.retailSentiment || 50;
               let sStatus: 'pass' | 'warning' | 'fail' = 'fail';
               let sLabel = "NEUTRAL";
@@ -119,8 +121,9 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                   status: sStatus,
                   details
               };
+          }
 
-          case '4': // Skewness
+          case '4': { // Skewness
               const skew = metrics.skewness || 0;
               
               if (details && details.variables) {
@@ -134,8 +137,9 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                   status: skew > -0.5 ? 'pass' : (skew > -1.0 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
                   details
               };
+          }
           
-          case '5': // Expected Value
+          case '5': { // Expected Value
               if (!expectedValue) return item;
               
               if (details && details.variables) {
@@ -151,6 +155,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                          (expectedValue.rrRatio > 1.5 ? 'warning' : 'fail') as 'pass' | 'warning' | 'fail',
                   details
               };
+          }
           
           default:
               return item;

@@ -16,7 +16,7 @@ import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl'; 
 import AlertEngine from './components/AlertEngine'; 
 import { ToastContainer } from './components/Toast';
-import { API_BASE_URL } from './constants';
+import { SCAN_COOLDOWN } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
@@ -27,8 +27,6 @@ import { calculateADX } from './utils/analytics';
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
-
-const SCAN_COOLDOWN = 60;
 
 const App: React.FC = () => {
   const ui = useStore(state => state.ui);
@@ -105,7 +103,8 @@ const App: React.FC = () => {
     let retryTimer: ReturnType<typeof setTimeout>;
     const fetchHistory = async () => {
         try {
-            const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
+            // Use Binance.US public API directly
+            const res = await fetch(`https://api.binance.us/api/v3/klines?symbol=${config.activeSymbol}&interval=${config.interval}&limit=500`);
             if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
             const data = await res.json();
             if (!Array.isArray(data)) throw new Error("Invalid history data format");
@@ -140,6 +139,7 @@ const App: React.FC = () => {
             setIsLoading(false);
             setConnectionError(false);
         } catch (e: any) {
+            console.error("History Fetch Error:", e);
             setConnectionError(true);
             setIsLoading(true);
             retryTimer = setTimeout(fetchHistory, 5000);
@@ -170,12 +170,13 @@ const App: React.FC = () => {
               `${symbol}@depth20@100ms`
           ].join('/');
           
-          const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+          // Use Binance.US WebSocket
+          const ws = new WebSocket(`wss://stream.binance.us:9443/stream?streams=${streams}`);
           wsRef.current = ws;
           
           ws.onopen = () => { 
               retryCount = 0;
-              console.log(`✅ WebSocket Connected: ${streams}`);
+              console.log(`✅ WebSocket Connected (US): ${streams}`);
           };
 
           ws.onmessage = (event) => {

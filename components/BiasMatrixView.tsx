@@ -12,6 +12,12 @@ const BiasCard: React.FC<{
     data: TimeframeData | null; 
     delay: number 
 }> = ({ label, data, delay }) => {
+    const [now, setNow] = React.useState(Date.now());
+
+    useEffect(() => {
+        const i = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(i);
+    }, []);
     
     let color = 'text-zinc-500';
     let bg = 'bg-zinc-900/50';
@@ -38,7 +44,7 @@ const BiasCard: React.FC<{
     }
 
     const chartData = data ? data.sparkline.map((val, i) => ({ i, val })) : [];
-    const isLive = data ? (Date.now() - data.lastUpdated < 60000) : false;
+    const isLive = data ? (now - data.lastUpdated < 60000) : false;
 
     return (
         <motion.div

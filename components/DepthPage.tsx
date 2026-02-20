@@ -59,17 +59,17 @@ const DepthPage: React.FC = () => {
 
         const identifiedWalls = [...asks, ...bids].filter(l => l.classification === 'WALL');
 
-        let bidAcc = 0;
-        const bidPoints = sortedBids.map(b => {
-            bidAcc += b.size;
-            return { price: b.price, bidDepth: bidAcc, askDepth: null };
-        }).sort((a, b) => a.price - b.price);
+        const bidPoints = sortedBids.reduce((acc: any[], b) => {
+            const lastDepth = acc.length > 0 ? acc[acc.length - 1].bidDepth : 0;
+            acc.push({ price: b.price, bidDepth: lastDepth + b.size, askDepth: null });
+            return acc;
+        }, []).sort((a: any, b: any) => a.price - b.price);
 
-        let askAcc = 0;
-        const askPoints = sortedAsks.map(a => {
-            askAcc += a.size;
-            return { price: a.price, bidDepth: null, askDepth: askAcc };
-        }).sort((a, b) => a.price - b.price);
+        const askPoints = sortedAsks.reduce((acc: any[], a) => {
+            const lastDepth = acc.length > 0 ? acc[acc.length - 1].askDepth : 0;
+            acc.push({ price: a.price, bidDepth: null, askDepth: lastDepth + a.size });
+            return acc;
+        }, []).sort((a: any, b: any) => a.price - b.price);
 
         const bTotal = bids.reduce((acc, b) => acc + b.size, 0);
         const aTotal = asks.reduce((acc, a) => acc + a.size, 0);

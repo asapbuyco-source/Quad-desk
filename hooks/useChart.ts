@@ -20,7 +20,10 @@ export const useLightweightChart = (
     
     // Store options in ref to avoid re-triggering effect on every render if options object is new
     const optionsRef = useRef(options);
-    optionsRef.current = options;
+    
+    useLayoutEffect(() => {
+        optionsRef.current = options;
+    });
 
     // Default Options
     const defaultOptions: DeepPartial<ChartOptions> = {

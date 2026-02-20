@@ -3,7 +3,7 @@ import { CandleData, MarketRegimeType } from '../types';
 export const generateMockCandles = (count: number, startPrice: number = 65000, intervalSeconds: number = 60): CandleData[] => {
     let currentPrice = startPrice;
     const now = Math.floor(Date.now() / 1000);
-    let currentTime = now - (count * intervalSeconds);
+    const currentTime = now - (count * intervalSeconds);
     const candles: CandleData[] = [];
     const trend = (Math.random() - 0.5) * 0.0001; 
 
