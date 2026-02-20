@@ -23,7 +23,7 @@ import { Loader2 } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
-import { calculateADX } from './utils/analytics'; 
+import { calculateADX, calculateBollingerBands } from './utils/analytics'; 
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -135,7 +135,8 @@ const App: React.FC = () => {
             if (formattedCandles.length === 0) throw new Error("No valid candle data received");
             
             const candlesWithADX = calculateADX(formattedCandles, 14);
-            setMarketHistory({ candles: candlesWithADX, initialCVD: runningCVD });
+            const candlesWithBands = calculateBollingerBands(candlesWithADX, 20);
+            setMarketHistory({ candles: candlesWithBands, initialCVD: runningCVD });
             setIsLoading(false);
             setConnectionError(false);
         } catch (e: any) {

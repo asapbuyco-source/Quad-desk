@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand';
 import { AppState } from '../types';
-import { MOCK_METRICS, API_BASE_URL } from '../../constants';
+import { MOCK_METRICS } from '../../constants';
 import { CandleData, OrderBookLevel } from '../../types';
 
 export const createMarketSlice: StateCreator<AppState, [], [], Pick<AppState, 'market' | 'cvdBaseline' | 'setMarketHistory' | 'setMarketBands' | 'processWsTick' | 'processTradeTick' | 'processDepthUpdate' | 'refreshHeatmap' | 'resetCvd'>> = (set, get) => ({
@@ -160,13 +160,33 @@ export const createMarketSlice: StateCreator<AppState, [], [], Pick<AppState, 'm
 
   refreshHeatmap: async () => {
       try {
-          const res = await fetch(`${API_BASE_URL}/heatmap`);
+          // Fetch 24h ticker for all symbols
+          const res = await fetch('https://api.binance.us/api/v3/ticker/24hr');
           if (res.ok) {
-              const heatmap = await res.json();
+              const data = await res.json();
+              // Filter for USDT pairs and top volume to simulate "heatmap" relevance
+              const topPairs = data
+                  .filter((t: any) => t.symbol.endsWith('USDT'))
+                  .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+                  .slice(0, 12);
+
+              const heatmap = topPairs.map((t: any) => {
+                  const priceChangePercent = parseFloat(t.priceChangePercent);
+                  // Approximate Z-Score based on change % (heuristic)
+                  // In a real system, this would use historical std dev
+                  const zScore = priceChangePercent / 2.5; 
+                  
+                  return {
+                      pair: t.symbol.replace('USDT', ''),
+                      price: parseFloat(t.lastPrice),
+                      zScore: zScore
+                  };
+              });
+
               set(state => ({ market: { ...state.market, metrics: { ...state.market.metrics, heatmap } } }));
           }
       } catch (e) {
-          console.warn("Heatmap fetch failed");
+          console.warn("Heatmap fetch failed", e);
       }
   },
 
