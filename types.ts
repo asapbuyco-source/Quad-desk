@@ -4,8 +4,8 @@ export type LiquidityType = 'WALL' | 'HOLE' | 'CLUSTER' | 'NORMAL';
 export type PeriodType = '20-DAY' | '20-HOUR' | '20-PERIOD';
 
 // Unified Regime Types
-export type MarketRegimeType = "TRENDING" | "RANGING" | "EXPANDING" | "COMPRESSING" | "UNCERTAIN";
-export type RegimeType = MarketRegimeType | 'MEAN_REVERTING' | 'HIGH_VOLATILITY';
+export type MarketRegimeType = "TRENDING" | "RANGING" | "MEAN_REVERTING" | "EXPANDING" | "COMPRESSING" | "HIGH_VOLATILITY" | "UNCERTAIN";
+export type RegimeType = MarketRegimeType;
 
 export interface OrderBookLevel {
   price: number;
@@ -17,12 +17,12 @@ export interface OrderBookLevel {
 }
 
 export interface RecentTrade {
-    id: string;
-    price: number;
-    size: number;
-    side: 'BUY' | 'SELL';
-    time: number;
-    isWhale: boolean;
+  id: string;
+  price: number;
+  size: number;
+  side: 'BUY' | 'SELL';
+  time: number;
+  isWhale: boolean;
 }
 
 export interface CandleData {
@@ -42,21 +42,21 @@ export interface CandleData {
 }
 
 export interface CalculationVariable {
-    label: string;
-    value: string | number;
-    unit?: string;
-    description: string;
+  label: string;
+  value: string | number;
+  unit?: string;
+  description: string;
 }
 
 export interface CalculationDetails {
-    formula: string;
-    variables: CalculationVariable[];
-    explanation: string;
-    thresholds: {
-        pass: string;
-        warning: string;
-        fail: string;
-    };
+  formula: string;
+  variables: CalculationVariable[];
+  explanation: string;
+  thresholds: {
+    pass: string;
+    warning: string;
+    fail: string;
+  };
 }
 
 export interface SentinelChecklist {
@@ -75,11 +75,11 @@ export interface HeatmapItem {
 }
 
 export interface ExpectedValueData {
-    ev: number; // Actual expected value in price units
-    rrRatio: number; // Risk:Reward ratio
-    winProbability: number;
-    winAmount: number;
-    lossAmount: number;
+  ev: number; // Actual expected value in price units
+  rrRatio: number; // Risk:Reward ratio
+  winProbability: number;
+  winAmount: number;
+  lossAmount: number;
 }
 
 export interface MarketMetrics {
@@ -98,10 +98,10 @@ export interface MarketMetrics {
   dailyPnL?: number;
   circuitBreakerTripped?: boolean;
   cvdContext?: {
-      trend: 'UP' | 'DOWN' | 'FLAT';
-      divergence: 'NONE' | 'BULLISH_ABSORPTION' | 'BEARISH_DISTRIBUTION';
-      interpretation: 'REAL STRENGTH' | 'REAL WEAKNESS' | 'ABSORPTION' | 'DISTRIBUTION' | 'NEUTRAL';
-      value: number;
+    trend: 'UP' | 'DOWN' | 'FLAT';
+    divergence: 'NONE' | 'BULLISH_ABSORPTION' | 'BEARISH_DISTRIBUTION';
+    interpretation: 'REAL STRENGTH' | 'REAL WEAKNESS' | 'ABSORPTION' | 'DISTRIBUTION' | 'NEUTRAL';
+    value: number;
   };
   // Advanced Analytics
   bayesianPosterior?: number; // 0-1 probability
@@ -148,16 +148,16 @@ export interface AiScanResult {
 }
 
 export interface AiAnalysis {
-    signal: 'BUY' | 'SELL' | 'WAIT';
-    confidence: number;
-    reason: string;
-    entry?: number;
-    stop_loss?: number;
-    take_profit?: number;
-    metrics?: {
-        z_score: number;
-        vpin: number;
-    }
+  signal: 'BUY' | 'SELL' | 'WAIT';
+  confidence: number;
+  reason: string;
+  entry?: number;
+  stop_loss?: number;
+  take_profit?: number;
+  metrics?: {
+    z_score: number;
+    vpin: number;
+  }
 }
 
 export interface ToastMessage {
@@ -180,9 +180,9 @@ export interface Position {
   riskAmount: number; // Dollar amount risked
   isOpen: boolean;
   openTime: number;
-  
+
   // Dynamic State
-  floatingR: number; 
+  floatingR: number;
   unrealizedPnL: number;
 }
 
@@ -207,19 +207,19 @@ export interface DailyStats {
 export type BiasType = "BULL" | "BEAR" | "NEUTRAL";
 
 export interface TimeframeData {
-    bias: BiasType;
-    sparkline: number[]; // Last 20 closes
-    lastUpdated: number;
+  bias: BiasType;
+  sparkline: number[]; // Last 20 closes
+  lastUpdated: number;
 }
 
 export interface BiasMatrixState {
-    symbol: string;
-    daily: TimeframeData | null;
-    h4: TimeframeData | null;
-    h1: TimeframeData | null;
-    m5: TimeframeData | null;
-    lastUpdated: number;
-    isLoading: boolean;
+  symbol: string;
+  daily: TimeframeData | null;
+  h4: TimeframeData | null;
+  h1: TimeframeData | null;
+  m5: TimeframeData | null;
+  lastUpdated: number;
+  isLoading: boolean;
 }
 
 // --- Liquidity Events Types ---

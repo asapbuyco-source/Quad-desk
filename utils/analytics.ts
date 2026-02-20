@@ -5,7 +5,7 @@ export const generateMockCandles = (count: number, startPrice: number = 65000, i
     const now = Math.floor(Date.now() / 1000);
     let currentTime = now - (count * intervalSeconds);
     const candles: CandleData[] = [];
-    const trend = (Math.random() - 0.5) * 0.0001; 
+    const trend = (Math.random() - 0.5) * 0.0001;
 
     for (let i = 0; i < count; i++) {
         const time = currentTime + (i * intervalSeconds);
@@ -28,11 +28,11 @@ export const generateMockCandles = (count: number, startPrice: number = 65000, i
             zScoreLower2: mean - (std * 2),
             adx: Math.random() * 40 + 10,
             delta: (Math.random() - 0.5) * volume * 0.4,
-            cvd: 0 
+            cvd: 0
         });
         currentPrice = close;
     }
-    
+
     let cvd = 0;
     return candles.map(c => {
         cvd += c.delta || 0;
@@ -88,7 +88,7 @@ export const calculateADX = (data: CandleData[], period = 14): CandleData[] => {
     let smoothDX = 0;
     for (let i = period; i < period * 2; i++) smoothDX += dxValues[i];
     smoothDX /= period;
-    adxValues[period * 2 - 1] = smoothDX; 
+    adxValues[period * 2 - 1] = smoothDX;
 
     for (let i = period * 2; i < length; i++) {
         smoothDX = ((smoothDX * (period - 1)) + dxValues[i]) / period;
@@ -127,8 +127,8 @@ export const calculateRSI = (prices: number[], period = 14): number => {
 export const calculateATR = (candles: CandleData[], period = 14): number => {
     if (candles.length < period + 1) return 0;
     const trs: number[] = [];
-    for(let i = 1; i < candles.length; i++) {
-        const curr = candles[i], prev = candles[i-1];
+    for (let i = 1; i < candles.length; i++) {
+        const curr = candles[i], prev = candles[i - 1];
         trs.push(Math.max(curr.high - curr.low, Math.abs(curr.high - prev.close), Math.abs(curr.low - prev.close)));
     }
     if (trs.length < period) return 0;
@@ -166,12 +166,71 @@ export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
         if (Math.abs(price - sma20) > currentATR * 2) {
             type = 'TRENDING';
             trendDirection = isBull ? 'BULL' : 'BEAR';
-        } else if (rangeSize > prevRangeSize * 1.2) type = 'EXPANDING';
-    } else if (rangeSize < prevRangeSize * 0.8) type = 'COMPRESSING';
+        } else if (rangeSize > prevRangeSize * 1.2) {
+            type = 'EXPANDING';
+        }
+    } else if (rangeSize < prevRangeSize * 0.8) {
+        type = 'COMPRESSING';
+    } else if (volatilityRatio < 0.85 && Math.abs(price - sma20) < currentATR) {
+        // Low volatility + price hugging the SMA = classical mean-reverting market
+        type = 'MEAN_REVERTING';
+    }
 
-    if ((candles[candles.length-1].adx || 0) > 25) {
+    if ((candles[candles.length - 1].adx || 0) > 25) {
         type = 'TRENDING';
         trendDirection = isBull ? 'BULL' : 'BEAR';
     }
     return { type, atr: currentATR, rangeSize, trendDirection, volatilityPercentile };
+};
+
+/**
+ * calculateZScoreBands
+ *
+ * Computes rolling VWAP-anchored standard deviation bands over `period` candles.
+ * Typical price = (H + L + C) / 3, weighted by volume.
+ *
+ * Bands:
+ *   Upper/Lower 1 = VWAP ± 1σ  (orange/blue dashed on chart)
+ *   Upper/Lower 2 = VWAP ± 2σ  (red/green solid on chart — key reversal zones)
+ *
+ * @param data   Array of CandleData (must include high, low, close, volume)
+ * @param period Rolling window size (default 20)
+ */
+export const calculateZScoreBands = (data: CandleData[], period = 20): CandleData[] => {
+    if (data.length < period) return data;
+
+    return data.map((candle, i) => {
+        if (i < period - 1) {
+            // Not enough history yet — keep zeroes so the chart filters them out
+            return candle;
+        }
+
+        const window = data.slice(i - period + 1, i + 1);
+
+        // Typical price per bar: (H + L + C) / 3
+        const typicals = window.map(c => (c.high + c.low + c.close) / 3);
+
+        // Volume-weighted average price (VWAP) over the window
+        let vwapNum = 0;
+        let vwapDen = 0;
+        for (let j = 0; j < window.length; j++) {
+            const vol = window[j].volume || 1; // Guard against 0-volume bars
+            vwapNum += typicals[j] * vol;
+            vwapDen += vol;
+        }
+        const vwap = vwapDen > 0 ? vwapNum / vwapDen : typicals[typicals.length - 1];
+
+        // Population standard deviation of typical prices in the window
+        const mean = typicals.reduce((a, b) => a + b, 0) / typicals.length;
+        const variance = typicals.reduce((acc, p) => acc + Math.pow(p - mean, 2), 0) / typicals.length;
+        const std = Math.sqrt(variance);
+
+        return {
+            ...candle,
+            zScoreUpper1: vwap + std,
+            zScoreLower1: vwap - std,
+            zScoreUpper2: vwap + 2 * std,
+            zScoreLower2: vwap - 2 * std,
+        };
+    });
 };

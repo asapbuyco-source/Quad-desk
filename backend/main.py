@@ -105,42 +105,42 @@ class AnalysisRequest(BaseModel):
     cvdTrend: str
     candleCount: int
 
-def map_symbol_to_kraken(symbol: str) -> str:
-    base = ""
-    quote = ""
-    if symbol.startswith("BTC"): base = "XBT"
-    elif symbol.startswith("ETH"): base = "ETH"
-    elif symbol.startswith("SOL"): base = "SOL"
-    else: base = symbol[:3] 
-    if symbol.endswith("USDT"): quote = "USDT"
-    elif symbol.endswith("USD"): quote = "USD"
-    else: quote = "USD"
-    return f"{base}{quote}"
+# Binance.US is accessible from US-based servers.
+# Response format per kline: [openTime, open, high, low, close, volume, closeTime,
+#   quoteAssetVolume, numTrades, takerBuyBaseVolume, takerBuyQuoteVolume, ignore]
+BINANCE_BASE = "https://api.binance.us"
 
-def map_interval_to_kraken(interval: str) -> int:
-    mapping = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
-    return mapping.get(interval, 1)
+VALID_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"}
 
-async def fetch_kraken_candles(symbol: str, interval: str, limit: int = 300):
-    pair = map_symbol_to_kraken(symbol)
-    kraken_interval = map_interval_to_kraken(interval)
-    url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": pair, "interval": kraken_interval}
+async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
+    if interval not in VALID_INTERVALS:
+        interval = "1m"
+    url = f"{BINANCE_BASE}/api/v3/klines"
+    params = {"symbol": symbol.upper(), "interval": interval, "limit": min(limit, 1000)}
     async with httpx.AsyncClient() as client:
         try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = await client.get(url, params=params, headers=headers, timeout=10.0)
+            resp = await client.get(url, params=params, timeout=10.0)
             resp.raise_for_status()
             data = resp.json()
-            if data.get("error"):
+            if not isinstance(data, list):
+                logger.error(f"Binance unexpected response for {symbol}: {data}")
                 return []
-            result = data.get("result", {})
-            ohlc_list = next((v for k, v in result.items() if isinstance(v, list)), [])
-            formatted_data = []
-            for d in ohlc_list:
-                formatted_data.append([int(d[0]) * 1000, float(d[1]), float(d[2]), float(d[3]), float(d[4]), float(d[6])])
-            return sorted(formatted_data, key=lambda x: x[0])[-limit:]
-        except Exception:
+            # Return 7 values: openTime(ms), open, high, low, close, volume, takerBuyBaseVolume
+            # Index 9 of the Binance response is takerBuyBaseVolume — used for accurate CVD
+            return [
+                [
+                    int(k[0]),      # 0: openTime in ms (already ms, no conversion needed)
+                    float(k[1]),    # 1: open
+                    float(k[2]),    # 2: high
+                    float(k[3]),    # 3: low
+                    float(k[4]),    # 4: close
+                    float(k[5]),    # 5: total base asset volume
+                    float(k[9]),    # 6: takerBuyBaseVolume (NEW) — for accurate historical delta
+                ]
+                for k in data
+            ]
+        except Exception as e:
+            logger.error(f"Binance candle fetch error ({symbol} {interval}): {e}")
             return []
 
 @asynccontextmanager
@@ -154,14 +154,14 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 @app.get("/history")
 async def get_history(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), interval: str = "1m", limit: int = 300):
-    return await fetch_kraken_candles(symbol, interval, limit)
+    return await fetch_binance_candles(symbol, interval, limit)
 
 @app.get("/heatmap")
 async def get_heatmap():
     pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     results = []
     for p in pairs:
-        klines = await fetch_kraken_candles(p, "1h", 21)
+        klines = await fetch_binance_candles(p, "1h", 21)
         if len(klines) < 21: continue
         closes = [x[4] for x in klines]
         mean = np.mean(closes[:-1])
@@ -172,7 +172,7 @@ async def get_heatmap():
 
 @app.get("/analyze")
 async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-3-flash-preview"):
-    klines = await fetch_kraken_candles(symbol, "15m", 30)
+    klines = await fetch_binance_candles(symbol, "15m", 30)
     if not klines: raise HTTPException(status_code=502, detail="Upstream Down")
     
     current_price = float(klines[-1][4])
