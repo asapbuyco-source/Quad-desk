@@ -152,6 +152,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
 @app.get("/history")
 async def get_history(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), interval: str = "1m", limit: int = 300):
     return await fetch_binance_candles(symbol, interval, limit)
