@@ -59,7 +59,8 @@ const App: React.FC = () => {
         processDepthUpdate,
         refreshHeatmap,
         refreshRegimeAnalysis,
-        refreshTacticalAnalysis
+        refreshTacticalAnalysis,
+        refreshLiquidityAnalysis
     } = useStore();
 
     const handlePeriodChange = (period: PeriodType) => {
@@ -94,9 +95,11 @@ const App: React.FC = () => {
     useEffect(() => {
         refreshRegimeAnalysis();
         refreshTacticalAnalysis();
+        refreshLiquidityAnalysis();
         const interval = setInterval(() => {
             refreshRegimeAnalysis();
             refreshTacticalAnalysis();
+            refreshLiquidityAnalysis();
         }, 5000);
         return () => clearInterval(interval);
     }, [config.activeSymbol]);

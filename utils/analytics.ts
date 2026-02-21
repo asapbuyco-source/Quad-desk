@@ -150,7 +150,7 @@ export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
     const currentATR = calculateATR(candles, 14);
     const longTermATR = calculateATR(candles, 50);
     const volatilityRatio = longTermATR > 0 ? currentATR / longTermATR : 1;
-    const volatilityPercentile = Math.min(100, Math.max(0, volatilityRatio * 50));
+    const volatilityPercentile = Math.min(100, Math.max(0, volatilityRatio * 100));
     const sma20 = candles.slice(-20).reduce((acc, c) => acc + c.close, 0) / 20;
     const price = candles[candles.length - 1].close;
     const isBull = price > sma20;

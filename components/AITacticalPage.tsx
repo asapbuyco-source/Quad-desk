@@ -36,7 +36,7 @@ const AITacticalPage: React.FC = () => {
     let color = 'text-zinc-400';
     let bg = 'bg-zinc-900';
     let icon = <Minus size={48} />;
-    
+
     if (scenario === 'BULLISH') {
         color = 'text-emerald-400';
         bg = 'bg-emerald-900/10 border-emerald-500/30';
@@ -50,7 +50,7 @@ const AITacticalPage: React.FC = () => {
     const rrRatio = Math.abs(exitLevel - entryLevel) / Math.abs(entryLevel - stopLevel);
 
     return (
-        <motion.div 
+        <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 max-w-6xl mx-auto pt-6"
@@ -79,13 +79,13 @@ const AITacticalPage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
+
                 {/* Main Probability Card */}
                 <div className={`lg:col-span-2 p-8 rounded-3xl border ${scenario === 'NEUTRAL' ? 'border-white/10 bg-zinc-900/50' : bg} relative overflow-hidden flex flex-col justify-between min-h-[300px]`}>
                     <div className="absolute top-0 right-0 p-8 opacity-10">
                         {icon}
                     </div>
-                    
+
                     <div>
                         <div className="flex items-center gap-3 mb-2">
                             <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-black/40 border border-white/10 ${color}`}>
@@ -138,8 +138,8 @@ const AITacticalPage: React.FC = () => {
                                 <span className={rrRatio >= 2 ? 'text-emerald-400 font-bold' : 'text-zinc-300'}>{rrRatio.toFixed(2)}R</span>
                             </div>
                             <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-                                <div 
-                                    className={`h-full ${rrRatio >= 2 ? 'bg-emerald-500' : 'bg-amber-500'}`} 
+                                <div
+                                    className={`h-full ${rrRatio >= 2 ? 'bg-emerald-500' : 'bg-amber-500'}`}
                                     style={{ width: `${Math.min((rrRatio / 4) * 100, 100)}%` }}
                                 />
                             </div>
@@ -151,7 +151,7 @@ const AITacticalPage: React.FC = () => {
 
             {/* Execution Bar */}
             {probability > 60 && (
-                <motion.div 
+                <motion.div
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     className="mt-8 p-1 rounded-2xl bg-gradient-to-r from-zinc-800 to-zinc-900 border border-white/5 flex items-center justify-between pl-6 pr-2 py-2"
@@ -160,8 +160,11 @@ const AITacticalPage: React.FC = () => {
                         <div className={`w-3 h-3 rounded-full animate-pulse ${color.replace('text-', 'bg-')}`} />
                         <span className="text-sm font-bold text-white tracking-wide">High Probability Setup Detected</span>
                     </div>
-                    <button className="px-6 py-3 rounded-xl bg-white text-black font-bold text-sm flex items-center gap-2 hover:scale-105 transition-transform">
-                        EXECUTE STRATEGY <ArrowRight size={16} />
+                    <button
+                        onClick={() => useStore.getState().setActiveTab('dashboard')}
+                        className="px-6 py-3 rounded-xl bg-white text-black font-bold text-sm flex items-center gap-2 hover:scale-105 transition-transform"
+                    >
+                        Go to Execution Desk <ArrowRight size={16} />
                     </button>
                 </motion.div>
             )}

@@ -3,7 +3,7 @@ import {
     MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel,
     AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState,
     LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-    BiasType
+    BiasType, SweepEvent, BreakOfStructure, FairValueGap
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
@@ -231,15 +231,30 @@ export const useStore = create<AppState>((set, get) => ({
     setAiModel: (model) => set(state => ({ config: { ...state.config, aiModel: model } })),
 
     setMarketHistory: ({ candles, initialCVD }) => {
+        // Compute RSI (retailSentiment) and VPIN (toxicity) from the initial historical data
+        const closes = candles.map(c => c.close);
+        const rsiOnLoad = calculateRSI(closes, 14);
+        const vpinSlice = candles.slice(-20);
+        const vpinOnLoad = Math.min(100, (vpinSlice.reduce((acc, c) => {
+            const vol = c.volume || 0;
+            return acc + (vol > 0 ? Math.abs(c.delta || 0) / vol : 0);
+        }, 0) / Math.max(vpinSlice.length, 1)) * 100);
+
         set(state => ({
             cvdBaseline: initialCVD,
             market: {
                 ...state.market,
                 candles,
-                metrics: { ...state.market.metrics, institutionalCVD: initialCVD }
+                metrics: {
+                    ...state.market.metrics,
+                    institutionalCVD: initialCVD,
+                    retailSentiment: rsiOnLoad,
+                    toxicity: vpinOnLoad
+                }
             }
         }));
         get().refreshBiasMatrix();
+        get().refreshLiquidityAnalysis();
     },
 
     setMarketBands: (_bands) => { },
@@ -325,10 +340,20 @@ export const useStore = create<AppState>((set, get) => ({
             const std20 = Math.sqrt(closes20.reduce((a, c) => a + Math.pow(c - mean20, 2), 0) / closes20.length);
             const zScore = std20 > 0 ? (tick.c - mean20) / std20 : 0;
 
+            // --- RSI (retailSentiment) — computed fresh on every new bar ---
+            const allClosesRSI = newCandles.map(c => c.close);
+            const rsiValue = calculateRSI(allClosesRSI, 14);
+
+            // --- VPIN / Toxicity: rolling |delta| / volume over last 20 bars ---
+            const vpinWindow = newCandles.slice(-20);
+            const vpinValue = Math.min(100, (vpinWindow.reduce((acc, c) => {
+                const vol = c.volume || 0;
+                return acc + (vol > 0 ? Math.abs(c.delta || 0) / vol : 0);
+            }, 0) / Math.max(vpinWindow.length, 1)) * 100);
+
             // --- Bayesian Posterior: P(bull | RSI, OFI) ---
-            const rsiNow = state.market.metrics.retailSentiment || 50;
             const ofiNow = state.market.metrics.ofi || 0;
-            const lBull = rsiNow > 55 ? 0.65 : rsiNow < 45 ? 0.35 : 0.50;
+            const lBull = rsiValue > 55 ? 0.65 : rsiValue < 45 ? 0.35 : 0.50;
             const ofiAdj = Math.max(-0.1, Math.min(0.1, ofiNow / 200));
             const lBullAdj = Math.max(0.05, Math.min(0.95, lBull + ofiAdj));
             const bayesianPosterior = (lBullAdj * 0.5) / ((lBullAdj * 0.5) + ((1 - lBullAdj) * 0.5));
@@ -346,6 +371,8 @@ export const useStore = create<AppState>((set, get) => ({
                         skewness,
                         kurtosis,
                         bayesianPosterior,
+                        retailSentiment: rsiValue,
+                        toxicity: vpinValue,
                         cvdContext: {
                             trend: cvdDelta > 0 ? 'UP' : 'DOWN',
                             divergence,
@@ -520,6 +547,10 @@ export const useStore = create<AppState>((set, get) => ({
         newStats.realizedPnL += pnl;
         if (r > 0) newStats.wins++; else newStats.losses++;
         newStats.tradesToday++;
+        // Track worst single-trade loss as max drawdown in R
+        if (r < 0 && Math.abs(r) > newStats.maxDrawdownR) {
+            newStats.maxDrawdownR = Math.abs(r);
+        }
         return {
             trading: { ...state.trading, activePosition: null, accountSize: state.trading.accountSize + pnl, dailyStats: newStats }
         };
@@ -569,9 +600,104 @@ export const useStore = create<AppState>((set, get) => ({
             return { biasMatrix: updatedBiasMatrix };
         });
     },
-    refreshLiquidityAnalysis: () => {
-        set(state => ({ liquidity: { ...state.liquidity, lastUpdated: Date.now() } }));
-    },
+    refreshLiquidityAnalysis: () => set(state => {
+        const candles = state.market.candles;
+        if (candles.length < 10) return {};
+
+        const N = 5; // swing lookback in bars
+        const MAX_PER_TYPE = 8;
+        const now = Date.now();
+        const lastCandle = candles[candles.length - 1];
+
+        // --- FVG Detection: 3-bar imbalance pattern, scan last 60 bars ---
+        const fvgEvents: FairValueGap[] = [];
+        const fvgScanStart = Math.max(2, candles.length - 60);
+        for (let i = fvgScanStart; i < candles.length; i++) {
+            const prev2 = candles[i - 2];
+            const curr = candles[i];
+            if (curr.low > prev2.high) {
+                fvgEvents.push({
+                    id: `fvg-bull-${curr.time}`,
+                    startPrice: prev2.high,
+                    endPrice: curr.low,
+                    direction: 'BULLISH',
+                    resolved: lastCandle.close < prev2.high,
+                    timestamp: now,
+                    candleTime: curr.time
+                });
+            } else if (curr.high < prev2.low) {
+                fvgEvents.push({
+                    id: `fvg-bear-${curr.time}`,
+                    startPrice: curr.high,
+                    endPrice: prev2.low,
+                    direction: 'BEARISH',
+                    resolved: lastCandle.close > prev2.low,
+                    timestamp: now,
+                    candleTime: curr.time
+                });
+            }
+        }
+
+        // --- Swing High/Low Identification ---
+        const swingHighs: { price: number; idx: number; time: number | string }[] = [];
+        const swingLows: { price: number; idx: number; time: number | string }[] = [];
+        for (let i = N; i < candles.length; i++) {
+            const c = candles[i];
+            let isHigh = true, isLow = true;
+            // Look-left: full N bars; look-right: as many as available (no forced N-bar right window)
+            const rightEnd = Math.min(i + N, candles.length - 1);
+            for (let j = i - N; j <= rightEnd; j++) {
+                if (j === i) continue;
+                if (candles[j].high >= c.high) isHigh = false;
+                if (candles[j].low <= c.low) isLow = false;
+            }
+            if (isHigh) swingHighs.push({ price: c.high, idx: i, time: c.time });
+            if (isLow) swingLows.push({ price: c.low, idx: i, time: c.time });
+        }
+
+        // --- BOS + Sweep Detection from swing points ---
+        const bosEvents: BreakOfStructure[] = [];
+        const sweepEvents: SweepEvent[] = [];
+
+        // Check last 5 swing highs: first subsequent candle triggering BOS or sweep wins
+        for (const sh of swingHighs.slice(-5)) {
+            for (let i = sh.idx + 1; i < candles.length; i++) {
+                const c = candles[i];
+                if (c.close > sh.price) {
+                    bosEvents.push({ id: `bos-bull-${c.time}`, price: sh.price, direction: 'BULLISH', timestamp: now, candleTime: c.time });
+                    break;
+                }
+                if (c.high > sh.price && c.close <= sh.price) {
+                    sweepEvents.push({ id: `sweep-buy-${c.time}`, price: sh.price, side: 'BUY', timestamp: now, candleTime: c.time });
+                    break;
+                }
+            }
+        }
+
+        // Check last 5 swing lows
+        for (const sl of swingLows.slice(-5)) {
+            for (let i = sl.idx + 1; i < candles.length; i++) {
+                const c = candles[i];
+                if (c.close < sl.price) {
+                    bosEvents.push({ id: `bos-bear-${c.time}`, price: sl.price, direction: 'BEARISH', timestamp: now, candleTime: c.time });
+                    break;
+                }
+                if (c.low < sl.price && c.close >= sl.price) {
+                    sweepEvents.push({ id: `sweep-sell-${c.time}`, price: sl.price, side: 'SELL', timestamp: now, candleTime: c.time });
+                    break;
+                }
+            }
+        }
+
+        return {
+            liquidity: {
+                sweeps: sweepEvents.slice(-MAX_PER_TYPE),
+                bos: bosEvents.slice(-MAX_PER_TYPE),
+                fvg: fvgEvents.slice(-MAX_PER_TYPE),
+                lastUpdated: now
+            }
+        };
+    }),
     refreshRegimeAnalysis: () => set(state => {
         const candles = state.market.candles;
         if (candles.length < 50) return {};
@@ -605,7 +731,6 @@ export const useStore = create<AppState>((set, get) => ({
         if (matrix.h1?.bias === 'BULL') bullScore += 10;
         if (regimeType === 'TRENDING' && trendDir === 'BULL') bullScore += 30;
         if (ofi > 20) bullScore += 20;
-        // Liquidity sweep scoring reserved — sweeps[] populated when refreshLiquidityAnalysis is fully implemented
 
         let bearScore = 0;
         if (matrix.daily?.bias === 'BEAR') bearScore += 10;
@@ -613,7 +738,12 @@ export const useStore = create<AppState>((set, get) => ({
         if (matrix.h1?.bias === 'BEAR') bearScore += 10;
         if (regimeType === 'TRENDING' && trendDir === 'BEAR') bearScore += 30;
         if (ofi < -20) bearScore += 20;
-        // Liquidity sweep scoring reserved — sweeps[] populated when refreshLiquidityAnalysis is fully implemented
+
+        // Liquidity sweep cross-scoring (both vars declared above)
+        // A BUY-side sweep (wick above swing high, close back inside) = bearish reversal signal
+        if (state.liquidity.sweeps.some((s: any) => s.side === 'BUY')) bearScore += 15;
+        // A SELL-side sweep (wick below swing low, close back inside) = bullish reversal signal
+        if (state.liquidity.sweeps.some((s: any) => s.side === 'SELL')) bullScore += 15;
 
         if (bullScore > bearScore) {
             prob = 50 + (bullScore / 2);

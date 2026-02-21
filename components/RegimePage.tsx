@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { Activity, TrendingUp, TrendingDown, Maximize2, Minimize2, Radio, Info, RefreshCw, BarChart2 } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, Maximize2, Minimize2, Radio, Info, RefreshCw, BarChart2, Waves } from 'lucide-react';
 
 const motion = m as any;
 
@@ -36,12 +36,14 @@ const RegimePage: React.FC = () => {
         config = { color: 'text-blue-400', bg: 'bg-blue-900/20', border: 'border-blue-500/30', icon: Maximize2, label: 'EXPANSION', gradient: 'from-blue-900/40 to-black' };
     } else if (regimeType === 'COMPRESSING') {
         config = { color: 'text-zinc-300', bg: 'bg-zinc-800/50', border: 'border-zinc-600/30', icon: Minimize2, label: 'SQUEEZE', gradient: 'from-zinc-800/40 to-black' };
+    } else if (regimeType === 'MEAN_REVERTING') {
+        config = { color: 'text-blue-400', bg: 'bg-blue-900/20', border: 'border-blue-500/30', icon: Waves, label: 'MEAN REVERT', gradient: 'from-blue-900/40 to-black' };
     } else if (regimeType === 'RANGING') {
         config = { color: 'text-amber-400', bg: 'bg-amber-900/20', border: 'border-amber-500/30', icon: Radio, label: 'CHOP / RANGE', gradient: 'from-amber-900/40 to-black' };
     }
 
     return (
-        <motion.div 
+        <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 max-w-5xl mx-auto pt-6"
@@ -70,7 +72,7 @@ const RegimePage: React.FC = () => {
             </div>
 
             {/* BIG BANNER */}
-            <motion.div 
+            <motion.div
                 key={regimeType + trendDirection}
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -80,7 +82,7 @@ const RegimePage: React.FC = () => {
                 <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
                     <config.icon size={200} />
                 </div>
-                
+
                 <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
                     <div>
                         <div className="flex items-center gap-3 mb-2">
@@ -100,8 +102,8 @@ const RegimePage: React.FC = () => {
                         </div>
                         <div className="text-3xl font-mono font-bold text-white mb-2">{volatilityPercentile.toFixed(0)}%</div>
                         <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                            <div 
-                                className={`h-full ${volatilityPercentile > 80 ? 'bg-rose-500' : volatilityPercentile > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
+                            <div
+                                className={`h-full ${volatilityPercentile > 80 ? 'bg-rose-500' : volatilityPercentile > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`}
                                 style={{ width: `${volatilityPercentile}%` }}
                             />
                         </div>
@@ -111,7 +113,7 @@ const RegimePage: React.FC = () => {
 
             {/* Metrics Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                
+
                 {/* ATR Card */}
                 <div className="p-6 rounded-2xl bg-zinc-900/50 border border-white/5">
                     <div className="flex items-center gap-2 text-zinc-500 text-xs font-bold uppercase mb-4">
@@ -140,7 +142,7 @@ const RegimePage: React.FC = () => {
 
                 {/* Info Card */}
                 <div className="p-6 rounded-2xl bg-zinc-900/50 border border-white/5 flex flex-col justify-between">
-                     <div className="flex items-center gap-2 text-zinc-500 text-xs font-bold uppercase mb-4">
+                    <div className="flex items-center gap-2 text-zinc-500 text-xs font-bold uppercase mb-4">
                         <Info size={14} /> Strategy Lock
                     </div>
                     <div className="flex flex-wrap gap-2">
