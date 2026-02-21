@@ -412,27 +412,62 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
     processDepthUpdate: ({ asks, bids }) => set(state => {
-        const bidVol = bids.reduce((acc, b) => acc + b.size, 0);
-        const askVol = asks.reduce((acc, a) => acc + a.size, 0);
-        const totalVol = bidVol + askVol;
-        const imbalance = totalVol > 0 ? ((bidVol - askVol) / totalVol) * 100 : 0;
+        // ─── Sort defensively: asks ascending (best ask = [0]), bids descending (best bid = [0])
+        const sortedAsks = [...asks].sort((a, b) => a.price - b.price);
+        const sortedBids = [...bids].sort((a, b) => b.price - a.price);
 
-        const allLevels = [...asks, ...bids];
-        const meanSize = allLevels.length > 0 ? allLevels.reduce((acc, l) => acc + l.size, 0) / allLevels.length : 0;
-        const threshold = meanSize * 2.5;
+        const bestAsk = sortedAsks[0]?.price ?? 0;
+        const bestBid = sortedBids[0]?.price ?? 0;
+        const midPrice = (bestAsk + bestBid) / 2 || 1;
+
+        // ─── Signal 1: Proximity-weighted depth imbalance
+        // Levels closer to mid-price carry exponentially more weight.
+        // Decay constant k: each additional level away reduces weight by ~18%.
+        const k = 0.18;
+        let weightedBid = 0, weightedAsk = 0;
+        sortedBids.forEach((b, i) => { weightedBid += b.size * Math.exp(-k * i); });
+        sortedAsks.forEach((a, i) => { weightedAsk += a.size * Math.exp(-k * i); });
+        const totalWeighted = weightedBid + weightedAsk;
+        const depthImbalance = totalWeighted > 0 ? ((weightedBid - weightedAsk) / totalWeighted) * 100 : 0;
+
+        // ─── Signal 2: Delta-OFI (Cont et al. microstructure definition)
+        // OFI = Σ bid_delta where price ≥ bestBid - Σ ask_delta where price ≤ bestAsk
+        // a positive bid delta at best bid = aggressive buying pressure
+        // a positive ask delta at best ask = new supply added (bearish)
+        let deltaOfiRaw = 0;
+        sortedBids.forEach(b => {
+            if (b.price >= bestBid) deltaOfiRaw += (b.delta ?? 0);   // bid reinforced at top = bullish
+        });
+        sortedAsks.forEach(a => {
+            if (a.price <= bestAsk) deltaOfiRaw -= (a.delta ?? 0);   // ask reinforced at top = bearish
+        });
+
+        // Normalise delta OFI to [-100, 100] using a rolling vol estimate (mid * 0.001 as proxy unit)
+        const deltaUnit = midPrice * 0.001 || 1;
+        const deltaOfi = Math.max(-100, Math.min(100, (deltaOfiRaw / deltaUnit) * 10));
+
+        // ─── Composite OFI: 60% depth imbalance + 40% delta signal
+        const ofi = (depthImbalance * 0.6) + (deltaOfi * 0.4);
+
+        // ─── Wall / Hole classification using per-side median (robust to outliers)
+        const allLevels = [...sortedAsks, ...sortedBids];
+        const sorted = [...allLevels].map(l => l.size).sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)] || 1;
+        const wallThreshold = median * 4;    // >4× median = significant wall
+        const holeThreshold = median * 0.15; // <15% median = liquidity hole
 
         const classify = (l: OrderBookLevel) => {
-            if (l.size > threshold) return 'WALL';
-            if (l.size < meanSize * 0.1) return 'HOLE';
+            if (l.size > wallThreshold) return 'WALL';
+            if (l.size < holeThreshold) return 'HOLE';
             return 'NORMAL';
         };
 
         return {
             market: {
                 ...state.market,
-                asks: asks.map(a => ({ ...a, classification: classify(a) as any })),
-                bids: bids.map(b => ({ ...b, classification: classify(b) as any })),
-                metrics: { ...state.market.metrics, ofi: imbalance }
+                asks: sortedAsks.map(a => ({ ...a, classification: classify(a) as any })),
+                bids: sortedBids.map(b => ({ ...b, classification: classify(b) as any })),
+                metrics: { ...state.market.metrics, ofi: Math.round(ofi * 10) / 10 }
             }
         };
     }),
