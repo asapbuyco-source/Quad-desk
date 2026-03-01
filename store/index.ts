@@ -3,7 +3,7 @@ import {
     MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel,
     AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState,
     LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-    BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, MacroStrategyAiResult
+    BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
