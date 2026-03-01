@@ -10,6 +10,7 @@ import BiasMatrixView from './components/BiasMatrixView';
 import LiquidityPage from './components/LiquidityPage';
 import RegimePage from './components/RegimePage';
 import AITacticalPage from './components/AITacticalPage';
+import MacroStrategyView from './components/MacroStrategyView';
 import DepthPage from './components/DepthPage';
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
@@ -299,6 +300,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'bias' && <BiasMatrixView />}
                                 {ui.activeTab === 'liquidity' && <LiquidityPage />}
                                 {ui.activeTab === 'regime' && <RegimePage />}
+                                {ui.activeTab === 'macro-strategy' && <MacroStrategyView />}
                                 {ui.activeTab === 'ai-tactical' && <AITacticalPage />}
                                 {ui.activeTab === 'analytics' && <AnalyticsView />}
                                 {ui.activeTab === 'intel' && <IntelView />}

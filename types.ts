@@ -287,6 +287,20 @@ export interface AiTacticalState {
   lastUpdated: number;
 }
 
+// --- Macro Strategy Types ---
+
+export interface MacroStrategyAiResult {
+  verdict: string;
+  confidence: number;
+  analysis: string;
+}
+
+export interface MacroStrategyState {
+  aiResult: MacroStrategyAiResult | null;
+  isLoading: boolean;
+  lastUpdated: number;
+}
+
 // --- Admin System Types ---
 
 export interface LogEntry {

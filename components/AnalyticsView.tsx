@@ -119,15 +119,15 @@ const AnalyticsView: React.FC = () => {
     let verdictBg = "from-zinc-900 to-black";
     let verdictBorder = "border-white/10";
 
-    if (orderFlowAnalysis.verdict === 'BULLISH') {
+    if (orderFlowAnalysis.verdict?.toUpperCase() === 'BULLISH') {
         verdictColor = "text-emerald-400";
         verdictBg = "from-emerald-900/20 to-black";
         verdictBorder = "border-emerald-500/20";
-    } else if (orderFlowAnalysis.verdict === 'BEARISH') {
+    } else if (orderFlowAnalysis.verdict?.toUpperCase() === 'BEARISH') {
         verdictColor = "text-rose-400";
         verdictBg = "from-rose-900/20 to-black";
         verdictBorder = "border-rose-500/20";
-    } else if (orderFlowAnalysis.verdict === 'NEUTRAL') {
+    } else if (orderFlowAnalysis.verdict?.toUpperCase() === 'NEUTRAL') {
         verdictColor = "text-amber-400";
         verdictBg = "from-amber-900/20 to-black";
         verdictBorder = "border-amber-500/20";

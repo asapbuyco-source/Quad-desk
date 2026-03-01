@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import json
+import re
 import time
 import psutil
 import numpy as np
@@ -105,6 +106,18 @@ class AnalysisRequest(BaseModel):
     cvdTrend: str
     candleCount: int
 
+class MacroStrategyRequest(BaseModel):
+    symbol: str
+    price: float
+    skewness: float
+    bayesianPosterior: float
+    zScore: float
+    rsi: float
+    ofi: float
+    cvd: float
+    tapeSpeed: str
+    wallContext: str
+
 # Binance.US is accessible from US-based servers.
 # Response format per kline: [openTime, open, high, low, close, volume, closeTime,
 #   quoteAssetVolume, numTrades, takerBuyBaseVolume, takerBuyQuoteVolume, ignore]
@@ -192,8 +205,9 @@ async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), 
     if not GEMINI_API_KEY:
         return {
             "support": [s1], "resistance": [r1], "decision_price": pivot,
-            "verdict": "WAIT", "confidence": 0.6, "analysis": "Mathematical Pivot Analysis (AI Offline).",
-            "risk_reward_ratio": 2.0, "entry_price": current_price, "stop_loss": s1, "take_profit": r1
+            "verdict": "WAIT", "confidence": 0.1, "analysis": "Mathematical Pivot Analysis (AI Offline).",
+            "risk_reward_ratio": 2.0, "entry_price": current_price, "stop_loss": s1, "take_profit": r1,
+            "is_simulated": True
         }
 
     prices_str = "\n".join([f"T:{x[0]} O:{x[1]} H:{x[2]} L:{x[3]} C:{x[4]}" for x in klines])
@@ -202,26 +216,78 @@ async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), 
     try:
         gen_model = genai.GenerativeModel(model)
         response = await gen_model.generate_content_async(prompt)
-        text = response.text.replace('```json', '').replace('```', '').strip()
+        match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+        if match:
+            text = match.group(0)
+        else:
+            text = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(text)
     except Exception:
         return {
             "support": [s1], "resistance": [r1], "decision_price": pivot,
-            "verdict": "WAIT", "confidence": 0.5, "analysis": "Degraded Mode: Pivot Logic Applied."
+            "verdict": "WAIT", "confidence": 0.1, "analysis": "Degraded Mode: Pivot Logic Applied.",
+            "is_simulated": True
         }
 
 @app.post("/analyze/flow")
 async def analyze_order_flow(req: AnalysisRequest):
     if not GEMINI_API_KEY:
-        return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.5, "flow_type": "NEUTRAL"}
-    prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output: {{verdict:str, confidence:num, explanation:str, flow_type:str}}"
+        return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.1, "flow_type": "NEUTRAL", "is_simulated": True}
+    prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output: {{verdict:BULLISH|BEARISH|NEUTRAL, confidence:num, explanation:str, flow_type:str}}"
     try:
         model = genai.GenerativeModel("gemini-3-flash-preview")
         response = await model.generate_content_async(prompt)
-        text = response.text.replace('```json', '').replace('```', '').strip()
+        match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+        if match:
+            text = match.group(0)
+        else:
+            text = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(text)
     except Exception:
-        return {"verdict": "NEUTRAL", "explanation": "Synthesis failed.", "confidence": 0}
+        return {"verdict": "NEUTRAL", "explanation": "Synthesis failed.", "confidence": 0, "is_simulated": True}
+
+@app.post("/analyze/strategy")
+async def analyze_strategy(req: MacroStrategyRequest):
+    if not GEMINI_API_KEY:
+        return {"verdict": "NEUTRAL", "analysis": "Degraded Mode: Hardware rules override enabled.", "confidence": 0.1, "is_simulated": True}
+    
+    prompt = f"""
+    Analyze Macro Statistical Filter Strategy for {req.symbol}.
+    Current Data:
+    Price: {req.price}
+    Skewness: {req.skewness}
+    Bayesian Posterior: {req.bayesianPosterior}
+    Z-Score: {req.zScore}
+    RSI: {req.rsi}
+    OFI: {req.ofi}
+    CVD: {req.cvd}
+    Tape Speed: {req.tapeSpeed}
+    Wall Context: {req.wallContext}
+
+    Strategy Rules to apply:
+    1. Skewness: Negative = Downside tail risk, Positive = Upside tail risk, Zero = Neutral.
+    2. Bayesian Posterior: 0 to -1 = Confirm Downside, 0 to +1 = Confirm Upside.
+    3. Z-Score: +2.5 to +5 = Sentiment Wash (Mean Reversal), 0.5 to +1 = Bullish Trend, 0 to -1 = Bearish Trend, 0 to 0.5 & 0 to -0.5 = Neutral.
+    4. LOB Wall: Price should be above buy wall for long, below sell wall for short. Buy/Sell walls define support/resistance.
+    5. RSI: Capitulation = Prepare for High Velocity Reversal; Building = Bullish Trend; Reset = Sideways.
+    6. OFI Trigger: First leading indicator. Positive jumps against resistance = Bullish Continuation Breakout. Positive during pullback = Re-accumulation. Positive during breakdown = Failed Breakout Trap (Go Long). Negative jumps against support = Bearish Continuation Breakdown. Negative during pullback = Distribution. Negative during rally = Trapped Buyers (Go Short).
+    7. CVD: Positive Net = Aggressive Buyers dominate (Bullish). Negative Net = Aggressive Sellers dominate (Bearish). Zero cross = Shift in control. Divergence against price/walls = Iceberg activity.
+
+    Output JSON rigidly structured: 
+    {{"verdict":"BUY|SELL|WAIT|MEAN_REVERSAL", "confidence":0-1, "analysis":"str"}}
+    """
+    try:
+        model = genai.GenerativeModel("gemini-3-flash-preview")
+        response = await model.generate_content_async(prompt)
+        match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+        if match:
+            text = match.group(0)
+        else:
+            text = response.text.replace('```json', '').replace('```', '').strip()
+        return json.loads(text)
+    except Exception as e:
+        logger.error(f"Strategy API fail: {e}")
+        return {"verdict": "ERROR", "analysis": "Strategy Synthesis failed due to upstream error.", "confidence": 0, "is_simulated": True}
 
 @app.get("/market-intelligence")
 async def get_market_intel(model: str = "gemini-3-flash-preview"):
@@ -241,7 +307,11 @@ async def get_market_intel(model: str = "gemini-3-flash-preview"):
         try:
             gen_model = genai.GenerativeModel(model)
             resp = await gen_model.generate_content_async(prompt)
-            text = resp.text.replace('```json', '').replace('```', '').strip()
+            match = re.search(r'\{.*\}', resp.text.replace('\n', ' '), re.DOTALL)
+            if match:
+                text = match.group(0)
+            else:
+                text = resp.text.replace('```json', '').replace('```', '').strip()
             intelligence = json.loads(text)
         except Exception: pass
     result = {"articles": articles, "intelligence": intelligence, "timestamp": now}

@@ -3,7 +3,7 @@ import {
     MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel,
     AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState,
     LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-    BiasType, SweepEvent, BreakOfStructure, FairValueGap
+    BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, MacroStrategyAiResult
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
@@ -68,6 +68,7 @@ interface AppState {
     liquidity: LiquidityState;
     regime: RegimeState;
     aiTactical: AiTacticalState;
+    macroStrategy: MacroStrategyState;
     notifications: ToastMessage[];
     alertLogs: any[];
 
@@ -114,6 +115,7 @@ interface AppState {
     refreshLiquidityAnalysis: () => void;
     refreshRegimeAnalysis: () => void;
     refreshTacticalAnalysis: () => void;
+    fetchMacroStrategyAnalysis: (payload: any) => Promise<void>;
 
     addNotification: (toast: ToastMessage) => void;
     removeNotification: (id: string) => void;
@@ -214,6 +216,11 @@ export const useStore = create<AppState>((set, get) => ({
             regimeAgreement: false,
             aiScore: 0,
         },
+        lastUpdated: 0,
+    },
+    macroStrategy: {
+        aiResult: null,
+        isLoading: false,
         lastUpdated: 0,
     },
     notifications: [],
@@ -810,6 +817,36 @@ export const useStore = create<AppState>((set, get) => ({
             }
         };
     }),
+
+    fetchMacroStrategyAnalysis: async (payload) => {
+        set(state => ({ macroStrategy: { ...state.macroStrategy, isLoading: true } }));
+        try {
+            const res = await fetch(`${API_BASE_URL}/analyze/strategy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                const analysis = await res.json();
+                set(state => ({
+                    macroStrategy: {
+                        ...state.macroStrategy,
+                        isLoading: false,
+                        aiResult: {
+                            verdict: analysis.verdict,
+                            confidence: analysis.confidence,
+                            analysis: analysis.analysis
+                        },
+                        lastUpdated: Date.now()
+                    }
+                }));
+            } else {
+                set(state => ({ macroStrategy: { ...state.macroStrategy, isLoading: false } }));
+            }
+        } catch (e) {
+            set(state => ({ macroStrategy: { ...state.macroStrategy, isLoading: false } }));
+        }
+    },
 
     addNotification: (toast) => set(state => ({ notifications: [...state.notifications, toast] })),
     removeNotification: (id) => set(state => ({ notifications: state.notifications.filter(n => n.id !== id) })),
