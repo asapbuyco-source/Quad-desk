@@ -116,7 +116,9 @@ class MacroStrategyRequest(BaseModel):
     ofi: float
     cvd: float
     tapeSpeed: str
+    tapeDominant: str
     wallContext: str
+    allWalls: str = ""  # All detected walls, not just nearest
 
 # Binance.US is accessible from US-based servers.
 # Response format per kline: [openTime, open, high, low, close, volume, closeTime,
@@ -251,18 +253,49 @@ async def analyze_strategy(req: MacroStrategyRequest):
     if not GEMINI_API_KEY:
         return {"verdict": "NEUTRAL", "analysis": "Degraded Mode: Hardware rules override enabled.", "confidence": 0.1, "is_simulated": True}
     
+    # FIX #4: Pre-classify RSI into strategy-aligned states
+    if req.rsi < 30:
+        rsi_state = "Capitulation (< 30) — Prepare for High Velocity Reversal"
+    elif req.rsi > 70:
+        rsi_state = "Capitulation (> 70) — Prepare for High Velocity Reversal (Overbought)"
+    elif 55 <= req.rsi <= 70:
+        rsi_state = "Building (55-70) — Bullish Trend"
+    elif 40 <= req.rsi < 50:
+        rsi_state = "Reset (40-50) — Sideways / Distribution"
+    elif 30 <= req.rsi < 40:
+        rsi_state = "Oversold Recovery (30-40) — Potential Bullish Reversal Setup"
+    else:
+        rsi_state = "Neutral (50-55)"
+
+    # FIX #3 (backend): Z-Score state label
+    if req.zScore >= 2.5:
+        z_state = "Sentiment Wash (> +2.5) — Mean Reversal Expected SHORT"
+    elif req.zScore <= -2.5:
+        z_state = "Sentiment Wash (< -2.5) — Mean Reversal Expected LONG"
+    elif req.zScore > 0.5:
+        z_state = "Bullish Trend (+0.5 to +2.5)"
+    elif req.zScore < -0.5:
+        z_state = "Bearish Trend (-0.5 to -2.5)"
+    else:
+        z_state = "Neutral (-0.5 to +0.5)"
+
+    # FIX #1 (backend): Bayesian Posterior display
+    bayes_state = "Confirming Upside" if req.bayesianPosterior > 0.6 else \
+                  "Confirming Downside" if req.bayesianPosterior < 0.4 else "Neutral"
+
     prompt = f"""
     Analyze Macro Statistical Filter Strategy for {req.symbol}.
-    Current Data:
+    Current Market Data:
     Price: {req.price}
-    Skewness: {req.skewness}
-    Bayesian Posterior: {req.bayesianPosterior}
-    Z-Score: {req.zScore}
-    RSI: {req.rsi}
-    OFI: {req.ofi}
-    CVD: {req.cvd}
-    Tape Speed: {req.tapeSpeed}
-    Wall Context: {req.wallContext}
+    Skewness (log-return): {req.skewness:.4f} — {'Downside tail risk' if req.skewness < 0 else 'Upside tail risk' if req.skewness > 0 else 'Neutral'}
+    Bayesian Posterior P(Bull|Evidence): {req.bayesianPosterior:.3f} — {bayes_state}
+    Z-Score (VWAP-anchored 20p): {req.zScore:.3f} — {z_state}
+    RSI: {req.rsi:.1f} — {rsi_state}
+    OFI (Order Flow Imbalance): {req.ofi:.1f} — {'Bullish Pressure' if req.ofi > 10 else 'Bearish Pressure' if req.ofi < -10 else 'Balanced'}
+    CVD (Cumulative Delta): {req.cvd:.0f} — {'Aggressive Buyers Dominating' if req.cvd > 0 else 'Aggressive Sellers Dominating'}
+    Tape Speed: {req.tapeSpeed} | Dominant Side: {req.tapeDominant}
+    Nearest Wall Context: {req.wallContext}
+    All Detected Walls: {req.allWalls if req.allWalls else 'None identified'}
 
     Strategy Rules to apply:
     1. Skewness: Negative = Downside tail risk, Positive = Upside tail risk, Zero = Neutral.

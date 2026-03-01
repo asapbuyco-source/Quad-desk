@@ -335,17 +335,29 @@ export const useStore = create<AppState>((set, get) => ({
 
             // --- Statistical Metrics (computed on new-bar open for performance) ---
             const allCloses = newCandles.map(c => c.close);
-            const closes50 = allCloses.slice(-50);
-            const n50 = closes50.length;
-            const mean50 = closes50.reduce((a, b) => a + b, 0) / n50;
-            const std50 = Math.sqrt(closes50.reduce((a, c) => a + Math.pow(c - mean50, 2), 0) / n50);
-            const skewness = std50 > 0 ? closes50.reduce((a, c) => a + Math.pow((c - mean50) / std50, 3), 0) / n50 : 0;
-            const kurtosis = std50 > 0 ? closes50.reduce((a, c) => a + Math.pow((c - mean50) / std50, 4), 0) / n50 - 3 : 0;
 
-            const closes20 = allCloses.slice(-20);
-            const mean20 = closes20.reduce((a, b) => a + b, 0) / closes20.length;
-            const std20 = Math.sqrt(closes20.reduce((a, c) => a + Math.pow(c - mean20, 2), 0) / closes20.length);
-            const zScore = std20 > 0 ? (tick.c - mean20) / std20 : 0;
+            // FIX #2: Skewness on LOG RETURNS (not price levels)
+            const closes51 = allCloses.slice(-51);
+            const returns50 = closes51.slice(1).map((c, i) => Math.log(c / closes51[i]));
+            const n50 = returns50.length;
+            const rMean = n50 > 0 ? returns50.reduce((a, b) => a + b, 0) / n50 : 0;
+            const rStd = n50 > 1 ? Math.sqrt(returns50.reduce((a, r) => a + Math.pow(r - rMean, 2), 0) / n50) : 0;
+            const skewness = rStd > 0.000001 ? returns50.reduce((a, r) => a + Math.pow((r - rMean) / rStd, 3), 0) / n50 : 0;
+            const kurtosis = rStd > 0.000001 ? returns50.reduce((a, r) => a + Math.pow((r - rMean) / rStd, 4), 0) / n50 - 3 : 0;
+
+            // FIX #3: Z-Score anchored to VWAP (consistent with chart bands)
+            const window20 = newCandles.slice(-20);
+            const typicals20 = window20.map(c => (c.high + c.low + c.close) / 3);
+            let vwapNum = 0, vwapDen = 0;
+            for (let j = 0; j < window20.length; j++) {
+                const vol = window20[j].volume || 1;
+                vwapNum += typicals20[j] * vol;
+                vwapDen += vol;
+            }
+            const vwap20 = vwapDen > 0 ? vwapNum / vwapDen : tick.c;
+            const vwapMean = typicals20.reduce((a, b) => a + b, 0) / typicals20.length;
+            const vwapStd = Math.sqrt(typicals20.reduce((acc, p) => acc + Math.pow(p - vwapMean, 2), 0) / typicals20.length);
+            const zScore = vwapStd > 0 ? (tick.c - vwap20) / vwapStd : 0;
 
             // --- RSI (retailSentiment) — computed fresh on every new bar ---
             const allClosesRSI = newCandles.map(c => c.close);
@@ -358,12 +370,20 @@ export const useStore = create<AppState>((set, get) => ({
                 return acc + (vol > 0 ? Math.abs(c.delta || 0) / vol : 0);
             }, 0) / Math.max(vpinWindow.length, 1)) * 100);
 
-            // --- Bayesian Posterior: P(bull | RSI, OFI) ---
+            // FIX #1: Proper multi-factor Bayesian Posterior P(bull|evidence)
+            // Each indicator contributes an independent likelihood update:
+            //   L_rsi: RSI > 55 → bullish evidence (0.65), RSI < 45 → bearish (0.35)
+            //   L_ofi: OFI normalized to [-100,100]. Positive → bullish evidence
+            //   L_z:   Z-Score < -1 → oversold (bullish mean-reversion signal)
+            //   L_skew: positive skew → upside tail risk (slight bullish bias)
             const ofiNow = state.market.metrics.ofi || 0;
-            const lBull = rsiValue > 55 ? 0.65 : rsiValue < 45 ? 0.35 : 0.50;
-            const ofiAdj = Math.max(-0.1, Math.min(0.1, ofiNow / 200));
-            const lBullAdj = Math.max(0.05, Math.min(0.95, lBull + ofiAdj));
-            const bayesianPosterior = (lBullAdj * 0.5) / ((lBullAdj * 0.5) + ((1 - lBullAdj) * 0.5));
+            const L_rsi = rsiValue > 55 ? 3.0 : rsiValue < 45 ? 0.333 : 1.0; // likelihood ratio
+            const L_ofi = ofiNow > 10 ? 1.5 : ofiNow < -10 ? 0.667 : 1.0;
+            const L_z = zScore < -1.5 ? 1.6 : zScore > 1.5 ? 0.625 : 1.0;
+            const L_skew = skewness > 0.3 ? 1.2 : skewness < -0.3 ? 0.833 : 1.0;
+            // Prior: 0.5, Posterior = unnormalized likelihood product
+            const bullOdds = 1.0 * L_rsi * L_ofi * L_z * L_skew; // prior odds = 1 (i.e. 0.5/0.5)
+            const bayesianPosterior = bullOdds / (bullOdds + 1.0); // [0,1]
 
             return {
                 cvdBaseline: updatedBaseline,
