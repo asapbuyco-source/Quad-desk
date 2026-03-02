@@ -3,7 +3,7 @@ import {
     MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel,
     AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState,
     LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-    BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState
+    BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, BotSettingsState
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
@@ -83,6 +83,12 @@ interface AppState {
     setPlaybackSpeed: (speed: number) => void;
     setBacktestDate: (date: string) => void;
     setAiModel: (model: string) => void;
+
+    setTheme: (theme: 'dark' | 'light') => void;
+    toggleSound: () => void;
+    setVolume: (vol: number) => void;
+    setConfig: (config: Partial<AppState['config']>) => void;
+    setBotSettings: (settings: Partial<BotSettingsState>) => void;
 
     setMarketHistory: (payload: { candles: CandleData[], initialCVD: number }) => void;
     setMarketBands: (bands: any) => void;
@@ -223,6 +229,17 @@ export const useStore = create<AppState>((set, get) => ({
         isLoading: false,
         lastUpdated: 0,
     },
+    botSettings: {
+        isActive: false,
+        exchange: 'binance',
+        apiKey: '',
+        apiSecret: '',
+        environment: 'testnet',
+        tradingPair: 'BTCUSDT',
+        maxRiskPerTradePct: 2.0,
+        status: 'OFFLINE',
+        activePositions: 0
+    },
     notifications: [],
     alertLogs: [],
     cvdBaseline: 0,
@@ -236,6 +253,14 @@ export const useStore = create<AppState>((set, get) => ({
     setPlaybackSpeed: (speed) => set(state => ({ config: { ...state.config, playbackSpeed: speed } })),
     setBacktestDate: (date) => set(state => ({ config: { ...state.config, backtestDate: date } })),
     setAiModel: (model) => set(state => ({ config: { ...state.config, aiModel: model } })),
+
+    setTheme: (theme) => set((state) => ({ ui: { ...state.ui, theme } })),
+    toggleSound: () => set((state) => ({ ui: { ...state.ui, soundEnabled: !state.ui.soundEnabled } })),
+    setVolume: (volume) => set((state) => ({ ui: { ...state.ui, volume } })),
+    setConfig: (newConfig) => set((state) => ({ config: { ...state.config, ...newConfig } })),
+    setBotSettings: (newSettings) => set((state) => ({
+        botSettings: { ...state.botSettings, ...newSettings }
+    })),
 
     setMarketHistory: ({ candles, initialCVD }) => {
         // Compute RSI (retailSentiment) and VPIN (toxicity) from the initial historical data
@@ -575,7 +600,13 @@ export const useStore = create<AppState>((set, get) => ({
             const user = get().auth.user;
             if (user) {
                 const snap = await getDoc(doc(db, 'users', user.uid));
-                if (snap.exists()) set(s => ({ config: { ...s.config, ...snap.data().config } }));
+                if (snap.exists()) {
+                    const data = snap.data();
+                    set(s => ({
+                        config: { ...s.config, ...data.config },
+                        botSettings: { ...s.botSettings, ...data.botSettings }
+                    }));
+                }
             }
         } catch (e) { }
     },

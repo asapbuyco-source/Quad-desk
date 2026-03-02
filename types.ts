@@ -250,6 +250,20 @@ export interface FairValueGap {
   candleTime: number | string;
 }
 
+// --- Bot Control Types ---
+export interface BotSettingsState {
+  isActive: boolean;
+  exchange: 'binance' | 'bybit';
+  apiKey: string;
+  apiSecret: string;
+  environment: 'testnet' | 'live';
+  tradingPair: string;
+  maxRiskPerTradePct: number;
+  status: 'ONLINE' | 'OFFLINE' | 'ERROR' | 'EXECUTING';
+  lastExecutionTime?: number;
+  activePositions: number;
+}
+
 export interface LiquidityState {
   sweeps: SweepEvent[];
   bos: BreakOfStructure[];

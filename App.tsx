@@ -8,10 +8,9 @@ import ChartingView from './components/ChartingView';
 import GuideView from './components/GuideView';
 import BiasMatrixView from './components/BiasMatrixView';
 import LiquidityPage from './components/LiquidityPage';
-import RegimePage from './components/RegimePage';
-import AITacticalPage from './components/AITacticalPage';
 import MacroStrategyView from './components/MacroStrategyView';
 import DepthPage from './components/DepthPage';
+import AdminBotControl from './components/AdminBotControl';
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl';
@@ -301,6 +300,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'liquidity' && <LiquidityPage />}
                                 {ui.activeTab === 'regime' && <RegimePage />}
                                 {ui.activeTab === 'macro-strategy' && <MacroStrategyView />}
+                                {ui.activeTab === 'bot-control' && <AdminBotControl />}
                                 {ui.activeTab === 'ai-tactical' && <AITacticalPage />}
                                 {ui.activeTab === 'analytics' && <AnalyticsView />}
                                 {ui.activeTab === 'intel' && <IntelView />}
