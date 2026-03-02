@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { Settings, Shield, Activity, Save, Key, Power, Server, Eye, EyeOff } from 'lucide-react';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 
 const motion = m as any;
@@ -80,8 +80,8 @@ const AdminBotControl: React.FC = () => {
                 <button
                     onClick={toggleMasterSwitch}
                     className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold font-mono transition-all ${botSettings.isActive
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
-                            : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+                        : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
                         }`}
                 >
                     <Power size={18} className={botSettings.isActive ? 'animate-pulse' : ''} />

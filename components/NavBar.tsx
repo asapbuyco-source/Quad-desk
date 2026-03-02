@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart, BookOpen, Layers, Droplets, Activity, BrainCircuit, Mountain, Zap } from 'lucide-react';
+import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart, BookOpen, Layers, Droplets, Activity, BrainCircuit, Mountain, Zap, Bot } from 'lucide-react';
 
 interface NavBarProps {
   activeTab: string;
@@ -16,7 +16,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'liquidity', icon: Droplets, label: 'Liquidity' },
     { id: 'regime', icon: Activity, label: 'Regime' },
     { id: 'macro-strategy', icon: Zap, label: 'Macro' },
-    { id: 'bot-control', icon: Settings, label: 'Bot' },
+    { id: 'bot-control', icon: Bot, label: 'Bot' },
     { id: 'ai-tactical', icon: BrainCircuit, label: 'Tactical' },
     { id: 'analytics', icon: BarChart2, label: 'Data' },
     { id: 'intel', icon: Radio, label: 'Intel' },
@@ -63,7 +63,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
           <button aria-label="Wallet" className="w-full aspect-square flex items-center justify-center rounded-xl hover:bg-white/5 text-slate-400 transition-colors">
             <Wallet size={20} />
           </button>
-          <button aria-label="Settings" className="w-full aspect-square flex items-center justify-center rounded-xl hover:bg-white/5 text-slate-400 transition-colors">
+          <button onClick={() => setActiveTab('bot-control')} aria-label="Settings" className={`w-full aspect-square flex items-center justify-center rounded-xl transition-colors ${activeTab === 'bot-control' ? 'text-white' : 'hover:bg-white/5 text-slate-400'}`}>
             <Settings size={20} />
           </button>
         </div>

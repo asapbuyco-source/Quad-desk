@@ -19,6 +19,9 @@ interface AppState {
         activeTab: string;
         hasEntered: boolean;
         isProfileOpen: boolean;
+        theme?: 'dark' | 'light';
+        soundEnabled?: boolean;
+        volume?: number;
     };
     config: {
         activeSymbol: string;
@@ -69,6 +72,7 @@ interface AppState {
     regime: RegimeState;
     aiTactical: AiTacticalState;
     macroStrategy: MacroStrategyState;
+    botSettings: BotSettingsState;
     notifications: ToastMessage[];
     alertLogs: any[];
 

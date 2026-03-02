@@ -11,6 +11,8 @@ import LiquidityPage from './components/LiquidityPage';
 import MacroStrategyView from './components/MacroStrategyView';
 import DepthPage from './components/DepthPage';
 import AdminBotControl from './components/AdminBotControl';
+import RegimePage from './components/RegimePage';
+import AITacticalPage from './components/AITacticalPage';
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl';
