@@ -606,9 +606,14 @@ export const useStore = create<AppState>((set, get) => ({
                 const snap = await getDoc(doc(db, 'users', user.uid));
                 if (snap.exists()) {
                     const data = snap.data();
+                    const restoredBot = { ...data.botSettings };
+                    // Recalculate status from isActive so it's consistent after refresh
+                    if (restoredBot && restoredBot.isActive !== undefined) {
+                        restoredBot.status = restoredBot.isActive ? 'ONLINE' : 'OFFLINE';
+                    }
                     set(s => ({
                         config: { ...s.config, ...data.config },
-                        botSettings: { ...s.botSettings, ...data.botSettings }
+                        botSettings: { ...s.botSettings, ...restoredBot }
                     }));
                 }
             }

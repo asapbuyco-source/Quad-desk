@@ -190,7 +190,7 @@ async def get_heatmap():
     return results
 
 @app.get("/analyze")
-async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-3-flash-preview"):
+async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-2.0-flash"):
     klines = await fetch_binance_candles(symbol, "15m", 30)
     if not klines: raise HTTPException(status_code=502, detail="Upstream Down")
     
@@ -237,7 +237,7 @@ async def analyze_order_flow(req: AnalysisRequest):
         return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.1, "flow_type": "NEUTRAL", "is_simulated": True}
     prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output: {{verdict:BULLISH|BEARISH|NEUTRAL, confidence:num, explanation:str, flow_type:str}}"
     try:
-        model = genai.GenerativeModel("gemini-3-flash-preview")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = await model.generate_content_async(prompt)
         match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
         if match:
@@ -310,7 +310,7 @@ async def analyze_strategy(req: MacroStrategyRequest):
     {{"verdict":"BUY|SELL|WAIT|MEAN_REVERSAL", "confidence":0-1, "analysis":"str"}}
     """
     try:
-        model = genai.GenerativeModel("gemini-3-flash-preview")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = await model.generate_content_async(prompt)
         match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
         if match:

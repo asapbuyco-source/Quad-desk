@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { Settings, Shield, Activity, Save, Key, Power, Server, Eye, EyeOff } from 'lucide-react';
+import { Settings, Shield, Activity, Save, Key, Power, Server, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 
@@ -11,6 +11,7 @@ const AdminBotControl: React.FC = () => {
     const { botSettings, setBotSettings } = useStore();
     const [isSaving, setIsSaving] = useState(false);
     const [showSecret, setShowSecret] = useState(false);
+    const [keyError, setKeyError] = useState('');
 
     // Local state for the form so we don't spam the store on every keystroke
     const [formData, setFormData] = useState({
@@ -52,12 +53,21 @@ const AdminBotControl: React.FC = () => {
 
     const toggleMasterSwitch = async () => {
         const newState = !botSettings.isActive;
-        setBotSettings({ isActive: newState });
+
+        // Validate API keys exist before going ONLINE
+        if (newState && (!formData.apiKey.trim() || !formData.apiSecret.trim())) {
+            setKeyError('API Key and Secret are required to activate the engine. Please fill them in and Save first.');
+            return;
+        }
+        setKeyError('');
+
+        const newStatus = newState ? 'ONLINE' : 'OFFLINE';
+        setBotSettings({ isActive: newState, status: newStatus });
 
         // Sync the master switch toggle to Firebase explicitly
         if (auth.currentUser) {
             const userRef = doc(db, 'users', auth.currentUser.uid);
-            await setDoc(userRef, { botSettings: { ...formData, isActive: newState } }, { merge: true });
+            await setDoc(userRef, { botSettings: { ...formData, isActive: newState, status: newStatus } }, { merge: true });
         }
     };
 
@@ -88,6 +98,14 @@ const AdminBotControl: React.FC = () => {
                     {botSettings.isActive ? 'SYSTEM ONLINE' : 'SYSTEM OFFLINE'}
                 </button>
             </div>
+
+            {/* Key Validation Error Banner */}
+            {keyError && (
+                <div className="flex items-center gap-3 bg-rose-500/10 border border-rose-500/30 rounded-xl px-5 py-3 text-rose-400 font-mono text-sm">
+                    <AlertTriangle size={16} className="shrink-0" />
+                    {keyError}
+                </div>
+            )}
 
             {/* Status Overview */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
