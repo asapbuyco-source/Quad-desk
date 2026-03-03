@@ -1,0 +1,21 @@
+# Railway configuration for the Quad-desk Trading Bot service.
+#
+# In your Railway dashboard (Bot Service) → Settings → Config File Path
+# set this to: railway.bot.toml
+#
+# (This file is now in the root directory to make it easier for Railway to find)
+
+[build]
+builder      = "nixpacks"
+watchPatterns = ["bot/**"]
+
+[phases.setup]
+nixPkgs = ["python311"]
+
+[phases.install]
+cmds = ["pip install -r bot/requirements.txt"]
+
+[deploy]
+startCommand      = "python -m bot.main"
+restartPolicyType = "ON_FAILURE"
+numReplicas       = 1
