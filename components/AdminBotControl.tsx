@@ -1,17 +1,38 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { Settings, Shield, Activity, Save, Key, Power, Server, Eye, EyeOff, AlertTriangle } from 'lucide-react';
-import { doc, setDoc } from 'firebase/firestore';
+import {
+    Settings, Shield, Activity, Save, Key, Power, Server,
+    Eye, EyeOff, AlertTriangle, Wifi, WifiOff, Zap, TrendingUp
+} from 'lucide-react';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 
 const motion = m as any;
+
+// Helper: format ms timestamp as "Xs ago" / "Xm ago" / "never"
+function timeAgo(ms: number | undefined): string {
+    if (!ms) return 'never';
+    const age = Math.floor((Date.now() - ms) / 1000);
+    if (age < 60) return `${age}s ago`;
+    if (age < 3600) return `${Math.floor(age / 60)}m ago`;
+    return `${Math.floor(age / 3600)}h ago`;
+}
+
+// Signal colour helper
+function signalColor(signal: string | undefined) {
+    if (!signal) return 'text-zinc-500';
+    if (signal === 'BUY' || signal === 'MEAN_REVERSAL_LONG') return 'text-emerald-400';
+    if (signal === 'SELL' || signal === 'MEAN_REVERSAL_SHORT') return 'text-rose-400';
+    return 'text-zinc-400';
+}
 
 const AdminBotControl: React.FC = () => {
     const { botSettings, setBotSettings } = useStore();
     const [isSaving, setIsSaving] = useState(false);
     const [showSecret, setShowSecret] = useState(false);
     const [keyError, setKeyError] = useState('');
+    const [tick, setTick] = useState(0); // 1-second ticker for "Xs ago" display
 
     // Local state for the form so we don't spam the store on every keystroke
     const [formData, setFormData] = useState({
@@ -23,30 +44,53 @@ const AdminBotControl: React.FC = () => {
         maxRiskPerTradePct: botSettings.maxRiskPerTradePct,
     });
 
+    // ── 1-second tick so "Xs ago" updates without re-fetching ────────────
+    useEffect(() => {
+        const id = setInterval(() => setTick(t => t + 1), 1000);
+        return () => clearInterval(id);
+    }, []);
+
+    // ── Real-time Firestore heartbeat listener ────────────────────────────
+    useEffect(() => {
+        const docRef = doc(db, 'botStatus', 'live');
+        const unsub = onSnapshot(docRef, (snap) => {
+            if (!snap.exists()) return;
+            const data = snap.data();
+            const heartbeatMs = data.lastHeartbeat?.toMillis?.() ?? 0;
+            const isVerified = heartbeatMs > 0 && (Date.now() - heartbeatMs) < 30_000;
+
+            setBotSettings({
+                status: isVerified ? 'ONLINE' : 'OFFLINE',
+                isActive: isVerified,
+                activePositions: data.activePositions ?? 0,
+                lastHeartbeat: heartbeatMs,
+                botMode: data.mode,
+                lastSignal: data.lastSignal,
+                totalTrades: data.totalTrades ?? 0,
+            });
+        });
+        return () => unsub();
+    }, [setBotSettings]);
+
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value, type } = e.target;
         setFormData(prev => ({
             ...prev,
-            [name]: type === 'number' ? parseFloat(value) : value
+            [name]: type === 'number' ? parseFloat(value) : value,
         }));
     };
 
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            // 1. Save to local Zustand store
             setBotSettings(formData);
-
-            // 2. Save securely to Firebase under the admin's document
             if (auth.currentUser) {
                 const userRef = doc(db, 'users', auth.currentUser.uid);
                 await setDoc(userRef, { botSettings: formData }, { merge: true });
             }
-
-            // Show brief success state
             setTimeout(() => setIsSaving(false), 500);
         } catch (error) {
-            console.error("Failed to save bot settings:", error);
+            console.error('Failed to save bot settings:', error);
             setIsSaving(false);
         }
     };
@@ -54,9 +98,8 @@ const AdminBotControl: React.FC = () => {
     const toggleMasterSwitch = async () => {
         const newState = !botSettings.isActive;
 
-        // Validate API keys exist before going ONLINE
         if (newState && (!formData.apiKey.trim() || !formData.apiSecret.trim())) {
-            setKeyError('API Key and Secret are required to activate the engine. Please fill them in and Save first.');
+            setKeyError('API Key and Secret are required. Fill them in and Save first.');
             return;
         }
         setKeyError('');
@@ -64,12 +107,15 @@ const AdminBotControl: React.FC = () => {
         const newStatus = newState ? 'ONLINE' : 'OFFLINE';
         setBotSettings({ isActive: newState, status: newStatus });
 
-        // Sync the master switch toggle to Firebase explicitly
         if (auth.currentUser) {
             const userRef = doc(db, 'users', auth.currentUser.uid);
             await setDoc(userRef, { botSettings: { ...formData, isActive: newState, status: newStatus } }, { merge: true });
         }
     };
+
+    // Derived values
+    const isVerified = botSettings.status === 'ONLINE';
+    const heartbeatAge = timeAgo(botSettings.lastHeartbeat);
 
     return (
         <motion.div
@@ -77,6 +123,7 @@ const AdminBotControl: React.FC = () => {
             animate={{ opacity: 1 }}
             className="flex flex-col h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 pt-6 max-w-4xl mx-auto gap-6"
         >
+            {/* ── Header ─────────────────────────────────────────────── */}
             <div className="flex items-center justify-between mb-2">
                 <div>
                     <h1 className="text-3xl font-black tracking-tighter uppercase flex items-center gap-3">
@@ -89,17 +136,17 @@ const AdminBotControl: React.FC = () => {
                 {/* Master Switch */}
                 <button
                     onClick={toggleMasterSwitch}
-                    className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold font-mono transition-all ${botSettings.isActive
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
-                        : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                    className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold font-mono transition-all ${isVerified
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+                            : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
                         }`}
                 >
-                    <Power size={18} className={botSettings.isActive ? 'animate-pulse' : ''} />
-                    {botSettings.isActive ? 'SYSTEM ONLINE' : 'SYSTEM OFFLINE'}
+                    <Power size={18} className={isVerified ? 'animate-pulse' : ''} />
+                    {isVerified ? 'SYSTEM ONLINE' : 'SYSTEM OFFLINE'}
                 </button>
             </div>
 
-            {/* Key Validation Error Banner */}
+            {/* Key Validation Error */}
             {keyError && (
                 <div className="flex items-center gap-3 bg-rose-500/10 border border-rose-500/30 rounded-xl px-5 py-3 text-rose-400 font-mono text-sm">
                     <AlertTriangle size={16} className="shrink-0" />
@@ -107,38 +154,62 @@ const AdminBotControl: React.FC = () => {
                 </div>
             )}
 
-            {/* Status Overview */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            {/* ── Live Status Cards ───────────────────────────────────── */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+                {/* Engine Status */}
                 <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                     <div>
                         <p className="text-[11px] font-bold text-zinc-500 uppercase">Engine Status</p>
-                        <p className={`font-mono font-bold text-xl ${botSettings.status === 'ONLINE' ? 'text-emerald-400' : 'text-zinc-400'}`}>
-                            {botSettings.status}
+                        <p className={`font-mono font-bold text-lg ${isVerified ? 'text-emerald-400' : 'text-zinc-400'}`}>
+                            {isVerified ? 'ONLINE' : 'OFFLINE'}
+                        </p>
+                        <p className={`text-[10px] font-mono mt-0.5 flex items-center gap-1 ${isVerified ? 'text-emerald-500/70' : 'text-zinc-600'}`}>
+                            {isVerified
+                                ? <><Wifi size={10} /> Verified {heartbeatAge}</>
+                                : <><WifiOff size={10} /> Not connected</>
+                            }
                         </p>
                     </div>
-                    <Activity className={botSettings.status === 'ONLINE' ? 'text-emerald-400/50' : 'text-zinc-500'} size={24} />
+                    <Activity className={isVerified ? 'text-emerald-400/50' : 'text-zinc-600'} size={24} />
                 </div>
+
+                {/* Bot Mode */}
                 <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                     <div>
-                        <p className="text-[11px] font-bold text-zinc-500 uppercase">Environment</p>
-                        <p className="font-mono font-bold text-xl text-brand-accent uppercase">
-                            {formData.environment}
+                        <p className="text-[11px] font-bold text-zinc-500 uppercase">Bot Mode</p>
+                        <p className={`font-mono font-bold text-lg uppercase ${botSettings.botMode === 'LIVE' ? 'text-amber-400' : 'text-brand-accent'
+                            }`}>
+                            {botSettings.botMode ?? formData.environment.toUpperCase()}
                         </p>
                     </div>
                     <Server className="text-brand-accent/50" size={24} />
                 </div>
+
+                {/* Last Signal */}
                 <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                     <div>
-                        <p className="text-[11px] font-bold text-zinc-500 uppercase">Active Positions</p>
-                        <p className="font-mono font-bold text-xl text-white">
-                            {botSettings.activePositions}
+                        <p className="text-[11px] font-bold text-zinc-500 uppercase">Last Signal</p>
+                        <p className={`font-mono font-bold text-lg uppercase ${signalColor(botSettings.lastSignal)}`}>
+                            {botSettings.lastSignal ?? '—'}
                         </p>
                     </div>
-                    <Shield className="text-zinc-500" size={24} />
+                    <Zap className={signalColor(botSettings.lastSignal)} size={24} />
+                </div>
+
+                {/* Active Positions / Trades */}
+                <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 flex items-center justify-between">
+                    <div>
+                        <p className="text-[11px] font-bold text-zinc-500 uppercase">Positions / Trades</p>
+                        <p className="font-mono font-bold text-lg text-white">
+                            {botSettings.activePositions} / {botSettings.totalTrades ?? 0}
+                        </p>
+                    </div>
+                    <TrendingUp className={botSettings.activePositions > 0 ? 'text-emerald-400/60' : 'text-zinc-600'} size={24} />
                 </div>
             </div>
 
-            {/* API Configuration */}
+            {/* ── API Configuration ───────────────────────────────────── */}
             <div className="bg-black/40 border border-white/10 rounded-2xl p-6 lg:p-8">
                 <h2 className="text-xl font-bold tracking-widest uppercase border-b border-white/10 pb-4 mb-6 text-zinc-300 flex items-center gap-2">
                     <Key size={20} className="text-brand-accent" /> Exchange Integration
@@ -187,7 +258,7 @@ const AdminBotControl: React.FC = () => {
                         <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">API Secret</label>
                         <div className="relative">
                             <input
-                                type={showSecret ? "text" : "password"}
+                                type={showSecret ? 'text' : 'password'}
                                 name="apiSecret"
                                 value={formData.apiSecret}
                                 onChange={handleChange}
@@ -205,7 +276,7 @@ const AdminBotControl: React.FC = () => {
                 </div>
             </div>
 
-            {/* Risk Management */}
+            {/* ── Risk Management ─────────────────────────────────────── */}
             <div className="bg-black/40 border border-white/10 rounded-2xl p-6 lg:p-8">
                 <h2 className="text-xl font-bold tracking-widest uppercase border-b border-white/10 pb-4 mb-6 text-zinc-300 flex items-center gap-2">
                     <Shield size={20} className="text-rose-400" /> Risk Management
@@ -239,13 +310,13 @@ const AdminBotControl: React.FC = () => {
                             <span className="text-zinc-500 font-mono">%</span>
                         </div>
                         <p className="text-xs text-zinc-500 mt-2">
-                            The engine will adjust position size so that hitting the AI stop loss never exceeds this percentage of your account equity.
+                            The engine adjusts position size so that hitting the AI stop-loss never exceeds this % of your account equity.
                         </p>
                     </div>
                 </div>
             </div>
 
-            {/* Save Action */}
+            {/* ── Save Action ─────────────────────────────────────────── */}
             <div className="flex justify-end pt-4">
                 <button
                     onClick={handleSave}
@@ -257,7 +328,7 @@ const AdminBotControl: React.FC = () => {
                 </button>
             </div>
 
-            <div className="h-10"></div>
+            <div className="h-10" />
         </motion.div>
     );
 };

@@ -262,6 +262,11 @@ export interface BotSettingsState {
   status: 'ONLINE' | 'OFFLINE' | 'ERROR' | 'EXECUTING';
   lastExecutionTime?: number;
   activePositions: number;
+  // Live heartbeat fields — populated by Firestore onSnapshot
+  lastHeartbeat?: number;   // ms timestamp of last bot heartbeat
+  botMode?: string;         // 'DRY-RUN' | 'LIVE'
+  lastSignal?: string;      // e.g. 'BUY' | 'SELL' | 'WAIT'
+  totalTrades?: number;
 }
 
 export interface LiquidityState {
