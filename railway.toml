@@ -1,21 +1,22 @@
-# Railway configuration for the Quad-desk Trading Bot service.
-#
-# In your Railway dashboard (Bot Service) → Settings → Config File Path
-# set this to: railway.bot.toml
-#
-# (This file is now in the root directory to make it easier for Railway to find)
 
 [build]
-builder      = "nixpacks"
-watchPatterns = ["bot/**"]
+builder = "nixpacks"
+watchPatterns = ["backend/**"]
 
 [phases.setup]
-nixPkgs = ["python311"]
+# Manually define packages to avoid provider auto-detection issues (Node vs Python)
+nixPkgs = ["python311", "gcc", "zlib", "openssl"]
+nixLibs = ["zlib", "openssl"]
 
 [phases.install]
-cmds = ["pip install -r bot/requirements.txt"]
+# Navigate to backend folder to install dependencies
+cmds = ["cd backend && pip install -r requirements.txt"]
 
 [deploy]
-startCommand      = "python -m bot.main"
+# Navigate to backend folder and start Uvicorn
+# Host 0.0.0.0 is required for container exposure
+startCommand = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 180
 restartPolicyType = "ON_FAILURE"
-numReplicas       = 1
+numReplicas = 1
