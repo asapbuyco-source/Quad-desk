@@ -14,7 +14,11 @@ watchPatterns = ["bot/**"]
 nixPkgs = ["python311", "gcc"]
 
 [phases.install]
-cmds = ["cd bot && python -m venv /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt"]
+cmds = [
+    "python -m venv /opt/venv",
+    ". /opt/venv/bin/activate && /opt/venv/bin/pip install -U pip",
+    ". /opt/venv/bin/activate && /opt/venv/bin/pip install -r bot/requirements.txt"
+]
 
 [deploy]
 startCommand      = ". /opt/venv/bin/activate && python -m bot.main"
