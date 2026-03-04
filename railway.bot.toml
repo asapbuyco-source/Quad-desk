@@ -13,14 +13,12 @@ watchPatterns = ["bot/**"]
 [phases.setup]
 nixPkgs = ["python311", "gcc"]
 
-[phases.install]
+[phases.build]
 cmds = [
-    "python -m venv /opt/venv",
-    ". /opt/venv/bin/activate && /opt/venv/bin/pip install -U pip",
-    ". /opt/venv/bin/activate && /opt/venv/bin/pip install -r bot/requirements.txt"
+    "python -m venv /app/venv && . /app/venv/bin/activate && pip install -U pip && pip install -r bot/requirements.txt"
 ]
 
 [deploy]
-startCommand      = ". /opt/venv/bin/activate && python -m bot.main"
+startCommand      = ". /app/venv/bin/activate && python -m bot.main"
 restartPolicyType = "ON_FAILURE"
 numReplicas       = 1
