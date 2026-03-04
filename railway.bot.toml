@@ -12,6 +12,6 @@ watchPatterns = ["bot/**"]
 
 
 [deploy]
-startCommand      = "python -m pip install --no-cache-dir -r bot/requirements.txt && python -m bot.main"
+startCommand      = "python -m ensurepip --upgrade && python -m pip install --no-cache-dir -r bot/requirements.txt && python -m bot.main"
 restartPolicyType = "ON_FAILURE"
 numReplicas       = 1
