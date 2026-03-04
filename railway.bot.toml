@@ -10,11 +10,9 @@
 builder      = "nixpacks"
 watchPatterns = ["bot/**"]
 
-[phases.setup]
-nixPkgs = ["python311", "gcc"]
-
-[phases.install]
-cmds = ["python -m pip install -r bot/requirements.txt"]
+[build]
+builder      = "nixpacks"
+watchPatterns = ["bot/**"]
 
 [deploy]
 startCommand      = "python -m bot.main"
