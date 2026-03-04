@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import {
@@ -32,7 +32,7 @@ const AdminBotControl: React.FC = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [showSecret, setShowSecret] = useState(false);
     const [keyError, setKeyError] = useState('');
-    const [tick, setTick] = useState(0); // 1-second ticker for "Xs ago" display
+    const [, setTick] = useState(0); // 1-second ticker for "Xs ago" display
 
     // Local state for the form so we don't spam the store on every keystroke
     const [formData, setFormData] = useState({
@@ -137,8 +137,8 @@ const AdminBotControl: React.FC = () => {
                 <button
                     onClick={toggleMasterSwitch}
                     className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold font-mono transition-all ${isVerified
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
-                            : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+                        : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
                         }`}
                 >
                     <Power size={18} className={isVerified ? 'animate-pulse' : ''} />
