@@ -10,9 +10,6 @@
 builder      = "nixpacks"
 watchPatterns = ["bot/**"]
 
-[build]
-builder      = "nixpacks"
-watchPatterns = ["bot/**"]
 
 [deploy]
 startCommand      = "python -m bot.main"
