@@ -56,6 +56,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+WHALE_ALERT_API_KEY = os.getenv("WHALE_ALERT_API_KEY")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quantdesk.netlify.app")
 
 if GEMINI_API_KEY:
@@ -436,6 +437,152 @@ async def send_telegram_alert(payload: TelegramPayload):
         except Exception as e:
             logger.error(f"Telegram send failed: {e}")
             raise HTTPException(status_code=502, detail=f"Telegram delivery failed: {str(e)}")
+
+
+# ── Whale Alert cache (5-min TTL) ───────────────────────────────────────────
+_whale_cache: Dict[str, Any] = {"data": None, "ts": 0}
+WHALE_CACHE_TTL = 300  # seconds
+
+
+@app.get("/whale-alerts")
+async def get_whale_alerts(min_value: int = 10_000_000):
+    """
+    Proxy for the Whale Alert /v1/transactions endpoint.
+    Returns normalised whale feed, block trades, inflow/outflow histogram,
+    and a rolling 4-hour bias value (-1 to +1) — same shape as the frontend
+    DarkPoolState expects.
+    """
+    # Serve cache if fresh
+    if _whale_cache["data"] and (time.time() - _whale_cache["ts"]) < WHALE_CACHE_TTL:
+        return _whale_cache["data"]
+
+    if not WHALE_ALERT_API_KEY:
+        raise HTTPException(status_code=503, detail="WHALE_ALERT_API_KEY not configured on server")
+
+    # Whale Alert only allows `start` up to 3600 s in the past on the free plan
+    start_ts = int(time.time()) - 3600
+    btc_price = 0  # will be updated from transaction data
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.get(
+                "https://api.whale-alert.io/v1/transactions",
+                params={
+                    "api_key": WHALE_ALERT_API_KEY,
+                    "cursor": "0",
+                    "limit": 100,
+                    "start": start_ts,
+                    "min_value": min_value,
+                    "currency": "bitcoin",  # BTC only
+                },
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Whale Alert HTTP error: {e.response.status_code} — {e.response.text}")
+            raise HTTPException(status_code=502, detail=f"Whale Alert API error: {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"Whale Alert fetch failed: {e}")
+            raise HTTPException(status_code=502, detail="Could not reach Whale Alert API")
+
+    transactions: list = raw.get("transactions", [])
+
+    # ── Map to WhaleTransfer (whaleFeed) ────────────────────────────────
+    whale_feed = []
+    for tx in transactions:
+        amount_usd = float(tx.get("amount_usd", 0))
+        amount_coin = float(tx.get("amount", 0))
+        if amount_coin > 0:
+            derived_price = amount_usd / amount_coin
+            if derived_price > 0:
+                btc_price = derived_price  # keep latest price estimate
+
+        to_ex = tx.get("to", {})
+        from_ex = tx.get("from", {})
+        to_exchange = to_ex.get("owner_type") == "exchange"
+        from_label = from_ex.get("owner") or from_ex.get("owner_type") or "Unknown Wallet"
+        to_label = to_ex.get("owner") or to_ex.get("owner_type") or "Unknown Wallet"
+
+        whale_feed.append({
+            "id": tx.get("hash", f"wh-{tx.get('id', '')}"),
+            "timestamp": int(tx.get("timestamp", 0)) * 1000,  # → ms
+            "amountBTC": amount_coin,
+            "amountUSD": amount_usd,
+            "fromLabel": from_label,
+            "toLabel": to_label,
+            "direction": "INFLOW" if to_exchange else "OUTFLOW",
+            "exchangeFlag": to_exchange,
+        })
+
+    # ── Map to DarkPrint (blockTrades) — flag low-price-impact BTC txs ─
+    DAILY_VOLUME_BTC = 25000
+    block_trades = []
+    for tx in transactions:
+        amount_coin = float(tx.get("amount", 0))
+        if amount_coin < 100:
+            continue  # ignore small ones
+        price_impact = 0.003  # Whale Alert doesn't provide this; use conservative estimate
+        is_significant = amount_coin / DAILY_VOLUME_BTC >= 0.005
+        to_ex_type = tx.get("to", {}).get("owner_type", "")
+        side = "BUY" if to_ex_type == "exchange" else "SELL"
+        block_trades.append({
+            "id": tx.get("hash", f"dp-{tx.get('id', '')}"),
+            "timestamp": int(tx.get("timestamp", 0)) * 1000,
+            "price": btc_price or 65000,
+            "volumeBTC": amount_coin,
+            "volumeUSD": float(tx.get("amount_usd", 0)),
+            "priceImpactPct": price_impact,
+            "exchange": tx.get("to", {}).get("owner") or tx.get("from", {}).get("owner") or "Unknown",
+            "side": side,
+            "isSignificant": is_significant,
+        })
+
+    # ── Build hourly inflow/outflow histogram (last 8 h) ────────────────
+    now_ms = int(time.time()) * 1000
+    buckets: Dict[int, Dict[str, float]] = {}
+    for h in range(8):
+        bucket_start = now_ms - (8 - h) * 3_600_000
+        buckets[h] = {"hour_ts": bucket_start, "inflow": 0.0, "outflow": 0.0}
+
+    for tx in whale_feed:
+        age_h = (now_ms - tx["timestamp"]) / 3_600_000
+        bucket_idx = 7 - int(age_h)
+        if 0 <= bucket_idx <= 7:
+            if tx["direction"] == "INFLOW":
+                buckets[bucket_idx]["inflow"] += tx["amountBTC"]
+            else:
+                buckets[bucket_idx]["outflow"] += tx["amountBTC"]
+
+    inflow_outflow = [
+        {
+            "hour": datetime.fromtimestamp(b["hour_ts"] / 1000).strftime("%H:%M"),
+            "netBTC": round(b["inflow"] - b["outflow"], 1),
+            "inflowBTC": round(b["inflow"], 1),
+            "outflowBTC": round(b["outflow"], 1),
+        }
+        for b in buckets.values()
+    ]
+
+    # ── Bias gauge: rolling 4-hour net signed flow ────────────────────
+    cutoff_ms = now_ms - 4 * 3_600_000
+    recent = [t for t in whale_feed if t["timestamp"] >= cutoff_ms]
+    buy_vol = sum(t["amountBTC"] for t in recent if t["direction"] == "INFLOW")
+    sell_vol = sum(t["amountBTC"] for t in recent if t["direction"] == "OUTFLOW")
+    total_vol = buy_vol + sell_vol or 1
+    raw_bias = (buy_vol - sell_vol) / total_vol
+
+    result = {
+        "whaleFeed": whale_feed[:40],
+        "blockTrades": block_trades[:30],
+        "inflowOutflow": inflow_outflow,
+        "rawBias": round(raw_bias, 4),
+        "isReal": True,
+    }
+
+    _whale_cache["data"] = result
+    _whale_cache["ts"] = time.time()
+    logger.info(f"Whale Alert: fetched {len(whale_feed)} transfers, bias={raw_bias:.3f}")
+    return result
 
 
 @app.get("/admin/system-status")
