@@ -3,7 +3,7 @@
 # In your Railway dashboard (Bot Service) → Settings → Config File Path
 # set this to: railway.bot.toml
 #
-# IMPORTANT: In your Railway dashboard, "Root Directory" MUST be left blank 
+# IMPORTANT: In your Railway dashboard, "Root Directory" MUST be left blank
 # or set to `/` (the main folder). Do NOT set it to `/bot`.
 
 [build]
@@ -11,6 +11,8 @@ builder      = "nixpacks"
 watchPatterns = ["bot/**"]
 
 [deploy]
-startCommand      = "python3 -m pip install --break-system-packages --user -r bot/requirements.txt && python3 -m bot.main"
+# Create a virtualenv in /tmp (always writable even on Nix) so pip can
+# install freely without hitting the externally-managed-environment wall.
+startCommand      = "python3 -m venv /tmp/botenv && /tmp/botenv/bin/pip install --quiet -r bot/requirements.txt && /tmp/botenv/bin/python -m bot.main"
 restartPolicyType = "ON_FAILURE"
 numReplicas       = 1
