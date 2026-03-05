@@ -173,7 +173,7 @@ const DarkPoolDiscovery: React.FC = () => {
         return () => { stopRef.current?.(); };
     }, []);
 
-    const { whaleFeed, blockTrades, inflowOutflow, biasHistory, isLoading, lastUpdated } = darkPool;
+    const { whaleFeed, blockTrades, inflowOutflow, biasHistory, isLoading, isSimulated, lastUpdated } = darkPool;
     const significantPrints = blockTrades.filter(p => p.isSignificant);
     const netHourFlow = inflowOutflow[inflowOutflow.length - 1]?.netBTC ?? 0;
     const biasIcon = darkPoolBias > 0.3
@@ -217,21 +217,22 @@ const DarkPoolDiscovery: React.FC = () => {
                 </div>
             </div>
 
-            {/* ── SIMULATED DATA DISCLAIMER ─────────────────────────────── */}
-            <div className="mb-6 flex items-start gap-3 px-4 py-3.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.07] backdrop-blur-sm">
-                <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                    <p className="text-amber-300 text-xs font-bold uppercase tracking-wider mb-0.5">
-                        ⚠ Simulated Data — Do Not Trade From This Page
-                    </p>
-                    <p className="text-amber-400/70 text-[11px] leading-relaxed font-mono">
-                        All whale transfers, block trades, bias readings, and inflow/outflow bars on this page are
-                        <span className="text-amber-300 font-bold"> randomly generated</span> by a mock data engine.
-                        No real Whale Alert API key is configured. Add <span className="text-white/80">WHALE_ALERT_API_KEY</span> to
-                        your backend environment and replace the mock generator in <span className="text-white/80">store/index.ts → fetchDarkPoolData</span> with a real API call before using this data for any decision.
-                    </p>
+            {/* ── SIMULATED DATA DISCLAIMER — only when no real data ─── */}
+            {isSimulated && (
+                <div className="mb-6 flex items-start gap-3 px-4 py-3.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.07] backdrop-blur-sm">
+                    <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                        <p className="text-amber-300 text-xs font-bold uppercase tracking-wider mb-0.5">
+                            ⚠ No Live Data — Do Not Trade From This Page
+                        </p>
+                        <p className="text-amber-400/70 text[11px] leading-relaxed font-mono">
+                            The Whale Alert API key is not configured or the upstream API is unavailable.
+                            Add <span className="text-white/80">WHALE_ALERT_API_KEY</span> to your backend
+                            environment to enable live institutional flow data. All stats below show empty state.
+                        </p>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* ── Stat strip ── */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">

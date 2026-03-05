@@ -8,19 +8,22 @@ import { API_BASE_URL } from '../constants';
 const motion = m as any;
 
 const AI_MODELS = [
-    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'High Reasoning (Complex Tasks)' },
-    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', desc: 'Low Latency (Fast)' },
-    { id: 'gemini-flash-latest', label: 'Gemini Flash', desc: 'Standard Flash' },
+    { id: 'gemini-2.5-pro-preview-03-25', label: 'Gemini 2.5 Pro', desc: 'Most Intelligent — Deep Reasoning' },
+    { id: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking', desc: 'Extended Reasoning (Complex Tasks)' },
+    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Fast & Balanced (Recommended)' },
+    { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', desc: 'Long Context Window (1M tokens)' },
+    { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', desc: 'Lightweight & Low Latency' },
+    { id: 'gemini-1.5-flash-8b', label: 'Gemini 1.5 Flash 8B', desc: 'Smallest — Ultra Fast' },
 ];
 
 const ProfileOverlay: React.FC = () => {
-    const { 
-        auth: { user }, 
+    const {
+        auth: { user },
         config: { aiModel, telegramBotToken, telegramChatId, activeSymbol },
         ui: { isProfileOpen },
         alertLogs,
-        setProfileOpen, 
-        setAiModel, 
+        setProfileOpen,
+        setAiModel,
         updateUserProfile,
         logout,
         addNotification
@@ -30,6 +33,8 @@ const ProfileOverlay: React.FC = () => {
     const [tempChatId, setTempChatId] = useState(telegramChatId);
     const [isSaving, setIsSaving] = useState(false);
     const [isSendingTest, setIsSendingTest] = useState(false);
+    const [isTestingAI, setIsTestingAI] = useState(false);
+    const [aiTestResult, setAiTestResult] = useState<'idle' | 'ok' | 'error'>('idle');
     const [activeTab, setActiveTab] = useState<'SETTINGS' | 'LOGS'>('SETTINGS');
 
     // Sync state when opening
@@ -38,8 +43,30 @@ const ProfileOverlay: React.FC = () => {
             setTempBotToken(telegramBotToken);
             setTempChatId(telegramChatId);
             setActiveTab('SETTINGS');
+            setAiTestResult('idle');
         }
     }, [isProfileOpen, telegramBotToken, telegramChatId]);
+
+    const handleTestAI = async () => {
+        setIsTestingAI(true);
+        setAiTestResult('idle');
+        try {
+            const res = await fetch(
+                `${API_BASE_URL}/analyze?symbol=BTCUSDT&model=${encodeURIComponent(aiModel)}`
+            );
+            if (res.ok) {
+                setAiTestResult('ok');
+                addNotification({ id: Date.now().toString(), type: 'success', title: 'AI Test Passed', message: `${aiModel} responded correctly.` });
+            } else {
+                throw new Error(`HTTP ${res.status}`);
+            }
+        } catch (e: any) {
+            setAiTestResult('error');
+            addNotification({ id: Date.now().toString(), type: 'error', title: 'AI Test Failed', message: e.message });
+        } finally {
+            setIsTestingAI(false);
+        }
+    };
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -49,18 +76,18 @@ const ProfileOverlay: React.FC = () => {
                 telegramBotToken: tempBotToken,
                 telegramChatId: tempChatId
             });
-            
+
             // Push to Backend for Autonomous Mode
             await fetch(`${API_BASE_URL}/alerts/configure`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     symbol: activeSymbol,
                     telegram_bot_token: tempBotToken,
                     telegram_chat_id: tempChatId
                 })
             });
-            
+
             addNotification({
                 id: Date.now().toString(),
                 type: 'success',
@@ -117,15 +144,15 @@ const ProfileOverlay: React.FC = () => {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
+            <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setProfileOpen(false)}
                 className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             />
-            
-            <motion.div 
+
+            <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -133,7 +160,7 @@ const ProfileOverlay: React.FC = () => {
             >
                 {/* Header Profile Section */}
                 <div className="relative p-6 border-b border-white/5 bg-gradient-to-b from-white/5 to-transparent">
-                    <button 
+                    <button
                         onClick={() => setProfileOpen(false)}
                         className="absolute top-4 right-4 p-2 rounded-full hover:bg-white/10 text-zinc-500 hover:text-white transition-colors"
                     >
@@ -166,13 +193,13 @@ const ProfileOverlay: React.FC = () => {
 
                 {/* Tab Nav */}
                 <div className="flex p-1 bg-black/40 border-b border-white/5">
-                    <button 
+                    <button
                         onClick={() => setActiveTab('SETTINGS')}
                         className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition-all ${activeTab === 'SETTINGS' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
                         Configuration
                     </button>
-                    <button 
+                    <button
                         onClick={() => setActiveTab('LOGS')}
                         className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition-all ${activeTab === 'LOGS' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
@@ -181,25 +208,38 @@ const ProfileOverlay: React.FC = () => {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-[#18181b]">
-                    
+
                     {activeTab === 'SETTINGS' ? (
                         <>
                             {/* AI Configuration */}
                             <div className="space-y-4">
-                                <div className="flex items-center gap-2 text-sm font-bold text-white">
-                                    <BrainCircuit size={16} className="text-brand-accent" />
-                                    AI Configuration
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2 text-sm font-bold text-white">
+                                        <BrainCircuit size={16} className="text-brand-accent" />
+                                        AI Configuration
+                                    </div>
+                                    <button
+                                        onClick={handleTestAI}
+                                        disabled={isTestingAI}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase border transition-all ${aiTestResult === 'ok' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                                                aiTestResult === 'error' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' :
+                                                    'bg-brand-accent/10 border-brand-accent/30 text-brand-accent hover:bg-brand-accent/20'
+                                            }`}
+                                    >
+                                        {isTestingAI ? <Loader size={12} className="animate-spin" /> : <Cpu size={12} />}
+                                        {aiTestResult === 'ok' ? 'AI OK ✓' : aiTestResult === 'error' ? 'Failed ✗' : 'Test AI'}
+                                    </button>
                                 </div>
-                                
+
                                 <div className="grid gap-2">
                                     {AI_MODELS.map((model) => (
                                         <button
                                             key={model.id}
-                                            onClick={() => setAiModel(model.id)}
+                                            onClick={() => { setAiModel(model.id); setAiTestResult('idle'); }}
                                             className={`
                                                 flex items-center justify-between p-3 rounded-xl border text-left transition-all
-                                                ${aiModel === model.id 
-                                                    ? 'bg-brand-accent/10 border-brand-accent/50 shadow-[0_0_15px_rgba(124,58,237,0.1)]' 
+                                                ${aiModel === model.id
+                                                    ? 'bg-brand-accent/10 border-brand-accent/50 shadow-[0_0_15px_rgba(124,58,237,0.1)]'
                                                     : 'bg-zinc-900/50 border-white/5 hover:border-white/10 hover:bg-zinc-900'}
                                             `}
                                         >
@@ -229,8 +269,8 @@ const ProfileOverlay: React.FC = () => {
                                     <div className="space-y-1">
                                         <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Bot Token</label>
                                         <div className="relative">
-                                            <input 
-                                                type="password" 
+                                            <input
+                                                type="password"
                                                 value={tempBotToken}
                                                 onChange={(e) => setTempBotToken(e.target.value)}
                                                 placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
@@ -242,8 +282,8 @@ const ProfileOverlay: React.FC = () => {
 
                                     <div className="space-y-1">
                                         <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Chat ID</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             value={tempChatId}
                                             onChange={(e) => setTempChatId(e.target.value)}
                                             placeholder="-100123456789"
@@ -253,7 +293,7 @@ const ProfileOverlay: React.FC = () => {
                                 </div>
 
                                 <div className="flex gap-2">
-                                    <button 
+                                    <button
                                         onClick={handleTestAlert}
                                         disabled={isSendingTest}
                                         className="flex-1 py-2.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 text-xs font-bold rounded-xl flex items-center justify-center gap-2 border border-blue-600/50 transition-all"
@@ -261,7 +301,7 @@ const ProfileOverlay: React.FC = () => {
                                         {isSendingTest ? <Loader size={14} className="animate-spin" /> : <Send size={14} />}
                                         TEST ALERT
                                     </button>
-                                    <button 
+                                    <button
                                         onClick={handleSave}
                                         disabled={isSaving}
                                         className="flex-[2] py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all"
@@ -320,7 +360,7 @@ const ProfileOverlay: React.FC = () => {
 
                 {/* Footer Actions */}
                 <div className="p-4 border-t border-white/5 bg-[#121215]">
-                    <button 
+                    <button
                         onClick={() => { setProfileOpen(false); logout(); }}
                         className="w-full py-3 border border-rose-500/20 hover:bg-rose-500/10 text-rose-500 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all"
                     >

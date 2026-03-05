@@ -98,6 +98,20 @@ class TelegramPayload(BaseModel):
     botToken: Optional[str] = None
     chatId: Optional[str] = None
 
+VALID_GEMINI_MODELS = {
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-thinking-exp",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-2.5-pro-preview-03-25",
+}
+DEFAULT_MODEL = "gemini-2.0-flash"
+
+def _safe_model(name: str) -> str:
+    """Return a validated model name, falling back to default."""
+    return name if name in VALID_GEMINI_MODELS else DEFAULT_MODEL
+
 class AnalysisRequest(BaseModel):
     symbol: str
     price: float
@@ -106,6 +120,7 @@ class AnalysisRequest(BaseModel):
     pocPrice: float
     cvdTrend: str
     candleCount: int
+    model: str = DEFAULT_MODEL
 
 class MacroStrategyRequest(BaseModel):
     symbol: str
@@ -120,6 +135,7 @@ class MacroStrategyRequest(BaseModel):
     tapeDominant: str
     wallContext: str
     allWalls: str = ""  # All detected walls, not just nearest
+    model: str = DEFAULT_MODEL
 
 # Binance.US is accessible from US-based servers.
 # Response format per kline: [openTime, open, high, low, close, volume, closeTime,
@@ -238,7 +254,7 @@ async def analyze_order_flow(req: AnalysisRequest):
         return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.1, "flow_type": "NEUTRAL", "is_simulated": True}
     prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output: {{verdict:BULLISH|BEARISH|NEUTRAL, confidence:num, explanation:str, flow_type:str}}"
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel(_safe_model(req.model))
         response = await model.generate_content_async(prompt)
         match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
         if match:
@@ -311,7 +327,7 @@ async def analyze_strategy(req: MacroStrategyRequest):
     {{"verdict":"BUY|SELL|WAIT|MEAN_REVERSAL", "confidence":0-1, "analysis":"str"}}
     """
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel(_safe_model(req.model))
         response = await model.generate_content_async(prompt)
         match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
         if match:
@@ -457,7 +473,12 @@ async def get_whale_alerts(min_value: int = 10_000_000):
         return _whale_cache["data"]
 
     if not WHALE_ALERT_API_KEY:
-        raise HTTPException(status_code=503, detail="WHALE_ALERT_API_KEY not configured on server")
+        logger.warning("WHALE_ALERT_API_KEY not set — returning empty dark pool response")
+        return {
+            "whaleFeed": [], "blockTrades": [], "inflowOutflow": [],
+            "rawBias": 0.0, "isReal": False,
+            "notice": "WHALE_ALERT_API_KEY not configured",
+        }
 
     # Whale Alert only allows `start` up to 3600 s in the past on the free plan
     start_ts = int(time.time()) - 3600
@@ -480,10 +501,18 @@ async def get_whale_alerts(min_value: int = 10_000_000):
             raw = resp.json()
         except httpx.HTTPStatusError as e:
             logger.error(f"Whale Alert HTTP error: {e.response.status_code} — {e.response.text}")
-            raise HTTPException(status_code=502, detail=f"Whale Alert API error: {e.response.status_code}")
+            return {
+                "whaleFeed": [], "blockTrades": [], "inflowOutflow": [],
+                "rawBias": 0.0, "isReal": False,
+                "notice": f"Whale Alert API error {e.response.status_code}",
+            }
         except Exception as e:
             logger.error(f"Whale Alert fetch failed: {e}")
-            raise HTTPException(status_code=502, detail="Could not reach Whale Alert API")
+            return {
+                "whaleFeed": [], "blockTrades": [], "inflowOutflow": [],
+                "rawBias": 0.0, "isReal": False,
+                "notice": "Could not reach Whale Alert API",
+            }
 
     transactions: list = raw.get("transactions", [])
 

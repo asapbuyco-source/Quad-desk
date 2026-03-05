@@ -377,5 +377,6 @@ export interface DarkPoolState {
   biasHistory: number[];      // last 20 bias readings for sparkline
   inflowOutflow: InflowOutflowBar[];
   isLoading: boolean;
+  isSimulated: boolean;       // true when no real Whale Alert data is available
   lastUpdated: number;
 }

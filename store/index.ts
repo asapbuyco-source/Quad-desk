@@ -261,6 +261,7 @@ export const useStore = create<AppState>((set, get) => ({
         biasHistory: [],
         inflowOutflow: [],
         isLoading: false,
+        isSimulated: true,
         lastUpdated: 0,
     },
 
@@ -579,7 +580,7 @@ export const useStore = create<AppState>((set, get) => ({
             const res = await fetch(`${API_BASE_URL}/analyze/flow`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({ ...payload, model: get().config.aiModel })
             });
             if (res.ok) {
                 const analysis = await res.json();
@@ -900,7 +901,7 @@ export const useStore = create<AppState>((set, get) => ({
             const res = await fetch(`${API_BASE_URL}/analyze/strategy`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({ ...payload, model: get().config.aiModel })
             });
             if (res.ok) {
                 const analysis = await res.json();
@@ -955,6 +956,7 @@ export const useStore = create<AppState>((set, get) => ({
                     inflowOutflow: data.inflowOutflow ?? [],
                     biasHistory,
                     isLoading: false,
+                    isSimulated: !(data.isReal),
                     lastUpdated: Date.now(),
                 },
                 darkPoolBias: rawBias,
