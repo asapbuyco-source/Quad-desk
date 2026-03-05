@@ -189,14 +189,14 @@ const DarkPoolDiscovery: React.FC = () => {
             className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 pt-6 max-w-7xl mx-auto"
         >
             {/* Header */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
                 <div className="flex items-center gap-4">
                     <div className="p-3 bg-violet-500/20 rounded-xl text-violet-400 shadow-[0_0_20px_rgba(139,92,246,0.3)]">
                         <Eye size={30} />
                     </div>
                     <div>
                         <h1 className="text-3xl font-black text-white tracking-tight">Dark Pool Discovery</h1>
-                        <p className="text-slate-400 text-sm mt-0.5">Institutional Radar · BTC On-Chain & OTC Flow</p>
+                        <p className="text-slate-400 text-sm mt-0.5">Institutional Radar · BTC On-Chain &amp; OTC Flow</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -214,6 +214,22 @@ const DarkPoolDiscovery: React.FC = () => {
                     >
                         <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
                     </button>
+                </div>
+            </div>
+
+            {/* ── SIMULATED DATA DISCLAIMER ─────────────────────────────── */}
+            <div className="mb-6 flex items-start gap-3 px-4 py-3.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.07] backdrop-blur-sm">
+                <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                    <p className="text-amber-300 text-xs font-bold uppercase tracking-wider mb-0.5">
+                        ⚠ Simulated Data — Do Not Trade From This Page
+                    </p>
+                    <p className="text-amber-400/70 text-[11px] leading-relaxed font-mono">
+                        All whale transfers, block trades, bias readings, and inflow/outflow bars on this page are
+                        <span className="text-amber-300 font-bold"> randomly generated</span> by a mock data engine.
+                        No real Whale Alert API key is configured. Add <span className="text-white/80">WHALE_ALERT_API_KEY</span> to
+                        your backend environment and replace the mock generator in <span className="text-white/80">store/index.ts → fetchDarkPoolData</span> with a real API call before using this data for any decision.
+                    </p>
                 </div>
             </div>
 
