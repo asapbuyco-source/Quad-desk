@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { SentinelChecklist, AiScanResult, HeatmapItem, MarketMetrics } from '../types';
-import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info, Lock } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Shield, ScanSearch, Percent, Zap, Activity, ChevronRight, X, Calculator, FunctionSquare, Variable, Info, Lock, GripHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
 
@@ -37,13 +37,36 @@ const ZScoreCell: React.FC<{ item: HeatmapItem }> = ({ item }) => {
 
 const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, heatmap, currentRegime = 'MEAN_REVERTING' }) => {
     const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+    // AI Verdict panel: resizable height + collapsible
+    const [aiCardHeight, setAiCardHeight] = useState(220);
+    const [aiCardCollapsed, setAiCardCollapsed] = useState(false);
+    const resizeDragRef = useRef<{ startY: number; startH: number } | null>(null);
 
-    // Hook into store to get live values
-    const { metrics, expectedValue, candles } = useStore(state => ({
+    const startResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        resizeDragRef.current = { startY: e.clientY, startH: aiCardHeight };
+    }, [aiCardHeight]);
+
+    const onResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (!resizeDragRef.current) return;
+        const dy = e.clientY - resizeDragRef.current.startY;
+        setAiCardHeight(Math.max(120, Math.min(600, resizeDragRef.current.startH + dy)));
+    }, []);
+
+    const stopResize = useCallback(() => { resizeDragRef.current = null; }, []);
+
+    // Hook into store to get live values + dark pool data
+    const { metrics, expectedValue, candles, darkPoolBias, darkPool } = useStore(state => ({
         metrics: state.market.metrics,
         expectedValue: state.market.expectedValue,
-        candles: state.market.candles
+        candles: state.market.candles,
+        darkPoolBias: state.darkPoolBias,
+        darkPool: state.darkPool,
     }));
+
+    // Anti-Liquidation Shield: blocklist trade if whale inflow + bearish institutional bias
+    const latestNetFlow = darkPool.inflowOutflow[darkPool.inflowOutflow.length - 1]?.netBTC ?? 0;
+    const darkPoolBlocked = darkPoolBias < -0.4 && latestNetFlow > 0;
 
     // Calculate stats for live details (Mean, StdDev) based on last 20 candles
     const stats = useMemo(() => {
@@ -194,6 +217,24 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                 {/* Checklist */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
 
+                    {/* ── Anti-Liquidation Shield ── */}
+                    {darkPoolBlocked && (
+                        <div className="mb-3 p-3 rounded-xl border border-rose-500/50 bg-rose-500/10 flex items-start gap-3 animate-pulse">
+                            <div className="shrink-0 p-1.5 bg-rose-500/20 rounded-lg mt-0.5">
+                                <AlertTriangle size={14} className="text-rose-400" />
+                            </div>
+                            <div>
+                                <div className="text-xs font-black text-rose-400 uppercase tracking-widest mb-1">
+                                    🚫 Dark Pool Alignment — BLOCKED
+                                </div>
+                                <p className="text-[10px] text-rose-300 leading-relaxed">
+                                    Institutional bias: <strong>{darkPoolBias.toFixed(2)}</strong> (bearish) + active whale inflow detected.
+                                    Anti-Liquidation Shield active — avoid longs regardless of Z-Score or RSI signals.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Heatmap Matrix */}
                     {heatmap && heatmap.length > 0 && (
                         <div className="mb-4 pb-4 border-b border-white/5">
@@ -209,24 +250,32 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                         </div>
                     )}
 
-                    {/* AI SCAN RESULT CARD */}
+                    {/* AI SCAN RESULT CARD - Resizable & Scrollable */}
                     {aiScanResult && (
-                        <div className="p-4 rounded-xl border mb-4 bg-purple-500/10 border-purple-500/30 relative overflow-hidden group">
-                            {/* SIMULATION BADGE */}
-                            {(aiScanResult.isSimulated || (aiScanResult as any).is_simulated) && (
-                                <div className="absolute top-0 right-0 left-0 bg-amber-500/20 border-b border-amber-500/30 py-1 flex items-center justify-center gap-2">
-                                    <AlertTriangle size={10} className="text-amber-500" />
-                                    <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">
-                                        ⚠ SIMULATED DATA
-                                    </span>
-                                </div>
-                            )}
+                        <div className="mb-4 rounded-xl border border-purple-500/30 bg-purple-500/10 relative flex flex-col overflow-hidden group"
+                            style={{ height: aiCardCollapsed ? 'auto' : aiCardHeight }}
+                        >
+                            {/* Card header row */}
+                            <div className="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-purple-500/20 shrink-0">
+                                {/* SIMULATION BADGE */}
+                                {(aiScanResult.isSimulated || (aiScanResult as any).is_simulated) && (
+                                    <div className="absolute top-0 right-0 left-0 bg-amber-500/20 border-b border-amber-500/30 py-1 flex items-center justify-center gap-2">
+                                        <AlertTriangle size={10} className="text-amber-500" />
+                                        <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">
+                                            ⚠ SIMULATED DATA
+                                        </span>
+                                    </div>
+                                )}
 
-                            <div className={`flex items-center justify-between mb-2 ${(aiScanResult.isSimulated || (aiScanResult as any).is_simulated) ? 'mt-6' : ''}`}>
-                                <div className="flex items-center gap-2">
-                                    <ScanSearch size={16} className="text-purple-400" />
-                                    <span className="text-xs font-bold text-white tracking-wide">AI VERDICT</span>
-                                </div>
+                                <ScanSearch size={16} className="text-purple-400" />
+                                <span className="text-xs font-bold text-white tracking-wide flex-1">AI VERDICT</span>
+                                <button
+                                    onClick={() => setAiCardCollapsed(p => !p)}
+                                    className="p-1 rounded text-zinc-500 hover:text-zinc-200 transition-colors"
+                                    title={aiCardCollapsed ? 'Expand' : 'Collapse'}
+                                >
+                                    {aiCardCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+                                </button>
                                 {aiScanResult.confidence && (
                                     <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/40 border border-white/10">
                                         <Zap size={10} className={aiScanResult.confidence > 0.8 ? "text-brand-accent" : "text-slate-500"} />
@@ -236,25 +285,42 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                     </div>
                                 )}
                             </div>
-                            <div className="flex items-baseline gap-2 mb-2">
-                                <h3 className={`text-2xl font-black tracking-tighter ${aiScanResult.verdict?.toUpperCase() === 'ENTRY' ? 'text-emerald-400' :
-                                        aiScanResult.verdict?.toUpperCase() === 'EXIT' ? 'text-rose-400' : 'text-amber-400'
-                                    }`}>
-                                    {aiScanResult.verdict}
-                                </h3>
-                            </div>
-                            <p className="text-[10px] text-slate-300 leading-relaxed font-medium mb-2">
-                                "{aiScanResult.analysis}"
-                            </p>
-
-                            {/* Risk/Reward Display */}
-                            {aiScanResult.risk_reward_ratio && (
-                                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-purple-500/20">
-                                    <Percent size={10} className="text-slate-500" />
-                                    <span className="text-[10px] text-slate-400">R:R Ratio</span>
-                                    <span className={`text-[10px] font-bold font-mono ${aiScanResult.risk_reward_ratio >= 2 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {aiScanResult.risk_reward_ratio.toFixed(2)}
-                                    </span>
+                            {/* Scrollable body */}
+                            {!aiCardCollapsed && (
+                                <div className="overflow-y-auto flex-1 px-4 py-3 space-y-2">
+                                    <div className="flex items-baseline gap-2">
+                                        <h3 className={`text-2xl font-black tracking-tighter ${aiScanResult.verdict?.toUpperCase() === 'ENTRY' ? 'text-emerald-400' :
+                                            aiScanResult.verdict?.toUpperCase() === 'EXIT' ? 'text-rose-400' : 'text-amber-400'
+                                            }`}>
+                                            {aiScanResult.verdict}
+                                        </h3>
+                                    </div>
+                                    <p className="text-[10px] text-slate-300 leading-relaxed font-medium italic">
+                                        {aiScanResult.analysis}
+                                    </p>
+                                    {/* Risk/Reward Display */}
+                                    {aiScanResult.risk_reward_ratio && (
+                                        <div className="flex items-center gap-2 pt-2 border-t border-purple-500/20">
+                                            <Percent size={10} className="text-slate-500" />
+                                            <span className="text-[10px] text-slate-400">R:R Ratio</span>
+                                            <span className={`text-[10px] font-bold font-mono ${aiScanResult.risk_reward_ratio >= 2 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {aiScanResult.risk_reward_ratio.toFixed(2)}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {/* Resize handle */}
+                            {!aiCardCollapsed && (
+                                <div
+                                    onPointerDown={startResize}
+                                    onPointerMove={onResize}
+                                    onPointerUp={stopResize}
+                                    style={{ cursor: 'ns-resize', touchAction: 'none' }}
+                                    className="shrink-0 flex items-center justify-center h-4 bg-purple-500/10 border-t border-purple-500/20 hover:bg-purple-500/20 transition-colors"
+                                    title="Drag to resize"
+                                >
+                                    <GripHorizontal size={12} className="text-purple-400/50" />
                                 </div>
                             )}
                         </div>
@@ -300,7 +366,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                             <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">REGIME LOCK</span>
                                         ) : (
                                             <span className={`text-xs font-mono font-bold ${item.status === 'pass' ? 'text-trade-bid' :
-                                                    item.status === 'fail' ? 'text-trade-ask' : 'text-trade-warn'
+                                                item.status === 'fail' ? 'text-trade-ask' : 'text-trade-warn'
                                                 }`}>
                                                 {item.value}
                                             </span>
@@ -343,8 +409,8 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                     <div>
                                         <h3 className="text-lg font-bold text-white">{selectedItem.label}</h3>
                                         <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${selectedItem.status === 'pass' ? 'border-emerald-500/20 text-emerald-500 bg-emerald-500/10' :
-                                                selectedItem.status === 'fail' ? 'border-rose-500/20 text-rose-500 bg-rose-500/10' :
-                                                    'border-amber-500/20 text-amber-500 bg-amber-500/10'
+                                            selectedItem.status === 'fail' ? 'border-rose-500/20 text-rose-500 bg-rose-500/10' :
+                                                'border-amber-500/20 text-amber-500 bg-amber-500/10'
                                             }`}>
                                             Status: {selectedItem.status.toUpperCase()}
                                         </span>
@@ -373,8 +439,8 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                         <div className="flex flex-wrap gap-2">
                                             {selectedItem.requiredRegime.map(r => (
                                                 <div key={r} className={`px-2 py-1 rounded text-[10px] font-mono font-bold border flex items-center gap-2 ${r === currentRegime
-                                                        ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
-                                                        : 'bg-zinc-800 text-zinc-500 border-zinc-700'
+                                                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                                                    : 'bg-zinc-800 text-zinc-500 border-zinc-700'
                                                     }`}>
                                                     {r === currentRegime && <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />}
                                                     {r.replace('_', ' ')}

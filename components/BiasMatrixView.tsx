@@ -1,23 +1,23 @@
 import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { Layers, ArrowUpCircle, ArrowDownCircle, MinusCircle, RefreshCw, Clock } from 'lucide-react';
-import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
+import { Layers, ArrowUpCircle, ArrowDownCircle, MinusCircle, RefreshCw, Clock, Eye } from 'lucide-react';
+import { LineChart, Line, ResponsiveContainer, YAxis, ReferenceLine } from 'recharts';
 import { TimeframeData } from '../types';
 
 const motion = m as any;
 
-const BiasCard: React.FC<{ 
-    label: string; 
-    data: TimeframeData | null; 
-    delay: number 
+const BiasCard: React.FC<{
+    label: string;
+    data: TimeframeData | null;
+    delay: number
 }> = ({ label, data, delay }) => {
-    
+
     let color = 'text-zinc-500';
     let bg = 'bg-zinc-900/50';
     let border = 'border-white/5';
     let icon = <MinusCircle size={24} className="text-zinc-600" />;
-    
+
     if (data) {
         if (data.bias === 'BULL') {
             color = 'text-emerald-400';
@@ -57,8 +57,8 @@ const BiasCard: React.FC<{
                 {data && (
                     <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/20 border border-white/5">
                         {isLive && <span className="relative flex h-2 w-2 mr-1">
-                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${data.bias === 'BULL' ? 'bg-emerald-400' : data.bias === 'BEAR' ? 'bg-rose-400' : 'bg-amber-400'}`}></span>
-                          <span className={`relative inline-flex rounded-full h-2 w-2 ${data.bias === 'BULL' ? 'bg-emerald-500' : data.bias === 'BEAR' ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
+                            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${data.bias === 'BULL' ? 'bg-emerald-400' : data.bias === 'BEAR' ? 'bg-rose-400' : 'bg-amber-400'}`}></span>
+                            <span className={`relative inline-flex rounded-full h-2 w-2 ${data.bias === 'BULL' ? 'bg-emerald-500' : data.bias === 'BEAR' ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
                         </span>}
                         <span className={`text-xs font-black tracking-widest ${color}`}>
                             {data.bias}
@@ -72,12 +72,12 @@ const BiasCard: React.FC<{
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData}>
                             <YAxis domain={['dataMin', 'dataMax']} hide />
-                            <Line 
-                                type="monotone" 
-                                dataKey="val" 
-                                stroke={data.bias === 'BULL' ? '#10b981' : data.bias === 'BEAR' ? '#f43f5e' : '#f59e0b'} 
-                                strokeWidth={2} 
-                                dot={false} 
+                            <Line
+                                type="monotone"
+                                dataKey="val"
+                                stroke={data.bias === 'BULL' ? '#10b981' : data.bias === 'BEAR' ? '#f43f5e' : '#f59e0b'}
+                                strokeWidth={2}
+                                dot={false}
                                 isAnimationActive={false}
                             />
                         </LineChart>
@@ -97,106 +97,158 @@ const BiasCard: React.FC<{
                 <span>TF: {label}</span>
             </div>
 
-            <div className={`absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-500 bg-gradient-to-br ${
-                data?.bias === 'BULL' ? 'from-emerald-500' : 
-                data?.bias === 'BEAR' ? 'from-rose-500' : 
-                'from-amber-500'
-            } to-transparent`} />
+            <div className={`absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-500 bg-gradient-to-br ${data?.bias === 'BULL' ? 'from-emerald-500' :
+                    data?.bias === 'BEAR' ? 'from-rose-500' :
+                        'from-amber-500'
+                } to-transparent`} />
         </motion.div>
     );
 };
 
 const BiasMatrixView: React.FC = () => {
-  const { biasMatrix, refreshBiasMatrix, market, config: { activeSymbol } } = useStore();
-  const { daily, h4, h1, m5, isLoading } = biasMatrix;
+    const { biasMatrix, refreshBiasMatrix, market, config: { activeSymbol }, darkPoolBias, darkPool } = useStore(s => ({
+        biasMatrix: s.biasMatrix,
+        refreshBiasMatrix: s.refreshBiasMatrix,
+        market: s.market,
+        config: s.config,
+        activeSymbol: s.config.activeSymbol,
+        darkPoolBias: s.darkPoolBias,
+        darkPool: s.darkPool,
+    }));
+    const { daily, h4, h1, m5, isLoading } = biasMatrix;
 
-  useEffect(() => {
-    refreshBiasMatrix();
-    const interval = setInterval(refreshBiasMatrix, 10000); // More frequent 10s auto-refresh
-    return () => clearInterval(interval);
-  }, [activeSymbol, market.candles.length]); // Also refresh when data points change
+    useEffect(() => {
+        refreshBiasMatrix();
+        const interval = setInterval(refreshBiasMatrix, 10000); // More frequent 10s auto-refresh
+        return () => clearInterval(interval);
+    }, [activeSymbol, market.candles.length]); // Also refresh when data points change
 
-  const getConfluence = () => {
-      if (!daily || !h4 || !h1) return "INSUFFICIENT DATA";
-      const biases = [daily.bias, h4.bias, h1.bias];
-      const bullCount = biases.filter(b => b === 'BULL').length;
-      const bearCount = biases.filter(b => b === 'BEAR').length;
-      
-      if (bullCount === 3) return "STRONG BULLISH CONFLUENCE";
-      if (bearCount === 3) return "STRONG BEARISH CONFLUENCE";
-      if (bullCount === 2) return "BULLISH BIAS (LOCKED)";
-      if (bearCount === 2) return "BEARISH BIAS (LOCKED)";
-      return "NEUTRAL / CHOP";
-  };
+    const getConfluence = () => {
+        if (!daily || !h4 || !h1) return "INSUFFICIENT DATA";
+        const biases = [daily.bias, h4.bias, h1.bias];
+        const bullCount = biases.filter(b => b === 'BULL').length;
+        const bearCount = biases.filter(b => b === 'BEAR').length;
 
-  return (
-    <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 max-w-7xl mx-auto pt-6"
-    >
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-            <div className="flex items-center gap-4">
-                <div className="p-3 bg-brand-accent/20 rounded-xl text-brand-accent shadow-[0_0_20px_rgba(124,58,237,0.2)]">
-                    <Layers size={32} />
-                </div>
-                <div>
-                    <h1 className="text-3xl font-bold text-white tracking-tight">Bias Matrix</h1>
-                    <p className="text-slate-400 text-sm">Multi-Timeframe Trend Confluence Engine</p>
-                </div>
-            </div>
+        if (bullCount === 3) return "STRONG BULLISH CONFLUENCE";
+        if (bearCount === 3) return "STRONG BEARISH CONFLUENCE";
+        if (bullCount === 2) return "BULLISH BIAS (LOCKED)";
+        if (bearCount === 2) return "BEARISH BIAS (LOCKED)";
+        return "NEUTRAL / CHOP";
+    };
 
-            <div className="flex items-center gap-4">
-                <div className="flex flex-col items-end">
-                    <span className="text-xs text-zinc-500 font-mono uppercase tracking-wider">Active Asset</span>
-                    <span className="text-xl font-bold text-white font-mono">{activeSymbol}</span>
-                </div>
-                <button 
-                    onClick={() => refreshBiasMatrix()}
-                    disabled={isLoading}
-                    className={`p-3 rounded-lg border transition-all ${isLoading ? 'bg-zinc-800 border-zinc-700 text-zinc-500' : 'bg-white/5 border-white/10 text-white hover:bg-white/10'}`}
-                >
-                    <RefreshCw size={20} className={isLoading ? "animate-spin" : ""} />
-                </button>
-            </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <BiasCard label="DAILY" data={daily} delay={0.1} />
-            <BiasCard label="H4" data={h4} delay={0.2} />
-            <BiasCard label="H1" data={h1} delay={0.3} />
-            <BiasCard label="M5" data={m5} delay={0.4} />
-        </div>
-
-        <div className="p-6 rounded-2xl bg-zinc-900/40 border border-white/5 relative overflow-hidden">
-             <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
-                <div className="max-w-xl">
-                    <h3 className="text-lg font-bold text-white mb-2">Trend Synthesis</h3>
-                    <p className="text-sm text-zinc-400 leading-relaxed">
-                        The matrix aggregates trend vectors across fractal timeframes. 
-                        Alignment between Daily and H4 suggests high-probability swing setups. 
-                        Contradiction indicates a ranging or transitionary market state.
-                    </p>
-                </div>
-                
-                <div className="flex items-center gap-4 px-6 py-4 rounded-xl bg-black/40 border border-white/5">
-                    <div className="text-right">
-                        <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Global State</div>
-                        <div className="text-xl font-bold text-white uppercase">
-                            {getConfluence()}
-                        </div>
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 max-w-7xl mx-auto pt-6"
+        >
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-brand-accent/20 rounded-xl text-brand-accent shadow-[0_0_20px_rgba(124,58,237,0.2)]">
+                        <Layers size={32} />
                     </div>
-                    <div className={`w-2 h-12 rounded-full ${
-                         getConfluence().includes('BULLISH') ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]' :
-                         getConfluence().includes('BEARISH') ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.5)]' :
-                         'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]'
-                    }`} />
+                    <div>
+                        <h1 className="text-3xl font-bold text-white tracking-tight">Bias Matrix</h1>
+                        <p className="text-slate-400 text-sm">Multi-Timeframe Trend Confluence Engine</p>
+                    </div>
                 </div>
-             </div>
-        </div>
 
-    </motion.div>
-  );
+                <div className="flex items-center gap-4">
+                    <div className="flex flex-col items-end">
+                        <span className="text-xs text-zinc-500 font-mono uppercase tracking-wider">Active Asset</span>
+                        <span className="text-xl font-bold text-white font-mono">{activeSymbol}</span>
+                    </div>
+                    <button
+                        onClick={() => refreshBiasMatrix()}
+                        disabled={isLoading}
+                        className={`p-3 rounded-lg border transition-all ${isLoading ? 'bg-zinc-800 border-zinc-700 text-zinc-500' : 'bg-white/5 border-white/10 text-white hover:bg-white/10'}`}
+                    >
+                        <RefreshCw size={20} className={isLoading ? "animate-spin" : ""} />
+                    </button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                <BiasCard label="DAILY" data={daily} delay={0.1} />
+                <BiasCard label="H4" data={h4} delay={0.2} />
+                <BiasCard label="H1" data={h1} delay={0.3} />
+                <BiasCard label="M5" data={m5} delay={0.4} />
+            </div>
+
+            {/* ── Institutional Velocity Card (Dark Pool) ── */}
+            {(() => {
+                const instBias = darkPoolBias > 0.3 ? 'BULL' : darkPoolBias < -0.3 ? 'BEAR' : 'NEUTRAL';
+                const instColor = instBias === 'BULL' ? 'text-emerald-400' : instBias === 'BEAR' ? 'text-rose-400' : 'text-amber-400';
+                const instBg = instBias === 'BULL' ? 'bg-emerald-900/10 border-emerald-500/30' : instBias === 'BEAR' ? 'bg-rose-900/10 border-rose-500/30' : 'bg-amber-900/10 border-amber-500/30';
+                const instStroke = instBias === 'BULL' ? '#10b981' : instBias === 'BEAR' ? '#f43f5e' : '#f59e0b';
+                const sparkData = darkPool.biasHistory.map((v: number, i: number) => ({ i, v }));
+                return (
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.5 }}
+                        className={`p-6 rounded-2xl border ${instBg} backdrop-blur-md mb-6 flex flex-col gap-3`}
+                    >
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 rounded-lg bg-black/20 border border-white/5">
+                                    <span className="text-sm font-bold font-mono text-white">INST VEL</span>
+                                </div>
+                                <Eye size={20} className={instColor} />
+                            </div>
+                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/20 border border-white/5 text-xs font-black tracking-widest ${instColor}`}>
+                                {instBias}
+                            </div>
+                        </div>
+                        <div className="h-16">
+                            {sparkData.length > 1 ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={sparkData}>
+                                        <YAxis domain={[-1, 1]} hide />
+                                        <Line type="monotone" dataKey="v" stroke={instStroke} strokeWidth={2} dot={false} isAnimationActive={false} />
+                                        <ReferenceLine y={0} stroke="#374151" strokeDasharray="3 3" />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div className="h-full flex items-center justify-center text-zinc-600 text-xs">Fetching institutional flow…</div>
+                            )}
+                        </div>
+                        <div className="text-[10px] text-zinc-500 font-mono">
+                            Dark Pool Bias: <span className={`font-bold ${instColor}`}>{darkPoolBias > 0 ? '+' : ''}{darkPoolBias.toFixed(3)}</span>
+                            &nbsp;·&nbsp; Institutional Velocity (4H Rolling)
+                        </div>
+                    </motion.div>
+                );
+            })()}
+
+            <div className="p-6 rounded-2xl bg-zinc-900/40 border border-white/5 relative overflow-hidden">
+                <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
+                    <div className="max-w-xl">
+                        <h3 className="text-lg font-bold text-white mb-2">Trend Synthesis</h3>
+                        <p className="text-sm text-zinc-400 leading-relaxed">
+                            The matrix aggregates trend vectors across fractal timeframes.
+                            Alignment between Daily and H4 suggests high-probability swing setups.
+                            Contradiction indicates a ranging or transitionary market state.
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-4 px-6 py-4 rounded-xl bg-black/40 border border-white/5">
+                        <div className="text-right">
+                            <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Global State</div>
+                            <div className="text-xl font-bold text-white uppercase">
+                                {getConfluence()}
+                            </div>
+                        </div>
+                        <div className={`w-2 h-12 rounded-full ${getConfluence().includes('BULLISH') ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]' :
+                                getConfluence().includes('BEARISH') ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.5)]' :
+                                    'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]'
+                            }`} />
+                    </div>
+                </div>
+            </div>
+
+        </motion.div>
+    );
 };
 
 export default BiasMatrixView;

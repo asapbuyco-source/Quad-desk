@@ -299,7 +299,7 @@ async def analyze_strategy(req: MacroStrategyRequest):
 
     Strategy Rules to apply:
     1. Skewness: Negative = Downside tail risk, Positive = Upside tail risk, Zero = Neutral.
-    2. Bayesian Posterior: 0 to -1 = Confirm Downside, 0 to +1 = Confirm Upside.
+    2. Bayesian Posterior: 0-1 probability range. >0.6 = Confirm Upside, <0.4 = Confirm Downside, 0.4-0.6 = Neutral.
     3. Z-Score: +2.5 to +5 = Sentiment Wash (Mean Reversal), 0.5 to +1 = Bullish Trend, 0 to -1 = Bearish Trend, 0 to 0.5 & 0 to -0.5 = Neutral.
     4. LOB Wall: Price should be above buy wall for long, below sell wall for short. Buy/Sell walls define support/resistance.
     5. RSI: Capitulation = Prepare for High Velocity Reversal; Building = Bullish Trend; Reset = Sideways.
@@ -323,7 +323,7 @@ async def analyze_strategy(req: MacroStrategyRequest):
         return {"verdict": "ERROR", "analysis": "Strategy Synthesis failed due to upstream error.", "confidence": 0, "is_simulated": True}
 
 @app.get("/market-intelligence")
-async def get_market_intel(model: str = "gemini-3-flash-preview"):
+async def get_market_intel(model: str = "gemini-2.0-flash"):
     now = datetime.now().timestamp() * 1000
     cache = state["market_intel_cache"]
     if cache["data"] and (now - cache["timestamp"] < 600000): return cache["data"]
@@ -350,6 +350,93 @@ async def get_market_intel(model: str = "gemini-3-flash-preview"):
     result = {"articles": articles, "intelligence": intelligence, "timestamp": now}
     state["market_intel_cache"] = {"data": result, "timestamp": now}
     return result
+
+@app.get("/alerts/status")
+async def alerts_status():
+    """Called by AlertEngine.tsx every 60s to detect autonomous mode."""
+    return {"autonomous_mode": state.get("autonomous_active", False)}
+
+
+class AlertEvaluateRequest(BaseModel):
+    symbol: str
+    price: float
+    zScore: float
+    tacticalProbability: float
+    aiScore: float
+    class Config:
+        extra = "allow"
+
+
+@app.post("/alerts/evaluate")
+async def alerts_evaluate(req: AlertEvaluateRequest):
+    """Evaluate whether conditions are met to fire an alert."""
+    score = 0
+    if abs(req.zScore) >= 2.0:
+        score += 1
+    if req.tacticalProbability >= 0.65:
+        score += 1
+    if req.aiScore >= 0.7:
+        score += 1
+
+    should_alert = score >= 3
+
+    ai_analysis = None
+    if should_alert and GEMINI_API_KEY:
+        try:
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            prompt = (
+                f"Trading Alert Analysis for {req.symbol} at price {req.price}.\n"
+                f"Z-Score: {req.zScore:.3f}, AI Probability: {req.tacticalProbability:.2f}, AI Score: {req.aiScore:.2f}.\n"
+                "Based on these signals determine the best trade setup.\n"
+                'Output JSON: {"direction":"LONG|SHORT","confidence":0.0-1.0,"entry":num,"stop":num,"target":num,"reasoning":"str"}'
+            )
+            response = await model.generate_content_async(prompt)
+            match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+            if match:
+                ai_analysis = json.loads(match.group(0))
+        except Exception as e:
+            logger.error(f"Alert AI analysis failed: {e}")
+
+    return {
+        "shouldAlert": should_alert,
+        "score": score,
+        "passedConditions": score,
+        "aiAnalysis": ai_analysis
+    }
+
+
+@app.post("/alerts/send-telegram")
+async def send_telegram_alert(payload: TelegramPayload):
+    """Send a formatted trading alert via Telegram."""
+    bot_token = payload.botToken or TELEGRAM_BOT_TOKEN
+    chat_id = payload.chatId or TELEGRAM_CHAT_ID
+
+    if not bot_token or not chat_id:
+        raise HTTPException(status_code=400, detail="Telegram credentials not configured")
+
+    emoji = "🟢" if payload.direction == "LONG" else "🔴"
+    message = (
+        f"{emoji} *QUAD-DESK ALERT — {payload.symbol}*\n"
+        f"Direction: *{payload.direction}*\n"
+        f"Confidence: {payload.confidence*100:.0f}%\n"
+        f"Entry: `{payload.entry}`\n"
+        f"Stop Loss: `{payload.stop}`\n"
+        f"Take Profit: `{payload.target}`\n"
+        f"R:R Ratio: `{abs(payload.target - payload.entry) / max(abs(payload.entry - payload.stop), 0.0001):.2f}`\n"
+        f"📝 {payload.reasoning}"
+    )
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=10.0)
+            resp.raise_for_status()
+            logger.info(f"Telegram alert sent for {payload.symbol}")
+            return {"success": True, "message_id": resp.json().get("result", {}).get("message_id")}
+        except Exception as e:
+            logger.error(f"Telegram send failed: {e}")
+            raise HTTPException(status_code=502, detail=f"Telegram delivery failed: {str(e)}")
+
 
 @app.get("/admin/system-status")
 def system_status():

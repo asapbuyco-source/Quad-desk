@@ -320,8 +320,6 @@ export interface MacroStrategyState {
   lastUpdated: number;
 }
 
-// --- Admin System Types ---
-
 export interface LogEntry {
   timestamp: string;
   level: string;
@@ -337,4 +335,47 @@ export interface SystemHealth {
   threads: number;
   autonomous_active: boolean;
   logs: LogEntry[];
+}
+
+// --- Dark Pool / Institutional Radar Types ---
+
+export type TransferDirection = 'INFLOW' | 'OUTFLOW' | 'INTERNAL';
+
+export interface WhaleTransfer {
+  id: string;
+  timestamp: number;
+  amountBTC: number;
+  amountUSD: number;
+  fromLabel: string;    // e.g. "Unknown Wallet", "Binance Hot"
+  toLabel: string;
+  direction: TransferDirection; // relative to exchange
+  exchangeFlag: boolean; // true if exchange-bound
+}
+
+export interface DarkPrint {
+  id: string;
+  timestamp: number;
+  price: number;
+  volumeBTC: number;
+  volumeUSD: number;
+  priceImpactPct: number;   // ideally < 0.01% for OTC cross
+  exchange: string;
+  side: 'BUY' | 'SELL';
+  isSignificant: boolean;   // true if above SIGNIFICANCE_THRESHOLD_PCT
+}
+
+export interface InflowOutflowBar {
+  hour: string;           // e.g. "14:00"
+  netBTC: number;         // positive = inflow, negative = outflow
+  inflowBTC: number;
+  outflowBTC: number;
+}
+
+export interface DarkPoolState {
+  whaleFeed: WhaleTransfer[];
+  blockTrades: DarkPrint[];
+  biasHistory: number[];      // last 20 bias readings for sparkline
+  inflowOutflow: InflowOutflowBar[];
+  isLoading: boolean;
+  lastUpdated: number;
 }

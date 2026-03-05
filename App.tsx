@@ -17,6 +17,7 @@ import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine';
+import DarkPoolDiscovery from './components/DarkPoolDiscovery';
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -62,7 +63,8 @@ const App: React.FC = () => {
         refreshHeatmap,
         refreshRegimeAnalysis,
         refreshTacticalAnalysis,
-        refreshLiquidityAnalysis
+        refreshLiquidityAnalysis,
+        startDarkPoolPolling,
     } = useStore();
 
     const handlePeriodChange = (period: PeriodType) => {
@@ -71,6 +73,7 @@ const App: React.FC = () => {
 
     useEffect(() => {
         initSystemConfig();
+        const stopDarkPool = startDarkPoolPolling();
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
                 setUser(user);
@@ -307,6 +310,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'analytics' && <AnalyticsView />}
                                 {ui.activeTab === 'intel' && <IntelView />}
                                 {ui.activeTab === 'guide' && <GuideView />}
+                                {ui.activeTab === 'dark-pool' && <DarkPoolDiscovery />}
                             </main>
                         </div>
                     </motion.div>

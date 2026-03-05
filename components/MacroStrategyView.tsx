@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useCallback, useState } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { BrainCircuit, Activity, BarChart2, Zap, Layers, TrendingUp } from 'lucide-react';
+import { BrainCircuit, Activity, BarChart2, Zap, Layers, TrendingUp, GripHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 
 const motion = m as any;
 
@@ -133,6 +133,21 @@ const MacroStrategyView: React.FC = () => {
     const getBayesLabel = (p: number) => p > 0.6 ? 'Confirming Upside' : p < 0.4 ? 'Confirming Downside' : 'Neutral';
     const getBayesColor = (p: number) => p > 0.6 ? 'text-emerald-400' : p < 0.4 ? 'text-rose-400' : 'text-zinc-400';
 
+    // Resizable AI analysis text
+    const [analysisHeight, setAnalysisHeight] = useState(120);
+    const [analysisCollapsed, setAnalysisCollapsed] = useState(false);
+    const analysisResizeRef = useRef<{ startY: number; startH: number } | null>(null);
+    const startAnalysisResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        analysisResizeRef.current = { startY: e.clientY, startH: analysisHeight };
+    }, [analysisHeight]);
+    const onAnalysisResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (!analysisResizeRef.current) return;
+        const dy = e.clientY - analysisResizeRef.current.startY;
+        setAnalysisHeight(Math.max(60, Math.min(500, analysisResizeRef.current.startH + dy)));
+    }, []);
+    const stopAnalysisResize = useCallback(() => { analysisResizeRef.current = null; }, []);
+
     return (
         <motion.div
             initial={{ opacity: 0 }}
@@ -176,12 +191,39 @@ const MacroStrategyView: React.FC = () => {
                             </div>
                         ) : (
                             <div className="mt-4">
-                                <h3 className={`text-4xl lg:text-5xl font-black uppercase tracking-tighter drop-shadow-md ${verdictColor}`}>
-                                    {aiVerdictStr}
-                                </h3>
-                                <p className="text-sm text-zinc-300 mt-4 max-w-3xl leading-relaxed whitespace-pre-wrap">
-                                    {macroStrategy.aiResult.analysis}
-                                </p>
+                                <div className="flex items-center gap-3 mb-2">
+                                    <h3 className={`text-4xl lg:text-5xl font-black uppercase tracking-tighter drop-shadow-md ${verdictColor}`}>
+                                        {aiVerdictStr}
+                                    </h3>
+                                    <button
+                                        onClick={() => setAnalysisCollapsed(p => !p)}
+                                        className="ml-auto p-1 rounded text-zinc-500 hover:text-zinc-200 transition-colors"
+                                        title={analysisCollapsed ? 'Show analysis' : 'Collapse analysis'}
+                                    >
+                                        {analysisCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                    </button>
+                                </div>
+                                {!analysisCollapsed && (
+                                    <div
+                                        className="rounded-lg border border-white/5 bg-black/20 flex flex-col overflow-hidden"
+                                        style={{ height: analysisHeight }}
+                                    >
+                                        <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap overflow-y-auto flex-1 p-3">
+                                            {macroStrategy.aiResult.analysis}
+                                        </p>
+                                        {/* Resize handle */}
+                                        <div
+                                            onPointerDown={startAnalysisResize}
+                                            onPointerMove={onAnalysisResize}
+                                            onPointerUp={stopAnalysisResize}
+                                            style={{ cursor: 'ns-resize', touchAction: 'none' }}
+                                            className="shrink-0 flex items-center justify-center h-4 bg-white/[0.03] border-t border-white/5 hover:bg-white/[0.07] transition-colors"
+                                            title="Drag to resize"
+                                        >
+                                            <GripHorizontal size={12} className="text-zinc-600" />
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

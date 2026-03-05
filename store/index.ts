@@ -3,9 +3,10 @@ import {
     MarketMetrics, CandleData, RecentTrade, OrderBookLevel, TradeSignal, PriceLevel,
     AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState,
     LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
-    BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, BotSettingsState
+    BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, BotSettingsState,
+    DarkPoolState, WhaleTransfer, DarkPrint, InflowOutflowBar
 } from '../types';
-import { MOCK_METRICS, API_BASE_URL } from '../constants';
+import { MOCK_METRICS, API_BASE_URL, DARK_POOL_THRESHOLDS } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
 import { auth, googleProvider, db } from '../lib/firebase';
 import {
@@ -75,6 +76,9 @@ interface AppState {
     botSettings: BotSettingsState;
     notifications: ToastMessage[];
     alertLogs: any[];
+    darkPool: DarkPoolState;
+    /** Rolling -1 to +1 bias from dark pool, used by SentinelPanel and BiasMatrix */
+    darkPoolBias: number;
 
     cvdBaseline: number;
 
@@ -130,6 +134,9 @@ interface AppState {
     addNotification: (toast: ToastMessage) => void;
     removeNotification: (id: string) => void;
     logAlert: (alert: any) => Promise<void>;
+
+    fetchDarkPoolData: () => Promise<void>;
+    startDarkPoolPolling: () => () => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -144,7 +151,7 @@ export const useStore = create<AppState>((set, get) => ({
         isBacktest: false,
         playbackSpeed: 1,
         backtestDate: new Date().toISOString().split('T')[0],
-        aiModel: 'gemini-3-flash-preview',
+        aiModel: 'gemini-2.0-flash',
         telegramBotToken: '',
         telegramChatId: '',
     },
@@ -247,6 +254,15 @@ export const useStore = create<AppState>((set, get) => ({
     notifications: [],
     alertLogs: [],
     cvdBaseline: 0,
+    darkPoolBias: 0,
+    darkPool: {
+        whaleFeed: [],
+        blockTrades: [],
+        biasHistory: [],
+        inflowOutflow: [],
+        isLoading: false,
+        lastUpdated: 0,
+    },
 
     setHasEntered: (val) => set(state => ({ ui: { ...state.ui, hasEntered: val } })),
     setActiveTab: (tab) => set(state => ({ ui: { ...state.ui, activeTab: tab } })),
@@ -310,8 +326,8 @@ export const useStore = create<AppState>((set, get) => ({
             newCandles[newCandles.length - 1] = {
                 ...last,
                 close: tick.c,
-                high: Math.max(last.high, tick.c),
-                low: Math.min(last.low, tick.c),
+                high: Math.max(last.high, tick.h),
+                low: Math.min(last.low, tick.l),
                 volume: tick.v,
                 delta: realDelta,
                 cvd: updatedCvd
@@ -910,5 +926,98 @@ export const useStore = create<AppState>((set, get) => ({
 
     addNotification: (toast) => set(state => ({ notifications: [...state.notifications, toast] })),
     removeNotification: (id) => set(state => ({ notifications: state.notifications.filter(n => n.id !== id) })),
-    logAlert: async (alert) => set(state => ({ alertLogs: [alert, ...state.alertLogs].slice(0, 50) }))
+    logAlert: async (alert) => set(state => ({ alertLogs: [alert, ...state.alertLogs].slice(0, 50) })),
+
+    // ── Dark Pool / Institutional Radar ─────────────────────────────────────
+    fetchDarkPoolData: async () => {
+        set(state => ({ darkPool: { ...state.darkPool, isLoading: true } }));
+
+        // ----- Simulated data generator -----
+        // Production: replace this block with a real Whale Alert API call
+        const rand = (min: number, max: number) => Math.random() * (max - min) + min;
+        const randInt = (min: number, max: number) => Math.floor(rand(min, max));
+        const EXCHANGES = ['Binance', 'Bybit', 'Coinbase', 'Kraken', 'OKX'];
+        const LABELS = ['Unknown Wallet', 'Cold Storage', 'OTC Desk', 'Mining Pool', 'Institutional Custodian'];
+        const btcPrice = get().market.metrics.price || 65000;
+        const dailyVolumeBTC = 25000; // avg daily BTC exchange volume
+
+        // Whale Feed — 8 fresh transfers
+        const newWhales = Array.from({ length: 8 }, (_, i): import('../types').WhaleTransfer => {
+            const amountBTC = rand(DARK_POOL_THRESHOLDS.WHALE_MIN_BTC, 2500);
+            const toExchange = Math.random() > 0.5;
+            return {
+                id: `wh-${Date.now()}-${i}`,
+                timestamp: Date.now() - randInt(0, 3_600_000),
+                amountBTC,
+                amountUSD: amountBTC * btcPrice,
+                fromLabel: toExchange ? LABELS[randInt(0, LABELS.length)] : EXCHANGES[randInt(0, EXCHANGES.length)],
+                toLabel: toExchange ? EXCHANGES[randInt(0, EXCHANGES.length)] : LABELS[randInt(0, LABELS.length)],
+                direction: toExchange ? 'INFLOW' : 'OUTFLOW',
+                exchangeFlag: toExchange,
+            };
+        });
+
+        // Block Trades — 6 OTC cross events
+        const newBlockTrades = Array.from({ length: 6 }, (_, i): import('../types').DarkPrint => {
+            const volumeBTC = rand(100, 1500);
+            const priceImpact = rand(0.0001, 0.015);
+            const isOTC = priceImpact <= DARK_POOL_THRESHOLDS.BLOCK_TRADE_PRICE_IMPACT_MAX;
+            // Significance gate: only flag if cumulative hour volume > 0.5% daily avg
+            const isSignificant = volumeBTC / dailyVolumeBTC >= DARK_POOL_THRESHOLDS.SIGNIFICANCE_THRESHOLD_PCT;
+            return {
+                id: `dp-${Date.now()}-${i}`,
+                timestamp: Date.now() - randInt(0, 14_400_000),
+                price: btcPrice * rand(0.98, 1.02),
+                volumeBTC,
+                volumeUSD: volumeBTC * btcPrice,
+                priceImpactPct: priceImpact,
+                exchange: EXCHANGES[randInt(0, EXCHANGES.length)],
+                side: Math.random() > 0.45 ? 'BUY' : 'SELL',
+                isSignificant: isOTC && isSignificant,
+            };
+        });
+
+        // Hourly inflow/outflow histogram (last 8 hours)
+        const inflowOutflow = Array.from({ length: 8 }, (_, i): import('../types').InflowOutflowBar => {
+            const h = new Date(Date.now() - (7 - i) * 3_600_000);
+            const inflow = rand(200, 900);
+            const outflow = rand(150, 800);
+            return {
+                hour: h.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                netBTC: +(inflow - outflow).toFixed(1),
+                inflowBTC: +inflow.toFixed(1),
+                outflowBTC: +outflow.toFixed(1),
+            };
+        });
+
+        // Bias Gauge: compute rolling 4h net flow, normalise to -1…+1
+        const windowCuts = Date.now() - DARK_POOL_THRESHOLDS.BIAS_WINDOW_HOURS * 3_600_000;
+        const recentPrints = newBlockTrades.filter(p => p.timestamp >= windowCuts);
+        const buyVol = recentPrints.filter(p => p.side === 'BUY').reduce((a, p) => a + p.volumeBTC, 0);
+        const sellVol = recentPrints.filter(p => p.side === 'SELL').reduce((a, p) => a + p.volumeBTC, 0);
+        const totalVol = buyVol + sellVol || 1;
+        const rawBias = (buyVol - sellVol) / totalVol;  // -1 to +1
+
+        const prevHistory = get().darkPool.biasHistory;
+        const biasHistory = [...prevHistory, rawBias].slice(-20);
+
+        set(state => ({
+            darkPool: {
+                whaleFeed: [...newWhales, ...state.darkPool.whaleFeed].slice(0, 40),
+                blockTrades: [...newBlockTrades, ...state.darkPool.blockTrades].slice(0, 30),
+                biasHistory,
+                inflowOutflow,
+                isLoading: false,
+                lastUpdated: Date.now(),
+            },
+            darkPoolBias: rawBias,
+        }));
+    },
+
+    startDarkPoolPolling: () => {
+        const { fetchDarkPoolData } = get();
+        fetchDarkPoolData(); // immediate first fetch
+        const id = setInterval(fetchDarkPoolData, DARK_POOL_THRESHOLDS.POLL_INTERVAL_MS);
+        return () => clearInterval(id);
+    },
 }));
