@@ -88,7 +88,7 @@ const App: React.FC = () => {
                 setUser(null);
             }
         });
-        return () => unsubscribe();
+        return () => { unsubscribe(); stopDarkPool(); };
     }, []);
 
     useEffect(() => {

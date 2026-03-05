@@ -4,7 +4,7 @@ import {
     AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState,
     LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
     BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, BotSettingsState,
-    DarkPoolState, WhaleTransfer, DarkPrint, InflowOutflowBar
+    DarkPoolState
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL, DARK_POOL_THRESHOLDS } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';

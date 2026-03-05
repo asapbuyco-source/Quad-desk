@@ -29,9 +29,6 @@ const timeAgo = (ts: number) => {
 
 const BiasGauge: React.FC<{ bias: number; history: number[] }> = ({ bias, history }) => {
     const clampedBias = Math.max(-1, Math.min(1, bias));
-    // Arc from -180° to 0° (left = -1, center = 0, right = +1)
-    const angleDeg = clampedBias * 90; // -90 to +90 relative to bottom of arc
-    const needleAngle = -90 + (clampedBias + 1) * 90; // maps -1→-90, 0→0, 1→90
 
     const cx = 120, cy = 120, r = 90;
     const arcPath = (startDeg: number, endDeg: number, color: string) => {

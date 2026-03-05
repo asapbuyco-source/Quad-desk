@@ -150,7 +150,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         });
     }, []);
 
-    const stopDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const stopDrag = useCallback((_e: React.PointerEvent<HTMLDivElement>) => {
         dragRef.current = null;
     }, []);
 
