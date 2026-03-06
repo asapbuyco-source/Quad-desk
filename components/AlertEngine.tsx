@@ -11,15 +11,15 @@ const COOLDOWN_MS = 10 * 60 * 1000; // 10 Minutes
 const POLL_INTERVAL_MS = 30000; // 30 Seconds
 
 const AlertEngine: React.FC = () => {
-    const { 
-        market, 
-        biasMatrix, 
-        liquidity, 
-        regime, 
-        aiTactical, 
-        config: { activeSymbol, isBacktest, telegramBotToken, telegramChatId },
+    const {
+        market,
+        biasMatrix,
+        liquidity,
+        regime,
+        aiTactical,
+        config: { activeSymbol, isBacktest, telegramBotToken, telegramChatId, aiModel },
         addNotification,
-        logAlert 
+        logAlert
     } = useStore();
 
     const lastAlertTimeRef = useRef<number>(0);
@@ -57,7 +57,7 @@ const AlertEngine: React.FC = () => {
 
         const checkConditions = async () => {
             const now = Date.now();
-            
+
             if (now - lastAlertTimeRef.current < COOLDOWN_MS) {
                 setStatus('COOLDOWN');
                 return;
@@ -73,28 +73,29 @@ const AlertEngine: React.FC = () => {
                     skewness: market.metrics.skewness || 0,
                     bayesianPosterior: market.metrics.bayesianPosterior || 0.5,
                     expectedValueRR: market.expectedValue?.rrRatio || 0,
-                    
+
                     tacticalProbability: aiTactical.probability,
                     biasAlignment: aiTactical.confidenceFactors.biasAlignment,
                     liquidityAgreement: aiTactical.confidenceFactors.liquidityAgreement,
                     regimeAgreement: aiTactical.confidenceFactors.regimeAgreement,
                     aiScore: aiTactical.confidenceFactors.aiScore,
-                    
+
                     sweeps: liquidity.sweeps,
                     bosDirection: liquidity.bos.length > 0 ? liquidity.bos[0].direction : null,
-                    
+
                     regimeType: regime.regimeType,
                     trendDirection: regime.trendDirection,
                     volatilityPercentile: regime.volatilityPercentile,
-                    
+
                     institutionalCVD: market.metrics.institutionalCVD,
                     ofi: market.metrics.ofi,
                     toxicity: market.metrics.toxicity,
                     retailSentiment: market.metrics.retailSentiment || 50,
-                    
+
                     dailyBias: biasMatrix.daily?.bias || 'NEUTRAL',
                     h4Bias: biasMatrix.h4?.bias || 'NEUTRAL',
-                    h1Bias: biasMatrix.h1?.bias || 'NEUTRAL'
+                    h1Bias: biasMatrix.h1?.bias || 'NEUTRAL',
+                    model: aiModel
                 };
 
                 const res = await fetch(`${API_BASE_URL}/alerts/evaluate`, {
@@ -104,12 +105,12 @@ const AlertEngine: React.FC = () => {
                 });
 
                 if (!res.ok) throw new Error('Evaluation Failed');
-                
+
                 const decision = await res.json();
-                
+
                 if (decision.shouldAlert && decision.aiAnalysis) {
                     setStatus('FIRING');
-                    
+
                     const payload = {
                         symbol: activeSymbol,
                         direction: decision.aiAnalysis.direction,
@@ -137,7 +138,7 @@ const AlertEngine: React.FC = () => {
                             title: 'ALERT SENT',
                             message: `Frontend: AI confirmed ${payload.direction} setup on ${activeSymbol}.`
                         });
-                        
+
                         await logAlert({
                             timestamp: Date.now(),
                             symbol: activeSymbol,
@@ -172,26 +173,26 @@ const AlertEngine: React.FC = () => {
             {lastResult && status === 'IDLE' && (
                 <div className="text-[9px] text-zinc-600 font-mono bg-black/40 px-2 py-1 rounded">{lastResult}</div>
             )}
-            
+
             <AnimatePresence>
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     className={`
                         flex items-center gap-2 px-3 py-1.5 rounded-full border backdrop-blur-md shadow-lg pointer-events-auto
-                        ${status === 'FIRING' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 
-                          status === 'COOLDOWN' ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' :
-                          status === 'AUTONOMOUS' ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
-                          status === 'CHECKING' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
-                          'bg-zinc-900/80 border-white/10 text-zinc-400'}
+                        ${status === 'FIRING' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' :
+                            status === 'COOLDOWN' ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' :
+                                status === 'AUTONOMOUS' ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' :
+                                    status === 'CHECKING' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
+                                        'bg-zinc-900/80 border-white/10 text-zinc-400'}
                     `}
                 >
                     <div className="relative">
                         {status === 'FIRING' ? <Zap size={12} fill="currentColor" /> :
-                         status === 'COOLDOWN' ? <Clock size={12} /> :
-                         status === 'AUTONOMOUS' ? <Server size={12} /> :
-                         <ShieldCheck size={12} />}
-                        
+                            status === 'COOLDOWN' ? <Clock size={12} /> :
+                                status === 'AUTONOMOUS' ? <Server size={12} /> :
+                                    <ShieldCheck size={12} />}
+
                         {status === 'CHECKING' && (
                             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-blue-500 rounded-full animate-ping opacity-75"></span>
                         )}
@@ -199,13 +200,13 @@ const AlertEngine: React.FC = () => {
                             <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-purple-500 rounded-full animate-pulse opacity-75"></span>
                         )}
                     </div>
-                    
+
                     <span className="text-[10px] font-bold uppercase tracking-wider">
-                        {status === 'FIRING' ? 'BROADCASTING' : 
-                         status === 'COOLDOWN' ? 'COOLDOWN' : 
-                         status === 'AUTONOMOUS' ? 'BACKEND ACTIVE' :
-                         status === 'CHECKING' ? 'ANALYZING' : 
-                         'SENTINEL ACTIVE'}
+                        {status === 'FIRING' ? 'BROADCASTING' :
+                            status === 'COOLDOWN' ? 'COOLDOWN' :
+                                status === 'AUTONOMOUS' ? 'BACKEND ACTIVE' :
+                                    status === 'CHECKING' ? 'ANALYZING' :
+                                        'SENTINEL ACTIVE'}
                     </span>
                 </motion.div>
             </AnimatePresence>

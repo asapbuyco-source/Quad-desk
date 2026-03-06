@@ -19,8 +19,9 @@ class QuantAgent:
     Falls back to WAIT gracefully if the API is unavailable.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = None):
         key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.model = model or GEMINI_MODEL
         if not key:
             logger.warning(
                 "[Agent] GEMINI_API_KEY not set — AI inference disabled. Bot will always output WAIT."
@@ -113,7 +114,7 @@ Respond with ONLY valid JSON, no markdown, no extra text:
         try:
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model=GEMINI_MODEL,
+                model=self.model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.2,   # Low temperature for deterministic trading decisions

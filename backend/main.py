@@ -207,7 +207,7 @@ async def get_heatmap():
     return results
 
 @app.get("/analyze")
-async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = "gemini-2.0-flash"):
+async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = DEFAULT_MODEL):
     klines = await fetch_binance_candles(symbol, "15m", 30)
     if not klines: raise HTTPException(status_code=502, detail="Upstream Down")
     
@@ -340,7 +340,7 @@ async def analyze_strategy(req: MacroStrategyRequest):
         return {"verdict": "ERROR", "analysis": "Strategy Synthesis failed due to upstream error.", "confidence": 0, "is_simulated": True}
 
 @app.get("/market-intelligence")
-async def get_market_intel(model: str = "gemini-2.0-flash"):
+async def get_market_intel(model: str = DEFAULT_MODEL):
     now = datetime.now().timestamp() * 1000
     cache = state["market_intel_cache"]
     if cache["data"] and (now - cache["timestamp"] < 600000): return cache["data"]
@@ -380,6 +380,7 @@ class AlertEvaluateRequest(BaseModel):
     zScore: float
     tacticalProbability: float
     aiScore: float
+    model: str = DEFAULT_MODEL
     class Config:
         extra = "allow"
 
@@ -400,7 +401,7 @@ async def alerts_evaluate(req: AlertEvaluateRequest):
     ai_analysis = None
     if should_alert and GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel(_safe_model(req.model))
             prompt = (
                 f"Trading Alert Analysis for {req.symbol} at price {req.price}.\n"
                 f"Z-Score: {req.zScore:.3f}, AI Probability: {req.tacticalProbability:.2f}, AI Score: {req.aiScore:.2f}.\n"
@@ -490,11 +491,10 @@ async def get_whale_alerts(min_value: int = 10_000_000):
                 "https://api.whale-alert.io/v1/transactions",
                 params={
                     "api_key": WHALE_ALERT_API_KEY,
-                    "cursor": "0",
                     "limit": 100,
                     "start": start_ts,
                     "min_value": min_value,
-                    "currency": "bitcoin",  # BTC only
+                    "currency": "btc",  # BTC only
                 },
             )
             resp.raise_for_status()

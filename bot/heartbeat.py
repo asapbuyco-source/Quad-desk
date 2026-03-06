@@ -86,10 +86,25 @@ async def run_heartbeat(stats: dict) -> None:
             }
             # firebase-admin is sync → run in a thread so we don't block the loop
             await asyncio.to_thread(doc_ref.set, payload)
+            
+            # Fetch user preferences to get dynamic aiModel
+            # Assuming single-user deployment (Railway) with the single user doc:
+            # Note: For production with multiple users, bot needs UID. But for Railway deploy,
+            # we can query the first user or pass UID via env. Let's list documents in `users` collection.
+            users_ref = _db.collection("users")
+            users = await asyncio.to_thread(lambda: list(users_ref.limit(1).stream()))
+            if users:
+                user_doc = users[0].to_dict()
+                fe_config = user_doc.get("config", {})
+                ai_model = fe_config.get("aiModel", "gemini-2.0-flash")
+                if stats.get("ai_model") != ai_model:
+                    stats["ai_model"] = ai_model
+                    logger.info(f"[Heartbeat] Synced AI Model from Firebase: {ai_model}")
+
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"[Heartbeat] Write error: {e}")
+            logger.error(f"[Heartbeat] Firebase sync error: {e}")
 
         try:
             await asyncio.sleep(10)

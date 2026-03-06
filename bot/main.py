@@ -140,6 +140,11 @@ async def execution_loop(
             )
 
             # ── AI inference ──────────────────────────────────────────
+            dynamic_model = stats.get("ai_model", agent.model)
+            if agent.model != dynamic_model:
+                logger.info(f"[Main] Switching AI Model to {dynamic_model}")
+                agent = QuantAgent(model=dynamic_model)
+
             verdict_json = await agent.analyze(metrics)
 
             action     = verdict_json.get('verdict', 'WAIT')
