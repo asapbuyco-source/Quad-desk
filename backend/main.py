@@ -99,18 +99,58 @@ class TelegramPayload(BaseModel):
     chatId: Optional[str] = None
 
 VALID_GEMINI_MODELS = {
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash-preview",
+    "gemini-2.5-pro-preview-03-25",
     "gemini-2.0-flash",
     "gemini-2.0-flash-thinking-exp",
     "gemini-1.5-pro",
     "gemini-1.5-flash",
     "gemini-1.5-flash-8b",
-    "gemini-2.5-pro-preview-03-25",
 }
 DEFAULT_MODEL = "gemini-2.0-flash"
+
+# Ordered fallback chain: newest/fastest → oldest
+# When the preferred model fails, the next one in the chain is tried automatically.
+FALLBACK_CHAIN = [
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash-preview",
+    "gemini-2.5-pro-preview-03-25",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-thinking-exp",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
 
 def _safe_model(name: str) -> str:
     """Return a validated model name, falling back to default."""
     return name if name in VALID_GEMINI_MODELS else DEFAULT_MODEL
+
+async def generate_with_fallback(preferred: str, prompt: str) -> tuple:
+    """
+    Try the preferred model first; on any error loop through FALLBACK_CHAIN.
+    Returns (response_text: str, model_used: str).
+    Raises RuntimeError if every model fails.
+    """
+    # Build a deduplicated ordered list: preferred first, then the rest of the chain
+    validated = _safe_model(preferred)
+    chain = [validated] + [m for m in FALLBACK_CHAIN if m != validated]
+
+    last_err = None
+    for model_id in chain:
+        try:
+            gen_model = genai.GenerativeModel(model_id)
+            response = await gen_model.generate_content_async(prompt)
+            logger.info(f"AI served by model: {model_id}")
+            return response.text, model_id
+        except Exception as e:
+            logger.warning(f"Model {model_id} failed: {e} — trying next fallback")
+            last_err = e
+
+    raise RuntimeError(f"All AI models exhausted. Last error: {last_err}")
 
 class AnalysisRequest(BaseModel):
     symbol: str
@@ -233,18 +273,19 @@ async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), 
     prompt = f"HFT Algo: Analyze OHLCV for {symbol}.\n{prices_str}\nOutput JSON: {{support:[num], resistance:[num], decision_price:num, verdict:ENTRY|EXIT|WAIT, confidence:0-1, analysis:str, risk_reward_ratio:num}}"
 
     try:
-        gen_model = genai.GenerativeModel(model)
-        response = await gen_model.generate_content_async(prompt)
-        match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+        response_text, model_used = await generate_with_fallback(model, prompt)
+        match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
         if match:
             text = match.group(0)
         else:
-            text = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(text)
+            text = response_text.replace('```json', '').replace('```', '').strip()
+        result = json.loads(text)
+        result["model_used"] = model_used
+        return result
     except Exception:
         return {
             "support": [s1], "resistance": [r1], "decision_price": pivot,
-            "verdict": "WAIT", "confidence": 0.1, "analysis": "Degraded Mode: Pivot Logic Applied.",
+            "verdict": "WAIT", "confidence": 0.1, "analysis": "Degraded Mode: All AI models exhausted.",
             "is_simulated": True
         }
 
@@ -254,16 +295,17 @@ async def analyze_order_flow(req: AnalysisRequest):
         return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.1, "flow_type": "NEUTRAL", "is_simulated": True}
     prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output: {{verdict:BULLISH|BEARISH|NEUTRAL, confidence:num, explanation:str, flow_type:str}}"
     try:
-        model = genai.GenerativeModel(_safe_model(req.model))
-        response = await model.generate_content_async(prompt)
-        match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+        response_text, model_used = await generate_with_fallback(req.model, prompt)
+        match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
         if match:
             text = match.group(0)
         else:
-            text = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(text)
+            text = response_text.replace('```json', '').replace('```', '').strip()
+        result = json.loads(text)
+        result["model_used"] = model_used
+        return result
     except Exception:
-        return {"verdict": "NEUTRAL", "explanation": "Synthesis failed.", "confidence": 0, "is_simulated": True}
+        return {"verdict": "NEUTRAL", "explanation": "All AI models exhausted.", "confidence": 0, "is_simulated": True}
 
 @app.post("/analyze/strategy")
 async def analyze_strategy(req: MacroStrategyRequest):
@@ -327,17 +369,18 @@ async def analyze_strategy(req: MacroStrategyRequest):
     {{"verdict":"BUY|SELL|WAIT|MEAN_REVERSAL", "confidence":0-1, "analysis":"str"}}
     """
     try:
-        model = genai.GenerativeModel(_safe_model(req.model))
-        response = await model.generate_content_async(prompt)
-        match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+        response_text, model_used = await generate_with_fallback(req.model, prompt)
+        match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
         if match:
             text = match.group(0)
         else:
-            text = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(text)
+            text = response_text.replace('```json', '').replace('```', '').strip()
+        result = json.loads(text)
+        result["model_used"] = model_used
+        return result
     except Exception as e:
-        logger.error(f"Strategy API fail: {e}")
-        return {"verdict": "ERROR", "analysis": "Strategy Synthesis failed due to upstream error.", "confidence": 0, "is_simulated": True}
+        logger.error(f"Strategy API fail — all models exhausted: {e}")
+        return {"verdict": "ERROR", "analysis": "All AI models exhausted. Strategy synthesis failed.", "confidence": 0, "is_simulated": True}
 
 @app.get("/market-intelligence")
 async def get_market_intel(model: str = DEFAULT_MODEL):
@@ -355,14 +398,14 @@ async def get_market_intel(model: str = DEFAULT_MODEL):
         headlines = "\n".join([f"- {a['title']}" for a in articles])
         prompt = f"Read: {headlines}\nOutput JSON: {{main_narrative:str, whale_impact:High|Medium|Low, ai_sentiment_score:num}}"
         try:
-            gen_model = genai.GenerativeModel(model)
-            resp = await gen_model.generate_content_async(prompt)
-            match = re.search(r'\{.*\}', resp.text.replace('\n', ' '), re.DOTALL)
+            resp_text, model_used = await generate_with_fallback(model, prompt)
+            match = re.search(r'\{.*\}', resp_text.replace('\n', ' '), re.DOTALL)
             if match:
                 text = match.group(0)
             else:
-                text = resp.text.replace('```json', '').replace('```', '').strip()
+                text = resp_text.replace('```json', '').replace('```', '').strip()
             intelligence = json.loads(text)
+            intelligence["model_used"] = model_used
         except Exception: pass
     result = {"articles": articles, "intelligence": intelligence, "timestamp": now}
     state["market_intel_cache"] = {"data": result, "timestamp": now}
@@ -399,21 +442,22 @@ async def alerts_evaluate(req: AlertEvaluateRequest):
     should_alert = score >= 3
 
     ai_analysis = None
+    model_used_for_alert = None
     if should_alert and GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel(_safe_model(req.model))
             prompt = (
                 f"Trading Alert Analysis for {req.symbol} at price {req.price}.\n"
                 f"Z-Score: {req.zScore:.3f}, AI Probability: {req.tacticalProbability:.2f}, AI Score: {req.aiScore:.2f}.\n"
                 "Based on these signals determine the best trade setup.\n"
                 'Output JSON: {"direction":"LONG|SHORT","confidence":0.0-1.0,"entry":num,"stop":num,"target":num,"reasoning":"str"}'
             )
-            response = await model.generate_content_async(prompt)
-            match = re.search(r'\{.*\}', response.text.replace('\n', ' '), re.DOTALL)
+            response_text, model_used_for_alert = await generate_with_fallback(req.model, prompt)
+            match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
             if match:
                 ai_analysis = json.loads(match.group(0))
+                ai_analysis["model_used"] = model_used_for_alert
         except Exception as e:
-            logger.error(f"Alert AI analysis failed: {e}")
+            logger.error(f"Alert AI analysis failed — all models exhausted: {e}")
 
     return {
         "shouldAlert": should_alert,

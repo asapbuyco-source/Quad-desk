@@ -8,6 +8,9 @@ import { API_BASE_URL } from '../constants';
 const motion = m as any;
 
 const AI_MODELS = [
+    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'Most Powerful — Series 3 Preview' },
+    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', desc: 'Next Gen Fast — Series 3 Preview' },
+    { id: 'gemini-2.5-flash-preview', label: 'Gemini 2.5 Flash', desc: 'Fast & Advanced — Series 2.5 Preview' },
     { id: 'gemini-2.5-pro-preview-03-25', label: 'Gemini 2.5 Pro', desc: 'Most Intelligent — Deep Reasoning' },
     { id: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking', desc: 'Extended Reasoning (Complex Tasks)' },
     { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Fast & Balanced (Recommended)' },
@@ -222,8 +225,8 @@ const ProfileOverlay: React.FC = () => {
                                         onClick={handleTestAI}
                                         disabled={isTestingAI}
                                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase border transition-all ${aiTestResult === 'ok' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                                                aiTestResult === 'error' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' :
-                                                    'bg-brand-accent/10 border-brand-accent/30 text-brand-accent hover:bg-brand-accent/20'
+                                            aiTestResult === 'error' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' :
+                                                'bg-brand-accent/10 border-brand-accent/30 text-brand-accent hover:bg-brand-accent/20'
                                             }`}
                                     >
                                         {isTestingAI ? <Loader size={12} className="animate-spin" /> : <Cpu size={12} />}
