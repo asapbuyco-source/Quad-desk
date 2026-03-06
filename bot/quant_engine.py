@@ -145,12 +145,22 @@ class QuantEngine:
         bids = self.state.bids
         asks = self.state.asks
 
-        # Simple OFI: total bid depth minus total ask depth
-        ofi = sum(bids.values()) - sum(asks.values())
+        # Filter orders too far from spread (mitigates deep spoofing)
+        MAX_DIST = 0.005  # 0.5% (tighter range)
+        valid_bids = {p: s for p, s in bids.items() if (current_price - p) / current_price <= MAX_DIST}
+        valid_asks = {p: s for p, s in asks.items() if (p - current_price) / current_price <= MAX_DIST}
 
-        # Top-5 walls by size
-        top_bids = sorted(bids.items(), key=lambda x: x[1], reverse=True)[:5]
-        top_asks = sorted(asks.items(), key=lambda x: x[1], reverse=True)[:5]
+        # OFI only using near-spread orders to prevent deep spoofing distortion
+        ofi = sum(valid_bids.values()) - sum(valid_asks.values())
+
+        # Calculate median size of all valid orders to establish a wall threshold
+        all_sizes = list(valid_bids.values()) + list(valid_asks.values())
+        median_size = float(np.median(all_sizes)) if all_sizes else 1.0
+        wall_threshold = median_size * 5.0
+
+        # Find top walls that exceed the threshold
+        top_bids = sorted([(p, s) for p, s in valid_bids.items() if s > wall_threshold], key=lambda x: x[1], reverse=True)[:5]
+        top_asks = sorted([(p, s) for p, s in valid_asks.items() if s > wall_threshold], key=lambda x: x[1], reverse=True)[:5]
 
         nearest_bid = top_bids[0][0] if top_bids else None
         nearest_ask = top_asks[0][0] if top_asks else None

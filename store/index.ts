@@ -526,11 +526,15 @@ export const useStore = create<AppState>((set, get) => ({
         const allLevels = [...sortedAsks, ...sortedBids];
         const sorted = [...allLevels].map(l => l.size).sort((a, b) => a - b);
         const median = sorted[Math.floor(sorted.length / 2)] || 1;
-        const wallThreshold = median * 4;    // >4× median = significant wall
+        const baseWallThreshold = median * 4;    // >4× median = significant wall
         const holeThreshold = median * 0.15; // <15% median = liquidity hole
 
-        const classify = (l: OrderBookLevel) => {
-            if (l.size > wallThreshold) return 'WALL';
+        const classify = (l: OrderBookLevel, index: number) => {
+            // Apply exponential penalty to wall threshold based on distance from spread
+            // Deeper orders must be significantly larger to be classified as a wall (mitigates spoofing)
+            const penalizedThreshold = baseWallThreshold * Math.exp(k * index);
+
+            if (l.size > penalizedThreshold) return 'WALL';
             if (l.size < holeThreshold) return 'HOLE';
             return 'NORMAL';
         };
@@ -538,8 +542,8 @@ export const useStore = create<AppState>((set, get) => ({
         return {
             market: {
                 ...state.market,
-                asks: sortedAsks.map(a => ({ ...a, classification: classify(a) as any })),
-                bids: sortedBids.map(b => ({ ...b, classification: classify(b) as any })),
+                asks: sortedAsks.map((a, i) => ({ ...a, classification: classify(a, i) as any })),
+                bids: sortedBids.map((b, i) => ({ ...b, classification: classify(b, i) as any })),
                 metrics: { ...state.market.metrics, ofi: Math.round(ofi * 10) / 10 }
             }
         };
