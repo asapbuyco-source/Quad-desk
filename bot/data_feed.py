@@ -106,7 +106,8 @@ class BinanceDataFeed:
         if testnet:
             base_url = "wss://testnet.binance.vision"
         else:
-            base_url = "wss://stream.binance.com:9443"
+            # Using Binance.US to avoid HTTP 451 (Region Blocked) errors
+            base_url = "wss://stream.binance.us:9443"
 
         streams = (
             f"{self.symbol}@kline_1m"
