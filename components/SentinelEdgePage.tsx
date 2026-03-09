@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { useStore } from '../store';
-import { ShieldAlert, Crosshair, Target, Activity, Flame, ShieldCheck, Siren, TrendingUp, TrendingDown, Clock, Zap } from 'lucide-react';
+import { ShieldAlert, Crosshair, Target, Activity, Flame, ShieldCheck, Siren, Clock, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const SentinelEdgePage: React.FC = () => {
@@ -12,7 +12,7 @@ const SentinelEdgePage: React.FC = () => {
     } = useStore();
 
     // Stage 1: Environment Definition
-    const currentRegime = regime.current;
+    const currentRegime = regime.regimeType;
 
     // Check Dark Pool Bias direction
     const biasDirection = darkPoolBias > 0.2 ? 'BULLISH' : darkPoolBias < -0.2 ? 'BEARISH' : 'NEUTRAL';
@@ -32,9 +32,8 @@ const SentinelEdgePage: React.FC = () => {
     const trapColor = trapDirection === 'BULLISH' ? 'text-emerald-400 border-emerald-400/30' : 'text-rose-400 border-rose-400/30';
 
     // Stage 3: The Trigger (OFI & Z-Score)
-    const ofi = Number(metrics.ohi) || 0;
-    const cvdDelta = Number(metrics.cvd) || 0; // Or whatever metric represents the recent CVD rate of change if available
-    const zScore = Number(metrics.z_score) || 0;
+    const ofi = Number(metrics.ofi) || 0;
+    const zScore = Number(metrics.zScore) || 0;
 
     const ofiThresholdTriggered = trapDirection === 'BULLISH' ? ofi > 10 : ofi < -10;
     const zScoreConditionMet = trapDirection === 'BULLISH' ? zScore < -1.5 : zScore > 1.5;
