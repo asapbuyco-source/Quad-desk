@@ -1,8 +1,8 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
-import { Droplets, ArrowUp, ArrowDown, MoveRight, ScanLine, AlertTriangle, RefreshCw, Layers, Clock } from 'lucide-react';
+import { Droplets, ArrowUp, ArrowDown, MoveRight, ScanLine, AlertTriangle, RefreshCw, Layers, Clock, Activity } from 'lucide-react';
 
 const motion = m as any;
 
@@ -14,10 +14,10 @@ const EventRow: React.FC<{
     type: 'SWEEP' | 'BOS' | 'FVG';
     subtext?: string;
 }> = ({ label, price, time, direction, subtext }) => {
-    
+
     let color = 'text-zinc-400';
     let icon = <MoveRight size={14} />;
-    
+
     if (direction === 'BULLISH') {
         color = 'text-emerald-400';
         icon = <ArrowUp size={14} />;
@@ -29,7 +29,7 @@ const EventRow: React.FC<{
     }
 
     return (
-        <motion.div 
+        <motion.div
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
             className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors group"
@@ -43,7 +43,7 @@ const EventRow: React.FC<{
                     <Clock size={10} /> {new Date(time).toLocaleTimeString()}
                 </span>
             </div>
-            
+
             <div className="text-right">
                 <div className={`text-sm font-mono font-bold ${color}`}>
                     {price.toFixed(2)}
@@ -69,8 +69,74 @@ const LiquidityPage: React.FC = () => {
 
     const { sweeps, bos, fvg, lastUpdated } = liquidity;
 
+    // --- Algorithmic Liquidity Bias ---
+    const biasData = useMemo(() => {
+        let score = 0;
+        const details: string[] = [];
+
+        // Sweeps (high impact reversals)
+        const recentSweeps = [...sweeps].reverse().slice(0, 2);
+        for (const s of recentSweeps) {
+            if (s.side === 'BUY') {
+                score -= 2; // Highs taken, bearish reversal
+                details.push(`Bearish divergence: Buy-side liquidity swept (highs taken) at ${s.price.toFixed(2)}`);
+            } else {
+                score += 2; // Lows taken, bullish reversal
+                details.push(`Bullish divergence: Sell-side liquidity swept (lows taken) at ${s.price.toFixed(2)}`);
+            }
+        }
+
+        // BOS (trend continuation)
+        const recentBOS = [...bos].reverse().slice(0, 1);
+        for (const b of recentBOS) {
+            if (b.direction === 'BULLISH') {
+                score += 1.5;
+                details.push(`Bullish structure: Recent BOS to the upside at ${b.price.toFixed(2)}`);
+            } else {
+                score -= 1.5;
+                details.push(`Bearish structure: Recent BOS to the downside at ${b.price.toFixed(2)}`);
+            }
+        }
+
+        // FVG (draw on liquidity)
+        const recentFVG = [...fvg].reverse().slice(0, 1);
+        for (const f of recentFVG) {
+            if (f.direction === 'BULLISH') {
+                score += 1;
+                details.push(`Bullish draw: Price may be drawn to unfilled bullish gap at ${f.startPrice.toFixed(2)}`);
+            } else {
+                score -= 1;
+                details.push(`Bearish draw: Price may be drawn to unfilled bearish gap at ${f.startPrice.toFixed(2)}`);
+            }
+        }
+
+        let bias = 'NEUTRAL';
+        let color = 'text-amber-400';
+        let bgColor = 'bg-amber-400/10';
+        let borderColor = 'border-amber-400/20';
+        let iconColor = 'text-amber-400';
+
+        if (score >= 2) {
+            bias = 'BULLISH';
+            color = 'text-emerald-400';
+            bgColor = 'bg-emerald-500/10';
+            borderColor = 'border-emerald-500/20';
+            iconColor = 'text-emerald-400';
+        } else if (score <= -2) {
+            bias = 'BEARISH';
+            color = 'text-rose-400';
+            bgColor = 'bg-rose-500/10';
+            borderColor = 'border-rose-500/20';
+            iconColor = 'text-rose-400';
+        }
+
+        if (details.length === 0) details.push('No recent significant liquidity events to analyze.');
+
+        return { bias, score, details, color, bgColor, borderColor, iconColor };
+    }, [sweeps, bos, fvg]);
+
     return (
-        <motion.div 
+        <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 max-w-7xl mx-auto pt-6"
@@ -87,13 +153,13 @@ const LiquidityPage: React.FC = () => {
                         Automated structural analysis for {activeSymbol}.
                     </p>
                 </div>
-                
+
                 <div className="flex items-center gap-4">
                     <div className="text-right hidden md:block">
                         <span className="text-[10px] text-zinc-500 font-bold uppercase block">Last Scan</span>
                         <span className="text-xs text-zinc-300 font-mono">{new Date(lastUpdated).toLocaleTimeString()}</span>
                     </div>
-                    <button 
+                    <button
                         onClick={() => refreshLiquidityAnalysis()}
                         className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
                     >
@@ -114,8 +180,8 @@ const LiquidityPage: React.FC = () => {
                         onClick={() => setActiveTab(tab.id as any)}
                         className={`
                             flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all
-                            ${activeTab === tab.id 
-                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' 
+                            ${activeTab === tab.id
+                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20'
                                 : 'bg-zinc-900/50 text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
                         `}
                     >
@@ -130,12 +196,12 @@ const LiquidityPage: React.FC = () => {
 
             {/* Content Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
+
                 {/* Main List */}
                 <div className="lg:col-span-2 space-y-3">
                     <AnimatePresence mode="wait">
                         {activeTab === 'SWEEPS' && (
-                            <motion.div 
+                            <motion.div
                                 key="sweeps"
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -145,12 +211,12 @@ const LiquidityPage: React.FC = () => {
                                 {sweeps.length === 0 ? (
                                     <div className="text-center py-12 text-zinc-600 font-mono text-xs">NO SWEEPS DETECTED</div>
                                 ) : sweeps.map(s => (
-                                    <EventRow 
+                                    <EventRow
                                         key={s.id}
                                         label={`${s.side} Liquidity Sweep`}
                                         price={s.price}
                                         time={s.timestamp}
-                                        direction={s.side === 'BUY' ? 'BEARISH' : 'BULLISH'} 
+                                        direction={s.side === 'BUY' ? 'BEARISH' : 'BULLISH'}
                                         type="SWEEP"
                                         subtext={s.side === 'BUY' ? 'HIGHS TAKEN' : 'LOWS TAKEN'}
                                     />
@@ -159,7 +225,7 @@ const LiquidityPage: React.FC = () => {
                         )}
 
                         {activeTab === 'BOS' && (
-                            <motion.div 
+                            <motion.div
                                 key="bos"
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -169,12 +235,12 @@ const LiquidityPage: React.FC = () => {
                                 {bos.length === 0 ? (
                                     <div className="text-center py-12 text-zinc-600 font-mono text-xs">NO STRUCTURE BREAKS</div>
                                 ) : bos.map(b => (
-                                    <EventRow 
+                                    <EventRow
                                         key={b.id}
                                         label={`${b.direction} BOS`}
                                         price={b.price}
                                         time={b.timestamp}
-                                        direction={b.direction} 
+                                        direction={b.direction}
                                         type="BOS"
                                     />
                                 ))}
@@ -182,7 +248,7 @@ const LiquidityPage: React.FC = () => {
                         )}
 
                         {activeTab === 'FVG' && (
-                            <motion.div 
+                            <motion.div
                                 key="fvg"
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -192,12 +258,12 @@ const LiquidityPage: React.FC = () => {
                                 {fvg.length === 0 ? (
                                     <div className="text-center py-12 text-zinc-600 font-mono text-xs">EFFICIENT PRICE ACTION</div>
                                 ) : fvg.map(f => (
-                                    <EventRow 
+                                    <EventRow
                                         key={f.id}
                                         label={`${f.direction} Gap`}
                                         price={f.startPrice} // Show start of gap
                                         time={f.timestamp}
-                                        direction={f.direction} 
+                                        direction={f.direction}
                                         type="FVG"
                                         subtext={`Range: ${Math.abs(f.startPrice - f.endPrice).toFixed(2)}`}
                                     />
@@ -207,43 +273,73 @@ const LiquidityPage: React.FC = () => {
                     </AnimatePresence>
                 </div>
 
-                {/* Explainer Panel */}
-                <div className="p-6 rounded-2xl bg-zinc-900/30 border border-white/5 h-fit">
-                    <h3 className="text-lg font-bold text-white mb-4">Event Logic</h3>
-                    
-                    <div className="space-y-6">
-                        <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-blue-400 text-xs font-bold uppercase tracking-wider">
-                                <ScanLine size={14} /> Liquidity Sweeps
+                {/* Explainer & Bias Panel */}
+                <div className="flex flex-col gap-6">
+                    {/* Algorithmic Bias Indicator */}
+                    <div className={`p-6 rounded-2xl border ${biasData.bgColor} ${biasData.borderColor}`}>
+                        <div className="flex items-center gap-3 mb-4">
+                            <Activity className={biasData.iconColor} size={24} />
+                            <div>
+                                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Algorithmic Edge</h3>
+                                <div className="flex items-baseline gap-2">
+                                    <p className={`text-xl font-black tracking-tighter ${biasData.color}`}>
+                                        {biasData.bias}
+                                    </p>
+                                    <span className={`text-xs font-mono font-bold ${biasData.color} opacity-70`}>
+                                        SCORE: {biasData.score > 0 ? `+${biasData.score}` : biasData.score}
+                                    </span>
+                                </div>
                             </div>
-                            <p className="text-xs text-zinc-400 leading-relaxed">
-                                Occurs when price breaks a swing high/low but fails to close beyond it. 
-                                Often signals a reversal as stop orders are triggered.
-                            </p>
                         </div>
-
-                        <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider">
-                                <Layers size={14} /> Break of Structure (BOS)
-                            </div>
-                            <p className="text-xs text-zinc-400 leading-relaxed">
-                                Confirmed trend continuation when candle body closes beyond a previous pivot point.
-                            </p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-amber-400 text-xs font-bold uppercase tracking-wider">
-                                <AlertTriangle size={14} /> Fair Value Gaps (FVG)
-                            </div>
-                            <p className="text-xs text-zinc-400 leading-relaxed">
-                                Inefficiencies where price moved too quickly, leaving resting orders unfilled. 
-                                Price often returns to these zones.
-                            </p>
+                        <div className="space-y-3">
+                            {biasData.details.map((detail, idx) => (
+                                <div key={idx} className="flex items-start gap-2 text-xs text-zinc-300">
+                                    <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${detail.startsWith('Bullish') ? 'bg-emerald-400' :
+                                            detail.startsWith('Bearish') ? 'bg-rose-400' : 'bg-amber-400'
+                                        }`} />
+                                    <span className="leading-snug">{detail}</span>
+                                </div>
+                            ))}
                         </div>
                     </div>
-                </div>
 
-            </div>
+                    {/* Explainer Panel */}
+                    <div className="p-6 rounded-2xl bg-zinc-900/30 border border-white/5 h-fit">
+                        <h3 className="text-lg font-bold text-white mb-4">Event Logic</h3>
+
+                        <div className="space-y-6">
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-blue-400 text-xs font-bold uppercase tracking-wider">
+                                    <ScanLine size={14} /> Liquidity Sweeps
+                                </div>
+                                <p className="text-xs text-zinc-400 leading-relaxed">
+                                    Occurs when price breaks a swing high/low but fails to close beyond it.
+                                    Often signals a reversal as stop orders are triggered.
+                                </p>
+                            </div>
+
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider">
+                                    <Layers size={14} /> Break of Structure (BOS)
+                                </div>
+                                <p className="text-xs text-zinc-400 leading-relaxed">
+                                    Confirmed trend continuation when candle body closes beyond a previous pivot point.
+                                </p>
+                            </div>
+
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-amber-400 text-xs font-bold uppercase tracking-wider">
+                                    <AlertTriangle size={14} /> Fair Value Gaps (FVG)
+                                </div>
+                                <p className="text-xs text-zinc-400 leading-relaxed">
+                                    Inefficiencies where price moved too quickly, leaving resting orders unfilled.
+                                    Price often returns to these zones.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
         </motion.div>
     );
 };
