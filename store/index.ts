@@ -4,7 +4,7 @@ import {
     AiScanResult, ToastMessage, Position, DailyStats, BiasMatrixState,
     LiquidityState, RegimeState, AiTacticalState, ExpectedValueData, TimeframeData,
     BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, BotSettingsState,
-    DarkPoolState
+    DarkPoolState, BotTrade
 } from '../types';
 import { MOCK_METRICS, API_BASE_URL, DARK_POOL_THRESHOLDS } from '../constants';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
@@ -13,7 +13,7 @@ import {
     signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword,
     signOut, updateProfile, User
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
 interface AppState {
     ui: {
@@ -79,6 +79,8 @@ interface AppState {
     darkPool: DarkPoolState;
     /** Rolling -1 to +1 bias from dark pool, used by SentinelPanel and BiasMatrix */
     darkPoolBias: number;
+    /** Bot trade history from Firestore botTrades collection */
+    botTrades: BotTrade[];
 
     cvdBaseline: number;
 
@@ -137,6 +139,8 @@ interface AppState {
 
     fetchDarkPoolData: () => Promise<void>;
     startDarkPoolPolling: () => () => void;
+    /** Subscribe to Firestore botTrades and sync chart levels */
+    subscribeToBotTrades: () => () => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -253,6 +257,7 @@ export const useStore = create<AppState>((set, get) => ({
     },
     notifications: [],
     alertLogs: [],
+    botTrades: [],
     cvdBaseline: 0,
     darkPoolBias: 0,
     darkPool: {
@@ -980,5 +985,60 @@ export const useStore = create<AppState>((set, get) => ({
         fetchDarkPoolData(); // immediate first fetch
         const id = setInterval(fetchDarkPoolData, DARK_POOL_THRESHOLDS.POLL_INTERVAL_MS);
         return () => clearInterval(id);
+    },
+
+    subscribeToBotTrades: () => {
+        const q = query(
+            collection(db, 'botTrades'),
+            orderBy('ts_ms', 'desc'),
+            limit(50)
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const trades: BotTrade[] = snap.docs.map(d => ({
+                id: d.id,
+                ...(d.data() as Omit<BotTrade, 'id'>),
+            }));
+            set({ botTrades: trades });
+
+            // ── Sync active bot trade levels to chart ─────────────────────
+            // The latest trade (index 0 after desc sort) represents the bot's
+            // most recent position. Push its entry / SL / TP as PriceLevel
+            // items so the chart draws them automatically.
+            if (trades.length > 0) {
+                const latest = trades[0];
+                const botLevels: PriceLevel[] = [
+                    {
+                        price: latest.entry_price,
+                        type: 'ENTRY',
+                        label: `Bot Entry (${latest.verdict})`,
+                    },
+                    {
+                        price: latest.stop_loss,
+                        type: 'STOP_LOSS',
+                        label: 'Bot Stop Loss',
+                    },
+                    {
+                        price: latest.take_profit,
+                        type: 'TAKE_PROFIT',
+                        label: 'Bot Take Profit',
+                    },
+                ];
+                set(state => ({
+                    market: {
+                        ...state.market,
+                        levels: [
+                            // Remove old bot levels, keep any user-placed levels
+                            ...state.market.levels.filter(
+                                l => !l.label?.startsWith('Bot ')
+                            ),
+                            ...botLevels,
+                        ],
+                    },
+                }));
+            }
+        }, (err) => {
+            console.warn('[Store] botTrades subscription error:', err);
+        });
+        return unsub;
     },
 }));

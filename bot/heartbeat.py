@@ -60,6 +60,11 @@ def init_firebase() -> Optional[Any]:
     return None
 
 
+def get_db() -> Optional[Any]:
+    """Return the initialised Firestore client (or None if not available)."""
+    return _db
+
+
 async def run_heartbeat(stats: dict) -> None:
     """
     Continuously writes bot status to Firestore every 10 s.
@@ -77,29 +82,15 @@ async def run_heartbeat(stats: dict) -> None:
             payload = {
                 "isRunning":       True,
                 "lastHeartbeat":   fs.SERVER_TIMESTAMP,
-                "symbol":          stats.get("symbol",          "UNKNOWN"),
-                "mode":            stats.get("mode",            "DRY-RUN"),
-                "environment":     stats.get("environment",     "TESTNET"),
+                "symbol":          stats.get("symbol",         "UNKNOWN"),
+                "mode":            stats.get("mode",           "DRY-RUN"),
+                "environment":     stats.get("environment",    "TESTNET"),
                 "activePositions": 1 if stats.get("active_position") else 0,
-                "totalTrades":     stats.get("total_trades",   0),
-                "lastSignal":      stats.get("last_signal",    "WAIT"),
+                "totalTrades":     stats.get("total_trades",  0),
+                "lastSignal":      stats.get("last_signal",   "WAIT"),
             }
             # firebase-admin is sync → run in a thread so we don't block the loop
             await asyncio.to_thread(doc_ref.set, payload)
-            
-            # Fetch user preferences to get dynamic aiModel
-            # Assuming single-user deployment (Railway) with the single user doc:
-            # Note: For production with multiple users, bot needs UID. But for Railway deploy,
-            # we can query the first user or pass UID via env. Let's list documents in `users` collection.
-            users_ref = _db.collection("users")
-            users = await asyncio.to_thread(lambda: list(users_ref.limit(1).stream()))
-            if users:
-                user_doc = users[0].to_dict()
-                fe_config = user_doc.get("config", {})
-                ai_model = fe_config.get("aiModel", "gemini-2.0-flash")
-                if stats.get("ai_model") != ai_model:
-                    stats["ai_model"] = ai_model
-                    logger.info(f"[Heartbeat] Synced AI Model from Firebase: {ai_model}")
 
         except asyncio.CancelledError:
             break

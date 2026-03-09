@@ -1,6 +1,8 @@
 import logging
+import time
 from typing import Dict, Any, Optional
 import ccxt.async_support as ccxt
+from bot import heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,36 @@ class TradingExecutor:
 
     async def close(self):
         await self.exchange.close()
+
+    # ------------------------------------------------------------------
+    # Firestore trade logger
+    # ------------------------------------------------------------------
+    def _log_trade(self, symbol: str, side: str, verdict: str,
+                   entry: float, stop_loss: float, take_profit: float):
+        """
+        Write a trade record to Firestore `botTrades` collection.
+        Silently skips if Firebase is not initialised.
+        """
+        db = heartbeat.get_db()
+        if db is None:
+            return
+        try:
+            from firebase_admin import firestore as fs
+            doc = {
+                "symbol":      symbol,
+                "side":        side,
+                "verdict":     verdict,
+                "entry_price": entry,
+                "stop_loss":   stop_loss,
+                "take_profit": take_profit,
+                "timestamp":   fs.SERVER_TIMESTAMP,
+                "mode":        "DRY-RUN" if self.dry_run else "LIVE",
+                "ts_ms":       int(time.time() * 1000),
+            }
+            db.collection("botTrades").add(doc)
+            logger.info(f"[Executor] Trade logged to Firestore ✓")
+        except Exception as e:
+            logger.warning(f"[Executor] Failed to log trade to Firestore: {e}")
 
     # ------------------------------------------------------------------
     # Balance
@@ -154,6 +186,7 @@ class TradingExecutor:
                 'take_profit': take_profit,
                 'dry_run':     True,
             }
+            self._log_trade(symbol, side, verdict, current_price, stop_loss, take_profit)
             return
 
         # ── LIVE EXECUTION ────────────────────────────────────────────
@@ -179,6 +212,7 @@ class TradingExecutor:
                 'take_profit': take_profit,
                 'order_id':    order.get('id'),
             }
+            self._log_trade(symbol, side, verdict, current_price, stop_loss, take_profit)
 
             # Attach SL bracket (STOP_LOSS_LIMIT)
             sl_limit_price = (

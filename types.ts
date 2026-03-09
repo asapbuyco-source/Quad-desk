@@ -380,3 +380,16 @@ export interface DarkPoolState {
   isSimulated: boolean;       // true when no real Whale Alert data is available
   lastUpdated: number;
 }
+
+// --- Bot Trade Log (written by Python bot → Firestore → read here) ---
+export interface BotTrade {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  verdict: string;
+  entry_price: number;
+  stop_loss: number;
+  take_profit: number;
+  ts_ms: number;   // client-side ms timestamp (SERVER_TIMESTAMP populated server-side)
+  mode: string;    // 'DRY-RUN' | 'LIVE'
+}

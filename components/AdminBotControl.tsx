@@ -3,10 +3,12 @@ import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import {
     Settings, Shield, Activity, Save, Key, Power, Server,
-    Eye, EyeOff, AlertTriangle, Wifi, WifiOff, Zap, TrendingUp
+    Eye, EyeOff, AlertTriangle, Wifi, WifiOff, Zap, TrendingUp,
+    Clock, ArrowUpRight, ArrowDownRight, History
 } from 'lucide-react';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
+import { BotTrade } from '../types';
 
 const motion = m as any;
 
@@ -19,6 +21,21 @@ function timeAgo(ms: number | undefined): string {
     return `${Math.floor(age / 3600)}h ago`;
 }
 
+function formatTime(tsMs: number): string {
+    if (!tsMs) return '—';
+    const d = new Date(tsMs);
+    return d.toLocaleString(undefined, {
+        month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+    });
+}
+
+function formatPrice(p: number): string {
+    if (!p || p === 0) return '—';
+    return p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // Signal colour helper
 function signalColor(signal: string | undefined) {
     if (!signal) return 'text-zinc-500';
@@ -28,7 +45,7 @@ function signalColor(signal: string | undefined) {
 }
 
 const AdminBotControl: React.FC = () => {
-    const { botSettings, setBotSettings } = useStore();
+    const { botSettings, setBotSettings, botTrades, subscribeToBotTrades } = useStore();
     const [isSaving, setIsSaving] = useState(false);
     const [showSecret, setShowSecret] = useState(false);
     const [keyError, setKeyError] = useState('');
@@ -49,6 +66,12 @@ const AdminBotControl: React.FC = () => {
         const id = setInterval(() => setTick(t => t + 1), 1000);
         return () => clearInterval(id);
     }, []);
+
+    // ── Subscribe to Firestore bot trade history ──────────────────────────
+    useEffect(() => {
+        const unsub = subscribeToBotTrades();
+        return unsub;
+    }, [subscribeToBotTrades]);
 
     // ── Real-time Firestore heartbeat listener ────────────────────────────
     useEffect(() => {
@@ -130,7 +153,7 @@ const AdminBotControl: React.FC = () => {
                         <Settings className="text-brand-accent" size={28} />
                         Bot Control Center
                     </h1>
-                    <p className="text-zinc-500 font-mono text-sm mt-1">Manage Macro Strategy Execution Engine</p>
+                    <p className="text-zinc-500 font-mono text-sm mt-1">Composite Quant Strategy Execution Engine</p>
                 </div>
 
                 {/* Master Switch */}
@@ -310,14 +333,14 @@ const AdminBotControl: React.FC = () => {
                             <span className="text-zinc-500 font-mono">%</span>
                         </div>
                         <p className="text-xs text-zinc-500 mt-2">
-                            The engine adjusts position size so that hitting the AI stop-loss never exceeds this % of your account equity.
+                            Position size is calculated so that hitting the stop-loss never exceeds this % of equity.
                         </p>
                     </div>
                 </div>
             </div>
 
             {/* ── Save Action ─────────────────────────────────────────── */}
-            <div className="flex justify-end pt-4">
+            <div className="flex justify-end pt-2">
                 <button
                     onClick={handleSave}
                     disabled={isSaving}
@@ -326,6 +349,94 @@ const AdminBotControl: React.FC = () => {
                     <Save size={18} />
                     {isSaving ? 'SAVING...' : 'SAVE CONFIGURATION'}
                 </button>
+            </div>
+
+            {/* ── Bot Trade History ────────────────────────────────────── */}
+            <div className="bg-black/40 border border-white/10 rounded-2xl p-6 lg:p-8">
+                <h2 className="text-xl font-bold tracking-widest uppercase border-b border-white/10 pb-4 mb-5 text-zinc-300 flex items-center gap-2">
+                    <History size={20} className="text-brand-accent" /> Trade History
+                    <span className="ml-auto text-xs font-mono text-zinc-600 normal-case tracking-normal">
+                        Live from Firestore · Last {botTrades.length} trades
+                    </span>
+                </h2>
+
+                {botTrades.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3 text-zinc-600">
+                        <Clock size={36} className="opacity-30" />
+                        <p className="font-mono text-sm">No trades yet — the bot will log here when it executes.</p>
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm font-mono">
+                            <thead>
+                                <tr className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-white/5">
+                                    <th className="text-left pb-3 pr-4">Time</th>
+                                    <th className="text-left pb-3 pr-4">Pair</th>
+                                    <th className="text-left pb-3 pr-4">Signal</th>
+                                    <th className="text-right pb-3 pr-4">Entry</th>
+                                    <th className="text-right pb-3 pr-4">Stop Loss</th>
+                                    <th className="text-right pb-3">Take Profit</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {botTrades.map((trade: BotTrade, idx: number) => {
+                                    const isBuy = trade.side === 'buy';
+                                    const isFirst = idx === 0;
+                                    return (
+                                        <tr
+                                            key={trade.id}
+                                            className={`border-b border-white/5 transition-colors hover:bg-white/[0.02] ${isFirst ? 'bg-white/[0.015]' : ''}`}
+                                        >
+                                            {/* Time */}
+                                            <td className="py-3 pr-4 text-zinc-500 text-[11px] whitespace-nowrap">
+                                                {formatTime(trade.ts_ms)}
+                                            </td>
+
+                                            {/* Pair */}
+                                            <td className="py-3 pr-4 text-white font-bold">
+                                                {trade.symbol}
+                                                {isFirst && (
+                                                    <span className="ml-2 text-[9px] bg-brand-accent/20 text-brand-accent border border-brand-accent/30 px-1.5 py-0.5 rounded-full">
+                                                        LATEST
+                                                    </span>
+                                                )}
+                                            </td>
+
+                                            {/* Signal / Side */}
+                                            <td className="py-3 pr-4">
+                                                <span className={`flex items-center gap-1 font-bold text-xs ${isBuy ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {isBuy
+                                                        ? <ArrowUpRight size={13} />
+                                                        : <ArrowDownRight size={13} />
+                                                    }
+                                                    {trade.verdict}
+                                                </span>
+                                                <span className="text-[10px] text-zinc-600 mt-0.5 block">
+                                                    {trade.mode}
+                                                </span>
+                                            </td>
+
+                                            {/* Entry */}
+                                            <td className="py-3 pr-4 text-right text-white">
+                                                {formatPrice(trade.entry_price)}
+                                            </td>
+
+                                            {/* Stop Loss */}
+                                            <td className="py-3 pr-4 text-right text-rose-400">
+                                                {formatPrice(trade.stop_loss)}
+                                            </td>
+
+                                            {/* Take Profit */}
+                                            <td className="py-3 text-right text-emerald-400">
+                                                {formatPrice(trade.take_profit)}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </div>
 
             <div className="h-10" />

@@ -38,6 +38,7 @@ class QuantEngine:
         ofi, wall_context, all_walls_str = self._lob_metrics(current_price)
         bayesian_posterior = self._bayesian(rsi, ofi, z_score, skewness)
         cvd = self.state.cvd
+        atr = self._atr(df)
 
         return {
             "symbol": self.state.symbol,
@@ -52,6 +53,8 @@ class QuantEngine:
             "tapeDominant": dominant_side,
             "wallContext": wall_context,
             "allWalls": all_walls_str,
+            "atr": atr,
+            "atr_pct": atr / current_price if current_price > 0 else 0.0,
         }
 
     # ------------------------------------------------------------------
@@ -196,3 +199,20 @@ class QuantEngine:
 
         bull_odds = L_rsi * L_ofi * L_z * L_skew
         return float(bull_odds / (bull_odds + 1.0))
+
+    # ------------------------------------------------------------------
+    # 7. ATR — Average True Range (14 periods)
+    # ------------------------------------------------------------------
+    def _atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        """Wilder ATR over `period` bars."""
+        n = len(df)
+        if n < period + 1:
+            return 0.0
+        recent = df.tail(period + 1).copy()
+        prev_close = recent['close'].shift(1)
+        tr = pd.concat([
+            recent['high'] - recent['low'],
+            (recent['high'] - prev_close).abs(),
+            (recent['low']  - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        return float(tr.tail(period).mean())
