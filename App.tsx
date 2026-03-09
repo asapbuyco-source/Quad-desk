@@ -18,6 +18,7 @@ import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine';
 import DarkPoolDiscovery from './components/DarkPoolDiscovery';
+import SentinelEdgePage from './components/SentinelEdgePage';
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -305,6 +306,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'liquidity' && <LiquidityPage />}
                                 {ui.activeTab === 'regime' && <RegimePage />}
                                 {ui.activeTab === 'macro-strategy' && <MacroStrategyView />}
+                                {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}
                                 {ui.activeTab === 'ai-tactical' && <AITacticalPage />}
                                 {ui.activeTab === 'analytics' && <AnalyticsView />}
