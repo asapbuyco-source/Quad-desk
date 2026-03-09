@@ -295,7 +295,7 @@ const LiquidityPage: React.FC = () => {
                             {biasData.details.map((detail, idx) => (
                                 <div key={idx} className="flex items-start gap-2 text-xs text-zinc-300">
                                     <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${detail.startsWith('Bullish') ? 'bg-emerald-400' :
-                                            detail.startsWith('Bearish') ? 'bg-rose-400' : 'bg-amber-400'
+                                        detail.startsWith('Bearish') ? 'bg-rose-400' : 'bg-amber-400'
                                         }`} />
                                     <span className="leading-snug">{detail}</span>
                                 </div>
@@ -340,6 +340,7 @@ const LiquidityPage: React.FC = () => {
                     </div>
 
                 </div>
+            </div>
         </motion.div>
     );
 };
