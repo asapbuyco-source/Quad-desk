@@ -1,11 +1,86 @@
 import React, { useMemo } from 'react';
 import { useStore } from '../store';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { ArrowDown, ArrowUp, Mountain, BoxSelect, Scale } from 'lucide-react';
+import { ArrowDown, ArrowUp, Mountain, BoxSelect, Scale, Layers } from 'lucide-react';
 import { motion as m } from 'framer-motion';
 import { OrderBookLevel } from '../types';
 
 const motion = m as any;
+
+/** Feature: Institutional Wall Heatmap
+ * Renders bid/ask levels as horizontal heatmap bars colored by wall strength.
+ * Red = ask wall, Green = bid wall, Dim = hole or normal.
+ */
+const WallHeatmap: React.FC<{ bids: OrderBookLevel[]; asks: OrderBookLevel[]; price: number }> = ({ bids, asks, price }) => {
+    const allLevels = useMemo(() => {
+        const combined = [
+            ...bids.slice(0, 15).map(l => ({ ...l, side: 'BID' as const })),
+            ...asks.slice(0, 15).map(l => ({ ...l, side: 'ASK' as const })),
+        ].sort((a, b) => b.price - a.price); // highest price first
+        const maxSize = Math.max(...combined.map(l => l.size), 1);
+        return combined.map(l => ({ ...l, pct: Math.min((l.size / maxSize) * 100, 100) }));
+    }, [bids, asks]);
+
+    if (allLevels.length === 0) return null;
+
+    return (
+        <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-4 mb-6">
+            <div className="flex items-center gap-2 mb-3">
+                <Layers size={14} className="text-indigo-400" />
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Institutional Wall Heatmap</span>
+                <span className="ml-auto text-[9px] text-zinc-600 font-mono">
+                    <span className="text-emerald-400 mr-2">■ BID WALL</span>
+                    <span className="text-rose-400 mr-2">■ ASK WALL</span>
+                    <span className="text-zinc-600">■ NORMAL/HOLE</span>
+                </span>
+            </div>
+            <div className="grid grid-cols-1 gap-0.5 max-h-64 overflow-y-auto scrollbar-hide">
+                {allLevels.map((level, i) => {
+                    const isWall = level.classification === 'WALL';
+                    const isHole = level.classification === 'HOLE';
+                    const isBid = level.side === 'BID';
+                    const isSpot = Math.abs(level.price - price) < (price * 0.001);
+
+                    const barBg = isWall
+                        ? (isBid ? 'bg-emerald-500' : 'bg-rose-500')
+                        : isHole ? 'bg-zinc-800/40'
+                            : (isBid ? 'bg-emerald-900/50' : 'bg-rose-900/50');
+
+                    const rowBg = isWall
+                        ? (isBid ? 'bg-emerald-950/30' : 'bg-rose-950/30')
+                        : 'bg-transparent';
+
+                    const priceColor = isBid ? 'text-emerald-400' : 'text-rose-400';
+
+                    return (
+                        <div
+                            key={`${level.side}-${level.price}-${i}`}
+                            className={`relative flex items-center h-6 px-2 rounded-sm overflow-hidden group ${rowBg} ${isSpot ? 'ring-1 ring-white/20' : ''}`}
+                        >
+                            {/* Heatmap fill bar */}
+                            <div
+                                className={`absolute top-0 bottom-0 ${isBid ? 'right-0' : 'left-0'} ${barBg} opacity-${isWall ? '80' : isHole ? '20' : '30'} transition-all duration-300`}
+                                style={{ width: `${level.pct}%` }}
+                            />
+
+                            {/* Labels */}
+                            <div className="relative z-10 flex items-center justify-between w-full">
+                                <span className={`text-[9px] font-mono font-bold ${priceColor}`}>
+                                    {level.price.toFixed(2)}
+                                </span>
+                                <span className={`text-[8px] font-mono ${isWall ? (isBid ? 'text-emerald-300 font-black' : 'text-rose-300 font-black') : 'text-zinc-600'
+                                    }`}>
+                                    {isWall ? '⬛ WALL ' : ''}{level.size.toLocaleString()}
+                                </span>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 
 const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -133,6 +208,8 @@ const DepthPage: React.FC = () => {
                     </AreaChart>
                 </ResponsiveContainer>
             </div>
+            {/* Feature: Institutional Wall Heatmap */}
+            <WallHeatmap bids={bids} asks={asks} price={metrics.price} />
             <div className="flex-1 min-h-0 grid grid-cols-2 gap-px bg-zinc-800 border border-white/5 rounded-2xl overflow-hidden">
                 <div className="bg-[#09090b] flex flex-col min-h-0"><div className="px-4 py-3 border-b border-white/5 bg-emerald-900/10 flex justify-between items-center"><div className="flex items-center gap-2 text-emerald-500"><ArrowUp size={16} /><span className="text-sm font-bold uppercase">Bids</span></div><span className="text-xs font-mono text-zinc-400">{bidTotal.toLocaleString()} Vol</span></div><div className="flex px-3 py-2 text-[10px] font-bold text-zinc-600 uppercase tracking-wider border-b border-white/5"><span className="w-1/3">Size</span><span className="w-1/3 text-right">Price</span><span className="w-1/3 text-right">Val (USD)</span></div><div className="flex-1 overflow-y-auto scrollbar-hide">{bids.map((bid) => <DepthRow key={bid.price} level={bid} type="BID" maxVol={maxVol} />)}</div></div>
                 <div className="bg-[#09090b] flex flex-col min-h-0"><div className="px-4 py-3 border-b border-white/5 bg-rose-900/10 flex justify-between items-center"><span className="text-xs font-mono text-zinc-400">{askTotal.toLocaleString()} Vol</span><div className="flex items-center gap-2 text-rose-500"><span className="text-sm font-bold uppercase">Asks</span><ArrowDown size={16} /></div></div><div className="flex px-3 py-2 text-[10px] font-bold text-zinc-600 uppercase tracking-wider border-b border-white/5"><span className="w-1/3">Price</span><span className="w-1/3 text-right">Size</span><span className="w-1/3 text-left pl-2">Val (USD)</span></div><div className="flex-1 overflow-y-auto scrollbar-hide">{asks.map((ask) => <DepthRow key={ask.price} level={ask} type="ASK" maxVol={maxVol} />)}</div></div>

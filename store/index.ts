@@ -84,6 +84,11 @@ interface AppState {
 
     cvdBaseline: number;
 
+    /** Cumulative OFI — running sum of OFI delta ticks, resets to 0 via resetCvd */
+    cofi: number;
+    /** Rolling OFI history for multi-timeframe convergence (last 60 readings) */
+    ofiHistory: number[];
+
     setHasEntered: (val: boolean) => void;
     setActiveTab: (tab: string) => void;
     setProfileOpen: (isOpen: boolean) => void;
@@ -259,6 +264,8 @@ export const useStore = create<AppState>((set, get) => ({
     alertLogs: [],
     botTrades: [],
     cvdBaseline: 0,
+    cofi: 0,
+    ofiHistory: [],
     darkPoolBias: 0,
     darkPool: {
         whaleFeed: [],
@@ -436,6 +443,37 @@ export const useStore = create<AppState>((set, get) => ({
             const bullOdds = 1.0 * L_rsi * L_ofi * L_z * L_skew; // prior odds = 1 (i.e. 0.5/0.5)
             const bayesianPosterior = bullOdds / (bullOdds + 1.0); // [0,1]
 
+            // ─── Z-Score Divergence Detection ──────────────────────────────
+            // Alert when price makes a new 10-bar high/low but Z-Score doesn't confirm.
+            // "Fakeout" signal: price breakout without statistical support.
+            if (newCandles.length >= 10) {
+                const recent10 = newCandles.slice(-10);
+                const prevHighs = newCandles.slice(-11, -1).map(c => c.high);
+                const prevLows = newCandles.slice(-11, -1).map(c => c.low);
+
+                const curr10High = Math.max(...recent10.map(c => c.high));
+                const curr10Low = Math.min(...recent10.map(c => c.low));
+                const prev10High = Math.max(...prevHighs);
+                const prev10Low = Math.min(...prevLows);
+
+                // New 10-bar high but Z-Score is not also at a new high (it's pulling back)
+                if (curr10High > prev10High && zScore < -0.5) {
+                    setTimeout(() => get().addNotification({
+                        id: `zdiv-bear-${Date.now()}`,
+                        type: 'warning',
+                        title: '⚡ Z-Score Divergence',
+                        message: `Price new high but Z=${zScore.toFixed(2)}σ — potential bearish fakeout`
+                    }), 0);
+                } else if (curr10Low < prev10Low && zScore > 0.5) {
+                    setTimeout(() => get().addNotification({
+                        id: `zdiv-bull-${Date.now()}`,
+                        type: 'warning',
+                        title: '⚡ Z-Score Divergence',
+                        message: `Price new low but Z=+${zScore.toFixed(2)}σ — potential bullish fakeout`
+                    }), 0);
+                }
+            }
+
             return {
                 cvdBaseline: updatedBaseline,
                 market: {
@@ -544,7 +582,16 @@ export const useStore = create<AppState>((set, get) => ({
             return 'NORMAL';
         };
 
+        // ─── COFI: accumulate OFI delta ─────────────────────────────────────
+        const prevOfi = state.market.metrics.ofi || 0;
+        const newCofi = state.cofi + ofi - prevOfi;
+
+        // ─── OFI History: rolling 60-reading buffer ──────────────────────────
+        const newOfiHistory = [...state.ofiHistory, ofi].slice(-60);
+
         return {
+            cofi: newCofi,
+            ofiHistory: newOfiHistory,
             market: {
                 ...state.market,
                 asks: sortedAsks.map((a, i) => ({ ...a, classification: classify(a, i) as any })),
@@ -568,6 +615,8 @@ export const useStore = create<AppState>((set, get) => ({
 
     resetCvd: () => set(state => ({
         cvdBaseline: 0,
+        cofi: 0,
+        ofiHistory: [],
         market: { ...state.market, metrics: { ...state.market.metrics, institutionalCVD: 0 } }
     })),
 

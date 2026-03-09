@@ -1,9 +1,46 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useStore } from '../store';
-import { ShieldAlert, Crosshair, Target, Activity, Flame, ShieldCheck, Siren, Clock, Zap } from 'lucide-react';
+import { ShieldAlert, Crosshair, Target, Activity, Flame, ShieldCheck, Siren, Clock, Zap, Timer } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+const SWEEP_TTL_MS = 15 * 60 * 1000; // 15-minute validity window
+
+/** Feature: Sweep Age Decay Timer — live countdown bar showing how much of the 15-min window remains */
+const SweepDecayTimer: React.FC<{ sweepTimestamp: number }> = ({ sweepTimestamp }) => {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const id = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(id);
+    }, []);
+    const remaining = Math.max(0, SWEEP_TTL_MS - (now - sweepTimestamp));
+    const pctLeft = (remaining / SWEEP_TTL_MS) * 100;
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    const barColor = pctLeft > 50 ? 'bg-emerald-500' : pctLeft > 20 ? 'bg-amber-400' : 'bg-rose-500';
+    const textColor = pctLeft > 50 ? 'text-emerald-400' : pctLeft > 20 ? 'text-amber-400' : 'text-rose-400';
+    return (
+        <div className="mt-2 space-y-1.5">
+            <div className="flex justify-between items-center">
+                <span className="text-[9px] uppercase font-bold text-zinc-500 flex items-center gap-1">
+                    <Timer size={9} /> Sweep Window
+                </span>
+                <span className={`text-[10px] font-mono font-bold ${textColor}`}>
+                    {remaining === 0 ? 'EXPIRED' : `${mins}m ${secs.toString().padStart(2, '0')}s left`}
+                </span>
+            </div>
+            <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+                <motion.div
+                    animate={{ width: `${pctLeft}%` }}
+                    transition={{ duration: 0.5 }}
+                    className={`h-full rounded-full ${barColor} transition-colors duration-1000`}
+                />
+            </div>
+        </div>
+    );
+};
+
 const SentinelEdgePage: React.FC = () => {
+
     const {
         liquidity,
         regime,
@@ -154,6 +191,8 @@ const SentinelEdgePage: React.FC = () => {
                             <span className="text-xs opacity-70">
                                 {recentSweep.side === 'BUY' ? 'Buy-side liquidity swept (Highs broken).' : 'Sell-side liquidity swept (Lows broken).'}
                             </span>
+                            {/* ── Feature: Sweep Age Decay Timer ── */}
+                            <SweepDecayTimer sweepTimestamp={recentSweep.timestamp} />
                         </div>
                     ) : (
                         <div className="flex-1 flex items-center justify-center border border-dashed border-zinc-800 rounded">
