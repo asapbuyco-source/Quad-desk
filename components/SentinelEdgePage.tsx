@@ -18,7 +18,7 @@ const SentinelEdgePage: React.FC = () => {
     const biasDirection = darkPoolBias > 0.2 ? 'BULLISH' : darkPoolBias < -0.2 ? 'BEARISH' : 'NEUTRAL';
     const biasColor = biasDirection === 'BULLISH' ? 'text-emerald-400' : biasDirection === 'BEARISH' ? 'text-rose-400' : 'text-amber-400';
 
-    const environmentValid = currentRegime === 'RANGE' || currentRegime === 'LIQUIDITY';
+    const environmentValid = currentRegime === 'RANGING' || currentRegime === 'MEAN_REVERTING';
 
     // Stage 2: The Trap (Recent Liquidity Sweep)
     // Get the most recent sweep
@@ -44,7 +44,7 @@ const SentinelEdgePage: React.FC = () => {
             return {
                 status: 'WAIT_REGIME',
                 title: 'INVALID MARKET REGIME',
-                desc: `Sentinel Strategy requires RANGE or LIQUIDITY regime. Current is ${currentRegime}. Do not trade.`,
+                desc: `Sentinel Strategy requires RANGING or MEAN_REVERTING regime. Current is ${currentRegime}. Do not trade.`,
                 color: 'text-zinc-500 bg-zinc-900 border-zinc-800'
             };
         }

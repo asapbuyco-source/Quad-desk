@@ -246,141 +246,356 @@ async def get_heatmap():
         results.append({"pair": p, "zScore": float(z), "price": float(closes[-1])})
     return results
 
+def _analyze_market_algo(symbol: str, klines: list) -> dict:
+    """
+    Deterministic chart analysis engine.
+    Computes Z-Score, VWAP, Pivot levels, ATR and derives ENTRY/EXIT/WAIT
+    with a human-readable explanation string.
+    """
+    closes  = [float(x[4]) for x in klines]
+    highs   = [float(x[2]) for x in klines]
+    lows    = [float(x[3]) for x in klines]
+    volumes = [float(x[5]) for x in klines]
+
+    current_price = closes[-1]
+    high = max(highs)
+    low  = min(lows)
+
+    # ── Pivot points ──────────────────────────────────────────────────
+    pivot = (high + low + current_price) / 3
+    r1    = 2 * pivot - low
+    s1    = 2 * pivot - high
+    r2    = pivot + (high - low)
+    s2    = pivot - (high - low)
+
+    # ── VWAP (volume-weighted average price) ──────────────────────────
+    typical_prices = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
+    total_vol      = sum(volumes) or 1
+    vwap           = sum(tp * v for tp, v in zip(typical_prices, volumes)) / total_vol
+
+    # ── Z-Score (last 20 closes) ──────────────────────────────────────
+    window = closes[-20:]
+    mean   = sum(window) / len(window)
+    std    = (sum((x - mean) ** 2 for x in window) / len(window)) ** 0.5 or 1
+    z      = (current_price - mean) / std
+
+    # ── ATR (last 14 bars) ────────────────────────────────────────────
+    tr_values = []
+    for i in range(1, min(15, len(klines))):
+        h, l, pc = highs[i], lows[i], closes[i - 1]
+        tr_values.append(max(h - l, abs(h - pc), abs(l - pc)))
+    atr = sum(tr_values) / len(tr_values) if tr_values else (high - low) / 14
+
+    # ── Trend bias (last 5 closes vs previous 5) ──────────────────────
+    short_mean = sum(closes[-5:]) / 5
+    mid_mean   = sum(closes[-10:-5]) / 5
+    trend_up   = short_mean > mid_mean
+
+    # ── Verdict logic ─────────────────────────────────────────────────
+    above_vwap = current_price > vwap
+    near_support    = abs(current_price - s1) / (atr or 1) < 1.5
+    near_resistance = abs(current_price - r1) / (atr or 1) < 1.5
+
+    reasons_bull = []
+    reasons_bear = []
+    reasons_wait = []
+
+    # Bullish signals
+    if z < -1.5:
+        reasons_bull.append(f"price is statistically depressed (Z={z:.2f}σ), indicating mean-reversion potential")
+    if above_vwap and trend_up:
+        reasons_bull.append(f"price is trading above VWAP ({vwap:.2f}) with upward momentum")
+    if near_support:
+        reasons_bull.append(f"price is testing key support at {s1:.2f} — a bounce zone")
+
+    # Bearish signals
+    if z > 1.5:
+        reasons_bear.append(f"price is statistically stretched (Z={z:.2f}σ), mean-reversion risk is elevated")
+    if not above_vwap and not trend_up:
+        reasons_bear.append(f"price is trading below VWAP ({vwap:.2f}) with downward momentum")
+    if near_resistance:
+        reasons_bear.append(f"price is testing resistance at {r1:.2f} — sellers likely to defend")
+
+    # Neutral signals
+    if abs(z) <= 0.5:
+        reasons_wait.append(f"Z-Score is neutral ({z:.2f}σ), no statistical edge")
+    if not near_support and not near_resistance and not reasons_bull and not reasons_bear:
+        reasons_wait.append("price is between key pivots — no high-probability setup is present")
+
+    bull_score = len(reasons_bull)
+    bear_score = len(reasons_bear)
+
+    if bull_score > bear_score and bull_score >= 2:
+        verdict    = "ENTRY"
+        confidence = min(0.5 + bull_score * 0.15, 0.92)
+        stop_loss  = max(s1, current_price - 1.5 * atr)
+        take_profit = min(r1, current_price + 3.0 * atr)
+        rr = abs(take_profit - current_price) / max(abs(current_price - stop_loss), 0.0001)
+        analysis = (
+            f"ENTRY signal on {symbol} @ {current_price:.2f}. "
+            + " ".join(f"{r.capitalize()}." for r in reasons_bull)
+            + f" Pivot support at {s1:.2f}, resistance at {r1:.2f}. "
+            f"ATR={atr:.2f}. Suggested stop: {stop_loss:.2f}, target: {take_profit:.2f} (R:R {rr:.1f}:1)."
+        )
+    elif bear_score > bull_score and bear_score >= 2:
+        verdict    = "EXIT"
+        confidence = min(0.5 + bear_score * 0.15, 0.92)
+        stop_loss  = min(r1, current_price + 1.5 * atr)
+        take_profit = max(s1, current_price - 3.0 * atr)
+        rr = abs(take_profit - current_price) / max(abs(current_price - stop_loss), 0.0001)
+        analysis = (
+            f"EXIT/SHORT signal on {symbol} @ {current_price:.2f}. "
+            + " ".join(f"{r.capitalize()}." for r in reasons_bear)
+            + f" Key resistance at {r1:.2f}, support at {s1:.2f}. "
+            f"ATR={atr:.2f}. Suggested stop: {stop_loss:.2f}, target: {take_profit:.2f} (R:R {rr:.1f}:1)."
+        )
+        stop_loss, take_profit = take_profit, stop_loss  # flip for display
+    else:
+        verdict    = "WAIT"
+        confidence = 0.4
+        stop_loss  = s1
+        take_profit = r1
+        rr = 2.0
+        wait_reasons = reasons_wait or ["conflicting signals require more confluence"]
+        analysis = (
+            f"WAIT on {symbol} @ {current_price:.2f}. No clear edge: "
+            + "; ".join(wait_reasons)
+            + f". Monitor VWAP ({vwap:.2f}), pivot ({pivot:.2f}), S1 ({s1:.2f}), R1 ({r1:.2f})."
+        )
+
+    return {
+        "support": [round(s1, 4), round(s2, 4)],
+        "resistance": [round(r1, 4), round(r2, 4)],
+        "decision_price": round(pivot, 4),
+        "verdict": verdict,
+        "confidence": round(confidence, 2),
+        "analysis": analysis,
+        "risk_reward_ratio": round(rr, 2),
+        "entry_price": round(current_price, 4),
+        "stop_loss": round(stop_loss, 4),
+        "take_profit": round(take_profit, 4),
+        "is_simulated": False,
+        "model_used": "quad-algo-v1",
+    }
+
+
 @app.get("/analyze")
 async def analyze_market(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), model: str = DEFAULT_MODEL):
     klines = await fetch_binance_candles(symbol, "15m", 30)
-    if not klines: raise HTTPException(status_code=502, detail="Upstream Down")
-    
-    current_price = float(klines[-1][4])
-    high = max([x[2] for x in klines])
-    low = min([x[3] for x in klines])
-    close = current_price
-    
-    # Calculate Pivot Points as fallback
-    pivot = (high + low + close) / 3
-    r1 = 2 * pivot - low
-    s1 = 2 * pivot - high
-
-    if not GEMINI_API_KEY:
-        return {
-            "support": [s1], "resistance": [r1], "decision_price": pivot,
-            "verdict": "WAIT", "confidence": 0.1, "analysis": "Mathematical Pivot Analysis (AI Offline).",
-            "risk_reward_ratio": 2.0, "entry_price": current_price, "stop_loss": s1, "take_profit": r1,
-            "is_simulated": True
-        }
-
-    prices_str = "\n".join([f"T:{x[0]} O:{x[1]} H:{x[2]} L:{x[3]} C:{x[4]}" for x in klines])
-    prompt = f"HFT Algo: Analyze OHLCV for {symbol}.\n{prices_str}\nOutput JSON: {{support:[num], resistance:[num], decision_price:num, verdict:ENTRY|EXIT|WAIT, confidence:0-1, analysis:str, risk_reward_ratio:num}}"
-
-    try:
-        response_text, model_used = await generate_with_fallback(model, prompt)
-        match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
-        if match:
-            text = match.group(0)
-        else:
-            text = response_text.replace('```json', '').replace('```', '').strip()
-        result = json.loads(text)
-        result["model_used"] = model_used
-        return result
-    except Exception:
-        return {
-            "support": [s1], "resistance": [r1], "decision_price": pivot,
-            "verdict": "WAIT", "confidence": 0.1, "analysis": "Degraded Mode: All AI models exhausted.",
-            "is_simulated": True
-        }
+    if not klines:
+        raise HTTPException(status_code=502, detail="Upstream Down")
+    return _analyze_market_algo(symbol, klines)
 
 @app.post("/analyze/flow")
 async def analyze_order_flow(req: AnalysisRequest):
-    if not GEMINI_API_KEY:
-        return {"verdict": "NEUTRAL", "explanation": "Statistical baseline maintained.", "confidence": 0.1, "flow_type": "NEUTRAL", "is_simulated": True}
-    prompt = f"Analyze Flow for {req.symbol}: Price:{req.price} NetDelta:{req.netDelta} Vol:{req.totalVolume} POC:{req.pocPrice} CVD:{req.cvdTrend}. JSON Output: {{verdict:BULLISH|BEARISH|NEUTRAL, confidence:num, explanation:str, flow_type:str}}"
-    try:
-        response_text, model_used = await generate_with_fallback(req.model, prompt)
-        match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
-        if match:
-            text = match.group(0)
-        else:
-            text = response_text.replace('```json', '').replace('```', '').strip()
-        result = json.loads(text)
-        result["model_used"] = model_used
-        return result
-    except Exception:
-        return {"verdict": "NEUTRAL", "explanation": "All AI models exhausted.", "confidence": 0, "is_simulated": True}
+    """
+    Deterministic order-flow analysis engine.
+    Evaluates NetDelta, CVD trend, and POC distance to classify flow.
+    """
+    net_delta   = req.netDelta
+    cvd_up      = req.cvdTrend.upper() in ("UP", "BULLISH", "POSITIVE", "RISING")
+    cvd_down    = req.cvdTrend.upper() in ("DOWN", "BEARISH", "NEGATIVE", "FALLING")
+    above_poc   = req.price > req.pocPrice
+    poc_delta   = abs(req.price - req.pocPrice)
+    poc_pct     = poc_delta / (req.pocPrice or 1) * 100
+
+    bull_points = 0
+    bear_points = 0
+    notes       = []
+
+    # NetDelta scoring
+    if net_delta > req.totalVolume * 0.05:
+        bull_points += 2
+        notes.append(f"Net delta is strongly positive ({net_delta:+.0f}), indicating aggressive buy-side absorption")
+    elif net_delta > 0:
+        bull_points += 1
+        notes.append(f"Net delta is mildly positive ({net_delta:+.0f}), buyers have slight edge")
+    elif net_delta < -req.totalVolume * 0.05:
+        bear_points += 2
+        notes.append(f"Net delta is strongly negative ({net_delta:+.0f}), sellers are dominating order flow")
+    elif net_delta < 0:
+        bear_points += 1
+        notes.append(f"Net delta is mildly negative ({net_delta:+.0f}), sellers have slight edge")
+
+    # CVD scoring
+    if cvd_up:
+        bull_points += 1
+        notes.append("CVD trend is rising — cumulative buyer pressure is building")
+    elif cvd_down:
+        bear_points += 1
+        notes.append("CVD trend is falling — cumulative seller pressure is building")
+
+    # POC position
+    if above_poc:
+        bull_points += 1
+        notes.append(f"Price ({req.price:.2f}) is trading above the Point of Control ({req.pocPrice:.2f}) by {poc_pct:.2f}% — fair-value bullish bias")
+    else:
+        bear_points += 1
+        notes.append(f"Price ({req.price:.2f}) is trading below the Point of Control ({req.pocPrice:.2f}) by {poc_pct:.2f}% — fair-value bearish bias")
+
+    # Verdict
+    if bull_points > bear_points + 1:
+        verdict    = "BULLISH"
+        flow_type  = "ACCUMULATION"
+        confidence = min(0.5 + bull_points * 0.1, 0.93)
+        explanation = (
+            f"Order flow on {req.symbol} is BULLISH. "
+            + " ".join(f"{n.capitalize()}." for n in notes)
+            + " Position bias: favour buy-side setups at value."
+        )
+    elif bear_points > bull_points + 1:
+        verdict    = "BEARISH"
+        flow_type  = "DISTRIBUTION"
+        confidence = min(0.5 + bear_points * 0.1, 0.93)
+        explanation = (
+            f"Order flow on {req.symbol} is BEARISH. "
+            + " ".join(f"{n.capitalize()}." for n in notes)
+            + " Position bias: favour sell-side setups at resistance."
+        )
+    else:
+        verdict    = "NEUTRAL"
+        flow_type  = "BALANCED"
+        confidence = 0.45
+        explanation = (
+            f"Order flow on {req.symbol} is BALANCED — no dominant side. "
+            + " ".join(f"{n.capitalize()}." for n in notes)
+            + " Wait for a decisive delta shift or CVD break before committing."
+        )
+
+    return {
+        "verdict": verdict,
+        "confidence": round(confidence, 2),
+        "explanation": explanation,
+        "flow_type": flow_type,
+        "is_simulated": False,
+        "model_used": "quad-algo-v1",
+    }
 
 @app.post("/analyze/strategy")
 async def analyze_strategy(req: MacroStrategyRequest):
-    if not GEMINI_API_KEY:
-        return {"verdict": "NEUTRAL", "analysis": "Degraded Mode: Hardware rules override enabled.", "confidence": 0.1, "is_simulated": True}
-    
-    # FIX #4: Pre-classify RSI into strategy-aligned states
-    if req.rsi < 30:
-        rsi_state = "Capitulation (< 30) — Prepare for High Velocity Reversal"
-    elif req.rsi > 70:
-        rsi_state = "Capitulation (> 70) — Prepare for High Velocity Reversal (Overbought)"
-    elif 55 <= req.rsi <= 70:
-        rsi_state = "Building (55-70) — Bullish Trend"
-    elif 40 <= req.rsi < 50:
-        rsi_state = "Reset (40-50) — Sideways / Distribution"
-    elif 30 <= req.rsi < 40:
-        rsi_state = "Oversold Recovery (30-40) — Potential Bullish Reversal Setup"
-    else:
-        rsi_state = "Neutral (50-55)"
-
-    # FIX #3 (backend): Z-Score state label
-    if req.zScore >= 2.5:
-        z_state = "Sentiment Wash (> +2.5) — Mean Reversal Expected SHORT"
-    elif req.zScore <= -2.5:
-        z_state = "Sentiment Wash (< -2.5) — Mean Reversal Expected LONG"
-    elif req.zScore > 0.5:
-        z_state = "Bullish Trend (+0.5 to +2.5)"
-    elif req.zScore < -0.5:
-        z_state = "Bearish Trend (-0.5 to -2.5)"
-    else:
-        z_state = "Neutral (-0.5 to +0.5)"
-
-    # FIX #1 (backend): Bayesian Posterior display
-    bayes_state = "Confirming Upside" if req.bayesianPosterior > 0.6 else \
-                  "Confirming Downside" if req.bayesianPosterior < 0.4 else "Neutral"
-
-    prompt = f"""
-    Analyze Macro Statistical Filter Strategy for {req.symbol}.
-    Current Market Data:
-    Price: {req.price}
-    Skewness (log-return): {req.skewness:.4f} — {'Downside tail risk' if req.skewness < 0 else 'Upside tail risk' if req.skewness > 0 else 'Neutral'}
-    Bayesian Posterior P(Bull|Evidence): {req.bayesianPosterior:.3f} — {bayes_state}
-    Z-Score (VWAP-anchored 20p): {req.zScore:.3f} — {z_state}
-    RSI: {req.rsi:.1f} — {rsi_state}
-    OFI (Order Flow Imbalance): {req.ofi:.1f} — {'Bullish Pressure' if req.ofi > 10 else 'Bearish Pressure' if req.ofi < -10 else 'Balanced'}
-    CVD (Cumulative Delta): {req.cvd:.0f} — {'Aggressive Buyers Dominating' if req.cvd > 0 else 'Aggressive Sellers Dominating'}
-    Tape Speed: {req.tapeSpeed} | Dominant Side: {req.tapeDominant}
-    Nearest Wall Context: {req.wallContext}
-    All Detected Walls: {req.allWalls if req.allWalls else 'None identified'}
-
-    Strategy Rules to apply:
-    1. Skewness: Negative = Downside tail risk, Positive = Upside tail risk, Zero = Neutral.
-    2. Bayesian Posterior: 0-1 probability range. >0.6 = Confirm Upside, <0.4 = Confirm Downside, 0.4-0.6 = Neutral.
-    3. Z-Score: +2.5 to +5 = Sentiment Wash (Mean Reversal), 0.5 to +1 = Bullish Trend, 0 to -1 = Bearish Trend, 0 to 0.5 & 0 to -0.5 = Neutral.
-    4. LOB Wall: Price should be above buy wall for long, below sell wall for short. Buy/Sell walls define support/resistance.
-    5. RSI: Capitulation = Prepare for High Velocity Reversal; Building = Bullish Trend; Reset = Sideways.
-    6. OFI Trigger: First leading indicator. Positive jumps against resistance = Bullish Continuation Breakout. Positive during pullback = Re-accumulation. Positive during breakdown = Failed Breakout Trap (Go Long). Negative jumps against support = Bearish Continuation Breakdown. Negative during pullback = Distribution. Negative during rally = Trapped Buyers (Go Short).
-    7. CVD: Positive Net = Aggressive Buyers dominate (Bullish). Negative Net = Aggressive Sellers dominate (Bearish). Zero cross = Shift in control. Divergence against price/walls = Iceberg activity.
-
-    Output JSON rigidly structured: 
-    {{"verdict":"BUY|SELL|WAIT|MEAN_REVERSAL", "confidence":0-1, "analysis":"str"}}
     """
-    try:
-        response_text, model_used = await generate_with_fallback(req.model, prompt)
-        match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
-        if match:
-            text = match.group(0)
-        else:
-            text = response_text.replace('```json', '').replace('```', '').strip()
-        result = json.loads(text)
-        result["model_used"] = model_used
-        return result
-    except Exception as e:
-        logger.error(f"Strategy API fail — all models exhausted: {e}")
-        return {"verdict": "ERROR", "analysis": "All AI models exhausted. Strategy synthesis failed.", "confidence": 0, "is_simulated": True}
+    Deterministic Macro Statistical Filter Strategy engine.
+    Each signal casts a weighted vote. The majority direction wins.
+    A human-readable analysis string is built from the active signals.
+    """
+    bull: list[str] = []
+    bear: list[str] = []
+    reversal: list[str] = []
+
+    # ── 1. Z-Score ───────────────────────────────────────────────────────
+    if req.zScore >= 2.5:
+        reversal.append(f"Z-Score ({req.zScore:.2f}σ) is in Sentiment Wash territory — statistically extreme, mean-reversion SHORT expected")
+        bear.append("zscore")
+    elif req.zScore <= -2.5:
+        reversal.append(f"Z-Score ({req.zScore:.2f}σ) is deeply negative — statistically oversold, mean-reversion LONG expected")
+        bull.append("zscore")
+    elif req.zScore > 0.5:
+        bull.append(f"Z-Score ({req.zScore:.2f}σ) confirms a mild bullish drift above the mean")
+    elif req.zScore < -0.5:
+        bear.append(f"Z-Score ({req.zScore:.2f}σ) confirms a mild bearish drift below the mean")
+
+    # ── 2. Bayesian Posterior ────────────────────────────────────────────
+    if req.bayesianPosterior > 0.65:
+        bull.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) strongly confirms bullish evidence — upside probability is elevated")
+    elif req.bayesianPosterior > 0.6:
+        bull.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) leans bullish — evidence slightly favours upside")
+    elif req.bayesianPosterior < 0.35:
+        bear.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) strongly confirms bearish evidence — downside probability is elevated")
+    elif req.bayesianPosterior < 0.4:
+        bear.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) leans bearish — evidence slightly favours downside")
+
+    # ── 3. RSI ───────────────────────────────────────────────────────────
+    if req.rsi < 30:
+        bull.append(f"RSI ({req.rsi:.1f}) signals capitulation — retail has over-sold; prepare for a high-velocity reversal long")
+        reversal.append("RSI capitulation LONG")
+    elif req.rsi > 70:
+        bear.append(f"RSI ({req.rsi:.1f}) signals overheating — retail is over-extended; prepare for a high-velocity reversal short")
+        reversal.append("RSI capitulation SHORT")
+    elif req.rsi >= 55:
+        bull.append(f"RSI ({req.rsi:.1f}) is in bullish building zone — trend is healthy with upward momentum")
+    elif req.rsi <= 40:
+        bear.append(f"RSI ({req.rsi:.1f}) is in bearish territory — downward pressure is sustained")
+
+    # ── 4. OFI (Order Flow Imbalance) ────────────────────────────────────
+    if req.ofi > 10:
+        bull.append(f"OFI ({req.ofi:.1f}) shows positive order flow imbalance — buyers are aggressively lifting offers")
+    elif req.ofi < -10:
+        bear.append(f"OFI ({req.ofi:.1f}) shows negative order flow imbalance — sellers are aggressively hitting bids")
+
+    # ── 5. CVD (Cumulative Volume Delta) ─────────────────────────────────
+    if req.cvd > 0:
+        bull.append(f"CVD ({req.cvd:.0f}) is positive — aggressive buyers dominate the tape")
+    elif req.cvd < 0:
+        bear.append(f"CVD ({req.cvd:.0f}) is negative — aggressive sellers dominate the tape")
+
+    # ── 6. Skewness ──────────────────────────────────────────────────────
+    if req.skewness < -0.5:
+        bear.append(f"Return skewness ({req.skewness:.3f}) is negatively skewed — downside tail risk is elevated")
+    elif req.skewness > 0.5:
+        bull.append(f"Return skewness ({req.skewness:.3f}) is positively skewed — upside tail risk dominates")
+
+    # ── Tally votes ──────────────────────────────────────────────────────
+    bull_score = sum(1 for x in bull if isinstance(x, str) and not x in ("zscore",)) + bull.count("zscore")
+    # Count actual signal strings (not tags)
+    bull_signals = [x for x in bull if not x == "zscore"] + ([f"Z-Score {req.zScore:.2f}σ bullish"] if "zscore" in bull else [])
+    bear_signals = [x for x in bear if not x == "zscore"] + ([f"Z-Score {req.zScore:.2f}σ bearish"] if "zscore" in bear else [])
+
+    bull_count = len([x for x in bull if isinstance(x, str)])
+    bear_count = len([x for x in bear if isinstance(x, str)])
+    mean_rev   = len(reversal) >= 1
+
+    if mean_rev and abs(req.zScore) >= 2.5:
+        verdict    = "MEAN_REVERSAL"
+        confidence = min(0.65 + abs(req.zScore) * 0.05, 0.95)
+        direction  = "LONG" if req.zScore <= -2.5 else "SHORT"
+        analysis = (
+            f"MEAN REVERSAL setup on {req.symbol}. "
+            + " ".join(f"{r}." for r in reversal)
+            + f" Dominant direction: {direction}. "
+            f"Tape: speed={req.tapeSpeed}, dominant={req.tapeDominant}. "
+            f"Wall context: {req.wallContext}. "
+            "Fade the extreme — enter counter-trend with tight risk."
+        )
+    elif bull_count > bear_count and bull_count >= 2:
+        verdict    = "BUY"
+        confidence = min(0.50 + bull_count * 0.08, 0.93)
+        all_bull   = [x for x in bull if isinstance(x, str)]
+        analysis = (
+            f"BUY signal on {req.symbol} @ {req.price:.2f}. "
+            + " ".join(f"{b.capitalize()}." for b in all_bull[:4])
+            + f" Tape speed: {req.tapeSpeed}, dominant side: {req.tapeDominant}. "
+            f"Wall context: {req.wallContext}. "
+            "All macro filters align — favour long entries on pullbacks to value."
+        )
+    elif bear_count > bull_count and bear_count >= 2:
+        verdict    = "SELL"
+        confidence = min(0.50 + bear_count * 0.08, 0.93)
+        all_bear   = [x for x in bear if isinstance(x, str)]
+        analysis = (
+            f"SELL signal on {req.symbol} @ {req.price:.2f}. "
+            + " ".join(f"{b.capitalize()}." for b in all_bear[:4])
+            + f" Tape speed: {req.tapeSpeed}, dominant side: {req.tapeDominant}. "
+            f"Wall context: {req.wallContext}. "
+            "Macro filters lean bearish — favour short entries at resistance or broken support."
+        )
+    else:
+        verdict    = "WAIT"
+        confidence = 0.40
+        mixed      = [x for x in bull + bear if isinstance(x, str)]
+        analysis = (
+            f"WAIT on {req.symbol} @ {req.price:.2f} — signals are conflicting or insufficient. "
+            + (f"Mixed readings: {'; '.join(mixed[:3])}." if mixed else "No dominant signal detected.")
+            + f" Tape speed: {req.tapeSpeed}. Wall context: {req.wallContext}. "
+            "Do not force a trade. Wait for Z-Score divergence, OFI confirmation, and Bayesian alignment."
+        )
+
+    return {
+        "verdict": verdict,
+        "confidence": round(confidence, 2),
+        "analysis": analysis,
+        "is_simulated": False,
+        "model_used": "quad-algo-v1",
+    }
 
 @app.get("/market-intelligence")
 async def get_market_intel(model: str = DEFAULT_MODEL):
@@ -430,40 +645,73 @@ class AlertEvaluateRequest(BaseModel):
 
 @app.post("/alerts/evaluate")
 async def alerts_evaluate(req: AlertEvaluateRequest):
-    """Evaluate whether conditions are met to fire an alert."""
-    score = 0
-    if abs(req.zScore) >= 2.0:
-        score += 1
-    if req.tacticalProbability >= 0.65:
-        score += 1
-    if req.aiScore >= 0.7:
-        score += 1
+    """
+    Deterministic alert evaluation engine.
+    Scores 3 independent conditions; fires alert when all 3 pass.
+    Computes ATR-based entry/stop/target and generates reasoning text.
+    """
+    passed   = []
+    failed   = []
+    z_abs    = abs(req.zScore)
 
+    if z_abs >= 2.0:
+        passed.append(f"Z-Score ({req.zScore:+.2f}σ) ≥ 2.0σ — statistically significant dislocation")
+    else:
+        failed.append(f"Z-Score ({req.zScore:+.2f}σ) < 2.0σ — insufficient dislocation")
+
+    if req.tacticalProbability >= 0.65:
+        passed.append(f"Tactical probability ({req.tacticalProbability:.2f}) ≥ 0.65 — high-confidence setup")
+    else:
+        failed.append(f"Tactical probability ({req.tacticalProbability:.2f}) < 0.65 — setup not mature")
+
+    if req.aiScore >= 0.7:
+        passed.append(f"Algorithmic score ({req.aiScore:.2f}) ≥ 0.70 — model consensus confirmed")
+    else:
+        failed.append(f"Algorithmic score ({req.aiScore:.2f}) < 0.70 — model score below threshold")
+
+    score        = len(passed)
     should_alert = score >= 3
 
-    ai_analysis = None
-    model_used_for_alert = None
-    if should_alert and GEMINI_API_KEY:
-        try:
-            prompt = (
-                f"Trading Alert Analysis for {req.symbol} at price {req.price}.\n"
-                f"Z-Score: {req.zScore:.3f}, AI Probability: {req.tacticalProbability:.2f}, AI Score: {req.aiScore:.2f}.\n"
-                "Based on these signals determine the best trade setup.\n"
-                'Output JSON: {"direction":"LONG|SHORT","confidence":0.0-1.0,"entry":num,"stop":num,"target":num,"reasoning":"str"}'
-            )
-            response_text, model_used_for_alert = await generate_with_fallback(req.model, prompt)
-            match = re.search(r'\{.*\}', response_text.replace('\n', ' '), re.DOTALL)
-            if match:
-                ai_analysis = json.loads(match.group(0))
-                ai_analysis["model_used"] = model_used_for_alert
-        except Exception as e:
-            logger.error(f"Alert AI analysis failed — all models exhausted: {e}")
+    algo_analysis = None
+    if should_alert:
+        # Direction: if z-score is negative → oversold → LONG; positive → overbought → SHORT
+        direction  = "LONG" if req.zScore < 0 else "SHORT"
+        # ATR estimate: use 0.8% of price as a conservative ATR proxy when no candles passed
+        atr_proxy  = req.price * 0.008
+        entry      = req.price
+        stop       = round(entry - atr_proxy * 1.5 if direction == "LONG" else entry + atr_proxy * 1.5, 4)
+        target     = round(entry + atr_proxy * 3.0 if direction == "LONG" else entry - atr_proxy * 3.0, 4)
+        rr         = round(abs(target - entry) / max(abs(entry - stop), 0.0001), 2)
+        confidence = round(min(0.55 + score * 0.12 + z_abs * 0.04, 0.95), 2)
+
+        reasoning = (
+            f"Alert conditions FULLY MET for {req.symbol} @ {entry:.2f}. "
+            + " ".join(f"{p}." for p in passed)
+            + f" Direction: {direction}. "
+            f"Entry: {entry:.2f}, Stop: {stop:.2f}, Target: {target:.2f} (R:R {rr}:1). "
+            f"Confidence: {confidence*100:.0f}%. Execute with defined risk only."
+        )
+
+        algo_analysis = {
+            "direction": direction,
+            "confidence": confidence,
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+            "reasoning": reasoning,
+            "model_used": "quad-algo-v1",
+        }
+    else:
+        logger.info(
+            f"Alert suppressed for {req.symbol}: {score}/3 conditions met. "
+            f"Failed: {'; '.join(failed)}"
+        )
 
     return {
         "shouldAlert": should_alert,
         "score": score,
         "passedConditions": score,
-        "aiAnalysis": ai_analysis
+        "aiAnalysis": algo_analysis,
     }
 
 

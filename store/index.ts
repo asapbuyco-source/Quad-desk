@@ -897,7 +897,7 @@ export const useStore = create<AppState>((set, get) => ({
                 confidenceFactors: {
                     biasAlignment: bullScore > 20 || bearScore > 20,
                     liquidityAgreement: state.liquidity.sweeps.length > 0,
-                    regimeAgreement: regimeType === 'TRENDING',
+                    regimeAgreement: regimeType !== 'UNCERTAIN',
                     aiScore: Math.min(prob / 100, 1)
                 }
             }

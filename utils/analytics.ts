@@ -176,7 +176,10 @@ export const analyzeRegime = (candles: CandleData[]): RegimeAnalysisResult => {
         type = 'MEAN_REVERTING';
     }
 
-    if ((candles[candles.length - 1].adx || 0) > 25) {
+    // ADX > 25 strongly confirms a trend, but only upgrade if we aren't already
+    // classifying a structural regime like EXPANDING or COMPRESSING.
+    const adxValue = candles[candles.length - 1].adx || 0;
+    if (adxValue > 25 && type !== 'EXPANDING' && type !== 'COMPRESSING') {
         type = 'TRENDING';
         trendDirection = isBull ? 'BULL' : 'BEAR';
     }

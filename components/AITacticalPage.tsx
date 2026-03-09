@@ -47,7 +47,8 @@ const AITacticalPage: React.FC = () => {
         icon = <TrendingDown size={48} />;
     }
 
-    const rrRatio = Math.abs(exitLevel - entryLevel) / Math.abs(entryLevel - stopLevel);
+    const stopDist = Math.abs(entryLevel - stopLevel);
+    const rrRatio = stopDist > 0 ? Math.abs(exitLevel - entryLevel) / stopDist : 0;
 
     return (
         <motion.div
