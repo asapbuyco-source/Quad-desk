@@ -19,6 +19,7 @@ import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine';
 import DarkPoolDiscovery from './components/DarkPoolDiscovery';
 import SentinelEdgePage from './components/SentinelEdgePage';
+import ULISView from './components/ULISView';
 import { ToastContainer } from './components/Toast';
 import { API_BASE_URL } from './constants';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -313,6 +314,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'intel' && <IntelView />}
                                 {ui.activeTab === 'guide' && <GuideView />}
                                 {ui.activeTab === 'dark-pool' && <DarkPoolDiscovery />}
+                                {ui.activeTab === 'ulis' && <ULISView />}
                             </main>
                         </div>
                     </motion.div>

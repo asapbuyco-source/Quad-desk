@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart, BookOpen, Layers, Droplets, Activity, BrainCircuit, Mountain, Zap, Bot, Eye, Crosshair } from 'lucide-react';
+import { LayoutGrid, BarChart2, Radio, Hexagon, Settings, Wallet, CandlestickChart, BookOpen, Layers, Droplets, Activity, BrainCircuit, Mountain, Zap, Bot, Eye, Crosshair, Globe2 } from 'lucide-react';
 
 interface NavBarProps {
   activeTab: string;
@@ -18,6 +18,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'regime', icon: Activity, label: 'Regime' },
     { id: 'sentinel', icon: Crosshair, label: 'Sentinel Edge' },
     { id: 'macro-strategy', icon: Zap, label: 'Macro' },
+    { id: 'ulis', icon: Globe2, label: 'ULIS' },
     { id: 'bot-control', icon: Bot, label: 'Bot' },
     { id: 'ai-tactical', icon: BrainCircuit, label: 'Tactical' },
     { id: 'analytics', icon: BarChart2, label: 'Data' },

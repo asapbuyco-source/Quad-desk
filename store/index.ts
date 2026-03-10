@@ -634,31 +634,142 @@ export const useStore = create<AppState>((set, get) => ({
 
     fetchOrderFlowAnalysis: async (payload) => {
         set(state => ({ ai: { ...state.ai, orderFlowAnalysis: { ...state.ai.orderFlowAnalysis, isLoading: true } } }));
-        try {
-            const res = await fetch(`${API_BASE_URL}/analyze/flow`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...payload, model: get().config.aiModel })
-            });
-            if (res.ok) {
-                const analysis = await res.json();
-                set(state => ({
-                    ai: {
-                        ...state.ai,
-                        orderFlowAnalysis: {
-                            isLoading: false,
-                            verdict: analysis.verdict,
-                            confidence: analysis.confidence,
-                            explanation: analysis.explanation,
-                            flowType: analysis.flow_type,
-                            timestamp: Date.now()
-                        }
-                    }
-                }));
-            }
-        } catch (e) {
-            set(state => ({ ai: { ...state.ai, orderFlowAnalysis: { ...state.ai.orderFlowAnalysis, isLoading: false } } }));
+
+        // ── Deterministic Order Flow Analysis Engine ─────────────────────────
+        // Simulates 150ms processing delay for UX realism
+        await new Promise(r => setTimeout(r, 150));
+
+        const { netDelta, totalVolume, pocPrice, cvdTrend, candleCount, price, symbol } = payload;
+
+        // ── Factor 1: Delta/Volume ratio (absorption detection) ──────────────
+        // If large volume but low delta → hidden absorption (contra-directional)
+        const dvRatio = totalVolume > 0 ? Math.abs(netDelta) / totalVolume : 0;
+        // dvRatio < 0.2 = high absorption, > 0.5 = aggressive directional
+        const isAbsorption = dvRatio < 0.2 && totalVolume > 0;
+        const isAggressive = dvRatio > 0.5;
+
+        // ── Factor 2: Net Delta direction and magnitude ──────────────────────
+        const deltaDir = netDelta > 0 ? 'BULL' : netDelta < 0 ? 'BEAR' : 'NEUTRAL';
+        const deltaStrong = Math.abs(netDelta) > totalVolume * 0.3;
+
+        // ── Factor 3: CVD trend direction ────────────────────────────────────
+        const cvdBull = cvdTrend === 'UP';
+        const cvdBear = cvdTrend === 'DOWN';
+        const cvdFlat = cvdTrend === 'FLAT';
+
+        // ── Factor 4: Price vs POC (mean-reversion setup) ────────────────────
+        const pocPct = pocPrice > 0 ? ((price - pocPrice) / pocPrice) * 100 : 0;
+        const abovePOC = pocPct > 0.05;  // price stretched above POC
+        const belowPOC = pocPct < -0.05; // price stretched below POC
+        const atPOC = !abovePOC && !belowPOC;
+
+        // ── Composite scoring ────────────────────────────────────────────────
+        let bullScore = 0;
+        let bearScore = 0;
+
+        // Delta direction (primary signal)
+        if (deltaDir === 'BULL') bullScore += deltaStrong ? 30 : 15;
+        else if (deltaDir === 'BEAR') bearScore += deltaStrong ? 30 : 15;
+
+        // CVD momentum
+        if (cvdBull) bullScore += 25;
+        else if (cvdBear) bearScore += 25;
+
+        // Absorption context — flips interpretation
+        if (isAbsorption) {
+            // High volume, low net delta = hidden contra-directional pressure
+            if (abovePOC) bearScore += 20; // absorbing sells above POC = bearish
+            if (belowPOC) bullScore += 20; // absorbing buys below POC = bullish
         }
+
+        // Aggressive flow reinforces trend
+        if (isAggressive && cvdBull && deltaDir === 'BULL') bullScore += 15;
+        if (isAggressive && cvdBear && deltaDir === 'BEAR') bearScore += 15;
+
+        // POC gravity — price above POC in a bull run adds confidence; below in bear adds confidence
+        if (abovePOC && cvdBull) bullScore += 10;
+        if (belowPOC && cvdBear) bearScore += 10;
+        // Price far from POC with contra-delta = mean reversion signal
+        if (abovePOC && deltaDir === 'BEAR') bearScore += 15;
+        if (belowPOC && deltaDir === 'BULL') bullScore += 15;
+
+        const totalScore = bullScore + bearScore;
+        const edge = Math.abs(bullScore - bearScore);
+        const minEdge = 15;
+
+        let rawVerdict: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+        if (bullScore > bearScore && edge >= minEdge) rawVerdict = 'BULLISH';
+        else if (bearScore > bullScore && edge >= minEdge) rawVerdict = 'BEARISH';
+
+        const confidence = totalScore > 0 ? Math.min(0.5 + (edge / totalScore) * 0.45, 0.97) : 0.5;
+
+        // ── Flow type classification ──────────────────────────────────────────
+        let flowType = 'MIXED';
+        if (isAbsorption) flowType = 'ABSORPTION';
+        else if (isAggressive && !cvdFlat) flowType = 'AGGRESSIVE';
+        else if (cvdFlat && atPOC) flowType = 'CONSOLIDATION';
+        else if (cvdBull || cvdBear) flowType = 'MOMENTUM';
+
+        // ── Natural-language explanation (AI-grade quality) ──────────────────
+        const deltaFmt = (netDelta > 0 ? '+' : '') + Math.round(netDelta).toLocaleString();
+        const volFmt = Math.round(totalVolume).toLocaleString();
+        const pocFmt = pocPrice.toFixed(2);
+        const priceFmt = price.toFixed(2);
+        const pocPctFmt = (pocPct > 0 ? '+' : '') + pocPct.toFixed(2) + '%';
+
+        const lines: string[] = [];
+
+        // Opening — what the data shows
+        if (rawVerdict === 'BULLISH') {
+            lines.push(`📈 Order flow is net bullish for ${symbol}. Net delta is ${deltaFmt} over ${candleCount} candles with ${volFmt} total volume — buyers are in control.`);
+        } else if (rawVerdict === 'BEARISH') {
+            lines.push(`📉 Order flow is net bearish for ${symbol}. Net delta is ${deltaFmt} over ${candleCount} candles with ${volFmt} total volume — sellers are dominating aggressor activity.`);
+        } else {
+            lines.push(`⚖️ Order flow for ${symbol} is balanced. Net delta of ${deltaFmt} relative to ${volFmt} total volume indicates no clear directional conviction at this time.`);
+        }
+
+        // CVD trend context
+        if (cvdBull) lines.push(`The Cumulative Volume Delta (CVD) is trending up, confirming that buyers have been the consistent aggressor across the session.`);
+        else if (cvdBear) lines.push(`The CVD trend is declining, confirming persistent sell-side aggression. This is not a single-candle spike — it represents sustained directional pressure.`);
+        else lines.push(`CVD is flat (${cvdTrend}), indicating that buying and selling aggression have been roughly offsetting. No momentum edge from CVD.`);
+
+        // Absorption analysis
+        if (isAbsorption) {
+            lines.push(`⚠️ High-volume absorption is detected (D/V ratio: ${dvRatio.toFixed(2)}). Large volume is trading without producing proportional delta — this signals hidden ${rawVerdict === 'BULLISH' ? 'buying demand absorbing offers' : 'selling pressure absorbing bids'}. This is often seen at inflection points.`);
+        } else if (isAggressive) {
+            lines.push(`Flow aggression is high (D/V ratio: ${dvRatio.toFixed(2)}). Initiators are hitting ${deltaDir === 'BULL' ? 'asks aggressively — urgency is present on the buy side' : 'bids aggressively — urgency is present on the sell side'}.`);
+        }
+
+        // POC context
+        if (atPOC) {
+            lines.push(`Price (${priceFmt}) is near the Point of Control (${pocFmt}), the highest-volume price node. This is a decision zone — expect either rejection or a breakout with volume confirmation.`);
+        } else if (abovePOC) {
+            lines.push(`Price is ${pocPctFmt} above the POC (${pocFmt}). ${rawVerdict === 'BULLISH' ? 'Buyers are accepting value above POC, suggesting confidence in new highs.' : 'Despite being above POC, sell-side pressure is building — a reversion back to POC at ' + pocFmt + ' is plausible.'}`);
+        } else {
+            lines.push(`Price is ${pocPctFmt} below the POC (${pocFmt}). ${rawVerdict === 'BEARISH' ? 'Sellers are accepting lower value, suggesting a structural shift lower.' : 'Price is below POC but buy-side flow is strengthening — a snapback to POC (' + pocFmt + ') is the primary target.'}`);
+        }
+
+        // Conclusion
+        lines.push(`\nVerdict: ${rawVerdict} | Confidence: ${(confidence * 100).toFixed(0)}% | Flow: ${flowType}`);
+        if (rawVerdict === 'BULLISH') lines.push(`Watch for: sustained CVD expansion, price acceptance above ${pocFmt}, and OFI > +10 as confirmation. Invalidated if CVD rolls over and delta goes negative.`);
+        else if (rawVerdict === 'BEARISH') lines.push(`Watch for: CVD continuation down, price rejection at ${pocFmt}, and OFI < -10. Invalidated if buyers step in and delta turns strongly positive.`);
+        else lines.push(`Remain patient. Wait for a clear delta directional break combined with CVD trend confirmation before committing to a directional bias.`);
+
+        const explanation = lines.join('\n\n');
+
+        set(state => ({
+            ai: {
+                ...state.ai,
+                orderFlowAnalysis: {
+                    isLoading: false,
+                    verdict: rawVerdict,
+                    confidence,
+                    explanation,
+                    flowType,
+                    timestamp: Date.now()
+                }
+            }
+        }));
     },
 
     setUser: (user) => set(state => ({ auth: { ...state.auth, user } })),
@@ -753,9 +864,23 @@ export const useStore = create<AppState>((set, get) => ({
             const sma = closes.length > 0 ? (closes.reduce((a, b) => a + b, 0) / closes.length) : 0;
             const current = closes.length > 0 ? (closes[closes.length - 1] ?? 0) : 0;
 
+            // CVD direction within this window (cumulative delta)
+            let windowCvdDelta = 0;
+            const midIndex = Math.floor(slice.length / 2);
+            for (let i = midIndex; i < slice.length; i++) {
+                windowCvdDelta += (slice[i].delta || 0);
+            }
+
+            // 3-factor scoring: price vs SMA (structural), RSI (momentum), CVD delta (flow)
+            let bullFactors = 0;
+            let bearFactors = 0;
+            if (current > sma) bullFactors++; else if (current < sma) bearFactors++;
+            if (rsi > 55) bullFactors++; else if (rsi < 45) bearFactors++;
+            if (windowCvdDelta > 0) bullFactors++; else if (windowCvdDelta < 0) bearFactors++;
+
             let bias: BiasType = 'NEUTRAL';
-            if (current > sma && rsi > 55) bias = 'BULL';
-            else if (current < sma && rsi < 45) bias = 'BEAR';
+            if (bullFactors >= 2) bias = 'BULL';
+            else if (bearFactors >= 2) bias = 'BEAR';
 
             return {
                 bias,
@@ -763,6 +888,7 @@ export const useStore = create<AppState>((set, get) => ({
                 lastUpdated: Date.now()
             };
         };
+
 
         set(state => {
             const updatedBiasMatrix: BiasMatrixState = {
@@ -894,44 +1020,96 @@ export const useStore = create<AppState>((set, get) => ({
     }),
     refreshTacticalAnalysis: () => set(state => {
         const matrix = state.biasMatrix;
-        const regimeType = state.regime.regimeType;
-        const trendDir = state.regime.trendDirection;
-        const ofi = state.market.metrics.ofi;
+        const regime = state.regime;
+        const metrics = state.market.metrics;
 
-        let prob = 50;
-        let scenario: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+        // ── Pull all signals ──────────────────────────────────────────────────
+        const ofi = metrics.ofi || 0;
+        const zScore = metrics.zScore || 0;
+        const bayes = metrics.bayesianPosterior || 0.5;
+        const cvd = metrics.institutionalCVD || 0;
+        const skewness = metrics.skewness || 0;
+        const regimeType = regime.regimeType;
+        const trendDir = regime.trendDirection;
+        const price = metrics.price;
+        const atr = regime.atr || price * 0.005;
 
-        // Algorithmic Confluence Scoring
+        // ── Multi-factor Bull/Bear scoring (max 100 points each side) ─────────
         let bullScore = 0;
-        if (matrix.daily?.bias === 'BULL') bullScore += 10;
-        if (matrix.h4?.bias === 'BULL') bullScore += 10;
-        if (matrix.h1?.bias === 'BULL') bullScore += 10;
-        if (regimeType === 'TRENDING' && trendDir === 'BULL') bullScore += 30;
-        if (ofi > 20) bullScore += 20;
-
         let bearScore = 0;
-        if (matrix.daily?.bias === 'BEAR') bearScore += 10;
-        if (matrix.h4?.bias === 'BEAR') bearScore += 10;
-        if (matrix.h1?.bias === 'BEAR') bearScore += 10;
-        if (regimeType === 'TRENDING' && trendDir === 'BEAR') bearScore += 30;
-        if (ofi < -20) bearScore += 20;
 
-        // Liquidity sweep cross-scoring (both vars declared above)
-        // A BUY-side sweep (wick above swing high, close back inside) = bearish reversal signal
-        if (state.liquidity.sweeps.some((s: any) => s.side === 'BUY')) bearScore += 15;
-        // A SELL-side sweep (wick below swing low, close back inside) = bullish reversal signal
-        if (state.liquidity.sweeps.some((s: any) => s.side === 'SELL')) bullScore += 15;
+        // Timeframe bias alignment (daily=20, H4=15, H1=10, M5=5)
+        if (matrix.daily?.bias === 'BULL') bullScore += 20; else if (matrix.daily?.bias === 'BEAR') bearScore += 20;
+        if (matrix.h4?.bias === 'BULL') bullScore += 15; else if (matrix.h4?.bias === 'BEAR') bearScore += 15;
+        if (matrix.h1?.bias === 'BULL') bullScore += 10; else if (matrix.h1?.bias === 'BEAR') bearScore += 10;
+        if (matrix.m5?.bias === 'BULL') bullScore += 5; else if (matrix.m5?.bias === 'BEAR') bearScore += 5;
 
-        if (bullScore > bearScore) {
-            prob = 50 + (bullScore / 2);
-            scenario = 'BULLISH';
-        } else if (bearScore > bullScore) {
-            prob = 50 + (bearScore / 2);
-            scenario = 'BEARISH';
+        // Regime (trend alignment = high conviction)
+        if (regimeType === 'TRENDING' && trendDir === 'BULL') bullScore += 20;
+        else if (regimeType === 'TRENDING' && trendDir === 'BEAR') bearScore += 20;
+        else if (regimeType === 'MEAN_REVERTING') {
+            // Mean reversion: strong z-score drives the opposite direction signal
+            if (zScore > 2.0) bearScore += 15;
+            else if (zScore < -2.0) bullScore += 15;
         }
 
-        const currentPrice = state.market.metrics.price;
-        const atr = state.regime.atr || currentPrice * 0.005;
+        // OFI (normalised: >15 = meaningful, >30 = strong)
+        if (ofi > 15) bullScore += Math.min(15, Math.round(ofi / 3));
+        else if (ofi < -15) bearScore += Math.min(15, Math.round(-ofi / 3));
+
+        // Bayesian posterior (>0.6 = bull conviction, <0.4 = bear)
+        if (bayes > 0.65) bullScore += 15;
+        else if (bayes > 0.55) bullScore += 8;
+        else if (bayes < 0.35) bearScore += 15;
+        else if (bayes < 0.45) bearScore += 8;
+
+        // CVD direction
+        if (cvd > 50000) bullScore += 10;
+        else if (cvd > 20000) bullScore += 5;
+        else if (cvd < -50000) bearScore += 10;
+        else if (cvd < -20000) bearScore += 5;
+
+        // Z-Score extreme (mean reversion signal, lower weight when trending)
+        const zWeight = regimeType === 'TRENDING' ? 4 : 8;
+        if (zScore > 2.0) bearScore += zWeight;  // overbought → bearish
+        else if (zScore < -2.0) bullScore += zWeight; // oversold → bullish
+
+        // Skewness (negative skew = downside distribution = bearish)
+        if (skewness < -0.5) bearScore += 6;
+        else if (skewness > 0.5) bullScore += 6;
+
+        // Liquidity sweep cross-scoring
+        // BUY sweep (highs taken, close back below = BEARISH reversal)
+        if (state.liquidity.sweeps.some((s: any) => s.side === 'BUY')) bearScore += 10;
+        // SELL sweep (lows taken, close back above = BULLISH reversal)
+        if (state.liquidity.sweeps.some((s: any) => s.side === 'SELL')) bullScore += 10;
+
+        // BOS alignment boosts
+        const latestBOS = state.liquidity.bos?.[state.liquidity.bos.length - 1];
+        if (latestBOS?.direction === 'BULLISH') bullScore += 8;
+        else if (latestBOS?.direction === 'BEARISH') bearScore += 8;
+
+        // ── Determine dominant scenario ──────────────────────────────────────
+        let scenario: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+        const edge = Math.abs(bullScore - bearScore);
+
+        if (bullScore > bearScore && edge >= 10) scenario = 'BULLISH';
+        else if (bearScore > bullScore && edge >= 10) scenario = 'BEARISH';
+
+        // ── Probability calculation ──────────────────────────────────────────
+        // Map dominant score (0→100) to probability range 50→95
+        const maxPossible = 124; // maximum achievable score with all factors
+        const dominantScore = Math.max(bullScore, bearScore);
+        const edgeRatio = Math.min(dominantScore / maxPossible, 1);
+        // Scale to 50–95 range (no system should claim >95% certainty)
+        const prob = scenario === 'NEUTRAL' ? 50 : Math.round(50 + edgeRatio * 45);
+
+        // ── Fragility-adjusted R:R ───────────────────────────────────────────
+        // High fragility = wider stops needed (less favourable R:R)
+        const zAbs = Math.abs(zScore);
+        const fragilityFactor = 1 + Math.min(zAbs / 3, 0.5); // 1.0→1.5
+        const slMult = 1.5 * fragilityFactor;
+        const tpMult = slMult * (prob > 75 ? 3 : prob > 60 ? 2.5 : 2); // TP scales with conviction
 
         return {
             aiTactical: {
@@ -940,14 +1118,18 @@ export const useStore = create<AppState>((set, get) => ({
                 lastUpdated: Date.now(),
                 probability: Math.min(prob, 95),
                 scenario,
-                entryLevel: currentPrice,
-                stopLevel: scenario === 'BULLISH' ? currentPrice - (atr * 1.5) : currentPrice + (atr * 1.5),
-                exitLevel: scenario === 'BULLISH' ? currentPrice + (atr * 3) : currentPrice - (atr * 3),
+                entryLevel: price,
+                stopLevel: scenario === 'BULLISH'
+                    ? price - (atr * slMult)
+                    : price + (atr * slMult),
+                exitLevel: scenario === 'BULLISH'
+                    ? price + (atr * tpMult)
+                    : price - (atr * tpMult),
                 confidenceFactors: {
-                    biasAlignment: bullScore > 20 || bearScore > 20,
+                    biasAlignment: (bullScore >= 30 || bearScore >= 30),
                     liquidityAgreement: state.liquidity.sweeps.length > 0,
                     regimeAgreement: regimeType !== 'UNCERTAIN',
-                    aiScore: Math.min(prob / 100, 1)
+                    aiScore: Math.min(edgeRatio, 1)
                 }
             }
         };
@@ -955,32 +1137,113 @@ export const useStore = create<AppState>((set, get) => ({
 
     fetchMacroStrategyAnalysis: async (payload) => {
         set(state => ({ macroStrategy: { ...state.macroStrategy, isLoading: true } }));
-        try {
-            const res = await fetch(`${API_BASE_URL}/analyze/strategy`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...payload, model: get().config.aiModel })
-            });
-            if (res.ok) {
-                const analysis = await res.json();
-                set(state => ({
-                    macroStrategy: {
-                        ...state.macroStrategy,
-                        isLoading: false,
-                        aiResult: {
-                            verdict: analysis.verdict,
-                            confidence: analysis.confidence,
-                            analysis: analysis.analysis
-                        },
-                        lastUpdated: Date.now()
-                    }
-                }));
-            } else {
-                set(state => ({ macroStrategy: { ...state.macroStrategy, isLoading: false } }));
-            }
-        } catch (e) {
-            set(state => ({ macroStrategy: { ...state.macroStrategy, isLoading: false } }));
+
+        // ── Deterministic Macro Strategy Engine ─────────────────────────────
+        // 150ms processing delay for UX realism
+        await new Promise(r => setTimeout(r, 150));
+
+        const { symbol, price, skewness, bayesianPosterior, zScore, rsi, ofi, cvd, tapeSpeed, tapeDominant, wallContext } = payload;
+
+        // ── Factor scoring ───────────────────────────────────────────────────
+        let bullScore = 0;
+        let bearScore = 0;
+        const signals: string[] = [];
+
+        // 1. Bayesian Posterior P(Bull|Evidence) — strongest signal
+        if (bayesianPosterior > 0.65) { bullScore += 25; signals.push(`Bayesian P(Bull)=${(bayesianPosterior * 100).toFixed(1)}% — strong upside evidence`); }
+        else if (bayesianPosterior > 0.55) { bullScore += 12; signals.push(`Bayesian P(Bull)=${(bayesianPosterior * 100).toFixed(1)}% — mild bullish lean`); }
+        else if (bayesianPosterior < 0.35) { bearScore += 25; signals.push(`Bayesian P(Bull)=${(bayesianPosterior * 100).toFixed(1)}% — strong downside evidence`); }
+        else if (bayesianPosterior < 0.45) { bearScore += 12; signals.push(`Bayesian P(Bull)=${(bayesianPosterior * 100).toFixed(1)}% — mild bearish lean`); }
+        else signals.push(`Bayesian is neutral (${(bayesianPosterior * 100).toFixed(1)}%)`);
+
+        // 2. OFI — real-time flow pressure
+        if (ofi > 25) { bullScore += 20; signals.push(`OFI=${ofi.toFixed(1)} — strong buy-side depth imbalance`); }
+        else if (ofi > 10) { bullScore += 10; signals.push(`OFI=${ofi.toFixed(1)} — mild buy pressure`); }
+        else if (ofi < -25) { bearScore += 20; signals.push(`OFI=${ofi.toFixed(1)} — strong sell-side depth imbalance`); }
+        else if (ofi < -10) { bearScore += 10; signals.push(`OFI=${ofi.toFixed(1)} — mild sell pressure`); }
+        else signals.push(`OFI=${ofi.toFixed(1)} — balanced order book`);
+
+        // 3. CVD — session-level aggressed flow
+        if (cvd > 50000) { bullScore += 15; signals.push(`CVD=${Math.round(cvd).toLocaleString()} — institutional buyer dominance`); }
+        else if (cvd > 10000) { bullScore += 7; signals.push(`CVD=${Math.round(cvd).toLocaleString()} — slight buy aggression`); }
+        else if (cvd < -50000) { bearScore += 15; signals.push(`CVD=${Math.round(cvd).toLocaleString()} — institutional seller dominance`); }
+        else if (cvd < -10000) { bearScore += 7; signals.push(`CVD=${Math.round(cvd).toLocaleString()} — slight sell aggression`); }
+        else signals.push(`CVD=${Math.round(cvd).toLocaleString()} — balanced`);
+
+        // 4. Z-Score (mean-reversion vs trend context)
+        // |Z| > 2.5 = sentiment wash (MEAN_REVERSAL candidate)
+        const isMeanReversal = Math.abs(zScore) >= 2.5;
+        if (zScore > 2.5) { bearScore += 20; signals.push(`Z-Score=${zScore.toFixed(2)} — extreme overbought, mean-reversion risk`); }
+        else if (zScore > 1.0) { bullScore += 10; signals.push(`Z-Score=${zScore.toFixed(2)} — above VWAP, trending bullish`); }
+        else if (zScore < -2.5) { bullScore += 20; signals.push(`Z-Score=${zScore.toFixed(2)} — extreme oversold, snap-back potential`); }
+        else if (zScore < -1.0) { bearScore += 10; signals.push(`Z-Score=${zScore.toFixed(2)} — below VWAP, trending bearish`); }
+        else signals.push(`Z-Score=${zScore.toFixed(2)} — near VWAP, neutral zone`);
+
+        // 5. Skewness — tail risk direction
+        if (skewness < -0.3) { bearScore += 12; signals.push(`Skewness=${skewness.toFixed(3)} — negative tail: downside risk skewed`); }
+        else if (skewness < -0.1) { bearScore += 5; signals.push(`Mild negative skewness (${skewness.toFixed(3)})`); }
+        else if (skewness > 0.3) { bullScore += 12; signals.push(`Skewness=${skewness.toFixed(3)} — positive tail: upside potential skewed`); }
+        else if (skewness > 0.1) { bullScore += 5; signals.push(`Mild positive skewness (${skewness.toFixed(3)})`); }
+        else signals.push(`Skewness ~0 — symmetric return distribution`);
+
+        // 6. RSI (sentiment oscillator)
+        if (rsi < 30) { bullScore += 10; signals.push(`RSI=${Math.round(rsi)} — capitulation zone (high mean-reversion probability)`); }
+        else if (rsi >= 55 && rsi < 70) { bullScore += 8; signals.push(`RSI=${Math.round(rsi)} — healthy bullish momentum`); }
+        else if (rsi >= 70) { bearScore += 10; signals.push(`RSI=${Math.round(rsi)} — overbought — exhaustion risk`); }
+        else if (rsi < 45) { bearScore += 8; signals.push(`RSI=${Math.round(rsi)} — bearish momentum reset`); }
+        else signals.push(`RSI=${Math.round(rsi)} — neutral (45–55 band)`);
+
+        // 7. Tape speed + LOB walls (microstructure)
+        if (tapeSpeed === 'SCREAMING') {
+            if (tapeDominant === 'BUY (ASK HIT)') { bullScore += 10; signals.push(`Tape SCREAMING — aggressive buy side hitting asks`); }
+            else if (tapeDominant === 'SELL (BID HIT)') { bearScore += 10; signals.push(`Tape SCREAMING — aggressive sell side hitting bids`); }
+            else signals.push(`Tape SCREAMING but balanced — potential delta divergence`);
         }
+
+        // ── Verdict routing ──────────────────────────────────────────────────
+        const totalScore = bullScore + bearScore;
+        const dominantEdge = Math.abs(bullScore - bearScore);
+        const confidence = totalScore > 0 ? Math.min(0.50 + (dominantEdge / totalScore) * 0.45, 0.97) : 0.50;
+
+        let verdict: string;
+        if (isMeanReversal && dominantEdge < 15) {
+            verdict = 'MEAN_REVERSAL';
+        } else if (bullScore > bearScore && dominantEdge >= 12) {
+            verdict = 'BUY';
+        } else if (bearScore > bullScore && dominantEdge >= 12) {
+            verdict = 'SELL';
+        } else {
+            verdict = 'NEUTRAL';
+        }
+
+        // ── Generate analysis text ────────────────────────────────────────────
+        const priceStr = price.toFixed(2);
+        const confPct = (confidence * 100).toFixed(0);
+
+        let opening = '';
+        if (verdict === 'BUY') opening = `📈 Macro strategy for ${symbol} at ${priceStr} is BULLISH (${confPct}% confidence). The statistical and microstructure evidence aligns to the upside. Asset is showing directional bias with multiple confirming factors.`;
+        else if (verdict === 'SELL') opening = `📉 Macro strategy for ${symbol} at ${priceStr} is BEARISH (${confPct}% confidence). Multiple quantitative filters are negatively aligned — risk is tilted to the downside.`;
+        else if (verdict === 'MEAN_REVERSAL') opening = `🔄 Macro strategy for ${symbol} at ${priceStr} signals a MEAN REVERSAL (${confPct}% confidence). Price has stretched significantly from statistical fair value (Z-Score: ${zScore.toFixed(2)}), and conflicting flows suggest an imminent snap-back.`;
+        else opening = `⚖️ Macro strategy for ${symbol} at ${priceStr} is NEUTRAL (${confPct}% confidence). Signals are mixed or below threshold — no high-conviction directional edge is present at this time.`;
+
+        const signalBlock = signals.slice(0, 6).map((s, i) => `${i + 1}. ${s}`).join('\n');
+
+        let conclusion = '';
+        if (verdict === 'BUY') conclusion = `Bias is LONG. Monitor for OFI remaining positive and CVD expansion. Invalidated if Z-Score crosses above +2.5 (sentiment wash) or Bayesian drops below 0.50.`;
+        else if (verdict === 'SELL') conclusion = `Bias is SHORT. Watch for CVD acceleration to the downside. Position invalidation: Bayesian rises above 0.55 or OFI flips positive with tape buying.`;
+        else if (verdict === 'MEAN_REVERSAL') conclusion = `Do NOT chase the trend at this extension. Wait for a close back toward the VWAP baseline or a delta reversal print. ${zScore > 0 ? 'Target: reversion to VWAP and potential flip to short if Bayesian collapses.' : 'Target: snap-back toward VWAP. Watch for positive delta as buyers absorb the sell pressure.'}`;
+        else conclusion = `Await a Bayesian directional break (>0.60 or <0.40), OFI exceeding ±15, and Z-Score trending away from 0 before committing to a trade.`;
+
+        const analysis = `${opening}\n\nActive Signals:\n${signalBlock}\n\nWall Context: ${wallContext}\n\n${conclusion}`;
+
+        set(state => ({
+            macroStrategy: {
+                ...state.macroStrategy,
+                isLoading: false,
+                aiResult: { verdict, confidence, analysis },
+                lastUpdated: Date.now()
+            }
+        }));
     },
 
     addNotification: (toast) => set(state => ({ notifications: [...state.notifications, toast] })),

@@ -99,16 +99,26 @@ const SentinelEdgePage: React.FC = () => {
             return {
                 status: 'WAIT_TRIGGER',
                 title: `${trapDirection} SWEEP DETECTED. WAITING FOR OFI.`,
-                desc: `Sweep at ${recentSweep.price}. Target OFI: ${trapDirection === 'BULLISH' ? '> +10' : '< -10'}. Current: ${ofi.toFixed(1)}`,
+                desc: `Sweep at ${recentSweep.price.toFixed(2)}. Need OFI ${trapDirection === 'BULLISH' ? '> +10' : '< -10'}. Current: ${ofi.toFixed(1)}. Z-Score: ${zScore.toFixed(2)} (target ${trapDirection === 'BULLISH' ? '< -1.5' : '> +1.5'}).`,
                 color: trapDirection === 'BULLISH' ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30' : 'text-rose-400 bg-rose-400/10 border-rose-400/30'
             };
         }
 
-        // All conditions met
+        // OFI confirmed — now require z-score to confirm mean-reversion stretch
+        if (!zScoreConditionMet) {
+            return {
+                status: 'WAIT_ZSCORE',
+                title: `OFI CONFIRMED. AWAIT Z-SCORE STRETCH.`,
+                desc: `Price needs to stretch further from mean (target Z-Score ${trapDirection === 'BULLISH' ? '< -1.5' : '> +1.5'}). Current: ${zScore.toFixed(2)}. OFI: ${ofi.toFixed(1)} ✓`,
+                color: trapDirection === 'BULLISH' ? 'text-sky-400 bg-sky-400/10 border-sky-400/30' : 'text-orange-400 bg-orange-400/10 border-orange-400/30'
+            };
+        }
+
+        // All 3 conditions met: Regime + OFI + Z-Score
         return {
             status: 'EXECUTE',
             title: `EXECUTE ${trapDirection === 'BULLISH' ? 'LONG' : 'SHORT'}`,
-            desc: `Setup Confirmed. Entry ~${metrics.price}. SL: ${recentSweep.price} (Sweep Extreme). Focus on VWAP for TP1.`,
+            desc: `All conditions confirmed. Entry ~${metrics.price?.toFixed?.(2) ?? 'N/A'}. SL: ${recentSweep.price.toFixed(2)} (Sweep Extreme). OFI: ${ofi.toFixed(1)} | Z-Score: ${zScore.toFixed(2)}. Focus on VWAP for TP1.`,
             color: trapDirection === 'BULLISH' ? 'text-emerald-400 bg-emerald-400/20 border-emerald-400 font-bold shadow-[0_0_30px_rgba(52,211,153,0.3)]' : 'text-rose-400 bg-rose-400/20 border-rose-400 font-bold shadow-[0_0_30px_rgba(244,63,94,0.3)]'
         };
     };
