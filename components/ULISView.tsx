@@ -1135,7 +1135,7 @@ const ULISView: React.FC = () => {
                     <div className="w-full h-[220px]">
                         <MasterHeatmapCanvas
                             price={price}
-                            levels={levels}
+                            levels={levels.map((l: any) => ({ price: l.price, size: l.size ?? 1 }))}
                             asks={asks}
                             bids={bids}
                             reflexivity={scores.reflexivityScore}
