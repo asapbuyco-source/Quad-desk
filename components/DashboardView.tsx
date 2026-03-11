@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import OrderBook from './OrderBook';
 import TradeTape from './TradeTape';
@@ -30,7 +31,7 @@ const DashboardView: React.FC = () => {
   const { scanResult } = useStore(state => state.ai);
 
   return (
-    <motion.div 
+    <motion.div
       variants={container}
       initial="hidden"
       animate="show"
@@ -38,28 +39,28 @@ const DashboardView: React.FC = () => {
     >
       {/* Top Row: Metrics Overview */}
       <motion.div variants={item} className="order-1 lg:col-span-12 lg:row-span-4 shrink-0">
-         <OrderFlowMetrics metrics={metrics} />
+        <OrderFlowMetrics metrics={metrics} />
       </motion.div>
 
       {/* Bottom Left: Order Flow Engine (Book + Trades) */}
-      <motion.div variants={item} className="order-2 lg:col-span-8 lg:row-span-8 h-[500px] lg:h-full shrink-0 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-4">
+      <motion.div variants={item} className="order-2 lg:col-span-8 lg:row-span-8 min-h-[400px] lg:h-full shrink-0 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="h-full min-h-0">
-            <OrderBook asks={asks} bids={bids} />
+          <OrderBook asks={asks} bids={bids} />
         </div>
         <div className="h-full min-h-0 hidden md:block">
-            <TradeTape trades={recentTrades} />
+          <TradeTape trades={recentTrades} />
         </div>
       </motion.div>
 
       {/* Bottom Right: Sentinel & System Status */}
-      <motion.div variants={item} className="order-3 lg:col-span-4 lg:row-span-8 h-auto lg:h-full shrink-0 flex flex-col gap-6">
+      <motion.div variants={item} className="order-3 lg:col-span-4 lg:row-span-8 min-h-[300px] lg:h-full shrink-0 flex flex-col gap-4">
         <div className="flex-1 min-h-0 h-full">
-             <SentinelPanel 
-                checklist={CHECKLIST_ITEMS} 
-                aiScanResult={scanResult} 
-                heatmap={metrics.heatmap}
-                currentRegime={metrics.regime}
-             />
+          <SentinelPanel
+            checklist={CHECKLIST_ITEMS}
+            aiScanResult={scanResult}
+            heatmap={metrics.heatmap}
+            currentRegime={metrics.regime}
+          />
         </div>
       </motion.div>
     </motion.div>

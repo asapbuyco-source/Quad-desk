@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import {
@@ -385,10 +385,14 @@ const SignalBadge: React.FC<{ active: boolean; label: string; sub: string; color
     </div>
 );
 
-// ─── AI Verdict Engine ───────────────────────────────────────────────────────
+// ─── ALDE × ULIS Hybrid Verdict Engine ─────────────────────────────────────
+// Merges ALDE's principled liquidity vector, market state classifier, sigmoid
+// cascade risk and strict AND-gates with ULIS's Bayesian posterior, CVD,
+// reasoning chain, entry/invalidation and 8-type verdict granularity.
 
 type VerdictType = 'STRONG_LONG' | 'LONG' | 'NEUTRAL' | 'SHORT' | 'STRONG_SHORT' | 'AVOID' | 'BREAKOUT_WATCH' | 'UNWIND';
 type RiskLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'EXTREME';
+type MarketState = 'TRENDING' | 'RANGE' | 'UNSTABLE';
 
 interface VerdictLine {
     symbol: '✓' | '⚠' | '✗' | '→' | '◈';
@@ -398,16 +402,28 @@ interface VerdictLine {
 
 interface AIVerdict {
     verdict: VerdictType;
-    confidence: number;          // 0–100
+    confidence: number;          // 0–100 (ALDE confidence formula)
     riskLevel: RiskLevel;
-    reasoning: VerdictLine[];    // analytical chain
-    action: string;              // one-liner trade action
-    entryContext: string;        // where to enter
-    invalidation: string;        // what would flip it
-    targets: string;             // TP context
-    biasStrength: number;        // 0–1, how decisive the system is
-    regimeLabel: string;         // market regime description
+    reasoning: VerdictLine[];
+    action: string;
+    entryContext: string;
+    invalidation: string;
+    targets: string;
+    biasStrength: number;        // |liquidityVector|
+    regimeLabel: string;
+    // ── ALDE additions ──────────────────────────────
+    marketState: MarketState;    // TRENDING / RANGE / UNSTABLE
+    liquidityVector: number;     // ULP − DLP, −1→+1
+    liquidityTarget: number;     // nearest high-liq price level
+    expectedMove: number;        // % move toward target
+    aldeConfidence: number;      // raw 0–1 ALDE score
+    cascadeRiskSigmoid: number;  // sigmoid cascade risk 0–1
+    ulp: number;                 // Upward Liquidity Pressure
+    dlp: number;                 // Downward Liquidity Pressure
 }
+
+// Sigmoid helper (ALDE spec §5)
+const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 
 const computeAIVerdict = ({
     scores,
@@ -416,7 +432,7 @@ const computeAIVerdict = ({
     zScore,
     bayesianPosterior,
     cvd,
-    skewness,
+    _skewness,
     price,
     sweepCount,
     fvgCount,
@@ -430,7 +446,7 @@ const computeAIVerdict = ({
     zScore: number;
     bayesianPosterior: number;
     cvd: number;
-    skewness: number;
+    _skewness?: number;   // reserved for future use
     price: number;
     sweepCount: number;
     fvgCount: number;
@@ -438,129 +454,194 @@ const computeAIVerdict = ({
     bids: any[];
     asks: any[];
 }): AIVerdict => {
-    // ── Phase 1: Individual signal scoring (each -1 to +1, positive = bull) ──
-    const ofiSignal = clamp(ofi / 40, -1, 1);                         // order flow direction
-    const zMeanReversion = clamp(-zScore / 2.5, -1, 1);                    // z > 0 → overbought → bearish signal
-    const bayesSignal = (bayesianPosterior - 0.5) * 2;                  // 0.5 baseline → -1/+1
-    const cvdDirection = clamp(cvd / 300000, -1, 1);                     // CVD direction
-    const skewSignal = clamp(-skewness / 1.2, -1, 1);                  // negative skew = bearish
-    const reflexBear = -scores.reflexivityScore * 0.6;                 // high reflexivity = danger (slightly bearish)
-    const fragilityBear = -scores.fragility * 0.5;                        // fragility = bearish risk
-    const glrBull = (scores.glrScore - 0.4) * 2;                    // GLR above 0.4 = macro bullish
-    const depthBias = (bids.reduce((a: number, b: any) => a + b.size, 0) -
-        asks.reduce((a: number, b: any) => a + b.size, 0)) /
-        Math.max(bids.reduce((a: number, b: any) => a + b.size, 0) +
-            asks.reduce((a: number, b: any) => a + b.size, 0), 1);
 
-    // ── Phase 2: Weighted composite directional score (-1 to +1) ──
-    const compositeScore =
-        ofiSignal * 0.22 +
-        zMeanReversion * 0.15 +
-        bayesSignal * 0.18 +
-        cvdDirection * 0.12 +
-        skewSignal * 0.08 +
-        reflexBear * 0.10 +
-        fragilityBear * 0.05 +
-        glrBull * 0.05 +
-        depthBias * 0.05;
+    // ══ PHASE 1 — Feature Fusion ══════════════════════════════════════════════
+    const ofiSignal = clamp(ofi / 40, -1, 1);
+    const _zMeanReversion = clamp(-zScore / 2.5, -1, 1);  // scaffold for mean-reversion overlay
+    const bayesSignal = (bayesianPosterior - 0.5) * 2;
+    const _cvdDirection = clamp(cvd / 300000, -1, 1);   // scaffold for future CVD gate
+    const leverageProxy = normalize(Math.abs(ofi), 0, 80);
 
-    // ── Phase 3: Regime classification ──
+    const totalBidSize = bids.reduce((a: number, b: any) => a + b.size, 0);
+    const totalAskSize = asks.reduce((a: number, b: any) => a + b.size, 0);
+    const totalDepth = totalBidSize + totalAskSize || 1;
+    const bidFraction = totalBidSize / totalDepth;
+    const askFraction = totalAskSize / totalDepth;
+
+    const sweepBull = sweepCount > 0 && bayesSignal > 0 ? Math.min(sweepCount / 6, 1) : 0;
+    const sweepBear = sweepCount > 0 && bayesSignal < 0 ? Math.min(sweepCount / 6, 1) : 0;
+
+    // ══ PHASE 2 — ALDE Market State Classifier ════════════════════════════════
+    // sigmoid(reflexivity×3 + fragility×2 + leverage×2 − 3) keeps midpoint at 0.5
+    const cascadeRiskSigmoid = sigmoid(
+        scores.reflexivityScore * 3 + scores.fragility * 2 + leverageProxy * 2 - 3
+    );
+    const trendAgreement =
+        Math.sign(ofiSignal) === Math.sign(bayesSignal) &&
+        Math.abs(ofiSignal) > 0.15 && Math.abs(bayesSignal) > 0.15;
+    const marketState: MarketState =
+        cascadeRiskSigmoid > 0.70 || scores.fragility > 0.65 ? 'UNSTABLE' :
+            Math.abs(bayesSignal) > 0.25 && trendAgreement ? 'TRENDING' : 'RANGE';
+
+    // ══ PHASE 3 — ALDE Liquidity Pressure Scores ═════════════════════════════
+    const ulp = clamp(
+        bidFraction * 0.30 +
+        scores.nlfScore * scores.latentLiquidity * 0.30 +
+        sweepBull * 0.15 +
+        (scores.glrComponents?.stablecoins ?? 55) / 100 * 0.25,
+        0, 1
+    );
+    const dlp = clamp(
+        askFraction * 0.30 +
+        (1 - scores.nlfScore) * scores.latentLiquidity * 0.30 +
+        sweepBear * 0.15 +
+        (1 - (scores.glrComponents?.etfFlows ?? 50) / 100) * 0.25,
+        0, 1
+    );
+
+    // ══ PHASE 4 — Net Liquidity Vector (ALDE §4) ══════════════════════════════
+    const liquidityVector = clamp(ulp - dlp, -1, 1);
+
+    // ══ PHASE 5 — Cascade Risk already computed above (sigmoid, ALDE §5) ══════
+
+    // ══ PHASE 6 — ALDE Confidence Score (§6) ═════════════════════════════════
+    const ilihScore = normalize(totalDepth, 1000, 80000);
+    const aldeConf0 =
+        0.25 * ilihScore +
+        0.20 * scores.glrScore +
+        0.25 * scores.nlfScore +
+        0.20 * (1 - scores.reflexivityScore) +
+        0.10 * (1 - scores.fragility);
+
+    // ══ PHASE 7 — Bayesian + CVD Overlay (ULIS) ══════════════════════════════
+    const bayesBoost = (bayesianPosterior - 0.5) * 0.12 * Math.sign(liquidityVector || 1);
+    const cvdBoost = clamp(cvd / 5000000, -0.06, 0.06) * Math.sign(liquidityVector || 1);
+    const aldeConfidence = clamp(aldeConf0 + bayesBoost + cvdBoost, 0, 1);
+    const confidencePct = Math.round(aldeConfidence * 100);
+
+    // ══ PHASE 8 — ALDE Strict AND-Gate Verdicts + ULIS Granularity ═══════════
     const isHighVolatility = scores.fragility > 0.55 || scores.reflexivityScore > 0.55;
-    const isCascadeRisk = scores.cascadeProb > 0.5;
-    const isTrendConfluence = Math.abs(bayesSignal) > 0.3 && Math.sign(ofiSignal) === Math.sign(bayesSignal);
-    const isMeanReversionPlay = Math.abs(zScore) > 1.8 && !isTrendConfluence;
-    const isLiquidityVacuum = scores.visibleLiquidity < 0.3 && fvgCount > 2;
-    const hasStrongSweep = sweepCount > 2;
+    const isMeanReversionPlay = Math.abs(zScore) > 1.8 && !trendAgreement;
+    const isLiquidityVacuum = scores.visibleLiquidity < 0.35 && fvgCount > 1;
     const isBOSConfirmed = bosList.length > 0;
 
-    // ── Phase 4: Determine verdict ──
     let verdict: VerdictType;
     let regimeLabel: string;
 
-    if (isCascadeRisk && scores.reflexivityScore > 0.6) {
+    // Safety overrides (ALDE §7 WAIT/AVOID conditions)
+    if (cascadeRiskSigmoid > 0.72 && scores.reflexivityScore > 0.55) {
         verdict = 'AVOID';
-        regimeLabel = 'Cascade Risk Regime — liquidity singularity active';
-    } else if (signals.cascadeWarning && isHighVolatility) {
-        verdict = compositeScore >= 0 ? 'UNWIND' : 'UNWIND';
-        regimeLabel = 'Pre-Cascade: Volatility Expansion Imminent';
-    } else if (isLiquidityVacuum && Math.abs(compositeScore) > 0.35) {
-        verdict = compositeScore > 0 ? 'BREAKOUT_WATCH' : 'BREAKOUT_WATCH';
-        regimeLabel = 'Liquidity Vacuum — breakout conditions forming';
+        regimeLabel = 'Cascade Risk Critical — Liquidity Singularity Active · STAND ASIDE';
+    } else if (signals.cascadeWarning && isHighVolatility && cascadeRiskSigmoid > 0.55) {
+        verdict = 'UNWIND';
+        regimeLabel = 'Pre-Cascade: Volatility Expansion · Reduce Exposure Now';
+    } else if (marketState === 'UNSTABLE' && !isMeanReversionPlay) {
+        verdict = 'NEUTRAL';
+        regimeLabel = 'Market Unstable — Cascade Sigmoid Elevated · Wait for Regime Stabilisation';
+        // STRONG_LONG: ALDE strict 6-condition AND gate
+    } else if (
+        liquidityVector > 0.28 &&
+        scores.nlfScore > 0.58 &&
+        scores.glrScore > 0.50 &&
+        cascadeRiskSigmoid < 0.45 &&
+        aldeConfidence > 0.68 &&
+        bayesianPosterior > 0.58
+    ) {
+        verdict = 'STRONG_LONG';
+        regimeLabel = 'ALDE+ULIS Bullish Confluence · Full Alignment — High Probability Long';
+        // LONG: relaxed conditions
+    } else if (
+        liquidityVector > 0.12 &&
+        aldeConfidence > 0.58 &&
+        cascadeRiskSigmoid < 0.62
+    ) {
+        verdict = 'LONG';
+        regimeLabel = 'Bullish Bias · Liquidity Vector Positive — Moderate ALDE Alignment';
+        // STRONG_SHORT: symmetric strict gate
+    } else if (
+        liquidityVector < -0.28 &&
+        scores.nlfScore < 0.42 &&
+        scores.glrScore < 0.50 &&
+        cascadeRiskSigmoid < 0.45 &&
+        aldeConfidence > 0.68 &&
+        bayesianPosterior < 0.42
+    ) {
+        verdict = 'STRONG_SHORT';
+        regimeLabel = 'ALDE+ULIS Bearish Confluence · Full Alignment — High Probability Short';
+        // SHORT: relaxed
+    } else if (
+        liquidityVector < -0.12 &&
+        aldeConfidence > 0.58 &&
+        cascadeRiskSigmoid < 0.62
+    ) {
+        verdict = 'SHORT';
+        regimeLabel = 'Bearish Bias · Liquidity Vector Negative — Moderate ALDE Alignment';
     } else if (isMeanReversionPlay) {
         verdict = zScore > 0 ? 'SHORT' : 'LONG';
-        regimeLabel = 'Mean Reversion Play — Z-Score extreme';
-    } else if (compositeScore > 0.45 && isTrendConfluence) {
-        verdict = 'STRONG_LONG';
-        regimeLabel = 'Bullish Trend Confluence — multi-factor alignment';
-    } else if (compositeScore > 0.2 && isTrendConfluence) {
-        verdict = 'LONG';
-        regimeLabel = 'Bullish Bias — moderate signal confluence';
-    } else if (compositeScore < -0.45 && isTrendConfluence) {
-        verdict = 'STRONG_SHORT';
-        regimeLabel = 'Bearish Trend Confluence — multi-factor alignment';
-    } else if (compositeScore < -0.2 && isTrendConfluence) {
-        verdict = 'SHORT';
-        regimeLabel = 'Bearish Bias — moderate signal confluence';
+        regimeLabel = 'Mean Reversion Play — Z-Score Extreme · Fade the Extension';
+    } else if (isLiquidityVacuum && Math.abs(liquidityVector) > 0.12) {
+        verdict = 'BREAKOUT_WATCH';
+        regimeLabel = 'Liquidity Vacuum · Breakout Conditions Forming — Direction TBD';
     } else {
         verdict = 'NEUTRAL';
-        regimeLabel = 'Mixed Signals — no clear directional edge';
+        regimeLabel = 'ALDE Equilibrium — Liquidity Vector Near Zero · No Actionable Edge';
     }
 
-    // ── Phase 5: Confidence (how many factors agree with the verdict) ──
-    const bullScore = [ofiSignal > 0.1, bayesSignal > 0.1, cvdDirection > 0.1,
-    zMeanReversion > 0.1, glrBull > 0.1, depthBias > 0].filter(Boolean).length;
-    const bearScore = [ofiSignal < -0.1, bayesSignal < -0.1, cvdDirection < -0.1,
-    zMeanReversion < -0.1, glrBull < -0.1, depthBias < 0].filter(Boolean).length;
-    const majorityVotes = verdict.includes('LONG') || verdict === 'BREAKOUT_WATCH' ? bullScore : bearScore;
-    const totalVotes = 6;
-    const agreementPct = majorityVotes / totalVotes;
+    // ── Liquidity Target + Expected Move (ALDE §8) ──────────────────────────
+    const atrProxy = price * 0.008 * (1 + scores.fragility);
+    const long = verdict.includes('LONG') || verdict === 'BREAKOUT_WATCH';
+    const walls = (long ? asks : bids)
+        .filter((l: any) => l.classification === 'WALL')
+        .sort((a: any, b: any) => long ? a.price - b.price : b.price - a.price);
+    const tpMult = verdict.includes('STRONG') ? 2.8 : 1.8;
+    const liquidityTarget = walls[0] ? walls[0].price : price + (long ? 1 : -1) * atrProxy * tpMult;
+    const expectedMove = ((liquidityTarget - price) / price) * 100;
 
-    // extra penalties/boosts
-    const cascadePenalty = isCascadeRisk ? -15 : 0;
-    const confluenceBoost = isTrendConfluence ? 10 : 0;
-    const sweepBoost = hasStrongSweep ? 8 : 0;
-    const bosBoost = isBOSConfirmed ? 7 : 0;
-    const volatilityPenalty = isHighVolatility && verdict !== 'AVOID' ? -8 : 0;
-    const confidence = Math.round(clamp(
-        agreementPct * 70 + 15 + cascadePenalty + confluenceBoost + sweepBoost + bosBoost + volatilityPenalty,
-        18, 97
-    ));
-
-    // ── Phase 6: Risk level ──
+    // ── Risk Level ──────────────────────────────────────────────────────────
     const riskLevel: RiskLevel =
-        isCascadeRisk ? 'EXTREME' :
+        cascadeRiskSigmoid > 0.65 ? 'EXTREME' :
             isHighVolatility ? 'HIGH' :
                 scores.fragility > 0.35 ? 'MODERATE' : 'LOW';
 
-    // ── Phase 7: Build reasoning chain ──
+    // ══ PHASE 9 — ULIS Reasoning Chain ═══════════════════════════════════════
     const reasoning: VerdictLine[] = [];
+
+    // ALDE Liquidity Vector (primary signal)
+    reasoning.push({
+        symbol: liquidityVector > 0.1 ? '✓' : liquidityVector < -0.1 ? '✗' : '→',
+        text: `Liquidity Vector: ULP ${(ulp * 100).toFixed(0)} vs DLP ${(dlp * 100).toFixed(0)} → Net ${liquidityVector >= 0 ? '+' : ''}${liquidityVector.toFixed(3)} — ${Math.abs(liquidityVector) > 0.25 ? 'strong directional force' : Math.abs(liquidityVector) > 0.1 ? 'moderate liquidity bias' : 'equilibrium — no dominant force'}`,
+        weight: Math.abs(liquidityVector) > 0.2 ? 'strong' : 'normal',
+    });
+
+    // ALDE Cascade Risk (sigmoid)
+    reasoning.push({
+        symbol: cascadeRiskSigmoid > 0.6 ? '⚠' : cascadeRiskSigmoid < 0.35 ? '✓' : '→',
+        text: `Cascade Risk Index: ${(cascadeRiskSigmoid * 100).toFixed(0)}% — sigmoid(reflexivity·3 + fragility·2 + leverage·2 − 3) — ${cascadeRiskSigmoid > 0.7 ? 'CRITICAL: liquidation cascade imminent' : cascadeRiskSigmoid > 0.5 ? 'elevated: reduce size, tighten stops' : cascadeRiskSigmoid > 0.35 ? 'moderate — normal caution' : 'safe: structure stable'}`,
+        weight: cascadeRiskSigmoid > 0.6 ? 'strong' : 'normal',
+    });
+
+    // ALDE Confidence Score
+    reasoning.push({
+        symbol: aldeConfidence > 0.65 ? '✓' : aldeConfidence < 0.45 ? '✗' : '→',
+        text: `ALDE Confidence: ${confidencePct}% — ILIH ${(ilihScore * 100).toFixed(0)} · GLR ${(scores.glrScore * 100).toFixed(0)} · NLF ${(scores.nlfScore * 100).toFixed(0)} · Stability ${((1 - scores.reflexivityScore) * 100).toFixed(0)}% — ${aldeConfidence > 0.68 ? 'sufficient for high-conviction entry' : aldeConfidence > 0.58 ? 'moderate — reduce sizing' : 'insufficient — wait for alignment'}`,
+        weight: aldeConfidence > 0.68 || aldeConfidence < 0.45 ? 'strong' : 'normal',
+    });
 
     // OFI
     if (Math.abs(ofi) > 5) {
         reasoning.push({
             symbol: ofi > 0 ? '✓' : '✗',
-            text: `Order Flow Imbalance ${ofi > 0 ? 'positive' : 'negative'} at ${ofi.toFixed(1)} — ${ofi > 10 ? 'strong institutional buying pressure' : ofi < -10 ? 'active sell-side absorption' : 'moderate directional bias'}`,
+            text: `Order Flow Imbalance ${ofi >= 0 ? '+' : ''}${ofi.toFixed(1)} — ${ofi > 15 ? 'strong institutional buy pressure' : ofi < -15 ? 'active sell-side absorption' : 'moderate directional bias'}`,
             weight: Math.abs(ofi) > 15 ? 'strong' : 'normal',
         });
     } else {
-        reasoning.push({ symbol: '→', text: 'Order flow near equilibrium — no dominant side detected', weight: 'weak' });
-    }
-
-    // Z-Score
-    if (Math.abs(zScore) > 1.5) {
-        reasoning.push({
-            symbol: zScore > 0 ? '⚠' : '✓',
-            text: `Price Z-Score at ${zScore.toFixed(2)}σ — ${zScore > 2 ? 'extreme overextension, high mean-reversion probability' : zScore < -2 ? 'deeply oversold, bounce potential elevated' : 'statistically displaced, reversion odds high'}`,
-            weight: Math.abs(zScore) > 2.5 ? 'strong' : 'normal',
-        });
-    } else {
-        reasoning.push({ symbol: '→', text: `Z-Score at ${zScore.toFixed(2)}σ — price within normal distribution, no mean-reversion edge`, weight: 'weak' });
+        reasoning.push({ symbol: '→', text: 'Order flow near equilibrium — no dominant side', weight: 'weak' });
     }
 
     // Bayesian
     reasoning.push({
         symbol: bayesianPosterior > 0.55 ? '✓' : bayesianPosterior < 0.45 ? '✗' : '→',
-        text: `Bayesian posterior P(Bull) = ${(bayesianPosterior * 100).toFixed(1)}% — ${bayesianPosterior > 0.65 ? 'strong bull probability, multi-factor evidence convergence' : bayesianPosterior < 0.35 ? 'high bear probability, bearish prior strengthened' : 'near-neutral evidence, prior unconfirmed'}`,
+        text: `Bayesian P(Bull) = ${(bayesianPosterior * 100).toFixed(1)}% — ${bayesianPosterior > 0.65 ? 'strong bull probability, multi-factor evidence convergence' : bayesianPosterior < 0.35 ? 'high bear probability, bearish prior strengthened' : 'near-neutral evidence, prior unconfirmed'}`,
         weight: Math.abs(bayesianPosterior - 0.5) > 0.2 ? 'strong' : 'normal',
     });
 
@@ -568,106 +649,95 @@ const computeAIVerdict = ({
     if (Math.abs(cvd) > 10000) {
         reasoning.push({
             symbol: cvd > 0 ? '✓' : '✗',
-            text: `Institutional CVD at ${cvd > 0 ? '+' : ''}${(cvd / 1000).toFixed(0)}K — ${cvd > 50000 ? 'heavy accumulation detected' : cvd < -50000 ? 'significant distribution detected' : cvd > 0 ? 'mild accumulation bias' : 'mild distribution bias'}`,
+            text: `Institutional CVD ${cvd >= 0 ? '+' : ''}${(cvd / 1000).toFixed(0)}K — ${cvd > 50000 ? 'heavy accumulation' : cvd < -50000 ? 'significant distribution' : cvd > 0 ? 'mild accumulation' : 'mild distribution'}`,
             weight: Math.abs(cvd) > 80000 ? 'strong' : 'normal',
         });
     }
 
-    // Reflexivity
-    if (scores.reflexivityScore > 0.4) {
+    // Z-Score
+    if (Math.abs(zScore) > 1.5) {
         reasoning.push({
-            symbol: '⚠',
-            text: `Reflexivity Ratio ${scores.reflexivityRatio.toFixed(2)} — ${scores.reflexivityScore > 0.7 ? 'liquidation cascade risk critical: avoid leveraged exposure' : scores.reflexivityScore > 0.5 ? 'leverage feedback loop building: reduce size' : 'moderate pressure building in order book'}`,
-            weight: scores.reflexivityScore > 0.6 ? 'strong' : 'normal',
+            symbol: zScore > 0 ? '⚠' : '✓',
+            text: `Z-Score ${zScore.toFixed(2)}σ — ${Math.abs(zScore) > 2.5 ? 'extreme extension, mean-reversion probability high' : 'statistically displaced, reversion odds elevated'}`,
+            weight: Math.abs(zScore) > 2.5 ? 'strong' : 'normal',
         });
     }
 
-    // Fragility
-    reasoning.push({
-        symbol: scores.fragility > 0.5 ? '⚠' : scores.fragility < 0.25 ? '✓' : '→',
-        text: `Market Fragility ${(scores.fragility * 100).toFixed(0)}% — ${scores.fragility > 0.65 ? 'market structure extremely brittle, gap risk elevated' : scores.fragility > 0.4 ? 'fragility elevated: tight stops required' : 'structure healthy, normal risk parameters apply'}`,
-        weight: scores.fragility > 0.55 ? 'strong' : 'weak',
-    });
-
     // Sweeps / BOS
     if (sweepCount > 0 || isBOSConfirmed) {
-        const bosText = isBOSConfirmed ? ` + BOS confirmed (${bosList.length} structure breaks)` : '';
         reasoning.push({
             symbol: '◈',
-            text: `Liquidity sweep activity: ${sweepCount} sweeps detected${bosText} — ${sweepCount > 3 ? 'aggressive stop-hunt cycle, reversal zone high probability' : sweepCount > 1 ? 'sweep cluster forming, watch for reversal confirmation' : 'initial sweep, observe for follow-through or reversal'}`,
+            text: `${sweepCount} liquidity sweeps${isBOSConfirmed ? ` + BOS confirmed (${bosList.length} breaks)` : ''} — ${sweepCount > 3 ? 'aggressive stop-hunt, reversal zone high probability' : sweepCount > 1 ? 'sweep cluster forming' : 'initial sweep observed'}`,
             weight: sweepCount > 2 || isBOSConfirmed ? 'strong' : 'normal',
         });
     }
 
-    // GLR
-    reasoning.push({
-        symbol: scores.glrScore > 0.55 ? '✓' : scores.glrScore < 0.35 ? '✗' : '→',
-        text: `Global Liquidity Radar score ${(scores.glrScore * 100).toFixed(0)} — ${scores.glrScore > 0.65 ? 'macro liquidity environment supportive (bullish tailwind)' : scores.glrScore < 0.3 ? 'macro liquidity tightening (headwind for risk assets)' : 'macro environment neutral, liquidity conditions mixed'}`,
-        weight: scores.glrScore > 0.6 || scores.glrScore < 0.3 ? 'normal' : 'weak',
-    });
-
-    // Cascade / Singularity
-    if (scores.cascadeProb > 0.3) {
-        reasoning.push({
-            symbol: '⚠',
-            text: `Cascade probability ${(scores.cascadeProb * 100).toFixed(0)}% — Singularity score ${(scores.singularityScore * 100).toFixed(0)}: ${scores.cascadeProb > 0.6 ? 'imminent liquidity event, avoid new positions' : 'cascade conditions present, treat as binary risk event'}`,
-            weight: scores.cascadeProb > 0.5 ? 'strong' : 'normal',
-        });
-    }
-
-    // NLF field
+    // NLF
     reasoning.push({
         symbol: scores.nlfScore > 0.55 ? '✓' : scores.nlfScore < 0.45 ? '✗' : '→',
-        text: `Neural Liquidity Field bias: ${scores.nlfScore > 0.6 ? 'bullish field — predicted liquidity concentration above current price' : scores.nlfScore < 0.4 ? 'bearish field — predicted liquidity vacuum above, concentration below' : 'neutral field — no statistically significant directional liquidity skew'}`,
+        text: `Neural Liquidity Field: ${(scores.nlfScore * 100).toFixed(0)} — ${scores.nlfScore > 0.6 ? 'bullish field: predicted liq concentration above' : scores.nlfScore < 0.4 ? 'bearish field: liq vacuum above, concentration below' : 'neutral — no significant directional skew'}`,
         weight: 'normal',
     });
 
-    // ── Phase 8: Actionable outputs ──
-    const atrProxy = price * 0.008 * (1 + scores.fragility); // estimated ATR proxy
-    const tpDist = atrProxy * (verdict.includes('STRONG') ? 2.8 : 1.8);
-    const slDist = atrProxy * (isCascadeRisk ? 0.5 : isHighVolatility ? 0.7 : 1.0);
+    // GLR
+    reasoning.push({
+        symbol: scores.glrScore > 0.55 ? '✓' : scores.glrScore < 0.35 ? '✗' : '→',
+        text: `Global Liquidity Radar ${(scores.glrScore * 100).toFixed(0)} — ${scores.glrScore > 0.65 ? 'macro supportive' : scores.glrScore < 0.3 ? 'macro tightening (headwind)' : 'macro neutral'}`,
+        weight: scores.glrScore > 0.6 || scores.glrScore < 0.3 ? 'normal' : 'weak',
+    });
+
+    // Actionable outputs
+    const slDist = atrProxy * (cascadeRiskSigmoid > 0.5 ? 0.5 : isHighVolatility ? 0.7 : 1.0);
+    const movePct = Math.abs(expectedMove).toFixed(2);
 
     const action: string =
-        verdict === 'STRONG_LONG' ? `Initiate LONG — high-confidence bullish setup with multi-factor confluence` :
-            verdict === 'LONG' ? `Bias LONG — moderate bullish edge, await confirmation candle` :
-                verdict === 'STRONG_SHORT' ? `Initiate SHORT — strong bearish alignment across OFI, Bayes, CVD` :
-                    verdict === 'SHORT' ? `Bias SHORT — moderate bearish edge, confirm with next candle close` :
-                        verdict === 'BREAKOUT_WATCH' ? `Monitor for breakout — liquidity vacuum forming, direction TBD` :
-                            verdict === 'UNWIND' ? `Reduce/close positions — pre-cascade conditions, avoid new exposure` :
-                                verdict === 'AVOID' ? `STAND ASIDE — cascade risk critical, no trade. Wait for singularity resolution` :
-                                    `No edge — signals conflicting. Wait for alignment before trading`;
+        verdict === 'STRONG_LONG' ? `ALDE+ULIS: Initiate LONG — full alignment across vector, NLF, GLR, Bayesian` :
+            verdict === 'LONG' ? `ALDE+ULIS: Bias LONG — positive liquidity vector, await OFI confirmation` :
+                verdict === 'STRONG_SHORT' ? `ALDE+ULIS: Initiate SHORT — full alignment across vector, NLF, GLR, Bayesian` :
+                    verdict === 'SHORT' ? `ALDE+ULIS: Bias SHORT — negative liquidity vector, confirm on next candle` :
+                        verdict === 'BREAKOUT_WATCH' ? `ALDE+ULIS: Monitor for breakout — liquidity vacuum + directional vector forming` :
+                            verdict === 'UNWIND' ? `ALDE+ULIS: Reduce/close — cascade sigmoid elevated, avoid new exposure` :
+                                verdict === 'AVOID' ? `ALDE+ULIS: STAND ASIDE — cascade sigmoid critical. Wait for singularity resolution` :
+                                    `ALDE+ULIS: No edge — liquidity equilibrium. Wait for vector to develop`;
 
     const entryContext: string =
-        verdict === 'STRONG_LONG' ? `Enter on retest of nearest bid wall or first pullback to OFI support zone` :
-            verdict === 'LONG' ? `Enter on orderbook imbalance confirmation; avoid chasing extended moves` :
-                verdict === 'STRONG_SHORT' ? `Enter on failed retests of ask wall or OFI resistance confirmation` :
-                    verdict === 'SHORT' ? `Wait for price rejection at local ask cluster before entry` :
+        verdict === 'STRONG_LONG' ? `Enter on retest of nearest bid wall. Liquidity Target: $${liquidityTarget.toFixed(0)}` :
+            verdict === 'LONG' ? `Enter on OFI confirmation; avoid chasing. Target: $${liquidityTarget.toFixed(0)}` :
+                verdict === 'STRONG_SHORT' ? `Enter on failed retest of ask wall. Liquidity Target: $${liquidityTarget.toFixed(0)}` :
+                    verdict === 'SHORT' ? `Wait for rejection at ask cluster. Target: $${liquidityTarget.toFixed(0)}` :
                         verdict === 'AVOID' || verdict === 'UNWIND' ? `Do not enter. Manage existing exposure only` :
-                            `Define direction first — no entry until breakout is confirmed with volume`;
+                            `Define direction first — wait for breakout confirmation`;
 
     const invalidation: string =
-        verdict.includes('LONG') ? `Invalidated if OFI flips negative AND Bayesian posterior drops below 0.4 — flip bias to neutral` :
-            verdict.includes('SHORT') ? `Invalidated if OFI turns strongly positive AND CVD reverses — close short, reassess` :
-                verdict === 'BREAKOUT_WATCH' ? `Invalidated if price returns to range mid with declining volume` :
-                    verdict === 'AVOID' ? `Re-assess when cascade probability drops below 30% and reflexivity normalizes below 0.4` :
-                        `Invalidated if any 3+ signals flip to a clear directional bias`;
+        verdict.includes('LONG') ? `Invalidated if liquidity vector crosses below −0.10 AND OFI flips negative` :
+            verdict.includes('SHORT') ? `Invalidated if liquidity vector crosses above +0.10 AND OFI turns positive` :
+                verdict === 'AVOID' ? `Re-assess when cascade sigmoid drops below 0.50 and reflexivity normalises` :
+                    `Invalidated if 3+ signals flip to a clear directional bias`;
 
     const targets: string =
-        verdict.includes('LONG') ? `TP1: +${(tpDist * 0.6).toFixed(0)} · TP2: +${tpDist.toFixed(0)} from entry. SL: −${slDist.toFixed(0)} or on structure break` :
-            verdict.includes('SHORT') ? `TP1: −${(tpDist * 0.6).toFixed(0)} · TP2: −${tpDist.toFixed(0)} from entry. SL: +${slDist.toFixed(0)} or invalidation` :
-                `No fixed targets — wait for directional conviction before sizing`;
+        verdict.includes('LONG') ? `Target: $${liquidityTarget.toFixed(0)} (+${movePct}%) · SL: −$${slDist.toFixed(0)} or structure break` :
+            verdict.includes('SHORT') ? `Target: $${liquidityTarget.toFixed(0)} (−${movePct}%) · SL: +$${slDist.toFixed(0)} or invalidation` :
+                `No fixed targets — wait for directional conviction`;
 
     return {
         verdict,
-        confidence,
+        confidence: confidencePct,
         riskLevel,
         reasoning,
         action,
         entryContext,
         invalidation,
         targets,
-        biasStrength: Math.abs(compositeScore),
+        biasStrength: Math.abs(liquidityVector),
         regimeLabel,
+        marketState,
+        liquidityVector,
+        liquidityTarget,
+        expectedMove,
+        aldeConfidence,
+        cascadeRiskSigmoid,
+        ulp,
+        dlp,
     };
 };
 
@@ -688,6 +758,96 @@ const useTypewriter = (text: string, speed = 18) => {
         return () => clearInterval(interval);
     }, [text]);
     return { displayed, done };
+};
+
+// ── EMA smoother — dampens noisy real-time scalar inputs ─────────────────────
+// alpha=0.25 means each new value contributes 25%, history contributes 75%.
+// Reacts to real moves in ~4 ticks (~400ms at 100ms depth refresh) but
+// ignores single-tick spikes.
+const useEMASmooth = (value: number, alpha = 0.25): number => {
+    const ref = React.useRef(value);
+    React.useEffect(() => {
+        ref.current = alpha * value + (1 - alpha) * ref.current;
+    });
+    return alpha * value + (1 - alpha) * ref.current;
+};
+
+// ── Stable book snapshot — only re-references when depth changes by >0.5% ────
+// Prevents aiVerdict from recomputing on every 100ms depth tick.
+const useStableBook = (live: Array<{ price: number; size: number; total: number; delta: number; classification: string }>) => {
+    const ref = React.useRef(live);
+    const sumRef = React.useRef(0);
+    const total = live.reduce((s, l) => s + l.size, 0);
+    if (Math.abs(total - sumRef.current) / (sumRef.current || 1) > 0.005) {
+        sumRef.current = total;
+        ref.current = live;
+    }
+    return ref.current;
+};
+
+// ── Throttled memo — limits how often an expensive computation runs ───────────
+// Returns the last computed value until intervalMs has elapsed.
+const useThrottledMemo = <T,>(factory: () => T, deps: React.DependencyList, intervalMs: number): T => {
+    const [value, setValue] = React.useState<T>(factory);
+    const lastRun = React.useRef(0);
+    React.useEffect(() => {
+        const now = Date.now();
+        if (now - lastRun.current >= intervalMs) {
+            lastRun.current = now;
+            setValue(factory());
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, deps);
+    return value;
+};
+
+// ── Verdict hysteresis — prevents rapid flipping at decision boundaries ───────
+// The committed verdict only updates if:
+//   (a) the incoming verdict has been stable for HOLD_MS, OR
+//   (b) compositeScore differs from last committed score by > SCORE_GAP
+const HOLD_MS = 5000;    // must hold new verdict for 5s before it's committed
+const SCORE_GAP = 0.12;  // a jump > 12% immediately overrides the timer
+
+const useVerdictWithHysteresis = (incoming: AIVerdict): AIVerdict => {
+    const [committed, setCommitted] = React.useState<AIVerdict>(incoming);
+    const pendingRef = React.useRef<{ verdict: AIVerdict; since: number } | null>(null);
+    const committedScoreRef = React.useRef(incoming.biasStrength);
+
+    React.useEffect(() => {
+        const newVerdict = incoming.verdict;
+        const newScore = incoming.biasStrength;
+        const scoreDelta = Math.abs(newScore - committedScoreRef.current);
+
+        // Immediate override if score gap is large enough
+        if (scoreDelta > SCORE_GAP) {
+            pendingRef.current = null;
+            committedScoreRef.current = newScore;
+            setCommitted(incoming);
+            return;
+        }
+
+        // Same verdict as committed: cancel any pending and update in-place
+        if (newVerdict === committed.verdict) {
+            pendingRef.current = null;
+            // Update sub-fields (confidence, reasoning text etc.) without a full label flip
+            setCommitted(incoming);
+            return;
+        }
+
+        // New verdict differs — start or refresh the hold timer
+        if (!pendingRef.current || pendingRef.current.verdict.verdict !== newVerdict) {
+            pendingRef.current = { verdict: incoming, since: Date.now() };
+        } else {
+            const held = Date.now() - pendingRef.current.since;
+            if (held >= HOLD_MS) {
+                pendingRef.current = null;
+                committedScoreRef.current = newScore;
+                setCommitted(incoming);
+            }
+        }
+    });
+
+    return committed;
 };
 
 // ── AI Verdict Component ─────────────────────────────────────────────────────
@@ -746,15 +906,25 @@ const ULISAIVerdict: React.FC<{
                     </div>
                     <div>
                         <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">ULIS · AI VERDICT ENGINE</span>
+                            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">ALDE × ULIS · AI VERDICT ENGINE</span>
                             <span className="text-[9px] text-zinc-700 font-mono">{tsStr}</span>
                         </div>
                         <h2 className={`text-2xl font-black tracking-tight ${meta.color}`}>{meta.label}</h2>
                         <p className="text-zinc-500 text-[10px] font-mono mt-0.5">{verdict.regimeLabel}</p>
                     </div>
                 </div>
-                {/* Confidence + Risk */}
-                <div className="flex gap-3">
+                {/* Market State badge + Confidence + Risk */}
+                <div className="flex gap-3 flex-wrap">
+                    {/* Market State badge */}
+                    <div className={`flex flex-col items-center justify-center p-3 rounded-xl border min-w-[80px] ${verdict.marketState === 'TRENDING' ? 'bg-blue-500/10 border-blue-500/30' :
+                        verdict.marketState === 'UNSTABLE' ? 'bg-red-500/10 border-red-500/30' :
+                            'bg-zinc-800/60 border-zinc-600/30'
+                        }`}>
+                        <span className="text-[8px] text-zinc-500 uppercase font-bold tracking-widest mb-0.5">State</span>
+                        <span className={`text-xs font-black font-mono ${verdict.marketState === 'TRENDING' ? 'text-blue-300' :
+                            verdict.marketState === 'UNSTABLE' ? 'text-red-300' : 'text-zinc-300'
+                            }`}>{verdict.marketState}</span>
+                    </div>
                     <div className="flex flex-col items-center p-3 rounded-xl bg-black/40 border border-white/5 min-w-[72px]">
                         <span className="text-[8px] text-zinc-600 uppercase font-bold tracking-widest mb-0.5">Confidence</span>
                         <span className={`text-2xl font-black font-mono ${meta.color}`}>{verdict.confidence}%</span>
@@ -790,12 +960,48 @@ const ULISAIVerdict: React.FC<{
                 </p>
             </div>
 
+            {/* ── ALDE Liquidity Vector Bar ── */}
+            <div className="mb-4 p-3 rounded-xl bg-black/25 border border-white/5">
+                <div className="flex items-center justify-between mb-2">
+                    <span className="text-[9px] text-zinc-500 uppercase font-bold tracking-widest">ALDE Liquidity Vector — ULP vs DLP</span>
+                    <span className={`text-[10px] font-black font-mono ${verdict.liquidityVector > 0.1 ? 'text-emerald-400' :
+                        verdict.liquidityVector < -0.1 ? 'text-red-400' : 'text-zinc-400'
+                        }`}>
+                        ULP {(verdict.ulp * 100).toFixed(0)} vs DLP {(verdict.dlp * 100).toFixed(0)} → {verdict.liquidityVector >= 0 ? '+' : ''}{verdict.liquidityVector.toFixed(3)}
+                    </span>
+                </div>
+                {/* Dual bar: left=DLP (red), right=ULP (green), center=0 */}
+                <div className="relative h-2 rounded-full bg-white/5 overflow-hidden">
+                    {/* DLP bar (left half) */}
+                    <motion.div
+                        className="absolute right-1/2 h-full bg-red-500/60 rounded-l-full"
+                        style={{ width: 0 }}
+                        animate={{ width: `${Math.min(verdict.dlp * 50, 50)}%` }}
+                        transition={{ duration: 0.8, ease: 'easeOut' }}
+                    />
+                    {/* ULP bar (right half) */}
+                    <motion.div
+                        className="absolute left-1/2 h-full bg-emerald-500/60 rounded-r-full"
+                        style={{ width: 0 }}
+                        animate={{ width: `${Math.min(verdict.ulp * 50, 50)}%` }}
+                        transition={{ duration: 0.8, ease: 'easeOut' }}
+                    />
+                    {/* Center line */}
+                    <div className="absolute left-1/2 top-0 w-px h-full bg-white/20" />
+                </div>
+                <div className="flex justify-between text-[8px] font-mono text-zinc-600 mt-1">
+                    <span>← DLP (Sellers)</span>
+                    <span>ULP (Buyers) →</span>
+                </div>
+            </div>
+
             {/* ── Trade Plan ── */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                 {[
                     { label: 'Entry Context', value: verdict.entryContext, icon: <TrendingUp size={11} />, color: 'text-zinc-300' },
-                    { label: 'Targets', value: verdict.targets, icon: <Activity size={11} />, color: 'text-emerald-400/80' },
+                    { label: `Target · ${verdict.expectedMove >= 0 ? '+' : ''}${verdict.expectedMove.toFixed(2)}%`, value: `$${verdict.liquidityTarget.toFixed(0)} (${verdict.expectedMove >= 0 ? '+' : ''}${verdict.expectedMove.toFixed(2)}%)`, icon: <Activity size={11} />, color: 'text-emerald-400/80' },
                     { label: 'Invalidation', value: verdict.invalidation, icon: <Shield size={11} />, color: 'text-red-400/70' },
+                    { label: `Cascade σ · ${(verdict.cascadeRiskSigmoid * 100).toFixed(0)}%`, value: verdict.targets, icon: <AlertTriangle size={11} />, color: verdict.cascadeRiskSigmoid > 0.6 ? 'text-red-400' : verdict.cascadeRiskSigmoid > 0.4 ? 'text-amber-400' : 'text-emerald-400/70' },
                 ].map(({ label, value, icon, color }) => (
                     <div key={label} className="p-3 rounded-xl bg-black/25 border border-white/5">
                         <div className={`flex items-center gap-1.5 mb-2 ${color}`}>
@@ -815,7 +1021,7 @@ const ULISAIVerdict: React.FC<{
                     <span className="text-[8px] text-zinc-700 font-mono ml-auto">{verdict.reasoning.length} factors evaluated</span>
                 </div>
                 <div className="space-y-1.5">
-                    {verdict.reasoning.map((line, idx) => (
+                    {verdict.reasoning.map((line: VerdictLine, idx: number) => (
                         <motion.div
                             key={idx}
                             initial={{ opacity: 0, x: -8 }}
@@ -868,20 +1074,21 @@ const ULISView: React.FC = () => {
     const { metrics, asks, bids, levels } = market;
     const { price, ofi, zScore, bayesianPosterior, institutionalCVD: cvd, skewness } = metrics;
 
-    const [tick, setTick] = useState(0);
+    // EMA-smoothed inputs — reduces tick-level noise before entering the verdict engine
+    const smoothOfi = useEMASmooth(ofi || 0, 0.25);
+    const smoothZScore = useEMASmooth(zScore || 0, 0.2);
+    const smoothCvd = useEMASmooth(cvd || 0, 0.15);
 
-    // Pulse every 3s to animate cascade probability
-    useEffect(() => {
-        const i = setInterval(() => setTick(t => t + 1), 3000);
-        return () => clearInterval(i);
-    }, []);
+    // Stable book snapshots — only update reference when depth changes >0.5%
+    const stableBids = useStableBook(bids);
+    const stableAsks = useStableBook(asks);
 
     // ── Derived Scores ──────────────────────────────────────────────────────
 
     const scores = useMemo(() => {
         // 1. Visible Liquidity depth score (from orderbook depth imbalance)
-        const totalBidSize = bids.reduce((a, b) => a + b.size, 0);
-        const totalAskSize = asks.reduce((a, b) => a + b.size, 0);
+        const totalBidSize = stableBids.reduce((a: number, b: any) => a + b.size, 0);
+        const totalAskSize = stableAsks.reduce((a: number, b: any) => a + b.size, 0);
         const totalDepth = totalBidSize + totalAskSize || 1;
         const visibleLiquidity = normalize(totalDepth, 0, totalDepth * 2); // normalized to 0-1
 
@@ -896,17 +1103,17 @@ const ULISView: React.FC = () => {
 
         // 4. Reflexivity Ratio = LiquidationPressure / MarketLiquidity
         // proxy: |OFI| / (totalDepth proxy). High OFI + low depth = high reflexivity
-        const ofiAbs = Math.abs(ofi || 0);
+        const ofiAbs = Math.abs(smoothOfi);
         const liquidityProxy = normalize(totalDepth, 1000, 50000);
         const reflexivityRaw = totalDepth > 0 ? ofiAbs / (100 + liquidityProxy * 100) : 0;
         const reflexivityRatio = clamp(reflexivityRaw * 8, 0, 2); // 0→2 scale matching blueprint
         const reflexivityScore = reflexivityRatio / 2; // normalized 0→1
 
         // 5. Fragility = Elasticity + CancelRate − RefillRate
-        // proxy from skewness + zScore
-        const elasticity = normalize(Math.abs(zScore || 0), 0, 3);
+        // proxy from skewness + smoothed zScore
+        const elasticity = normalize(Math.abs(smoothZScore), 0, 3);
         const cancelProxy = normalize(Math.abs(skewness || 0), 0, 1.5);
-        const refillProxy = normalize(Math.abs(cvd || 0), 0, 500000) * 0.5;
+        const refillProxy = normalize(Math.abs(smoothCvd), 0, 500000) * 0.5;
         const fragility = clamp(elasticity * 0.5 + cancelProxy * 0.3 - refillProxy, 0, 1);
 
         // 6. GLR proxy: composite macro signal
@@ -914,7 +1121,7 @@ const ULISView: React.FC = () => {
         //    - |cvd| / big number → derivatives leverage proxy
         //    - stablecoin & ETF simulated as neutral (no real data)
         const centralBankProxy = normalize(Math.abs(darkPoolBias), 0, 1) * 0.8 + 0.1;
-        const dollarLiqProxy = normalize(1 / (1 + Math.exp(-ofi / 30)), 0, 1); // sigmoid of OFI
+        const dollarLiqProxy = normalize(1 / (1 + Math.exp(-smoothOfi / 30)), 0, 1); // sigmoid of smoothed OFI
         const stablecoinProxy = 0.55; // simulated neutral
         const etfFlowsProxy = normalize(Math.abs(cvd || 0), 0, 200000);
         const derivLevProxy = normalize(ofiAbs, 0, 80);
@@ -977,7 +1184,7 @@ const ULISView: React.FC = () => {
                 derivatives: +(derivLevProxy * 100).toFixed(0),
             }
         };
-    }, [bids, asks, ofi, zScore, bayesianPosterior, cvd, skewness, darkPoolBias, liquidity, tick]);
+    }, [stableBids, stableAsks, smoothOfi, smoothZScore, bayesianPosterior, smoothCvd, skewness, darkPoolBias, liquidity]);
 
     // ── Signal Engine ────────────────────────────────────────────────────
 
@@ -990,27 +1197,28 @@ const ULISView: React.FC = () => {
         };
     }, [scores, ofi, liquidity.sweeps.length]);
 
-    // ── AI Verdict ────────────────────────────────────────────────────────
+    // ── AI Verdict — throttled at most every 5s, then hysteresis-filtered ──
     const [analysisTs, setAnalysisTs] = React.useState(Date.now());
-    const aiVerdict = useMemo(() => computeAIVerdict({
+    const rawVerdict = useThrottledMemo(() => computeAIVerdict({
         scores,
         signals,
-        ofi: ofi || 0,
-        zScore: zScore || 0,
+        ofi: smoothOfi,
+        zScore: smoothZScore,
         bayesianPosterior: bayesianPosterior || 0.5,
-        cvd: cvd || 0,
-        skewness: skewness || 0,
+        cvd: smoothCvd,
         price,
         sweepCount: liquidity.sweeps.length,
         fvgCount: liquidity.fvg.length,
         bosList: liquidity.bos || [],
-        bids,
-        asks,
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [scores, signals, ofi, zScore, bayesianPosterior, cvd, skewness, price, liquidity, bids, asks]);
+        bids: stableBids,
+        asks: stableAsks,
+    }), [scores, signals, smoothOfi, smoothZScore, bayesianPosterior, smoothCvd, price, liquidity, stableBids, stableAsks], 5000);
 
-    // Stamp timestamp whenever verdict re-runs
-    useEffect(() => { setAnalysisTs(Date.now()); }, [aiVerdict]);
+    // Apply hysteresis so verdict label only flips after 5s hold or large score jump
+    const aiVerdict = useVerdictWithHysteresis(rawVerdict);
+
+    // Stamp timestamp whenever committed verdict changes
+    useEffect(() => { setAnalysisTs(Date.now()); }, [aiVerdict.verdict]);
 
     // GLR Radar data
     const radarData = [

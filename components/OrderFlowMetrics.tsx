@@ -99,7 +99,7 @@ const RegimeWidget: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
     }
 
     return (
-        <div className="fintech-card p-4 flex flex-col justify-between overflow-hidden relative">
+        <div className="fintech-card p-4 flex flex-col justify-between overflow-hidden relative h-full">
             <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 {React.cloneElement(icon as React.ReactElement<any>, { size: 64 })}
             </div>
@@ -138,7 +138,7 @@ const CofiWidget: React.FC = () => {
     const pct = Math.min(Math.abs(cofi) / 500 * 100, 100);
 
     return (
-        <div className="fintech-card p-4 flex flex-col justify-between relative overflow-hidden">
+        <div className="fintech-card p-4 flex flex-col justify-between relative overflow-hidden h-full">
             <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 <Layers size={64} />
             </div>
@@ -215,7 +215,7 @@ const MtfOfiWidget: React.FC = () => {
     ];
 
     return (
-        <div className="fintech-card p-4 flex flex-col justify-between relative overflow-hidden">
+        <div className="fintech-card p-4 flex flex-col justify-between relative overflow-hidden h-full">
             <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 <GitMerge size={64} />
             </div>
@@ -228,14 +228,14 @@ const MtfOfiWidget: React.FC = () => {
                     <span className="text-xs text-slate-500 font-mono mt-0.5 block">Multi-Timeframe Convergence</span>
                 </div>
                 <div className={`px-2 py-0.5 rounded border text-[9px] font-black uppercase tracking-wider ${converge === 'BULLISH' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 animate-pulse' :
-                        converge === 'BEARISH' ? 'text-rose-400 bg-rose-500/10 border-rose-500/20 animate-pulse' :
-                            'text-zinc-400 bg-zinc-800 border-zinc-700'
+                    converge === 'BEARISH' ? 'text-rose-400 bg-rose-500/10 border-rose-500/20 animate-pulse' :
+                        'text-zinc-400 bg-zinc-800 border-zinc-700'
                     }`}>
                     {converge}
                 </div>
             </div>
 
-            <div className="mt-4 space-y-3 z-10">
+            <div className="mt-4 space-y-3 z-10 flex-1">
                 {n < 5 && (
                     <p className="text-[10px] text-zinc-500 text-center py-2">Collecting data…</p>
                 )}
@@ -288,12 +288,12 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
     return (
         <div className="space-y-6">
             {/* Row 1: CVD / Regime / OFI (existing) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
                 <WhaleHunterWidget metrics={metrics} />
                 <RegimeWidget metrics={metrics} />
 
                 {/* Widget 3: OFI */}
-                <div className="fintech-card p-4 flex flex-col justify-between relative overflow-hidden group">
+                <div className="fintech-card p-4 flex flex-col justify-between relative overflow-hidden group h-full">
                     <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
                         <BarChart2 size={64} />
                     </div>
@@ -335,7 +335,7 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
                             <ArrowRight size={10} className="text-slate-600" />
                         </div>
                         <div className={`text-[10px] font-bold px-2 py-0.5 rounded border ${signalState.includes("VALIDATION") ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400" :
-                                "border-zinc-700 bg-zinc-800 text-zinc-400"
+                            "border-zinc-700 bg-zinc-800 text-zinc-400"
                             }`}>
                             {signalState}
                         </div>
@@ -348,7 +348,7 @@ const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => {
             </div>
 
             {/* Row 2: NEW — COFI + MTF OFI */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
                 <CofiWidget />
                 <MtfOfiWidget />
             </div>
