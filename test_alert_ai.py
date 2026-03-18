@@ -9,7 +9,12 @@ async def test_alert():
         "zScore": 2.6,
         "tacticalProbability": 0.8,
         "aiScore": 0.85,
-        "model": "gemini-2.5-pro" # Testing non-default model parameter 
+        "bayesianPosterior": 0.35,
+        "expectedValueRR": 2.1,
+        "dynamicEntry": 95000,
+        "dynamicStop": 96100,
+        "dynamicTarget": 92000,
+        "model": "gemini-2.0-flash" # Testing non-default model parameter 
     }
     
     try:

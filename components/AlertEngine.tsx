@@ -80,6 +80,10 @@ const AlertEngine: React.FC = () => {
                     regimeAgreement: aiTactical.confidenceFactors.regimeAgreement,
                     aiScore: aiTactical.confidenceFactors.aiScore,
 
+                    dynamicEntry: aiTactical.entryLevel,
+                    dynamicStop: aiTactical.stopLevel,
+                    dynamicTarget: aiTactical.exitLevel,
+
                     sweeps: liquidity.sweeps,
                     bosDirection: liquidity.bos.length > 0 ? liquidity.bos[0].direction : null,
 

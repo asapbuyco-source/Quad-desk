@@ -638,6 +638,11 @@ class AlertEvaluateRequest(BaseModel):
     zScore: float
     tacticalProbability: float
     aiScore: float
+    bayesianPosterior: float = 0.5
+    expectedValueRR: float = 0.0
+    dynamicEntry: Optional[float] = None
+    dynamicStop: Optional[float] = None
+    dynamicTarget: Optional[float] = None
     model: str = DEFAULT_MODEL
     class Config:
         extra = "allow"
@@ -647,7 +652,7 @@ class AlertEvaluateRequest(BaseModel):
 async def alerts_evaluate(req: AlertEvaluateRequest):
     """
     Deterministic alert evaluation engine.
-    Scores 3 independent conditions; fires alert when all 3 pass.
+    Scores 5 independent conditions; fires alert when at least 4 pass.
     Computes ATR-based entry/stop/target and generates reasoning text.
     """
     passed   = []
@@ -669,18 +674,42 @@ async def alerts_evaluate(req: AlertEvaluateRequest):
     else:
         failed.append(f"Algorithmic score ({req.aiScore:.2f}) < 0.70 — model score below threshold")
 
+    expected_direction = "LONG" if req.zScore < 0 else "SHORT"
+
+    if expected_direction == "LONG":
+        if req.bayesianPosterior >= 0.60:
+            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≥ 0.60 — strong probability evidence")
+        else:
+            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) < 0.60 — insufficient posterior evidence")
+    else:
+        if req.bayesianPosterior <= 0.40:
+            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≤ 0.40 — strong bearish evidence")
+        else:
+            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) > 0.40 — insufficient bearish evidence")
+
+    if req.expectedValueRR >= 1.5:
+        passed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) ≥ 1.5 R — favorable risk/reward setup")
+    else:
+        failed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) < 1.5 R — poor risk/reward expectancy")
+
     score        = len(passed)
-    should_alert = score >= 3
+    should_alert = score >= 4
 
     algo_analysis = None
     if should_alert:
         # Direction: if z-score is negative → oversold → LONG; positive → overbought → SHORT
         direction  = "LONG" if req.zScore < 0 else "SHORT"
-        # ATR estimate: use 0.8% of price as a conservative ATR proxy when no candles passed
-        atr_proxy  = req.price * 0.008
-        entry      = req.price
-        stop       = round(entry - atr_proxy * 1.5 if direction == "LONG" else entry + atr_proxy * 1.5, 4)
-        target     = round(entry + atr_proxy * 3.0 if direction == "LONG" else entry - atr_proxy * 3.0, 4)
+        entry = req.dynamicEntry if req.dynamicEntry else req.price
+        
+        if req.dynamicStop and req.dynamicTarget:
+            stop = round(req.dynamicStop, 4)
+            target = round(req.dynamicTarget, 4)
+        else:
+            # ATR estimate: use 0.8% of price as a conservative ATR proxy when no candles passed
+            atr_proxy  = req.price * 0.008
+            stop       = round(entry - atr_proxy * 1.5 if direction == "LONG" else entry + atr_proxy * 1.5, 4)
+            target     = round(entry + atr_proxy * 3.0 if direction == "LONG" else entry - atr_proxy * 3.0, 4)
+            
         rr         = round(abs(target - entry) / max(abs(entry - stop), 0.0001), 2)
         confidence = round(min(0.55 + score * 0.12 + z_abs * 0.04, 0.95), 2)
 
@@ -703,7 +732,7 @@ async def alerts_evaluate(req: AlertEvaluateRequest):
         }
     else:
         logger.info(
-            f"Alert suppressed for {req.symbol}: {score}/3 conditions met. "
+            f"Alert suppressed for {req.symbol}: {score}/5 conditions met. "
             f"Failed: {'; '.join(failed)}"
         )
 

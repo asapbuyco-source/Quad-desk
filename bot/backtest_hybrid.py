@@ -1,0 +1,398 @@
+import os
+import time
+import numpy as np
+import pandas as pd
+from datetime import datetime
+import warnings
+
+warnings.filterwarnings('ignore')
+
+try:
+    from colorama import Fore, Style, init
+    init(autoreset=True)
+except ImportError:
+    class Fore: GREEN = RED = YELLOW = CYAN = WHITE = MAGENTA = ""
+    class Style: RESET_ALL = BRIGHT = ""
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+CONFIG = {
+    "symbols": ["BTCUSDT"],
+    "timeframe_mins": 5,
+    "initial_balance": 10000.0,
+    "base_risk_pct": 1.0,
+    "max_daily_loss_pct": 3.0,
+    "min_confidence": 0.60,
+    
+    # Feature Engine
+    "atr_period": 14,
+    "rsi_period": 14,
+    "vwap_period": 20,
+    "skew_period": 50,
+    
+    # Thresholds
+    "trend_atr_threshold": 0.005,  # 0.5%
+    "range_z_threshold": 1.5,
+}
+
+# ==============================================================================
+# VECTORISED FEATURE ENGINE
+# ==============================================================================
+
+def calc_atr(high, low, close, period=14):
+    tr = np.maximum(high[1:] - low[1:], 
+                    np.maximum(np.abs(high[1:] - close[:-1]), 
+                               np.abs(low[1:] - close[:-1])))
+    atr = np.full(len(close), np.nan)
+    if len(tr) >= period:
+        atr[period] = np.mean(tr[:period])
+        for i in range(period + 1, len(close)):
+            atr[i] = (atr[i-1] * (period - 1) + tr[i-1]) / period
+    return atr
+
+def calc_rsi(close, period=14):
+    delta = np.diff(close)
+    gains = np.where(delta > 0, delta, 0.0)
+    losses = np.where(delta < 0, -delta, 0.0)
+    rsi = np.full(len(close), 50.0)
+    if len(gains) >= period:
+        avg_g = np.mean(gains[:period])
+        avg_l = np.mean(losses[:period])
+        for i in range(period, len(gains)):
+            avg_g = (avg_g * (period - 1) + gains[i]) / period
+            avg_l = (avg_l * (period - 1) + losses[i]) / period
+            rsi[i+1] = 100 - (100 / (1 + avg_g / avg_l)) if avg_l > 0 else 100
+    return rsi
+
+def calc_vwap_zscore(df, period=20):
+    tp = (df['high'] + df['low'] + df['close']) / 3.0
+    vol = df['volume']
+    
+    vwap = (tp * vol).rolling(period).sum() / vol.rolling(period).sum()
+    std = tp.rolling(period).std(ddof=0)
+    
+    z = (df['close'] - vwap) / std
+    return z.fillna(0).values
+
+def calc_skewness(close, period=50):
+    log_ret = np.zeros(len(close))
+    log_ret[1:] = np.log(close[1:] / np.maximum(close[:-1], 1e-10))
+    skew = pd.Series(log_ret).rolling(period).skew().fillna(0).values
+    return skew
+
+def calc_cvd_proxy(close, open_, volume, period=20):
+    body = np.abs(close - open_)
+    conv = np.clip(body / (body + 1e-10), 0.3, 1.0)
+    dir_ = np.where(close >= open_, 1.0, -1.0)
+    delta = dir_ * volume * conv
+    cvd = pd.Series(delta).rolling(period).sum().fillna(0).values
+    return cvd
+
+# ==============================================================================
+# STRATEGY & BAYESIAN FUSION
+# ==============================================================================
+
+def backtest_hybrid(df, config, symbol):
+    close = df['close'].values
+    high = df['high'].values
+    low = df['low'].values
+    open_ = df['open'].values
+    vol = df['volume'].values
+    ts = df.index
+    
+    print("  Computing features...")
+    atr = calc_atr(high, low, close, config['atr_period'])
+    rsi = calc_rsi(close, config['rsi_period'])
+    zscore = calc_vwap_zscore(df, config['vwap_period'])
+    skew = calc_skewness(close, config['skew_period'])
+    cvd = calc_cvd_proxy(close, open_, vol, 20)
+    
+    atr_pct = np.zeros_like(atr)
+    valid_idx = close > 0
+    atr_pct[valid_idx] = atr[valid_idx] / close[valid_idx]
+
+    # Proxies for missing live data (LOB / Tape)
+    # We use local extreme rollings to simulate walls/liquidity pools
+    sw_high = pd.Series(high).rolling(20).max().shift(1).values
+    sw_low = pd.Series(low).rolling(20).min().shift(1).values
+    
+    # OFI proxy based on volume delta momentum
+    ofi_proxy = pd.Series(np.where(close >= open_, vol, -vol)).rolling(5).sum().values
+    
+    print("  Simulating event-driven trades...")
+    
+    balance = config['initial_balance']
+    trades = []
+    open_trades = []
+    
+    daily_losses = 0
+    last_day = None
+    daily_halt = False
+    
+    for i in range(50, len(close)):
+        cur_day = ts[i].date()
+        if cur_day != last_day:
+            daily_losses = 0
+            daily_halt = False
+            last_day = cur_day
+            
+        px = close[i]
+        
+        # 1. Manage Open Trades
+        still_open = []
+        for t in open_trades:
+            hit_sl = (t['dir'] == 1 and low[i] <= t['sl']) or (t['dir'] == -1 and high[i] >= t['sl'])
+            hit_tp = (t['dir'] == 1 and high[i] >= t['tp']) or (t['dir'] == -1 and low[i] <= t['tp'])
+            
+            if hit_sl or hit_tp:
+                exit_px = t['tp'] if hit_tp else t['sl']
+                pnl = (exit_px - t['entry']) / t['entry'] * balance * config['base_risk_pct'] / 100.0 * t['dir']
+                # leverage normalized
+                r_mult = pnl / (balance * config['base_risk_pct'] / 100.0)
+                
+                balance += pnl
+                if pnl < 0:
+                    daily_losses += 1
+                    if daily_losses >= int(config['max_daily_loss_pct']):
+                        daily_halt = True
+                
+                trades.append({
+                    "entry_time": t['entry_time'],
+                    "exit_time": ts[i],
+                    "dir": "BUY" if t['dir'] == 1 else "SELL",
+                    "entry": t['entry'],
+                    "exit": exit_px,
+                    "pnl": pnl,
+                    "r_mult": r_mult,
+                    "balance": balance,
+                    "regime": t['regime']
+                })
+            else:
+                still_open.append(t)
+        open_trades = still_open
+        
+        if daily_halt or len(open_trades) > 0:
+            continue
+            
+        # 2. Market Regime
+        regime = "NEUTRAL"
+        # Proximate to recent swing high/low (simulated walls)
+        near_wall = False
+        nav_h = sw_high[i]
+        nav_l = sw_low[i]
+        
+        if not np.isnan(nav_h) and not np.isnan(nav_l):
+            if abs(px - nav_h) / px <= 0.001 or abs(px - nav_l) / px <= 0.001:
+                regime = "LIQUIDITY"
+                near_wall = True
+        
+        if not near_wall:
+            if atr_pct[i] > config['trend_atr_threshold']:
+                regime = "TREND"
+            elif abs(zscore[i]) < config['range_z_threshold']:
+                regime = "RANGE"
+                
+        # 3. Liquidity Sweep Detection
+        sweep = None
+        if not np.isnan(nav_h) and not np.isnan(nav_l):
+            prev_h, prev_l = high[i-1], low[i-1]
+            prev_c = close[i-1]
+            if prev_h > nav_h and px < nav_h:
+                sweep = "ABOVE_HIGHS"
+            elif prev_l < nav_l and px > nav_l:
+                sweep = "BELOW_LOWS"
+                
+        # 4. Strategy Layer
+        raw_direction = None
+        strategy = ""
+        
+        if sweep:
+            strategy = "SWEEP"
+            if sweep == "ABOVE_HIGHS" and (ofi_proxy[i] < 0 or cvd[i] < 0):
+                raw_direction = "SELL"
+            elif sweep == "BELOW_LOWS" and (ofi_proxy[i] > 0 or cvd[i] > 0):
+                raw_direction = "BUY"
+                
+        elif regime == "TREND":
+            strategy = "TREND"
+            score = 0.0
+            if ofi_proxy[i] > 0: score += 1.0
+            elif ofi_proxy[i] < 0: score -= 1.0
+            if cvd[i] > 0: score += 1.0
+            elif cvd[i] < 0: score -= 1.0
+            
+            if score >= 1.5: raw_direction = "BUY"
+            elif score <= -1.5: raw_direction = "SELL"
+            
+        elif regime == "RANGE":
+            strategy = "MEAN_REVERSION"
+            if zscore[i] >= 2.5 and rsi[i] > 45: raw_direction = "SELL"
+            elif zscore[i] <= -2.5 and rsi[i] < 55: raw_direction = "BUY"
+            
+        if not raw_direction: continue
+        
+        # 5. Bayesian Fusion
+        odds = 1.0
+        if ofi_proxy[i] > 0: odds *= 1.4
+        elif ofi_proxy[i] < 0: odds *= 0.7
+        
+        if cvd[i] > 0: odds *= 1.25
+        elif cvd[i] < 0: odds *= 0.8
+        
+        if skew[i] > 0.3: odds *= 1.12
+        elif skew[i] < -0.3: odds *= 0.88
+        
+        p_bull = odds / (odds + 1.0)
+        conf = p_bull if raw_direction == "BUY" else (1.0 - p_bull)
+        
+        if conf < config['min_confidence']:
+            continue
+            
+        # 6. Risk Engine
+        is_long = raw_direction == "BUY"
+        cur_atr = atr[i]
+        
+        if strategy == "SWEEP" and sweep:
+            sl_dist = abs(px - nav_h if sweep == "ABOVE_HIGHS" else nav_l) + cur_atr * 0.5
+            sl_dist = max(sl_dist, cur_atr * 0.5)
+        elif strategy == "TREND":
+            sl_dist = cur_atr * 1.5
+        elif strategy == "MEAN_REVERSION":
+            sl_dist = cur_atr * 1.0
+        else:
+            sl_dist = px * 0.008
+            
+        sl = px - sl_dist if is_long else px + sl_dist
+        tp = px + (sl_dist * 2.0) if is_long else px - (sl_dist * 2.0)
+        
+        open_trades.append({
+            "entry": px,
+            "sl": sl,
+            "tp": tp,
+            "dir": 1 if is_long else -1,
+            "entry_time": ts[i],
+            "regime": regime
+        })
+
+    # Close remaining
+    last_px = close[-1]
+    for t in open_trades:
+        pnl = (last_px - t['entry']) / t['entry'] * balance * config['base_risk_pct'] / 100.0 * t['dir']
+        balance += pnl
+        trades.append({
+            "entry_time": t['entry_time'],
+            "exit_time": ts[-1],
+            "dir": "BUY" if t['dir'] == 1 else "SELL",
+            "entry": t['entry'],
+            "exit": last_px,
+            "pnl": pnl,
+            "r_mult": pnl / (balance * config['base_risk_pct'] / 100.0),
+            "balance": balance,
+            "regime": t['regime']
+        })
+        
+    return trades, balance
+
+# ==============================================================================
+# MAIN RUNNER
+# ==============================================================================
+
+def load_data(symbol, years_back=10):
+    """
+    Simulated data loader. In a real scenario, connect this to a CSV or DB.
+    For demonstration of the backtest logic, we generate synthetic walk data.
+    """
+    end_date = datetime.now()
+    # Handle leap years when subtracting years
+    try:
+        start_date = end_date.replace(year=end_date.year - years_back)
+    except ValueError:
+        start_date = end_date.replace(year=end_date.year - years_back, day=end_date.day - 1)
+        
+    print(f"  Generating synthetic {symbol} data for {years_back} years (ending {end_date.date()})...")
+    np.random.seed(42)
+    
+    delta = end_date - start_date
+    periods = int(delta.total_seconds() / 300) # 5m bars
+    dates = pd.date_range(end=end_date, periods=periods, freq="5min")
+    
+    # Random walk with some volatility clustering
+    returns = np.random.normal(0, 0.001, periods)
+    volatility = np.abs(np.random.normal(1, 0.2, periods))
+    returns = returns * volatility
+    
+    close = 1000.0 * np.exp(np.cumsum(returns))
+    high = close * (1 + np.abs(np.random.normal(0, 0.0005, periods)))
+    low = close * (1 - np.abs(np.random.normal(0, 0.0005, periods)))
+    open_ = np.roll(close, 1)
+    open_[0] = close[0]
+    
+    vol = np.random.lognormal(mean=10, sigma=1, size=periods)
+    
+    df = pd.DataFrame({
+        'open': open_,
+        'high': high,
+        'low': low,
+        'close': close,
+        'volume': vol
+    }, index=dates)
+    
+    return df
+
+def run():
+    print(f"\n{Fore.CYAN}{Style.BRIGHT}{'━'*62}")
+    print(f"  Macro Hybrid Bot — Vectorised Backtester")
+    print(f"  10-Year Test Engine")
+    print(f"{'━'*62}{Style.RESET_ALL}\n")
+    
+    t_start = time.time()
+    
+    for symbol in CONFIG['symbols']:
+        print(f"  {Fore.CYAN}▶ {symbol}{Style.RESET_ALL}")
+        # Try to load local CSV if it exists, otherwise use synthetic
+        csv_path = f"data/{symbol}_M5.csv"
+        if os.path.exists(csv_path):
+            print(f"  Loading {csv_path}...")
+            df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+            df.sort_index(inplace=True)
+        else:
+            df = load_data(symbol)
+            
+        print(f"  Bars: {len(df):,} ({df.index[0].date()} -> {df.index[-1].date()})")
+        
+        trades, final_bal = backtest_hybrid(df, CONFIG, symbol)
+        
+        # Report
+        df_t = pd.DataFrame(trades)
+        if len(df_t) == 0:
+            print(f"  {Fore.RED}No trades executed.{Style.RESET_ALL}")
+            continue
+            
+        wins = (df_t['pnl'] > 0).sum()
+        total = len(df_t)
+        wr = wins / total * 100
+        net = df_t['pnl'].sum()
+        
+        print(f"\n  Results for {symbol}:")
+        print(f"  Initial Balance: ${CONFIG['initial_balance']:,.2f}")
+        color = Fore.GREEN if net > 0 else Fore.RED
+        print(f"  Final Balance:   {color}${final_bal:,.2f}{Style.RESET_ALL}")
+        print(f"  Net Profit:      {color}${net:,.2f}{Style.RESET_ALL}")
+        print(f"  Total Trades:    {total}")
+        print(f"  Win Rate:        {wr:.1f}%")
+        
+        # Breakdown by regime
+        print("\n  Performance by Regime:")
+        by_regime = df_t.groupby('regime').agg(
+            trades=('pnl', 'count'),
+            win_rate=('pnl', lambda x: (x>0).mean() * 100),
+            pnl=('pnl', 'sum')
+        )
+        print(by_regime.to_string())
+        print(f"\n{Fore.CYAN}{Style.BRIGHT}{'━'*62}{Style.RESET_ALL}\n")
+        
+    print(f"  Total time: {time.time() - t_start:.2f}s")
+
+if __name__ == "__main__":
+    run()
