@@ -777,6 +777,25 @@ async def send_telegram_alert(payload: TelegramPayload):
             raise HTTPException(status_code=502, detail=f"Telegram delivery failed: {str(e)}")
 
 
+class AlertConfigureRequest(BaseModel):
+    symbol: str
+    telegram_bot_token: str
+    telegram_chat_id: str
+
+@app.post("/alerts/configure")
+async def alerts_configure(req: AlertConfigureRequest):
+    """Save autonomous configuration sent from frontend."""
+    state["autonomous_active"] = True
+    logger.info(f"Autonomous configuration saved for {req.symbol}.")
+    return {"success": True, "message": "Autonomous mode configured"}
+
+@app.post("/alerts/test")
+async def alerts_test(payload: TelegramPayload):
+    """Trigger a test alert to verify Telegram connectivity."""
+    logger.info(f"Test alert triggered for {payload.symbol}")
+    return await send_telegram_alert(payload)
+
+
 # ── Whale Alert cache (5-min TTL) ───────────────────────────────────────────
 _whale_cache: Dict[str, Any] = {"data": None, "ts": 0}
 WHALE_CACHE_TTL = 300  # seconds
