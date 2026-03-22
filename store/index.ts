@@ -15,6 +15,17 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
+// ── Centralised constants (used across store + components) ──────────────────
+/** Skewness magnitude considered statistically significant — used by Bayesian, Macro, Sentinel, UI */
+export const SKEW_SIGNIFICANT = 0.3;
+
+// ── Module-level refs (not reactive, used for inter-frame coordination) ──────
+/** Most recent OFI value written by processDepthUpdate, read by processWsTick Bayesian calc */
+let _latestOfi = 0;
+/** Timestamp of the last Z-Score divergence notification, to throttle spam */
+let _lastZDivAlertMs = 0;
+const Z_DIV_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
 interface AppState {
     ui: {
         activeTab: string;
@@ -296,6 +307,10 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
     setMarketHistory: ({ candles, initialCVD }) => {
+        // Bug Fix #4: Reset CVD baseline and COFI on every symbol/interval change
+        // so stale baseline from a previous symbol doesn't pollute the new feed.
+        _latestOfi = 0;
+
         // Compute RSI (retailSentiment) and VPIN (toxicity) from the initial historical data
         const closes = candles.map(c => c.close);
         const rsiOnLoad = calculateRSI(closes, 14);
@@ -306,7 +321,10 @@ export const useStore = create<AppState>((set, get) => ({
         }, 0) / Math.max(vpinSlice.length, 1)) * 100);
 
         set(state => ({
+            // Bug Fix #4: Reset CVD accumulator state alongside market history
             cvdBaseline: initialCVD,
+            cofi: 0,
+            ofiHistory: [],
             market: {
                 ...state.market,
                 candles,
@@ -314,7 +332,8 @@ export const useStore = create<AppState>((set, get) => ({
                     ...state.market.metrics,
                     institutionalCVD: initialCVD,
                     retailSentiment: rsiOnLoad,
-                    toxicity: vpinOnLoad
+                    toxicity: vpinOnLoad,
+                    ofi: 0
                 }
             }
         }));
@@ -428,24 +447,23 @@ export const useStore = create<AppState>((set, get) => ({
                 return acc + (vol > 0 ? Math.abs(c.delta || 0) / vol : 0);
             }, 0) / Math.max(vpinWindow.length, 1)) * 100);
 
-            // FIX #1: Proper multi-factor Bayesian Posterior P(bull|evidence)
-            // Each indicator contributes an independent likelihood update:
-            //   L_rsi: RSI > 55 → bullish evidence (0.65), RSI < 45 → bearish (0.35)
-            //   L_ofi: OFI normalized to [-100,100]. Positive → bullish evidence
-            //   L_z:   Z-Score < -1 → oversold (bullish mean-reversion signal)
-            //   L_skew: positive skew → upside tail risk (slight bullish bias)
-            const ofiNow = state.market.metrics.ofi || 0;
-            const L_rsi = rsiValue > 55 ? 3.0 : rsiValue < 45 ? 0.333 : 1.0; // likelihood ratio
-            const L_ofi = ofiNow > 10 ? 1.5 : ofiNow < -10 ? 0.667 : 1.0;
+            // Multi-factor Bayesian Posterior P(bull|evidence)
+            // Each indicator contributes an independent likelihood update.
+            // Bug Fix #2: Use _latestOfi (module-level ref written by processDepthUpdate)
+            // instead of state.market.metrics.ofi which lags by one WebSocket frame.
+            const L_rsi = rsiValue > 55 ? 3.0 : rsiValue < 45 ? 0.333 : 1.0;
+            const L_ofi = _latestOfi > 10 ? 1.5 : _latestOfi < -10 ? 0.667 : 1.0;
             const L_z = zScore < -1.5 ? 1.6 : zScore > 1.5 ? 0.625 : 1.0;
-            const L_skew = skewness > 0.3 ? 1.2 : skewness < -0.3 ? 0.833 : 1.0;
+            // Bug Fix #8: Use centralised SKEW_SIGNIFICANT constant (0.3) for consistency
+            const L_skew = skewness > SKEW_SIGNIFICANT ? 1.2 : skewness < -SKEW_SIGNIFICANT ? 0.833 : 1.0;
             // Prior: 0.5, Posterior = unnormalized likelihood product
             const bullOdds = 1.0 * L_rsi * L_ofi * L_z * L_skew; // prior odds = 1 (i.e. 0.5/0.5)
             const bayesianPosterior = bullOdds / (bullOdds + 1.0); // [0,1]
 
             // ─── Z-Score Divergence Detection ──────────────────────────────
             // Alert when price makes a new 10-bar high/low but Z-Score doesn't confirm.
-            // "Fakeout" signal: price breakout without statistical support.
+            // Bug Fix #9: Gate with Z_DIV_COOLDOWN_MS (10 min) to prevent flooding
+            // every bar when a sustained divergence condition exists.
             if (newCandles.length >= 10) {
                 const recent10 = newCandles.slice(-10);
                 const prevHighs = newCandles.slice(-11, -1).map(c => c.high);
@@ -456,17 +474,21 @@ export const useStore = create<AppState>((set, get) => ({
                 const prev10High = Math.max(...prevHighs);
                 const prev10Low = Math.min(...prevLows);
 
-                // New 10-bar high but Z-Score is not also at a new high (it's pulling back)
-                if (curr10High > prev10High && zScore < -0.5) {
+                const nowMs = Date.now();
+                const canFireZDiv = nowMs - _lastZDivAlertMs > Z_DIV_COOLDOWN_MS;
+
+                if (canFireZDiv && curr10High > prev10High && zScore < -0.5) {
+                    _lastZDivAlertMs = nowMs;
                     setTimeout(() => get().addNotification({
-                        id: `zdiv-bear-${Date.now()}`,
+                        id: `zdiv-bear-${nowMs}`,
                         type: 'warning',
                         title: '⚡ Z-Score Divergence',
                         message: `Price new high but Z=${zScore.toFixed(2)}σ — potential bearish fakeout`
                     }), 0);
-                } else if (curr10Low < prev10Low && zScore > 0.5) {
+                } else if (canFireZDiv && curr10Low < prev10Low && zScore > 0.5) {
+                    _lastZDivAlertMs = nowMs;
                     setTimeout(() => get().addNotification({
-                        id: `zdiv-bull-${Date.now()}`,
+                        id: `zdiv-bull-${nowMs}`,
                         type: 'warning',
                         title: '⚡ Z-Score Divergence',
                         message: `Price new low but Z=+${zScore.toFixed(2)}σ — potential bullish fakeout`
@@ -501,10 +523,20 @@ export const useStore = create<AppState>((set, get) => ({
         }
 
         // Mid-bar update: keep institutionalCVD and zScore in sync without heavy stats
-        const mbCloses20 = newCandles.slice(-20).map(c => c.close);
-        const mbMean20 = mbCloses20.reduce((a, b) => a + b, 0) / mbCloses20.length;
-        const mbStd20 = Math.sqrt(mbCloses20.reduce((a, c) => a + Math.pow(c - mbMean20, 2), 0) / mbCloses20.length);
-        const mbZScore = mbStd20 > 0 ? (tick.c - mbMean20) / mbStd20 : 0;
+        // Bug Fix #1: Use the same VWAP-anchored typical-price formula as the new-bar
+        // update to prevent Z-Score from jumping at bar boundaries.
+        const mbWindow20 = newCandles.slice(-20);
+        const mbTypicals20 = mbWindow20.map(c => (c.high + c.low + c.close) / 3);
+        let mbVwapNum = 0, mbVwapDen = 0;
+        for (let j = 0; j < mbWindow20.length; j++) {
+            const vol = mbWindow20[j].volume || 1;
+            mbVwapNum += mbTypicals20[j] * vol;
+            mbVwapDen += vol;
+        }
+        const mbVwap20 = mbVwapDen > 0 ? mbVwapNum / mbVwapDen : tick.c;
+        const mbTypMean = mbTypicals20.reduce((a, b) => a + b, 0) / mbTypicals20.length;
+        const mbStd20 = Math.sqrt(mbTypicals20.reduce((acc, p) => acc + Math.pow(p - mbTypMean, 2), 0) / mbTypicals20.length);
+        const mbZScore = mbStd20 > 0 ? (tick.c - mbVwap20) / mbStd20 : 0;
 
         return {
             market: {
@@ -565,11 +597,18 @@ export const useStore = create<AppState>((set, get) => ({
         // ─── Composite OFI: 60% depth imbalance + 40% delta signal
         const ofi = (depthImbalance * 0.6) + (deltaOfi * 0.4);
 
+        // Bug Fix #2: Keep module-level ref in sync so processWsTick Bayesian reads current OFI
+        _latestOfi = ofi;
+
         // ─── Wall / Hole classification using per-side median (robust to outliers)
         const allLevels = [...sortedAsks, ...sortedBids];
         const sorted = [...allLevels].map(l => l.size).sort((a, b) => a - b);
         const median = sorted[Math.floor(sorted.length / 2)] || 1;
-        const baseWallThreshold = median * 4;    // >4× median = significant wall
+        // Bug Fix #5: Add absolute floor based on notional value to prevent over-classification
+        // during thin-market sessions where the median itself collapses to near zero.
+        // Floor = 0.15% of mid-price in USD equivalent (e.g. ~$143 for BTC @ $95k)
+        const absoluteFloor = midPrice * 0.0015;
+        const baseWallThreshold = Math.max(median * 4, absoluteFloor);   // >4× median = significant wall
         const holeThreshold = median * 0.15; // <15% median = liquidity hole
 
         const classify = (l: OrderBookLevel, index: number) => {
@@ -852,7 +891,24 @@ export const useStore = create<AppState>((set, get) => ({
         const _itvToMins: Record<string, number> = { '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440 };
         const _curMins = _itvToMins[get().config.interval] || 1;
 
-        const calculateBiasForWindow = (windowSize: number): TimeframeData => {
+        /**
+         * Bug Fix #3: Bias matrix timeframe resolution guard.
+         * If the current chart interval is COARSER than the target timeframe window
+         * (e.g. viewing 1h chart and asking for M5 bias = 5-bar window = 5 hours),
+         * the result is meaningless. Return a special marker so the UI can show
+         * "Insufficient Resolution" instead of a mislabeled bias signal.
+         */
+        const calculateBiasForWindow = (windowSize: number, targetMins: number): TimeframeData => {
+            // Guard: current interval is coarser than target timeframe
+            if (_curMins > targetMins) {
+                return {
+                    bias: 'NEUTRAL' as BiasType,
+                    sparkline: [],
+                    lastUpdated: Date.now(),
+                    insufficientResolution: true
+                } as TimeframeData;
+            }
+
             if (candles.length < Math.max(windowSize, 20)) {
                 return { bias: 'NEUTRAL', sparkline: new Array(20).fill(50), lastUpdated: Date.now() };
             }
@@ -895,10 +951,10 @@ export const useStore = create<AppState>((set, get) => ({
                 ...state.biasMatrix,
                 isLoading: false,
                 lastUpdated: Date.now(),
-                daily: calculateBiasForWindow(Math.max(20, Math.round(1440 / _curMins))),
-                h4: calculateBiasForWindow(Math.max(14, Math.round(240 / _curMins))),
-                h1: calculateBiasForWindow(Math.max(14, Math.round(60 / _curMins))),
-                m5: calculateBiasForWindow(Math.max(5, Math.round(5 / _curMins))),
+                daily: calculateBiasForWindow(Math.max(20, Math.round(1440 / _curMins)), 1440),
+                h4: calculateBiasForWindow(Math.max(14, Math.round(240 / _curMins)), 240),
+                h1: calculateBiasForWindow(Math.max(14, Math.round(60 / _curMins)), 60),
+                m5: calculateBiasForWindow(Math.max(5, Math.round(5 / _curMins)), 5),
             };
             return { biasMatrix: updatedBiasMatrix };
         });
@@ -1111,6 +1167,27 @@ export const useStore = create<AppState>((set, get) => ({
         const slMult = 1.5 * fragilityFactor;
         const tpMult = slMult * (prob > 75 ? 3 : prob > 60 ? 2.5 : 2); // TP scales with conviction
 
+        // Bug Fix #6: Compute Expected Value (E.V.) from the tactical levels.
+        // This was previously always null, breaking the EV checklist item in SentinelPanel.
+        const stopLevel = scenario === 'BULLISH'
+            ? price - (atr * slMult)
+            : price + (atr * slMult);
+        const exitLevel = scenario === 'BULLISH'
+            ? price + (atr * tpMult)
+            : price - (atr * tpMult);
+
+        const stopDistance = Math.abs(price - stopLevel);
+        const targetDistance = Math.abs(exitLevel - price);
+        const rrRatio = stopDistance > 0 ? targetDistance / stopDistance : 0;
+        // Win probability derived from tactical score (capped at 0.75 to avoid overconfidence)
+        const winProb = Math.min(0.75, prob / 100);
+        const computedEV: ExpectedValueData = {
+            winProbability: winProb,
+            lossAmount: stopDistance,
+            winAmount: targetDistance,
+            rrRatio
+        };
+
         return {
             aiTactical: {
                 ...state.aiTactical,
@@ -1119,18 +1196,19 @@ export const useStore = create<AppState>((set, get) => ({
                 probability: Math.min(prob, 95),
                 scenario,
                 entryLevel: price,
-                stopLevel: scenario === 'BULLISH'
-                    ? price - (atr * slMult)
-                    : price + (atr * slMult),
-                exitLevel: scenario === 'BULLISH'
-                    ? price + (atr * tpMult)
-                    : price - (atr * tpMult),
+                stopLevel,
+                exitLevel,
                 confidenceFactors: {
                     biasAlignment: (bullScore >= 30 || bearScore >= 30),
                     liquidityAgreement: state.liquidity.sweeps.length > 0,
                     regimeAgreement: regimeType !== 'UNCERTAIN',
                     aiScore: Math.min(edgeRatio, 1)
                 }
+            },
+            market: {
+                ...state.market,
+                // Bug Fix #6 continued: write expectedValue to market slice so SentinelPanel receives it
+                expectedValue: scenario !== 'NEUTRAL' ? computedEV : null
             }
         };
     }),

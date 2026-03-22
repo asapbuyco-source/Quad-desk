@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useCallback, useState } from 'react';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
+import { SKEW_SIGNIFICANT } from '../store';
 import { BrainCircuit, Activity, BarChart2, Zap, Layers, TrendingUp, GripHorizontal, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const motion = m as any;
@@ -233,7 +234,7 @@ const MacroStrategyView: React.FC = () => {
                             <div className="border-t border-white/5 pt-4 flex flex-col gap-2">
                                 <span className="text-[10px] text-zinc-600 font-mono uppercase tracking-wider">Live Inputs</span>
                                 {[
-                                    { label: 'Skewness', value: (skewness || 0).toFixed(4), color: skewness && skewness < -0.1 ? 'text-rose-400' : skewness && skewness > 0.1 ? 'text-emerald-400' : 'text-zinc-400' },
+                                    { label: 'Skewness', value: (skewness || 0).toFixed(4), color: skewness && skewness < -SKEW_SIGNIFICANT ? 'text-rose-400' : skewness && skewness > SKEW_SIGNIFICANT ? 'text-emerald-400' : 'text-zinc-400' },
                                     { label: 'Bayes P(Bull)', value: bayesianPosterior !== undefined ? (bayesianPosterior * 100).toFixed(1) + '%' : '50.0%', color: getBayesColor(bayesianPosterior || 0.5) },
                                     { label: 'Z-Score', value: (zScore || 0).toFixed(3), color: zScore && Math.abs(zScore) >= 2.5 ? 'text-violet-400' : zScore && zScore > 0.5 ? 'text-emerald-400' : zScore && zScore < -0.5 ? 'text-rose-400' : 'text-zinc-400' },
                                     { label: 'RSI', value: rsi ? Math.round(rsi).toString() : '50', color: rsi && (rsi < 30 || rsi > 70) ? 'text-amber-400' : rsi && rsi >= 55 ? 'text-emerald-400' : 'text-zinc-400' },
@@ -319,10 +320,10 @@ const MacroStrategyView: React.FC = () => {
                             label="Skewness — Log Returns"
                             value={skewness !== undefined && skewness !== null ? skewness.toFixed(4) : "0.0000"}
                             subValue={
-                                skewness && Math.abs(skewness) < 0.1 ? "Symmetric — Neutral" :
+                                skewness && Math.abs(skewness) < SKEW_SIGNIFICANT ? "Symmetric — Neutral" :
                                     skewness && skewness < 0 ? "Negative — Downside Tail Risk" : "Positive — Upside Tail Risk"
                             }
-                            color={skewness && skewness < -0.1 ? "text-rose-400" : skewness && skewness > 0.1 ? "text-emerald-400" : "text-zinc-400"}
+                            color={skewness && skewness < -SKEW_SIGNIFICANT ? "text-rose-400" : skewness && skewness > SKEW_SIGNIFICANT ? "text-emerald-400" : "text-zinc-400"}
                         />
                         <StatBlock
                             label="Bayesian P(Bull | Evidence)"

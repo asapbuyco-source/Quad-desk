@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { Layers, ArrowUpCircle, ArrowDownCircle, MinusCircle, RefreshCw, Clock, Eye } from 'lucide-react';
+import { Layers, ArrowUpCircle, ArrowDownCircle, MinusCircle, RefreshCw, Clock, Eye, Ban } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, YAxis, ReferenceLine } from 'recharts';
 import { TimeframeData } from '../types';
 
@@ -12,6 +12,37 @@ const BiasCard: React.FC<{
     data: TimeframeData | null;
     delay: number
 }> = ({ label, data, delay }) => {
+
+    // Bug Fix #3 UI: Show a disabled card when the current interval is too coarse
+    if (data?.insufficientResolution) {
+        return (
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay }}
+                className="p-6 rounded-2xl border border-white/5 bg-zinc-900/30 relative overflow-hidden opacity-50"
+            >
+                <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-black/20 border border-white/5">
+                            <span className="text-sm font-bold font-mono text-zinc-500">{label}</span>
+                        </div>
+                        <Ban size={20} className="text-zinc-600" />
+                    </div>
+                    <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest px-2 py-1 rounded bg-zinc-800">RESOLUTION LOCK</span>
+                </div>
+                <div className="h-24 flex items-center justify-center">
+                    <p className="text-[10px] text-zinc-600 font-mono text-center leading-relaxed">
+                        Switch to a lower interval<br />to unlock {label} bias
+                    </p>
+                </div>
+                <div className="mt-4 pt-4 border-t border-white/5 flex justify-between items-center text-[10px] text-zinc-600 font-mono">
+                    <span>-- : --</span>
+                    <span>TF: {label}</span>
+                </div>
+            </motion.div>
+        );
+    }
 
     let color = 'text-zinc-500';
     let bg = 'bg-zinc-900/50';
@@ -124,15 +155,18 @@ const BiasMatrixView: React.FC = () => {
     }, [activeSymbol, market.candles.length]); // Also refresh when data points change
 
     const getConfluence = () => {
-        if (!daily || !h4 || !h1) return "INSUFFICIENT DATA";
-        const biases = [daily.bias, h4.bias, h1.bias];
-        const bullCount = biases.filter(b => b === 'BULL').length;
-        const bearCount = biases.filter(b => b === 'BEAR').length;
+        // Only include timeframes that have sufficient resolution
+        const validBiases = [daily, h4, h1]
+            .filter(tf => tf && !tf.insufficientResolution)
+            .map(tf => tf!.bias);
+        if (validBiases.length < 2) return "INSUFFICIENT DATA";
+        const bullCount = validBiases.filter(b => b === 'BULL').length;
+        const bearCount = validBiases.filter(b => b === 'BEAR').length;
 
-        if (bullCount === 3) return "STRONG BULLISH CONFLUENCE";
-        if (bearCount === 3) return "STRONG BEARISH CONFLUENCE";
-        if (bullCount === 2) return "BULLISH BIAS (LOCKED)";
-        if (bearCount === 2) return "BEARISH BIAS (LOCKED)";
+        if (bullCount === validBiases.length) return "STRONG BULLISH CONFLUENCE";
+        if (bearCount === validBiases.length) return "STRONG BEARISH CONFLUENCE";
+        if (bullCount >= Math.ceil(validBiases.length / 2)) return "BULLISH BIAS (LOCKED)";
+        if (bearCount >= Math.ceil(validBiases.length / 2)) return "BEARISH BIAS (LOCKED)";
         return "NEUTRAL / CHOP";
     };
 

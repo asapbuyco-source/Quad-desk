@@ -210,6 +210,8 @@ export interface TimeframeData {
   bias: BiasType;
   sparkline: number[]; // Last 20 closes
   lastUpdated: number;
+  /** True when the current chart interval is coarser than this timeframe's resolution */
+  insufficientResolution?: boolean;
 }
 
 export interface BiasMatrixState {
