@@ -659,41 +659,41 @@ async def alerts_evaluate(req: AlertEvaluateRequest):
     failed   = []
     z_abs    = abs(req.zScore)
 
-    if z_abs >= 2.0:
-        passed.append(f"Z-Score ({req.zScore:+.2f}σ) ≥ 2.0σ — statistically significant dislocation")
+    if z_abs >= 1.5:
+        passed.append(f"Z-Score ({req.zScore:+.2f}σ) ≥ 1.5σ — meaningful dislocation")
     else:
-        failed.append(f"Z-Score ({req.zScore:+.2f}σ) < 2.0σ — insufficient dislocation")
+        failed.append(f"Z-Score ({req.zScore:+.2f}σ) < 1.5σ — weak dislocation")
 
-    if req.tacticalProbability >= 0.65:
-        passed.append(f"Tactical probability ({req.tacticalProbability:.2f}) ≥ 0.65 — high-confidence setup")
+    if req.tacticalProbability >= 0.55:
+        passed.append(f"Tactical probability ({req.tacticalProbability:.2f}) ≥ 0.55 — moderate confidence setup")
     else:
-        failed.append(f"Tactical probability ({req.tacticalProbability:.2f}) < 0.65 — setup not mature")
+        failed.append(f"Tactical probability ({req.tacticalProbability:.2f}) < 0.55 — setup not mature")
 
-    if req.aiScore >= 0.7:
-        passed.append(f"Algorithmic score ({req.aiScore:.2f}) ≥ 0.70 — model consensus confirmed")
+    if req.aiScore >= 0.6:
+        passed.append(f"Algorithmic score ({req.aiScore:.2f}) ≥ 0.60 — model consensus confirmed")
     else:
-        failed.append(f"Algorithmic score ({req.aiScore:.2f}) < 0.70 — model score below threshold")
+        failed.append(f"Algorithmic score ({req.aiScore:.2f}) < 0.60 — model score below threshold")
 
     expected_direction = "LONG" if req.zScore < 0 else "SHORT"
 
     if expected_direction == "LONG":
-        if req.bayesianPosterior >= 0.60:
-            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≥ 0.60 — strong probability evidence")
+        if req.bayesianPosterior >= 0.55:
+            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≥ 0.55 — bullish probability evidence")
         else:
-            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) < 0.60 — insufficient posterior evidence")
+            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) < 0.55 — insufficient posterior evidence")
     else:
-        if req.bayesianPosterior <= 0.40:
-            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≤ 0.40 — strong bearish evidence")
+        if req.bayesianPosterior <= 0.45:
+            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≤ 0.45 — bearish probability evidence")
         else:
-            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) > 0.40 — insufficient bearish evidence")
+            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) > 0.45 — insufficient bearish evidence")
 
-    if req.expectedValueRR >= 1.5:
-        passed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) ≥ 1.5 R — favorable risk/reward setup")
+    if req.expectedValueRR >= 1.0:
+        passed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) ≥ 1.0 R — favorable risk/reward setup")
     else:
-        failed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) < 1.5 R — poor risk/reward expectancy")
+        failed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) < 1.0 R — poor risk/reward expectancy")
 
     score        = len(passed)
-    should_alert = score >= 4
+    should_alert = score >= 3
 
     algo_analysis = None
     if should_alert:
