@@ -963,6 +963,347 @@ def system_status():
         "threads": process.num_threads(), "autonomous_active": state["autonomous_active"], "logs": list(log_buffer)
     }
 
+# ── Backtesting ─────────────────────────────────────────────────────────────
+
+class BacktestRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    from_date: str   # ISO date string: "2025-01-01"
+    to_date: str     # ISO date string: "2025-03-01"
+    risk_pct: float = 1.0
+    min_confidence: float = 0.70
+    account_size: float = 100.0
+    interval: str = "1h"   # candle interval for backtest
+
+
+async def _fetch_historical_candles(symbol: str, interval: str, start_ms: int, end_ms: int) -> list:
+    """
+    Paginate Binance klines to cover the full date range.
+    Binance returns max 1000 candles per call; we paginate until end_ms.
+    """
+    all_candles = []
+    current_ms = start_ms
+    MAX_PER_CALL = 1000
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        while current_ms < end_ms:
+            params = {
+                "symbol":    symbol.upper(),
+                "interval":  interval,
+                "startTime": current_ms,
+                "endTime":   end_ms,
+                "limit":     MAX_PER_CALL,
+            }
+            try:
+                resp = await client.get(f"{BINANCE_BASE}/api/v3/klines", params=params)
+                resp.raise_for_status()
+                batch = resp.json()
+                if not batch:
+                    break
+                all_candles.extend(batch)
+                # Next page starts after last candle's close time
+                current_ms = int(batch[-1][6]) + 1   # closeTime + 1ms
+                if len(batch) < MAX_PER_CALL:
+                    break
+            except Exception as e:
+                logger.error(f"Backtest candle fetch error: {e}")
+                break
+
+    return all_candles
+
+
+def _run_backtest_engine(
+    candles_raw: list,
+    risk_pct: float,
+    min_confidence: float,
+    account_size: float,
+) -> dict:
+    """
+    Replay the 6-stage signal engine on historical OHLCV data.
+    Uses pure Python so it doesn't require the bot's async feed.
+    Returns trade log + performance statistics.
+    """
+    if len(candles_raw) < 55:
+        return {"trades": [], "stats": {"error": "Not enough candle data"}}
+
+    # Build candle list
+    candles = [
+        {
+            "time":   int(k[0]) / 1000,
+            "open":   float(k[1]),
+            "high":   float(k[2]),
+            "low":    float(k[3]),
+            "close":  float(k[4]),
+            "volume": float(k[5]),
+        }
+        for k in candles_raw
+    ]
+
+    equity     = account_size
+    trades     = []
+    equity_curve = [account_size]
+
+    # Rolling window size for indicators
+    WIN = 20  # Z-Score / VWAP window
+    ATR_WIN = 14
+
+    MIN_WARM = 55
+
+    for i in range(MIN_WARM, len(candles)):
+        window = candles[max(0, i - WIN): i]
+        atr_window = candles[max(0, i - ATR_WIN - 1): i]
+
+        closes = [c["close"] for c in window]
+        prices = [c["close"] for c in atr_window]
+        highs  = [c["high"]  for c in atr_window]
+        lows   = [c["low"]   for c in atr_window]
+
+        current = candles[i]
+        price   = current["close"]
+
+        # ── Z-Score ───────────────────────────────────────────────────
+        mean = sum(closes) / len(closes)
+        variance = sum((c - mean) ** 2 for c in closes) / len(closes)
+        std  = variance ** 0.5 or 1.0
+        z    = (price - mean) / std
+
+        # ── ATR ───────────────────────────────────────────────────────
+        tr_vals = []
+        for j in range(1, len(prices)):
+            hl = highs[j] - lows[j]
+            hc = abs(highs[j] - prices[j - 1])
+            lc = abs(lows[j]  - prices[j - 1])
+            tr_vals.append(max(hl, hc, lc))
+        atr = sum(tr_vals[-ATR_WIN:]) / min(len(tr_vals), ATR_WIN) if tr_vals else price * 0.005
+
+        # ── RSI (simple) ──────────────────────────────────────────────
+        gains, losses = [], []
+        for j in range(1, len(closes)):
+            d = closes[j] - closes[j - 1]
+            gains.append(max(d, 0))
+            losses.append(max(-d, 0))
+        avg_gain = sum(gains[-14:]) / 14 if len(gains) >= 14 else 0.5
+        avg_loss = sum(losses[-14:]) / 14 if len(losses) >= 14 else 0.5
+        rs    = avg_gain / avg_loss if avg_loss > 0 else 100
+        rsi   = 100 - (100 / (1 + rs))
+
+        # ── Simple Bayesian proxy ─────────────────────────────────────
+        L_rsi = 3.0 if rsi > 55 else 0.333 if rsi < 45 else 1.0
+        L_z   = 1.6 if z < -1.5 else 0.625 if z > 1.5 else 1.0
+        bull_odds = L_rsi * L_z
+        bayes = bull_odds / (bull_odds + 1.0)
+
+        # ── Signal logic (simplified 4-stage) ─────────────────────────
+        direction: Optional[str] = None
+        confidence = 0.0
+
+        # Mean Reversion (Z-Score extremes)
+        if z <= -2.5 and rsi < 55:
+            direction  = "BUY"
+            confidence = min(0.5 + abs(z) * 0.08, 0.95)
+        elif z >= 2.5 and rsi > 45:
+            direction  = "SELL"
+            confidence = min(0.5 + abs(z) * 0.08, 0.95)
+        # Trend (strong Bayesian + RSI momentum)
+        elif bayes > 0.65 and rsi > 60:
+            direction  = "BUY"
+            confidence = 0.55 + (bayes - 0.65) * 2.0
+        elif bayes < 0.35 and rsi < 40:
+            direction  = "SELL"
+            confidence = 0.55 + (0.35 - bayes) * 2.0
+
+        if direction is None or confidence < min_confidence:
+            continue
+
+        # ── Risk sizing ───────────────────────────────────────────────
+        is_long   = direction == "BUY"
+        sl_dist   = atr * 1.5
+        tp_dist   = sl_dist * 2.0
+        stop_loss   = round(price - sl_dist if is_long else price + sl_dist, 2)
+        take_profit = round(price + tp_dist if is_long else price - tp_dist, 2)
+
+        risk_usd  = equity * (risk_pct / 100.0)
+        qty       = risk_usd / sl_dist if sl_dist > 0 else 0.0
+        if qty <= 0:
+            continue
+
+        # ── Simulate exit on subsequent candles ───────────────────────
+        result   = "OPEN"
+        exit_price = price
+        exit_idx   = i
+
+        for j in range(i + 1, min(i + 100, len(candles))):
+            future = candles[j]
+            if is_long:
+                if future["low"] <= stop_loss:
+                    exit_price = stop_loss
+                    result = "LOSS"
+                    exit_idx = j
+                    break
+                if future["high"] >= take_profit:
+                    exit_price = take_profit
+                    result = "WIN"
+                    exit_idx = j
+                    break
+            else:
+                if future["high"] >= stop_loss:
+                    exit_price = stop_loss
+                    result = "LOSS"
+                    exit_idx = j
+                    break
+                if future["low"] <= take_profit:
+                    exit_price = take_profit
+                    result = "WIN"
+                    exit_idx = j
+                    break
+
+        if result == "OPEN":
+            continue  # Skip unresolved trades in stats
+
+        pnl = (exit_price - price) * qty if is_long else (price - exit_price) * qty
+        equity += pnl
+
+        trades.append({
+            "date":        datetime.fromtimestamp(current["time"]).strftime("%Y-%m-%d %H:%M"),
+            "exit_date":   datetime.fromtimestamp(candles[exit_idx]["time"]).strftime("%Y-%m-%d %H:%M"),
+            "side":        "BUY" if is_long else "SELL",
+            "entry":       round(price, 2),
+            "stop_loss":   stop_loss,
+            "take_profit": take_profit,
+            "exit_price":  round(exit_price, 2),
+            "pnl":         round(pnl, 2),
+            "result":      result,
+            "confidence":  round(confidence, 3),
+            "equity":      round(equity, 2),
+            "z_score":     round(z, 3),
+            "rsi":         round(rsi, 1),
+        })
+        equity_curve.append(round(equity, 2))
+
+        # Skip to after the exit candle (no overlapping trades)
+        i = exit_idx
+
+    # ── Performance statistics ─────────────────────────────────────────
+    if not trades:
+        return {
+            "trades": [],
+            "equity_curve": equity_curve,
+            "stats": {
+                "totalTrades": 0, "wins": 0, "losses": 0,
+                "winRate": 0, "totalReturn": 0, "maxDrawdown": 0, "sharpe": 0,
+            }
+        }
+
+    wins       = sum(1 for t in trades if t["result"] == "WIN")
+    losses     = sum(1 for t in trades if t["result"] == "LOSS")
+    win_rate   = round(wins / len(trades) * 100, 1)
+
+    total_return = round((equity - account_size) / account_size * 100, 2)
+
+    # Max drawdown
+    peak = account_size
+    max_dd = 0.0
+    for eq in equity_curve:
+        if eq > peak:
+            peak = eq
+        dd = (peak - eq) / peak * 100
+        if dd > max_dd:
+            max_dd = dd
+
+    # Sharpe ratio (annualised, assume 252 trading days)
+    pnls = [t["pnl"] for t in trades]
+    if len(pnls) > 1:
+        avg_pnl  = sum(pnls) / len(pnls)
+        std_pnl  = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
+        sharpe   = round((avg_pnl / std_pnl) * (252 ** 0.5) if std_pnl > 0 else 0.0, 2)
+    else:
+        sharpe = 0.0
+
+    return {
+        "trades":       trades,
+        "equity_curve": equity_curve,
+        "stats": {
+            "totalTrades": len(trades),
+            "wins":        wins,
+            "losses":      losses,
+            "winRate":     win_rate,
+            "totalReturn": total_return,
+            "maxDrawdown": round(max_dd, 2),
+            "sharpe":      sharpe,
+            "finalEquity": round(equity, 2),
+        }
+    }
+
+
+@app.post("/backtest")
+async def run_backtest(req: BacktestRequest):
+    """
+    Replay the quant signal engine on historical OHLCV data.
+    Fetches candles from Binance for the given date range,
+    then simulates entries/exits and returns performance stats.
+    """
+    # Parse date strings
+    try:
+        dt_from = datetime.strptime(req.from_date, "%Y-%m-%d")
+        dt_to   = datetime.strptime(req.to_date,   "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    if dt_from >= dt_to:
+        raise HTTPException(status_code=400, detail="from_date must be before to_date.")
+
+    date_range_days = (dt_to - dt_from).days
+    if date_range_days > 365 * 3:
+        raise HTTPException(status_code=400, detail="Date range too large. Max 3 years.")
+
+    start_ms = int(dt_from.timestamp() * 1000)
+    end_ms   = int(dt_to.timestamp()   * 1000)
+
+    # Validate interval
+    valid_intervals = {"1m", "5m", "15m", "1h", "4h", "1d"}
+    interval = req.interval if req.interval in valid_intervals else "1h"
+
+    logger.info(f"Backtest: {req.symbol} {interval} {req.from_date}→{req.to_date} | risk={req.risk_pct}% conf={req.min_confidence}")
+
+    candles_raw = await _fetch_historical_candles(req.symbol.upper(), interval, start_ms, end_ms)
+
+    if not candles_raw:
+        raise HTTPException(status_code=502, detail="Failed to fetch historical data from Binance.")
+
+    result = _run_backtest_engine(
+        candles_raw,
+        risk_pct=req.risk_pct,
+        min_confidence=req.min_confidence,
+        account_size=req.account_size,
+    )
+
+    result["meta"] = {
+        "symbol":        req.symbol.upper(),
+        "interval":      interval,
+        "from_date":     req.from_date,
+        "to_date":       req.to_date,
+        "candles_fetched": len(candles_raw),
+        "account_size":  req.account_size,
+    }
+
+    return result
+
+
+@app.get("/backtest/symbols")
+async def backtest_symbols():
+    """Return supported symbols for backtesting."""
+    return {
+        "symbols": [
+            {"value": "BTCUSDT",  "label": "Bitcoin (BTC/USDT)"},
+            {"value": "ETHUSDT",  "label": "Ethereum (ETH/USDT)"},
+            {"value": "SOLUSDT",  "label": "Solana (SOL/USDT)"},
+            {"value": "BNBUSDT",  "label": "BNB (BNB/USDT)"},
+            {"value": "XRPUSDT",  "label": "Ripple (XRP/USDT)"},
+            {"value": "ADAUSDT",  "label": "Cardano (ADA/USDT)"},
+            {"value": "DOGEUSDT", "label": "Dogecoin (DOGE/USDT)"},
+        ]
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))

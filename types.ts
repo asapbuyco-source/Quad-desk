@@ -255,12 +255,22 @@ export interface FairValueGap {
 // --- Bot Control Types ---
 export interface BotSettingsState {
   isActive: boolean;
-  exchange: 'binance' | 'bybit';
+  exchange: 'binance' | 'bybit' | 'coinbase';
+  // Binance / Bybit auth
   apiKey: string;
   apiSecret: string;
+  // Coinbase Advanced Trade auth (RSA/EC key)
+  coinbaseKeyName: string;
+  coinbasePrivateKey: string;
   environment: 'testnet' | 'live';
   tradingPair: string;
   maxRiskPerTradePct: number;
+  // Advanced risk settings
+  maxDailyLossPct: number;
+  analysisIntervalSec: number;
+  minConfidence: number;
+  accountSize: number;
+  ulisGateEnabled: boolean;
   status: 'ONLINE' | 'OFFLINE' | 'ERROR' | 'EXECUTING';
   lastExecutionTime?: number;
   activePositions: number;
@@ -268,6 +278,7 @@ export interface BotSettingsState {
   lastHeartbeat?: number;   // ms timestamp of last bot heartbeat
   botMode?: string;         // 'DRY-RUN' | 'LIVE'
   lastSignal?: string;      // e.g. 'BUY' | 'SELL' | 'WAIT'
+  lastUlis?: string;        // e.g. 'STRONG_LONG' | 'AVOID'
   totalTrades?: number;
 }
 
@@ -392,6 +403,50 @@ export interface BotTrade {
   entry_price: number;
   stop_loss: number;
   take_profit: number;
-  ts_ms: number;   // client-side ms timestamp (SERVER_TIMESTAMP populated server-side)
-  mode: string;    // 'DRY-RUN' | 'LIVE'
+  ts_ms: number;          // client-side ms timestamp
+  mode: string;           // 'DRY-RUN' | 'LIVE'
+  exchange?: string;      // 'coinbase' | 'binance'
+  ulis_verdict?: string;  // ULIS gate verdict that confirmed/rejected the trade
+}
+
+// --- Backtesting Types ---
+export interface BacktestTrade {
+  date: string;
+  exit_date: string;
+  side: 'BUY' | 'SELL';
+  entry: number;
+  stop_loss: number;
+  take_profit: number;
+  exit_price: number;
+  pnl: number;
+  result: 'WIN' | 'LOSS';
+  confidence: number;
+  equity: number;
+  z_score: number;
+  rsi: number;
+}
+
+export interface BacktestStats {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalReturn: number;
+  maxDrawdown: number;
+  sharpe: number;
+  finalEquity: number;
+}
+
+export interface BacktestResult {
+  trades: BacktestTrade[];
+  equity_curve: number[];
+  stats: BacktestStats;
+  meta: {
+    symbol: string;
+    interval: string;
+    from_date: string;
+    to_date: string;
+    candles_fetched: number;
+    account_size: number;
+  };
 }

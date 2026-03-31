@@ -9,10 +9,14 @@ logger = logging.getLogger(__name__)
 
 class TradingExecutor:
     """
-    Handles risk-managed execution of AI trading signals via ccxt.
+    Handles risk-managed execution of trading signals via ccxt.
 
-    In DRY_RUN mode (no API keys supplied) the executor logs what it WOULD do
-    without placing any real orders — safe for live observation/testing.
+    Supports Coinbase Advanced Trade (spot) and Binance (legacy).
+    In DRY_RUN mode the executor logs what it WOULD do without placing
+    any real orders — safe for live observation/testing.
+
+    Coinbase Advanced Trade uses RSA/EC private key authentication.
+    Set COINBASE_API_KEY_NAME and COINBASE_PRIVATE_KEY in your .env.
     """
 
     def __init__(
@@ -21,40 +25,115 @@ class TradingExecutor:
         api_secret: str,
         testnet: bool = True,
         dry_run: bool = True,
+        exchange_id: str = "binance",
+        coinbase_key_name: str = "",
+        coinbase_private_key: str = "",
     ):
-        self.testnet  = testnet
-        self.dry_run  = dry_run or not (api_key and api_secret)
+        self.testnet   = testnet
+        self.exchange_id = exchange_id.lower()
+        self.dry_run   = dry_run or not self._has_credentials(
+            exchange_id, api_key, api_secret, coinbase_key_name, coinbase_private_key
+        )
+
         if self.dry_run:
             logger.warning("[Executor] DRY-RUN mode: no real orders will be placed.")
 
-        self.exchange = ccxt.binance({
-            'apiKey':          api_key,
-            'secret':          api_secret,
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'spot',
+        # ── Exchange initialisation ───────────────────────────────────────
+        if self.exchange_id == "coinbase":
+            self.exchange = self._init_coinbase(
+                coinbase_key_name, coinbase_private_key
+            )
+        else:
+            # Binance (legacy / fallback)
+            self.exchange = self._init_binance(api_key, api_secret, testnet)
+
+        self.active_position: Optional[Dict[str, Any]] = None
+
+    # ------------------------------------------------------------------
+    # Static helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _has_credentials(exchange_id, api_key, api_secret, cb_name, cb_key) -> bool:
+        if exchange_id.lower() == "coinbase":
+            return bool(cb_name and cb_key)
+        return bool(api_key and api_secret)
+
+    @staticmethod
+    def _init_coinbase(key_name: str, private_key: str) -> ccxt.Exchange:
+        """
+        Coinbase Advanced Trade uses EC/RSA private keys, not HMAC secrets.
+        ccxt maps: apiKey → key_name, secret → private_key (PEM string).
+        The private key may be stored with literal \\n — normalise to real newlines.
+        """
+        # Normalise escaped newlines from env vars
+        normalised_key = private_key.replace("\\n", "\n").strip()
+
+        exchange = ccxt.coinbase({
+            "apiKey":          key_name,
+            "secret":          normalised_key,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "spot",
+            },
+        })
+        logger.info("[Executor] Coinbase Advanced Trade (spot) initialised.")
+        return exchange
+
+    @staticmethod
+    def _init_binance(api_key: str, api_secret: str, testnet: bool) -> ccxt.Exchange:
+        exchange = ccxt.binance({
+            "apiKey":          api_key,
+            "secret":          api_secret,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "spot",
             },
         })
         if testnet:
-            self.exchange.set_sandbox_mode(True)
+            exchange.set_sandbox_mode(True)
+        logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised.")
+        return exchange
 
-        self.active_position: Optional[Dict[str, Any]] = None
+    # ------------------------------------------------------------------
+    # Symbol translation helpers
+    # ------------------------------------------------------------------
+    def _to_exchange_symbol(self, symbol: str) -> str:
+        """
+        Translate a Binance-style symbol (BTCUSDT) to the exchange's native format.
+        Coinbase uses BTC/USD (ccxt unified) or BTC-USD (raw API).
+        ccxt accepts the unified BTC/USDT format for both exchanges.
+        """
+        if self.exchange_id != "coinbase":
+            return symbol
+
+        # Map BTCUSDT → BTC/USDT, BTC-USD → BTC/USD, etc.
+        # If already in BTC-USD or BTC/USD form, convert to ccxt unified
+        if "/" in symbol:
+            return symbol  # already unified
+        if "-" in symbol:
+            return symbol.replace("-", "/")  # BTC-USD → BTC/USD
+
+        # BTCUSDT style → BTC/USDT
+        # Common quote currencies in order of descending length (avoid partial match)
+        for quote in ("USDT", "USDC", "USD", "BTC", "ETH", "BNB"):
+            if symbol.endswith(quote):
+                base = symbol[: -len(quote)]
+                return f"{base}/{quote}"
+        return symbol  # fallback — return as-is
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
     async def initialize(self):
-        """
-        Load markets and confirm connectivity.
-        In dry-run mode we skip the network call when no keys are present.
-        """
+        """Load markets and confirm connectivity."""
         if self.dry_run and not self.exchange.apiKey:
             logger.info("[Executor] Skipping market load in keyless dry-run mode.")
             return
         try:
             await self.exchange.load_markets()
             env = "TESTNET" if self.testnet else "LIVE"
-            logger.info(f"[Executor] Connected to Binance {env} ✓")
+            exch = self.exchange_id.upper()
+            logger.info(f"[Executor] Connected to {exch} {env} ✓")
         except Exception as e:
             logger.error(f"[Executor] Failed to initialise exchange: {e}")
 
@@ -65,42 +144,46 @@ class TradingExecutor:
     # Firestore trade logger
     # ------------------------------------------------------------------
     def _log_trade(self, symbol: str, side: str, verdict: str,
-                   entry: float, stop_loss: float, take_profit: float):
-        """
-        Write a trade record to Firestore `botTrades` collection.
-        Silently skips if Firebase is not initialised.
-        """
+                   entry: float, stop_loss: float, take_profit: float,
+                   ulis_verdict: str = ""):
+        """Write a trade record to Firestore `botTrades` collection."""
         db = heartbeat.get_db()
         if db is None:
             return
         try:
             from firebase_admin import firestore as fs
             doc = {
-                "symbol":      symbol,
-                "side":        side,
-                "verdict":     verdict,
-                "entry_price": entry,
-                "stop_loss":   stop_loss,
-                "take_profit": take_profit,
-                "timestamp":   fs.SERVER_TIMESTAMP,
-                "mode":        "DRY-RUN" if self.dry_run else "LIVE",
-                "ts_ms":       int(time.time() * 1000),
+                "symbol":       symbol,
+                "side":         side,
+                "verdict":      verdict,
+                "entry_price":  entry,
+                "stop_loss":    stop_loss,
+                "take_profit":  take_profit,
+                "timestamp":    fs.SERVER_TIMESTAMP,
+                "mode":         "DRY-RUN" if self.dry_run else "LIVE",
+                "exchange":     self.exchange_id,
+                "ulis_verdict": ulis_verdict,
+                "ts_ms":        int(time.time() * 1000),
             }
             db.collection("botTrades").add(doc)
-            logger.info(f"[Executor] Trade logged to Firestore ✓")
+            logger.info("[Executor] Trade logged to Firestore ✓")
         except Exception as e:
             logger.warning(f"[Executor] Failed to log trade to Firestore: {e}")
 
     # ------------------------------------------------------------------
     # Balance
     # ------------------------------------------------------------------
-    async def get_usdt_balance(self) -> float:
-        """Return free USDT balance (or simulated equity in dry-run)."""
+    async def get_usdt_balance(self, account_size: float = 100.0) -> float:
+        """Return free USDT/USD balance (or simulated equity in dry-run)."""
         if self.dry_run:
-            return 1_000.0  # Simulated starting equity for dry-run logging
+            return account_size   # Configurable simulated equity
         try:
             bal = await self.exchange.fetch_balance()
-            return float(bal.get('free', {}).get('USDT', 0.0))
+            free = bal.get("free", {})
+            # Coinbase uses "USD", Binance uses "USDT"
+            usdt = float(free.get("USDT", 0.0))
+            usd  = float(free.get("USD",  0.0))
+            return usdt or usd
         except Exception as e:
             logger.error(f"[Executor] fetch_balance error: {e}")
             return 0.0
@@ -116,8 +199,8 @@ class TradingExecutor:
         max_risk_pct: float,
     ) -> float:
         """
-        Kelly-constrained fixed-fractional sizing:
-        Size = (equity × risk%) / |entry - stop_loss|
+        Fixed-fractional sizing: risk_usd / |entry − stop|
+        risk_usd = equity × (max_risk_pct / 100)
         """
         risk_usd = equity * (max_risk_pct / 100.0)
         distance = abs(current_price - stop_loss)
@@ -134,14 +217,16 @@ class TradingExecutor:
         current_price: float,
         signal: Dict[str, Any],
         max_risk_pct: float,
+        account_size: float = 100.0,
+        ulis_verdict: str = "",
     ):
-        verdict    = signal.get('verdict', 'WAIT')
-        confidence = float(signal.get('confidence', 0))
-        stop_loss  = float(signal.get('stop_loss', 0))
-        take_profit = float(signal.get('take_profit', 0))
+        verdict     = signal.get("verdict", "WAIT")
+        confidence  = float(signal.get("confidence", 0))
+        stop_loss   = float(signal.get("stop_loss", 0))
+        take_profit = float(signal.get("take_profit", 0))
 
         # Guard rails
-        if 'WAIT' in verdict:
+        if "WAIT" in verdict:
             return
 
         if self.active_position is not None:
@@ -149,94 +234,95 @@ class TradingExecutor:
             return
 
         if stop_loss <= 0 or take_profit <= 0:
-            logger.warning("[Executor] AI returned invalid SL/TP. Aborting.")
+            logger.warning("[Executor] Invalid SL/TP. Aborting.")
             return
 
-        # Sanity check: for a BUY, SL must be below price; for SELL above.
-        side = 'buy' if ('BUY' in verdict or 'LONG' in verdict) else 'sell'
-        if side == 'buy' and stop_loss >= current_price:
+        side = "buy" if ("BUY" in verdict or "LONG" in verdict) else "sell"
+        if side == "buy" and stop_loss >= current_price:
             logger.warning(f"[Executor] SL {stop_loss} ≥ price {current_price} for BUY. Aborting.")
             return
-        if side == 'sell' and stop_loss <= current_price:
+        if side == "sell" and stop_loss <= current_price:
             logger.warning(f"[Executor] SL {stop_loss} ≤ price {current_price} for SELL. Aborting.")
             return
 
-        equity = await self.get_usdt_balance()
-        if equity < 10:
-            logger.warning(f"[Executor] Insufficient equity ({equity:.2f} USDT).")
+        equity = await self.get_usdt_balance(account_size)
+        if equity < 5:
+            logger.warning(f"[Executor] Insufficient equity ({equity:.2f}). Min $5 required.")
             return
 
         raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
 
+        # Translate symbol to exchange format
+        ex_symbol = self._to_exchange_symbol(symbol)
+
         if self.dry_run:
-            # ── DRY RUN: only log what would happen ──────────────────
+            # ── DRY RUN ──────────────────────────────────────────────────
             cost = raw_size * current_price
             logger.info(
-                f"[DRY-RUN] {verdict} {symbol} "
+                f"[DRY-RUN] {verdict} {ex_symbol} "
                 f"| qty={raw_size:.6f} (${cost:.2f}) "
                 f"| SL={stop_loss} TP={take_profit} "
-                f"| equity=${equity:.2f} risk={max_risk_pct}%"
+                f"| equity=${equity:.2f} risk={max_risk_pct}% "
+                f"| ULIS={ulis_verdict}"
             )
             self.active_position = {
-                'symbol':      symbol,
-                'side':        side,
-                'size':        raw_size,
-                'entry_price': current_price,
-                'stop_loss':   stop_loss,
-                'take_profit': take_profit,
-                'dry_run':     True,
+                "symbol":      ex_symbol,
+                "side":        side,
+                "size":        raw_size,
+                "entry_price": current_price,
+                "stop_loss":   stop_loss,
+                "take_profit": take_profit,
+                "dry_run":     True,
             }
-            self._log_trade(symbol, side, verdict, current_price, stop_loss, take_profit)
+            self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
             return
 
-        # ── LIVE EXECUTION ────────────────────────────────────────────
+        # ── LIVE EXECUTION ────────────────────────────────────────────────
         try:
-            # Format to exchange precision
-            fmt_size = float(self.exchange.amount_to_precision(symbol, raw_size))
+            fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
             if cost > equity:
                 fmt_size = float(
-                    self.exchange.amount_to_precision(symbol, equity * 0.95 / current_price)
+                    self.exchange.amount_to_precision(ex_symbol, equity * 0.95 / current_price)
                 )
 
-            logger.info(f"[Executor] Placing MARKET {side.upper()} {fmt_size} {symbol} @ ~{current_price}")
-            order = await self.exchange.create_market_order(symbol, side, fmt_size)
+            logger.info(f"[Executor] Placing MARKET {side.upper()} {fmt_size} {ex_symbol} @ ~{current_price}")
+            order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
             logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
 
             self.active_position = {
-                'symbol':      symbol,
-                'side':        side,
-                'size':        fmt_size,
-                'entry_price': current_price,
-                'stop_loss':   stop_loss,
-                'take_profit': take_profit,
-                'order_id':    order.get('id'),
+                "symbol":      ex_symbol,
+                "side":        side,
+                "size":        fmt_size,
+                "entry_price": current_price,
+                "stop_loss":   stop_loss,
+                "take_profit": take_profit,
+                "order_id":    order.get("id"),
             }
-            self._log_trade(symbol, side, verdict, current_price, stop_loss, take_profit)
+            self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
 
-            # Attach SL bracket (STOP_LOSS_LIMIT)
-            sl_limit_price = (
-                stop_loss * 0.999 if side == 'buy' else stop_loss * 1.001
-            )
-            sl_side = 'sell' if side == 'buy' else 'buy'
+            sl_side = "sell" if side == "buy" else "buy"
+
+            # Stop-loss limit order
+            sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
             await self.exchange.create_order(
-                symbol=symbol,
-                type='STOP_LOSS_LIMIT',
+                symbol=ex_symbol,
+                type="STOP_LOSS_LIMIT" if self.exchange_id == "binance" else "stop_limit",
                 side=sl_side,
                 amount=fmt_size,
-                price=float(self.exchange.price_to_precision(symbol, sl_limit_price)),
-                params={'stopPrice': float(self.exchange.price_to_precision(symbol, stop_loss))},
+                price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
             )
             logger.info(f"[Executor] SL attached at {stop_loss}")
 
-            # Attach TP (LIMIT)
+            # Take-profit limit order
             await self.exchange.create_order(
-                symbol=symbol,
-                type='LIMIT',
+                symbol=ex_symbol,
+                type="limit",
                 side=sl_side,
                 amount=fmt_size,
-                price=float(self.exchange.price_to_precision(symbol, take_profit)),
-                params={'timeInForce': 'GTC'},
+                price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                params={"timeInForce": "GTC"},
             )
             logger.info(f"[Executor] TP attached at {take_profit}")
 
@@ -248,42 +334,42 @@ class TradingExecutor:
             logger.error(f"[Executor] Order placement failed: {e}", exc_info=True)
 
     # ------------------------------------------------------------------
-    # Position monitor (called from main loop)
+    # Position monitor (called from main loop for dry-run)
     # ------------------------------------------------------------------
     def check_position_exit(self, current_price: float) -> bool:
         """
-        Check whether the active position's SL or TP has been hit
-        (used in dry-run; in live mode the exchange handles OCO orders).
-        Returns True and clears position if an exit is triggered.
+        Check SL/TP for dry-run mode.
+        In live mode the exchange handles OCO orders.
+        Returns True and clears position if exit is triggered.
         """
         pos = self.active_position
         if pos is None:
             return False
 
-        side     = pos['side']
-        sl       = pos['stop_loss']
-        tp       = pos['take_profit']
+        side = pos["side"]
+        sl   = pos["stop_loss"]
+        tp   = pos["take_profit"]
 
-        if side == 'buy':
+        if side == "buy":
             if current_price <= sl:
-                pnl = (current_price - pos['entry_price']) * pos['size']
-                logger.info(f"[Executor] STOP LOSS HIT. PnL={pnl:.2f} USDT")
+                pnl = (current_price - pos["entry_price"]) * pos["size"]
+                logger.info(f"[Executor] STOP LOSS HIT. PnL={pnl:.2f}")
                 self.active_position = None
                 return True
             if current_price >= tp:
-                pnl = (current_price - pos['entry_price']) * pos['size']
-                logger.info(f"[Executor] TAKE PROFIT HIT. PnL={pnl:.2f} USDT")
+                pnl = (current_price - pos["entry_price"]) * pos["size"]
+                logger.info(f"[Executor] TAKE PROFIT HIT. PnL={pnl:.2f}")
                 self.active_position = None
                 return True
-        else:  # sell / short
+        else:
             if current_price >= sl:
-                pnl = (pos['entry_price'] - current_price) * pos['size']
-                logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL={pnl:.2f} USDT")
+                pnl = (pos["entry_price"] - current_price) * pos["size"]
+                logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL={pnl:.2f}")
                 self.active_position = None
                 return True
             if current_price <= tp:
-                pnl = (pos['entry_price'] - current_price) * pos['size']
-                logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL={pnl:.2f} USDT")
+                pnl = (pos["entry_price"] - current_price) * pos["size"]
+                logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL={pnl:.2f}")
                 self.active_position = None
                 return True
 
