@@ -256,12 +256,6 @@ export interface FairValueGap {
 export interface BotSettingsState {
   isActive: boolean;
   exchange: 'binance' | 'bybit' | 'coinbase';
-  // Binance / Bybit auth
-  apiKey: string;
-  apiSecret: string;
-  // Coinbase Advanced Trade auth (RSA/EC key)
-  coinbaseKeyName: string;
-  coinbasePrivateKey: string;
   environment: 'testnet' | 'live';
   tradingPair: string;
   maxRiskPerTradePct: number;

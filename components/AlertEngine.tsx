@@ -31,7 +31,9 @@ const AlertEngine: React.FC = () => {
     useEffect(() => {
         const checkBackend = async () => {
             try {
-                const res = await fetch(`${API_BASE_URL}/alerts/status`);
+                const res = await fetch(`${API_BASE_URL}/alerts/status`, {
+                    headers: { 'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || '' }
+                });
                 if (res.ok) {
                     const data = await res.json();
                     if (data.autonomous_mode) {
@@ -104,7 +106,10 @@ const AlertEngine: React.FC = () => {
 
                 const res = await fetch(`${API_BASE_URL}/alerts/evaluate`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || ''
+                    },
                     body: JSON.stringify(snapshot)
                 });
 

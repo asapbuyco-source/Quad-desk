@@ -150,7 +150,8 @@ const AdminControl: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'CONFIG' | 'HEALTH'>('CONFIG');
 
     // Hardcoded Admin Check based on prompt requirements
-    const isAdmin = user?.email?.toLowerCase() === 'abrackly@gmail.com';
+    const adminEmails = ((import.meta as any).env.VITE_ADMIN_EMAILS || '').toLowerCase().split(',');
+    const isAdmin = user?.email && adminEmails.includes(user.email.toLowerCase());
 
     if (!isAdmin || !user) return null;
 

@@ -17,13 +17,13 @@ import type { Firestore } from "firebase/firestore";
 export type { FirebaseApp, Auth, Analytics, Firestore };
 
 const firebaseConfig = {
-  apiKey: "AIzaSyD6eNi5OkV8mwvaV-hAyvNjOD_gLznNgtg",
-  authDomain: "quantdesk-6bcd0.firebaseapp.com",
-  projectId: "quantdesk-6bcd0",
-  storageBucket: "quantdesk-6bcd0.firebasestorage.app",
-  messagingSenderId: "792199101587",
-  appId: "1:792199101587:web:f30e81b1c898e3d7dfe166",
-  measurementId: "G-Y4JY39HZF3"
+  apiKey: (import.meta as any).env.VITE_FIREBASE_API_KEY,
+  authDomain: (import.meta as any).env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: (import.meta as any).env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: (import.meta as any).env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: (import.meta as any).env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: (import.meta as any).env.VITE_FIREBASE_APP_ID,
+  measurementId: (import.meta as any).env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 // Singleton pattern to handle HMR (Hot Module Replacement)

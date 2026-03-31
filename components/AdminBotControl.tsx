@@ -232,7 +232,7 @@ const AdminBotControl: React.FC = () => {
   return (
     <div style={{
       fontFamily: "'Inter', 'Outfit', sans-serif",
-      color: '#e0eaff', minHeight: '100vh',
+      color: '#e0eaff', height: '100%', overflowY: 'auto',
       background: 'linear-gradient(135deg, #0d0f1a 0%, #111326 100%)',
       padding: '24px 20px',
     }}>
@@ -334,23 +334,11 @@ const AdminBotControl: React.FC = () => {
 
           {/* COINBASE fields */}
           {botSettings.exchange === 'coinbase' && (
-            <>
-              <div style={{ background: 'rgba(78,201,176,0.06)', border: '1px solid rgba(78,201,176,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 18, fontSize: 12, color: '#4ec9b0', lineHeight: 1.6 }}>
-                <strong>Coinbase API Key Format:</strong><br />
-                1. Go to <strong>advanced.coinbase.com → Profile → API</strong><br />
-                2. Create key with <strong>View + Trade</strong> permissions (NOT Transfer)<br />
-                3. Copy the <em>Key Name</em> (starts with <code>organizations/…</code>) and the <em>Private Key</em> (PEM block)
-              </div>
-              <InputField label="API Key Name" value={botSettings.coinbaseKeyName ?? ''}
-                placeholder="organizations/abc123/apiKeys/xyz789"
-                hint="Looks like: organizations/…/apiKeys/…"
-                onChange={v => update({ coinbaseKeyName: v })} />
-              <InputField label="Private Key (PEM)" value={botSettings.coinbasePrivateKey ?? ''}
-                placeholder="-----BEGIN EC PRIVATE KEY-----&#10;MHQCAQEEIAx…&#10;-----END EC PRIVATE KEY-----"
-                rows={5}
-                hint="Paste the full PEM block including the BEGIN/END lines. Never share this."
-                onChange={v => update({ coinbasePrivateKey: v })} />
-            </>
+            <div style={{ background: 'rgba(78,201,176,0.06)', border: '1px solid rgba(78,201,176,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 18, fontSize: 12, color: '#4ec9b0', lineHeight: 1.6 }}>
+              <strong>🔒 Security Hardening Active:</strong><br />
+              Coinbase Advanced Trade API Keys have been migrated exclusively to the backend environment variables to prevent accidental exposure.<br /><br />
+              Please configure <code>COINBASE_API_KEY_NAME</code> and <code>COINBASE_PRIVATE_KEY</code> directly in your Railway/Render dashboard.
+            </div>
           )}
 
           {/* BINANCE fields */}

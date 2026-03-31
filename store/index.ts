@@ -263,10 +263,6 @@ export const useStore = create<AppState>((set, get) => ({
     botSettings: {
         isActive: false,
         exchange: 'coinbase',
-        apiKey: '',
-        apiSecret: '',
-        coinbaseKeyName: '',
-        coinbasePrivateKey: '',
         environment: 'live',
         tradingPair: 'BTC-USD',
         maxRiskPerTradePct: 1.0,
@@ -650,7 +646,9 @@ export const useStore = create<AppState>((set, get) => ({
 
     refreshHeatmap: async () => {
         try {
-            const res = await fetch(`${API_BASE_URL}/heatmap`);
+            const res = await fetch(`${API_BASE_URL}/heatmap`, {
+                headers: { 'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || '' }
+            });
             if (res.ok) {
                 const heatmap = await res.json();
                 set(state => ({ market: { ...state.market, metrics: { ...state.market.metrics, heatmap } } }));
@@ -1343,7 +1341,9 @@ export const useStore = create<AppState>((set, get) => ({
 
         try {
             // Call the backend proxy — keeps WHALE_ALERT_API_KEY server-side
-            const res = await fetch(`${API_BASE_URL}/whale-alerts`);
+            const res = await fetch(`${API_BASE_URL}/whale-alerts`, {
+                headers: { 'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || '' }
+            });
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));

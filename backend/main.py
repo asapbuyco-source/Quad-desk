@@ -8,13 +8,14 @@ import psutil
 import numpy as np
 import pandas as pd
 import httpx
-from collections import deque
+from collections import deque, defaultdict
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import google.generativeai as genai
@@ -58,6 +59,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WHALE_ALERT_API_KEY = os.getenv("WHALE_ALERT_API_KEY")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quantdesk.netlify.app")
+BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "dev-secret-key-123")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", BACKEND_API_KEY)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -222,7 +225,65 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+ALLOWED_ORIGINS = [
+    FRONTEND_URL,
+    "http://localhost:5173",
+    "http://127.0.0.1:5173"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+RATE_LIMIT_WINDOW = 60
+MAX_REQUESTS_PER_MIN = 60
+MAX_AI_REQUESTS_PER_MIN = 10
+
+request_counts = defaultdict(list)
+ai_request_counts = defaultdict(list)
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in ["/health", "/docs", "/openapi.json"]:
+        return await call_next(request)
+
+    # 1. API Key Auth
+    api_key = request.headers.get("X-API-Key")
+    if not api_key or api_key != BACKEND_API_KEY:
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized. Missing or invalid X-API-Key header."})
+        
+    # Admin Auth specific to system-status
+    if path.startswith("/admin/"):
+        admin_key = request.headers.get("X-Admin-Key")
+        if not admin_key or admin_key != ADMIN_API_KEY:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden. Admin access required."})
+
+    # 2. Rate Limiting
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    now = time.time()
+    
+    request_counts[client_ip] = [t for t in request_counts[client_ip] if now - t < RATE_LIMIT_WINDOW]
+    ai_request_counts[client_ip] = [t for t in ai_request_counts[client_ip] if now - t < RATE_LIMIT_WINDOW]
+    
+    is_ai = any(kw in path for kw in ["/analyze", "/flow", "/strategy", "/market-intelligence", "/alerts/evaluate"])
+    if is_ai:
+        if len(ai_request_counts[client_ip]) >= MAX_AI_REQUESTS_PER_MIN:
+            logger.warning(f"Rate limit exceeded (AI) for IP: {client_ip}")
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded for AI endpoints."})
+        ai_request_counts[client_ip].append(now)
+    else:
+        if len(request_counts[client_ip]) >= MAX_REQUESTS_PER_MIN:
+            logger.warning(f"Rate limit exceeded (Standard) for IP: {client_ip}")
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
+        request_counts[client_ip].append(now)
+
+    return await call_next(request)
 
 @app.get("/health")
 async def health_check():
@@ -747,11 +808,11 @@ async def alerts_evaluate(req: AlertEvaluateRequest):
 @app.post("/alerts/send-telegram")
 async def send_telegram_alert(payload: TelegramPayload):
     """Send a formatted trading alert via Telegram."""
-    bot_token = payload.botToken or TELEGRAM_BOT_TOKEN
-    chat_id = payload.chatId or TELEGRAM_CHAT_ID
+    bot_token = TELEGRAM_BOT_TOKEN
+    chat_id = TELEGRAM_CHAT_ID
 
     if not bot_token or not chat_id:
-        raise HTTPException(status_code=400, detail="Telegram credentials not configured")
+        raise HTTPException(status_code=400, detail="Telegram credentials not configured on backend.")
 
     emoji = "🟢" if payload.direction == "LONG" else "🔴"
     message = (
