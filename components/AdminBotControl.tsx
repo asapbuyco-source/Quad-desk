@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { BotSettingsState, BacktestResult, BacktestTrade } from '../types';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000';
 
 // ── Colour utilities ────────────────────────────────────────────────────────
 

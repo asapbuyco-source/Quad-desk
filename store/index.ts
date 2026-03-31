@@ -1190,6 +1190,7 @@ export const useStore = create<AppState>((set, get) => ({
         // Win probability derived from tactical score (capped at 0.75 to avoid overconfidence)
         const winProb = Math.min(0.75, prob / 100);
         const computedEV: ExpectedValueData = {
+            ev: (winProb * targetDistance) - ((1 - winProb) * stopDistance),
             winProbability: winProb,
             lossAmount: stopDistance,
             winAmount: targetDistance,

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import {
@@ -432,7 +432,6 @@ const computeAIVerdict = ({
     zScore,
     bayesianPosterior,
     cvd,
-    _skewness,
     price,
     sweepCount,
     fvgCount,
@@ -446,7 +445,6 @@ const computeAIVerdict = ({
     zScore: number;
     bayesianPosterior: number;
     cvd: number;
-    _skewness?: number;   // reserved for future use
     price: number;
     sweepCount: number;
     fvgCount: number;
@@ -457,9 +455,7 @@ const computeAIVerdict = ({
 
     // ══ PHASE 1 — Feature Fusion ══════════════════════════════════════════════
     const ofiSignal = clamp(ofi / 40, -1, 1);
-    const _zMeanReversion = clamp(-zScore / 2.5, -1, 1);  // scaffold for mean-reversion overlay
     const bayesSignal = (bayesianPosterior - 0.5) * 2;
-    const _cvdDirection = clamp(cvd / 300000, -1, 1);   // scaffold for future CVD gate
     const leverageProxy = normalize(Math.abs(ofi), 0, 80);
 
     const totalBidSize = bids.reduce((a: number, b: any) => a + b.size, 0);
@@ -1080,8 +1076,8 @@ const ULISView: React.FC = () => {
     const smoothCvd = useEMASmooth(cvd || 0, 0.15);
 
     // Stable book snapshots — only update reference when depth changes >0.5%
-    const stableBids = useStableBook(bids);
-    const stableAsks = useStableBook(asks);
+    const stableBids = useStableBook(bids.map(b => ({ ...b, delta: b.delta ?? 0, classification: b.classification ?? '' })));
+    const stableAsks = useStableBook(asks.map(a => ({ ...a, delta: a.delta ?? 0, classification: a.classification ?? '' })));
 
     // ── Derived Scores ──────────────────────────────────────────────────────
 
@@ -1414,7 +1410,7 @@ const ULISView: React.FC = () => {
                             {Object.entries(scores.glrComponents).map(([k, v]) => (
                                 <div key={k} className="flex flex-col items-center p-2 rounded-lg bg-black/30">
                                     <span className="text-[8px] text-zinc-600 uppercase tracking-wide">{k.replace('Liq', '').replace('Flow', '')}</span>
-                                    <span className="text-blue-400 font-black text-sm font-mono">{v}</span>
+                                    <span className="text-blue-400 font-black text-sm font-mono">{String(v)}</span>
                                 </div>
                             ))}
                         </div>
