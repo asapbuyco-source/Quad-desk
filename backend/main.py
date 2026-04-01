@@ -1034,6 +1034,11 @@ class BacktestRequest(BaseModel):
     min_confidence: float = 0.70
     account_size: float = 100.0
     interval: str = "1h"   # candle interval for backtest
+    # ── Realistic friction parameters ─────────────────────────────────────────
+    # slippage_bps: half-spread assumed on each entry AND exit leg (3 bps ≈ $2.85 on a $95k BTC)
+    slippage_bps: float = 3.0    # basis points per side (0.03%)
+    # commission_pct: exchange fee per trade leg (Coinbase Advanced taker = 0.10%)
+    commission_pct: float = 0.10  # percent per leg (0.10% = 0.001 fraction)
 
 
 async def _fetch_historical_candles(symbol: str, interval: str, start_ms: int, end_ms: int) -> list:
@@ -1077,6 +1082,8 @@ def _run_backtest_engine(
     risk_pct: float,
     min_confidence: float,
     account_size: float,
+    slippage_bps: float = 3.0,
+    commission_pct: float = 0.10,
 ) -> dict:
     """
     Replay the 6-stage signal engine on historical OHLCV data.
@@ -1102,6 +1109,11 @@ def _run_backtest_engine(
     equity     = account_size
     trades     = []
     equity_curve = [account_size]
+    total_costs_paid = 0.0  # accumulated slippage + commission across all trades
+
+    # Pre-compute friction constants
+    slip_fraction = slippage_bps / 10_000.0  # e.g. 3 bps → 0.0003
+    comm_fraction = commission_pct / 100.0   # e.g. 0.10% → 0.001
 
     # Rolling window size for indicators
     WIN = 20  # Z-Score / VWAP window
@@ -1220,7 +1232,27 @@ def _run_backtest_engine(
         if result == "OPEN":
             continue  # Skip unresolved trades in stats
 
-        pnl = (exit_price - price) * qty if is_long else (price - exit_price) * qty
+        # ── Apply realistic friction ──────────────────────────────────────────
+        # Slippage: buying at a slightly worse price, selling at slightly worse price.
+        # For LONG  → entry is marked-up,  exit is marked-down.
+        # For SHORT → entry is marked-down, exit is marked-up.
+        if is_long:
+            eff_entry = price * (1.0 + slip_fraction)       # pay the spread going in
+            eff_exit  = exit_price * (1.0 - slip_fraction)  # lose the spread going out
+        else:
+            eff_entry = price * (1.0 - slip_fraction)
+            eff_exit  = exit_price * (1.0 + slip_fraction)
+
+        # Raw directional PnL (excluding friction costs)
+        raw_pnl = (eff_exit - eff_entry) * qty if is_long else (eff_entry - eff_exit) * qty
+
+        # Commission: charged on notional of BOTH entry and exit legs
+        entry_notional = eff_entry * qty
+        exit_notional  = eff_exit  * qty
+        commission_cost = (entry_notional + exit_notional) * comm_fraction
+
+        pnl = raw_pnl - commission_cost
+        total_costs_paid += commission_cost + abs(eff_entry - price) * qty + abs(eff_exit - exit_price) * qty
         equity += pnl
 
         trades.append({
@@ -1291,6 +1323,8 @@ def _run_backtest_engine(
             "maxDrawdown": round(max_dd, 2),
             "sharpe":      sharpe,
             "finalEquity": round(equity, 2),
+            # Friction transparency — surface to UI so traders can see true cost of strategy
+            "totalCostsPaid": round(total_costs_paid, 2),
         }
     }
 
@@ -1323,7 +1357,11 @@ async def run_backtest(req: BacktestRequest):
     valid_intervals = {"1m", "5m", "15m", "1h", "4h", "1d"}
     interval = req.interval if req.interval in valid_intervals else "1h"
 
-    logger.info(f"Backtest: {req.symbol} {interval} {req.from_date}→{req.to_date} | risk={req.risk_pct}% conf={req.min_confidence}")
+    logger.info(
+        f"Backtest: {req.symbol} {interval} {req.from_date}→{req.to_date} | "
+        f"risk={req.risk_pct}% conf={req.min_confidence} "
+        f"slip={req.slippage_bps}bps comm={req.commission_pct}%"
+    )
 
     candles_raw = await _fetch_historical_candles(req.symbol.upper(), interval, start_ms, end_ms)
 
@@ -1335,15 +1373,19 @@ async def run_backtest(req: BacktestRequest):
         risk_pct=req.risk_pct,
         min_confidence=req.min_confidence,
         account_size=req.account_size,
+        slippage_bps=req.slippage_bps,
+        commission_pct=req.commission_pct,
     )
 
     result["meta"] = {
-        "symbol":        req.symbol.upper(),
-        "interval":      interval,
-        "from_date":     req.from_date,
-        "to_date":       req.to_date,
+        "symbol":          req.symbol.upper(),
+        "interval":        interval,
+        "from_date":       req.from_date,
+        "to_date":         req.to_date,
         "candles_fetched": len(candles_raw),
-        "account_size":  req.account_size,
+        "account_size":    req.account_size,
+        "slippage_bps":    req.slippage_bps,
+        "commission_pct":  req.commission_pct,
     }
 
     return result

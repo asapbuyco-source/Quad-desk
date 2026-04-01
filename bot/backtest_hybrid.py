@@ -34,6 +34,14 @@ CONFIG = {
     # Thresholds
     "trend_atr_threshold": 0.005,  # 0.5%
     "range_z_threshold": 1.5,
+
+    # ── Realistic execution friction ─────────────────────────────────
+    # slippage_bps: half-spread cost per side (3 bps on a $95k BTC ≈ $2.85 per side)
+    # Set to 0 to see 'theoretical max' performance, 3-5 is realistic for liquid markets
+    "slippage_bps": 3,
+    # commission_pct: exchange fee per trade LEG (Coinbase Advanced taker = 0.10%)
+    # Total round-trip cost at defaults: 3 bps slip ×2 + 0.10% comm ×2 = ~0.26% per trade
+    "commission_pct": 0.001,    # expressed as a fraction (0.001 = 0.1%)
 }
 
 # ==============================================================================
@@ -146,11 +154,35 @@ def backtest_hybrid(df, config, symbol):
             hit_tp = (t['dir'] == 1 and high[i] >= t['tp']) or (t['dir'] == -1 and low[i] <= t['tp'])
             
             if hit_sl or hit_tp:
-                exit_px = t['tp'] if hit_tp else t['sl']
-                pnl = (exit_px - t['entry']) / t['entry'] * balance * config['base_risk_pct'] / 100.0 * t['dir']
-                # leverage normalized
-                r_mult = pnl / (balance * config['base_risk_pct'] / 100.0)
-                
+                raw_exit = t['tp'] if hit_tp else t['sl']
+                is_long  = t['dir'] == 1
+
+                # ── Apply realistic friction ─────────────────────────────
+                slip = config.get('slippage_bps', 3) / 10_000.0
+                comm = config.get('commission_pct', 0.001)
+
+                # Slippage worsens both fill prices
+                if is_long:
+                    eff_entry = t['entry'] * (1.0 + slip)
+                    eff_exit  = raw_exit  * (1.0 - slip)
+                else:
+                    eff_entry = t['entry'] * (1.0 - slip)
+                    eff_exit  = raw_exit  * (1.0 + slip)
+
+                # Percentage-based PnL on risk capital
+                entry_pct = eff_entry / t['entry']    # entry degradation factor
+                exit_pct  = eff_exit  / raw_exit      # exit degradation factor
+
+                raw_pnl = (eff_exit - eff_entry) / eff_entry * balance * config['base_risk_pct'] / 100.0 * t['dir']
+
+                # Commission on round-trip notional (proxy: 2× commission_pct on risk amount)
+                risk_usd = balance * config['base_risk_pct'] / 100.0
+                commission_cost = risk_usd * 2.0 * comm
+
+                pnl = raw_pnl - commission_cost
+                r_mult = pnl / max(risk_usd, 1e-9)
+
+                exit_px = raw_exit  # keep original for logging
                 balance += pnl
                 if pnl < 0:
                     daily_losses += 1
@@ -275,10 +307,18 @@ def backtest_hybrid(df, config, symbol):
             "regime": regime
         })
 
-    # Close remaining
+    # Close remaining open trades at the last known price
     last_px = close[-1]
+    slip = config.get('slippage_bps', 3) / 10_000.0
+    comm = config.get('commission_pct', 0.001)
     for t in open_trades:
-        pnl = (last_px - t['entry']) / t['entry'] * balance * config['base_risk_pct'] / 100.0 * t['dir']
+        is_long = t['dir'] == 1
+        eff_entry = t['entry'] * (1.0 + slip) if is_long else t['entry'] * (1.0 - slip)
+        eff_exit  = last_px  * (1.0 - slip) if is_long else last_px  * (1.0 + slip)
+        risk_usd  = balance * config['base_risk_pct'] / 100.0
+        raw_pnl   = (eff_exit - eff_entry) / eff_entry * balance * config['base_risk_pct'] / 100.0 * t['dir']
+        commission_cost = risk_usd * 2.0 * comm
+        pnl = raw_pnl - commission_cost
         balance += pnl
         trades.append({
             "entry_time": t['entry_time'],
@@ -287,7 +327,7 @@ def backtest_hybrid(df, config, symbol):
             "entry": t['entry'],
             "exit": last_px,
             "pnl": pnl,
-            "r_mult": pnl / (balance * config['base_risk_pct'] / 100.0),
+            "r_mult": pnl / max(risk_usd, 1e-9),
             "balance": balance,
             "regime": t['regime']
         })

@@ -48,6 +48,9 @@ const App: React.FC = () => {
 
     const lastDispatchedBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
     const wsRef = useRef<WebSocket | null>(null);
+    // Holds the latest fetchHistory fn so the WS reconnect handler can call it
+    // without creating a closure dependency cycle between the two useEffects.
+    const fetchHistoryFnRef = useRef<(() => Promise<void>) | null>(null);
 
     const {
         setHasEntered,
@@ -158,6 +161,8 @@ const App: React.FC = () => {
                 retryTimer = setTimeout(fetchHistory, 5000);
             }
         };
+        // Keep ref current so the WS reconnect handler can call the latest version
+        fetchHistoryFnRef.current = fetchHistory;
         setIsLoading(true);
         fetchHistory();
         return () => clearTimeout(retryTimer);
@@ -187,8 +192,17 @@ const App: React.FC = () => {
             wsRef.current = ws;
 
             ws.onopen = () => {
+                // Detect reconnections (first connect has retryCount still at 0 before this runs)
+                const isReconnect = retryCount > 0;
                 retryCount = 0;
                 console.log(`✅ WebSocket Connected: ${streams}`);
+
+                // State reconciliation: on reconnect, re-fetch REST history to re-anchor
+                // CVD baseline and Z-Score bands that may have drifted during the gap.
+                if (isReconnect && fetchHistoryFnRef.current) {
+                    console.warn('🔄 WS reconnected — backfilling candle history to re-anchor CVD & metrics...');
+                    fetchHistoryFnRef.current();
+                }
             };
 
             ws.onmessage = (event) => {
