@@ -4,59 +4,31 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Quant Desk</title>
-    <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-              mono: ['JetBrains Mono', 'monospace'],
-            },
-            colors: {
-              // Overriding slate with deeper, more neutral Zinc tones for True Dark theme
-              slate: {
-                50: '#fafafa',
-                100: '#f4f4f5',
-                200: '#e4e4e7',
-                300: '#d4d4d8',
-                400: '#a1a1aa',
-                500: '#71717a',
-                600: '#52525b',
-                700: '#3f3f46',
-                800: '#27272a', 
-                850: '#202023',
-                900: '#18181b',
-                950: '#09090b', 
-              },
-              brand: {
-                dark: '#000000',
-                surface: '#121212',
-                accent: '#3b82f6', // Keep Electric Blue for contrast
-              },
-              trade: {
-                bid: '#10b981', // Emerald
-                ask: '#f43f5e', // Rose
-                warn: '#f59e0b', // Amber
-              }
-            },
-            animation: {
-              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'float': 'float 6s ease-in-out infinite',
-            },
-            keyframes: {
-              float: {
-                '0%, 100%': { transform: 'translateY(0)' },
-                '50%': { transform: 'translateY(-10px)' },
-              }
-            }
-          }
-        }
-      }
-    </script>
     <style>
+      /* ── Design Tokens ────────────────────────────────────────── */
+      :root {
+        --font-sans: 'Inter', sans-serif;
+        --font-mono: 'JetBrains Mono', monospace;
+        /* Zinc dark palette */
+        --slate-50:  #fafafa;  --slate-100: #f4f4f5;
+        --slate-200: #e4e4e7;  --slate-300: #d4d4d8;
+        --slate-400: #a1a1aa;  --slate-500: #71717a;
+        --slate-600: #52525b;  --slate-700: #3f3f46;
+        --slate-800: #27272a;  --slate-850: #202023;
+        --slate-900: #18181b;  --slate-950: #09090b;
+        /* Brand */
+        --brand-dark:    #000000;
+        --brand-surface: #121212;
+        --brand-accent:  #3b82f6; /* Electric Blue */
+        /* Trade */
+        --trade-bid:  #10b981; /* Emerald */
+        --trade-ask:  #f43f5e; /* Rose    */
+        --trade-warn: #f59e0b; /* Amber   */
+      }
+
       body {
+        font-family: var(--font-sans);
         /* Deep Neutral Dark Background */
         background: radial-gradient(circle at 60% 0%, #18181b 0%, #000000 100%);
         color: #e4e4e7;

@@ -2,7 +2,7 @@ import os
 import time
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -32,7 +32,7 @@ CONFIG = {
     "skew_period": 50,
     
     # Thresholds
-    "trend_atr_threshold": 0.005,  # 0.5%
+    "trend_atr_threshold": 0.006,  # 0.6% — aligned with live bot (was 0.005)
     "range_z_threshold": 1.5,
 
     # ── Realistic execution friction ─────────────────────────────────
@@ -89,13 +89,94 @@ def calc_skewness(close, period=50):
     skew = pd.Series(log_ret).rolling(period).skew().fillna(0).values
     return skew
 
-def calc_cvd_proxy(close, open_, volume, period=20):
-    body = np.abs(close - open_)
-    conv = np.clip(body / (body + 1e-10), 0.3, 1.0)
-    dir_ = np.where(close >= open_, 1.0, -1.0)
-    delta = dir_ * volume * conv
+def calc_cvd_proxy(close, open_, volume, period=20, taker_buy_base=None):
+    """
+    Cumulative Volume Delta.
+    If `taker_buy_base` is supplied (Binance kline field 9), uses the exact
+    live formula matching App.tsx:  delta = 2 × takerBuyVol − totalVol
+    Otherwise falls back to the candle-sign body-weighted proxy.
+    """
+    if taker_buy_base is not None:
+        # Exact formula — mirrors the live frontend CVD calculation
+        delta = (2.0 * taker_buy_base) - volume
+    else:
+        body  = np.abs(close - open_)
+        conv  = np.clip(body / (body + 1e-10), 0.3, 1.0)
+        dir_  = np.where(close >= open_, 1.0, -1.0)
+        delta = dir_ * volume * conv
     cvd = pd.Series(delta).rolling(period).sum().fillna(0).values
     return cvd
+
+
+# ==============================================================================
+# REAL DATA FETCHER — Binance Public REST API
+# ==============================================================================
+
+def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2) -> pd.DataFrame:
+    """
+    Fetch real OHLCV + taker-buy-volume klines from the Binance public API.
+    Returns a DataFrame with columns: open, high, low, close, volume, taker_buy_base
+    Falls back to an empty DataFrame on any network/API error.
+    """
+    try:
+        import requests as _req
+    except ImportError:
+        print("  ⚠️  `requests` not installed. Run: pip install requests")
+        return pd.DataFrame()
+
+    end_dt   = datetime.now()
+    start_dt = end_dt - timedelta(days=int(365 * years_back))
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms   = int(end_dt.timestamp()   * 1000)
+
+    print(f"  Fetching {symbol} ({interval}) from Binance API "
+          f"[{start_dt.date()} → {end_dt.date()}]...")
+
+    all_klines: list = []
+    current_ms = start_ms
+
+    while current_ms < end_ms:
+        try:
+            resp = _req.get(
+                "https://api.binance.com/api/v3/klines",
+                params={"symbol":    symbol,
+                        "interval":  interval,
+                        "startTime": current_ms,
+                        "endTime":   end_ms,
+                        "limit":     1000},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+        except Exception as exc:
+            print(f"  ⚠️  Binance API error: {exc}. Falling back to CSV / synthetic data.")
+            return pd.DataFrame()
+
+        if not batch:
+            break
+        all_klines.extend(batch)
+        current_ms = int(batch[-1][0]) + 1
+        if len(batch) < 1000:
+            break
+
+    if not all_klines:
+        return pd.DataFrame()
+
+    cols = [
+        'time', 'open', 'high', 'low', 'close', 'volume',
+        'close_time', 'quote_vol', 'trades',
+        'taker_buy_base', 'taker_buy_quote', 'ignore',
+    ]
+    df = pd.DataFrame(all_klines, columns=cols)
+    df['time'] = pd.to_datetime(df['time'].astype(int), unit='ms')
+    df.set_index('time', inplace=True)
+    for col in ('open', 'high', 'low', 'close', 'volume', 'taker_buy_base'):
+        df[col] = df[col].astype(float)
+
+    print(f"  ✓ {len(df):,} real bars loaded  "
+          f"({df.index[0].date()} → {df.index[-1].date()})")
+    return df
+
 
 # ==============================================================================
 # STRATEGY & BAYESIAN FUSION
@@ -114,19 +195,27 @@ def backtest_hybrid(df, config, symbol):
     rsi = calc_rsi(close, config['rsi_period'])
     zscore = calc_vwap_zscore(df, config['vwap_period'])
     skew = calc_skewness(close, config['skew_period'])
-    cvd = calc_cvd_proxy(close, open_, vol, 20)
+    # CVD: use real taker-buy volume when available (Binance kline field 'taker_buy_base')
+    # This mirrors the live app formula exactly: delta = 2 * takerBuyVol - totalVol
+    taker_buy_base = df['taker_buy_base'].values if 'taker_buy_base' in df.columns else None
+    cvd = calc_cvd_proxy(close, open_, vol, 20, taker_buy_base=taker_buy_base)
     
     atr_pct = np.zeros_like(atr)
     valid_idx = close > 0
     atr_pct[valid_idx] = atr[valid_idx] / close[valid_idx]
 
     # Proxies for missing live data (LOB / Tape)
-    # We use local extreme rollings to simulate walls/liquidity pools
+    # We use local extreme rollings to simulate walls / liquidity pools
     sw_high = pd.Series(high).rolling(20).max().shift(1).values
-    sw_low = pd.Series(low).rolling(20).min().shift(1).values
+    sw_low  = pd.Series(low).rolling(20).min().shift(1).values
     
     # OFI proxy based on volume delta momentum
     ofi_proxy = pd.Series(np.where(close >= open_, vol, -vol)).rolling(5).sum().values
+
+    # Volume-surge proxy for the live bot’s SCREAMING tape requirement (Stage 2 TREND gate)
+    # Live:  10-second taker notional > 3× per-10s rolling baseline → SCREAMING
+    # Proxy: current bar volume > 3× 60-bar rolling mean (same 3× multiplier, different window)
+    vol_sma_60 = pd.Series(vol).rolling(60, min_periods=1).mean().shift(1).fillna(0).values
     
     print("  Simulating event-driven trades...")
     
@@ -220,7 +309,11 @@ def backtest_hybrid(df, config, symbol):
                 near_wall = True
         
         if not near_wall:
-            if atr_pct[i] > config['trend_atr_threshold']:
+            # Mirror live bot Stage 2: TREND requires high ATR AND a volume surge
+            # (proxy for the SCREAMING tape condition checked against Binance trade feed)
+            sma_vol   = vol_sma_60[i] if i < len(vol_sma_60) else 0.0
+            vol_surge = sma_vol > 0 and vol[i] > sma_vol * 3.0
+            if atr_pct[i] > config['trend_atr_threshold'] and vol_surge:
                 regime = "TREND"
             elif abs(zscore[i]) < config['range_z_threshold']:
                 regime = "RANGE"
@@ -338,47 +431,50 @@ def backtest_hybrid(df, config, symbol):
 # MAIN RUNNER
 # ==============================================================================
 
-def load_data(symbol, years_back=10):
+def load_data(symbol: str, years_back: int = 2) -> pd.DataFrame:
     """
-    Simulated data loader. In a real scenario, connect this to a CSV or DB.
-    For demonstration of the backtest logic, we generate synthetic walk data.
+    Data loading priority (most to least realistic):
+      1. Binance public REST API  — real OHLCV + taker-buy volume  [DEFAULT]
+      2. Local CSV at data/{symbol}_M5.csv
+      3. Synthetic random walk    — LAST RESORT, results are non-predictive
     """
+    # ── 1. Real Binance data (preferred) ───────────────────────────────────────
+    df = fetch_binance_candles(symbol, interval="5m", years_back=years_back)
+    if not df.empty:
+        return df
+
+    # ── 2. Local CSV fallback ──────────────────────────────────────────────
+    csv_path = f"data/{symbol}_M5.csv"
+    if os.path.exists(csv_path):
+        print(f"  Loading {csv_path}...")
+        df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+        df.sort_index(inplace=True)
+        return df
+
+    # ── 3. Synthetic fallback (CI / offline only) ───────────────────────────
+    print("\n  ⚠️  WARNING: No real data available. Using SYNTHETIC random walk.")
+    print("  ⚠️  Results are for code validation ONLY — NOT predictive of live performance.\n")
+    np.random.seed(42)
     end_date = datetime.now()
-    # Handle leap years when subtracting years
     try:
         start_date = end_date.replace(year=end_date.year - years_back)
     except ValueError:
         start_date = end_date.replace(year=end_date.year - years_back, day=end_date.day - 1)
-        
-    print(f"  Generating synthetic {symbol} data for {years_back} years (ending {end_date.date()})...")
-    np.random.seed(42)
-    
-    delta = end_date - start_date
-    periods = int(delta.total_seconds() / 300) # 5m bars
-    dates = pd.date_range(end=end_date, periods=periods, freq="5min")
-    
-    # Random walk with some volatility clustering
-    returns = np.random.normal(0, 0.001, periods)
-    volatility = np.abs(np.random.normal(1, 0.2, periods))
-    returns = returns * volatility
-    
-    close = 1000.0 * np.exp(np.cumsum(returns))
-    high = close * (1 + np.abs(np.random.normal(0, 0.0005, periods)))
-    low = close * (1 - np.abs(np.random.normal(0, 0.0005, periods)))
-    open_ = np.roll(close, 1)
-    open_[0] = close[0]
-    
-    vol = np.random.lognormal(mean=10, sigma=1, size=periods)
-    
-    df = pd.DataFrame({
-        'open': open_,
-        'high': high,
-        'low': low,
-        'close': close,
-        'volume': vol
-    }, index=dates)
-    
-    return df
+
+    periods = int((end_date - start_date).total_seconds() / 300)  # 5-min bars
+    dates   = pd.date_range(end=end_date, periods=periods, freq="5min")
+
+    returns = np.random.normal(0, 0.001, periods) * np.abs(np.random.normal(1, 0.2, periods))
+    close   = 30_000.0 * np.exp(np.cumsum(returns))   # BTC-realistic starting price
+    high    = close * (1 + np.abs(np.random.normal(0, 0.0005, periods)))
+    low     = close * (1 - np.abs(np.random.normal(0, 0.0005, periods)))
+    open_   = np.roll(close, 1); open_[0] = close[0]
+    vol     = np.random.lognormal(mean=10, sigma=1, size=periods)
+
+    return pd.DataFrame(
+        {'open': open_, 'high': high, 'low': low, 'close': close, 'volume': vol},
+        index=dates,
+    )
 
 def run():
     print(f"\n{Fore.CYAN}{Style.BRIGHT}{'━'*62}")

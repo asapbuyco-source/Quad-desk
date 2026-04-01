@@ -58,7 +58,7 @@ NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WHALE_ALERT_API_KEY = os.getenv("WHALE_ALERT_API_KEY")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quantdesk.netlify.app")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quandesk.netlify.app")
 BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "dev-secret-key-123")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", BACKEND_API_KEY)
 
@@ -227,9 +227,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 ALLOWED_ORIGINS = [
-    FRONTEND_URL,
+    FRONTEND_URL,                         # Set via FRONTEND_URL env var on Railway
+    "https://quandesk.netlify.app",       # Production frontend (explicit fallback)
+    "https://quantdesk.netlify.app",      # Common alias variant
     "http://localhost:5173",
-    "http://127.0.0.1:5173"
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
 ]
 
 app.add_middleware(
@@ -237,7 +240,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 RATE_LIMIT_WINDOW = 60
@@ -250,21 +253,44 @@ ai_request_counts = defaultdict(list)
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ["/health", "/docs", "/openapi.json"]:
+
+    # ── Always pass OPTIONS (CORS preflight) and public endpoints through ────────────
+    # If we intercept OPTIONS before CORSMiddleware can handle it, the browser
+    # sees a 401 without Access-Control-Allow-Origin and reports a CORS error
+    # instead of showing the real 401 — making debugging extremely confusing.
+    if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json"]:
         return await call_next(request)
 
-    # 1. API Key Auth
+    # ── API Key Auth ─────────────────────────────────────────────────────────
     api_key = request.headers.get("X-API-Key")
     if not api_key or api_key != BACKEND_API_KEY:
-        return JSONResponse(status_code=401, content={"detail": "Unauthorized. Missing or invalid X-API-Key header."})
-        
-    # Admin Auth specific to system-status
+        # Manually attach CORS headers so the browser can read the 401 body
+        # (without this, the browser reports a CORS error instead of 401)
+        origin = request.headers.get("origin", "")
+        response = JSONResponse(
+            status_code=401,
+            content={"detail": "Unauthorized. Missing or invalid X-API-Key header."},
+        )
+        if origin in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+    # ── Admin endpoints require an additional key ──────────────────────────────
     if path.startswith("/admin/"):
         admin_key = request.headers.get("X-Admin-Key")
         if not admin_key or admin_key != ADMIN_API_KEY:
-            return JSONResponse(status_code=403, content={"detail": "Forbidden. Admin access required."})
+            origin = request.headers.get("origin", "")
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": "Forbidden. Admin access required."},
+            )
+            if origin in ALLOWED_ORIGINS:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+            return response
 
-    # 2. Rate Limiting
+    # ── Rate Limiting ─────────────────────────────────────────────────────────
     client_ip = request.client.host if request.client else "127.0.0.1"
     now = time.time()
     
