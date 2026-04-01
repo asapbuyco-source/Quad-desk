@@ -343,13 +343,13 @@ const AdminBotControl: React.FC = () => {
 
           {/* BINANCE fields */}
           {botSettings.exchange === 'binance' && (
-            <>
-              <InputField label="API Key" value={botSettings.apiKey}
-                placeholder="Binance API key" onChange={v => update({ apiKey: v })} />
-              <InputField label="API Secret" value={botSettings.apiSecret}
-                placeholder="Binance API secret" type="password" onChange={v => update({ apiSecret: v })} />
-            </>
+            <div style={{ background: 'rgba(255,229,102,0.06)', border: '1px solid rgba(255,229,102,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 18, fontSize: 12, color: '#ffe566', lineHeight: 1.6 }}>
+              <strong>🔒 Security Hardening Active:</strong><br />
+              Binance API keys have been migrated exclusively to backend environment variables to prevent accidental exposure.<br /><br />
+              Please configure <code>BINANCE_API_KEY</code> and <code>BINANCE_API_SECRET</code> directly in your Railway/Render dashboard.
+            </div>
           )}
+
 
           {/* Trading pair */}
           <InputField label="Trading Pair"
