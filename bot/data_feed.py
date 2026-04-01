@@ -3,6 +3,7 @@ import json
 import logging
 import time
 import websockets
+import httpx
 from collections import deque
 
 logger = logging.getLogger(__name__)
@@ -98,19 +99,22 @@ class BinanceDataFeed:
     Live endpoint:    wss://stream.binance.com:9443/stream?streams=...
     """
 
-    def __init__(self, symbol: str = "BTCUSDT", testnet: bool = True):
+    def __init__(self, symbol: str = "BTCUSDT", interval: str = "15m", testnet: bool = True):
         self.symbol = symbol.lower()
+        self.interval = interval.lower()
         self.state = MarketState(symbol)
 
         # FIX: Binance Testnet Spot uses a different base URL
         if testnet:
+            self.rest_url = "https://testnet.binance.vision"
             base_url = "wss://testnet.binance.vision"
         else:
             # Using Binance.US to avoid HTTP 451 (Region Blocked) errors
+            self.rest_url = "https://api.binance.us"
             base_url = "wss://stream.binance.us:9443"
 
         streams = (
-            f"{self.symbol}@kline_1m"
+            f"{self.symbol}@kline_{self.interval}"
             f"/{self.symbol}@trade"
             f"/{self.symbol}@depth20@100ms"
         )
@@ -146,11 +150,50 @@ class BinanceDataFeed:
             logger.error(f"Error processing stream '{stream}': {e}", exc_info=True)
 
     # ------------------------------------------------------------------
+    # REST API Prefetch
+    # ------------------------------------------------------------------
+    async def _fetch_historical_candles_rest(self):
+        """Fetch 100 recent candles to warm up the Quant Engine immediately."""
+        url = f"{self.rest_url}/api/v3/klines"
+        params = {
+            "symbol": self.symbol.upper(),
+            "interval": self.interval,
+            "limit": 100
+        }
+        try:
+            logger.info(f"[DataFeed] Fetching historical {self.interval} candles from {url}...")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+
+            for k in data:
+                # Binance REST returns an array of arrays
+                # [openTime, open, high, low, close, volume, closeTime, qav, trades, ...]
+                c_data = {
+                    't': int(k[0]),
+                    'o': float(k[1]),
+                    'h': float(k[2]),
+                    'l': float(k[3]),
+                    'c': float(k[4]),
+                    'v': float(k[5]),
+                }
+                # Simulate websocket feed: treat all historical candles as "closed"
+                self.state.add_candle(c_data, is_final=True)
+            
+            logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles.")
+        except Exception as e:
+            logger.warning(f"[DataFeed] Failed to prefetch historical candles: {e}")
+
+    # ------------------------------------------------------------------
     # Connection loop with exponential back-off
     # ------------------------------------------------------------------
     async def run(self):
         self.is_running = True
         retry_delay = 1
+
+        # ALWAYS fill history before opening streaming connections to prevent the 51-interval delay
+        await self._fetch_historical_candles_rest()
 
         while self.is_running:
             try:

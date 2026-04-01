@@ -1041,7 +1041,7 @@ class BacktestRequest(BaseModel):
     risk_pct: float = 1.0
     min_confidence: float = 0.70
     account_size: float = 100.0
-    interval: str = "1h"   # candle interval for backtest
+    interval: str = "15m"   # candle interval for backtest
     # ── Realistic friction parameters ─────────────────────────────────────────
     # slippage_bps: half-spread assumed on each entry AND exit leg (3 bps ≈ $2.85 on a $95k BTC)
     slippage_bps: float = 3.0    # basis points per side (0.03%)
@@ -1198,7 +1198,7 @@ def _run_backtest_engine(
         # ── Risk sizing ───────────────────────────────────────────────
         is_long   = direction == "BUY"
         sl_dist   = atr * 1.5
-        tp_dist   = sl_dist * 2.0
+        tp_dist   = sl_dist * 1.5
         stop_loss   = round(price - sl_dist if is_long else price + sl_dist, 2)
         take_profit = round(price + tp_dist if is_long else price - tp_dist, 2)
 
@@ -1211,13 +1211,18 @@ def _run_backtest_engine(
         result   = "OPEN"
         exit_price = price
         exit_idx   = i
+        be_triggered = False
+        be_target = price + (tp_dist * 0.5) if is_long else price - (tp_dist * 0.5)
 
         for j in range(i + 1, min(i + 100, len(candles))):
             future = candles[j]
             if is_long:
+                if not be_triggered and future["high"] >= be_target:
+                    be_triggered = True
+                    stop_loss = max(stop_loss, price)  # Move SL to entry perfectly
                 if future["low"] <= stop_loss:
                     exit_price = stop_loss
-                    result = "LOSS"
+                    result = "BREAKEVEN" if stop_loss == price else "LOSS"
                     exit_idx = j
                     break
                 if future["high"] >= take_profit:
@@ -1226,9 +1231,12 @@ def _run_backtest_engine(
                     exit_idx = j
                     break
             else:
+                if not be_triggered and future["low"] <= be_target:
+                    be_triggered = True
+                    stop_loss = min(stop_loss, price)
                 if future["high"] >= stop_loss:
                     exit_price = stop_loss
-                    result = "LOSS"
+                    result = "BREAKEVEN" if stop_loss == price else "LOSS"
                     exit_idx = j
                     break
                 if future["low"] <= take_profit:
@@ -1296,6 +1304,9 @@ def _run_backtest_engine(
 
     wins       = sum(1 for t in trades if t["result"] == "WIN")
     losses     = sum(1 for t in trades if t["result"] == "LOSS")
+    breakevens = sum(1 for t in trades if t["result"] == "BREAKEVEN")
+    # Break-evens don't count towards wins, but we report len(trades) total. 
+    # Win rate is exclusively (Wins / Total) -> so capital protection lowers raw Win% but increases equity.
     win_rate   = round(wins / len(trades) * 100, 1)
 
     total_return = round((equity - account_size) / account_size * 100, 2)
@@ -1326,6 +1337,7 @@ def _run_backtest_engine(
             "totalTrades": len(trades),
             "wins":        wins,
             "losses":      losses,
+            "breakevens":  breakevens,
             "winRate":     win_rate,
             "totalReturn": total_return,
             "maxDrawdown": round(max_dd, 2),
@@ -1400,7 +1412,7 @@ async def run_backtest(req: BacktestRequest):
     stats = result.get("stats", {})
     logger.info(
         f"📊 RESULTS | Return: {stats.get('totalReturn', 0)}% | "
-        f"Win Rate: {stats.get('winRate', 0)}% ({stats.get('wins', 0)}W/{stats.get('losses', 0)}L) | "
+        f"Win Rate: {stats.get('winRate', 0)}% ({stats.get('wins', 0)}W/{stats.get('losses', 0)}L/{stats.get('breakevens', 0)}BE) | "
         f"Total Trades: {stats.get('totalTrades', 0)} | "
         f"Sharpe: {stats.get('sharpe', 0)} | "
         f"Fee Drag Paid: ${stats.get('totalCostsPaid', 0)}"

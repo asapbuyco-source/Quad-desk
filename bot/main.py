@@ -72,6 +72,7 @@ TESTNET             = os.environ.get("BOT_TESTNET",             "true").lower() 
 MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        "1.0"))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  "3.0"))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
+CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
 MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.70"))
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
@@ -377,12 +378,12 @@ def _risk_engine(
     def sl_tp(sl_dist: float) -> Tuple[float, float]:
         if is_long:
             sl = price - sl_dist
-            tp_2r = price + (sl_dist * 2.0)
-            tp = tp_from_wall if (tp_from_wall and tp_from_wall > tp_2r) else tp_2r
+            tp_target = price + (sl_dist * 1.5)
+            tp = tp_from_wall if (tp_from_wall and tp_from_wall > tp_target) else tp_target
         else:
             sl = price + sl_dist
-            tp_2r = price - (sl_dist * 2.0)
-            tp = tp_from_wall if (tp_from_wall and tp_from_wall < tp_2r) else tp_2r
+            tp_target = price - (sl_dist * 1.5)
+            tp = tp_from_wall if (tp_from_wall and tp_from_wall < tp_target) else tp_target
         return round(sl, 2), round(tp, 2)
 
     if strategy_type == "LIQUIDITY_SWEEP" and sweep:
@@ -588,6 +589,9 @@ async def execution_loop(
             stats["active_position"] = executor.active_position
 
             if executor.active_position:
+                if not executor.active_position.get("be_triggered", False):
+                    await executor.update_breakeven_stop(current_price)
+
                 pos = executor.active_position
                 pnl_pct = (
                     (current_price - pos["entry_price"]) / pos["entry_price"] * 100
@@ -661,7 +665,7 @@ async def execution_loop(
 # ══════════════════════════════════════════════════════════════════════
 
 async def main():
-    feed     = BinanceDataFeed(symbol=FEED_SYMBOL, testnet=TESTNET)
+    feed     = BinanceDataFeed(symbol=FEED_SYMBOL, interval=CANDLE_INTERVAL, testnet=TESTNET)
     quant    = QuantEngine(feed.state)
     executor = TradingExecutor(
         api_key=BINANCE_API_KEY,
