@@ -180,10 +180,11 @@ class TradingExecutor:
         try:
             bal = await self.exchange.fetch_balance()
             free = bal.get("free", {})
-            # Coinbase uses "USD", Binance uses "USDT"
+            # Coinbase uses "USD" or "USDC", Binance uses "USDT"
             usdt = float(free.get("USDT", 0.0))
             usd  = float(free.get("USD",  0.0))
-            return usdt or usd
+            usdc = float(free.get("USDC", 0.0))
+            return usdt or usdc or usd
         except Exception as e:
             logger.error(f"[Executor] fetch_balance error: {e}")
             return 0.0
