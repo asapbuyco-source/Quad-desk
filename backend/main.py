@@ -254,29 +254,11 @@ ai_request_counts = defaultdict(list)
 async def security_middleware(request: Request, call_next):
     path = request.url.path
 
-    # ── Always pass OPTIONS (CORS preflight) and public endpoints through ────────────
-    # If we intercept OPTIONS before CORSMiddleware can handle it, the browser
-    # sees a 401 without Access-Control-Allow-Origin and reports a CORS error
-    # instead of showing the real 401 — making debugging extremely confusing.
+    # ── Always pass OPTIONS (CORS preflight) through ──────────────────────────
     if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json"]:
         return await call_next(request)
 
-    # ── API Key Auth ─────────────────────────────────────────────────────────
-    api_key = request.headers.get("X-API-Key")
-    if not api_key or api_key != BACKEND_API_KEY:
-        # Manually attach CORS headers so the browser can read the 401 body
-        # (without this, the browser reports a CORS error instead of 401)
-        origin = request.headers.get("origin", "")
-        response = JSONResponse(
-            status_code=401,
-            content={"detail": "Unauthorized. Missing or invalid X-API-Key header."},
-        )
-        if origin in ALLOWED_ORIGINS:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response
-
-    # ── Admin endpoints require an additional key ──────────────────────────────
+    # ── Admin endpoints require the admin key ─────────────────────────────────
     if path.startswith("/admin/"):
         admin_key = request.headers.get("X-Admin-Key")
         if not admin_key or admin_key != ADMIN_API_KEY:
@@ -293,10 +275,10 @@ async def security_middleware(request: Request, call_next):
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     client_ip = request.client.host if request.client else "127.0.0.1"
     now = time.time()
-    
+
     request_counts[client_ip] = [t for t in request_counts[client_ip] if now - t < RATE_LIMIT_WINDOW]
     ai_request_counts[client_ip] = [t for t in ai_request_counts[client_ip] if now - t < RATE_LIMIT_WINDOW]
-    
+
     is_ai = any(kw in path for kw in ["/analyze", "/flow", "/strategy", "/market-intelligence", "/alerts/evaluate"])
     if is_ai:
         if len(ai_request_counts[client_ip]) >= MAX_AI_REQUESTS_PER_MIN:
