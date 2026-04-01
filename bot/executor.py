@@ -174,17 +174,19 @@ class TradingExecutor:
     # Balance
     # ------------------------------------------------------------------
     async def get_usdt_balance(self, account_size: float = 100.0) -> float:
-        """Return free USDT/USD balance (or simulated equity in dry-run)."""
+        """Return free stablecoin balance (USDC/USD/USDT) or simulated equity in dry-run."""
         if self.dry_run:
             return account_size   # Configurable simulated equity
         try:
             bal = await self.exchange.fetch_balance()
             free = bal.get("free", {})
-            # Coinbase uses "USD" or "USDC", Binance uses "USDT"
+            # Sum all stablecoin balances — funds may be split across wallets
             usdt = float(free.get("USDT", 0.0))
             usd  = float(free.get("USD",  0.0))
             usdc = float(free.get("USDC", 0.0))
-            return usdt or usdc or usd
+            total = usdt + usdc + usd
+            logger.info(f"[Executor] Balance: USDC={usdc:.2f} USD={usd:.2f} USDT={usdt:.2f} → total={total:.2f}")
+            return total
         except Exception as e:
             logger.error(f"[Executor] fetch_balance error: {e}")
             return 0.0
@@ -291,6 +293,42 @@ class TradingExecutor:
             order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
             logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
 
+            sl_side = "sell" if side == "buy" else "buy"
+            sl_order_id = None
+            tp_order_id = None
+
+            # Stop-loss order (exchange-specific type)
+            sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
+            if self.exchange_id == "binance":
+                sl_order = await self.exchange.create_order(
+                    symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
+                    amount=fmt_size,
+                    price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                    params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
+                )
+            else:
+                # Coinbase Advanced Trade: use limit + stop_price param
+                sl_order = await self.exchange.create_order(
+                    symbol=ex_symbol, type="limit", side=sl_side,
+                    amount=fmt_size,
+                    price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                    params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
+                )
+            sl_order_id = sl_order.get("id")
+            logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id})")
+
+            # Take-profit limit order
+            tp_order = await self.exchange.create_order(
+                symbol=ex_symbol,
+                type="limit",
+                side=sl_side,
+                amount=fmt_size,
+                price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                params={"timeInForce": "GTC"},
+            )
+            tp_order_id = tp_order.get("id")
+            logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
+
             self.active_position = {
                 "symbol":      ex_symbol,
                 "side":        side,
@@ -299,33 +337,10 @@ class TradingExecutor:
                 "stop_loss":   stop_loss,
                 "take_profit": take_profit,
                 "order_id":    order.get("id"),
+                "sl_order_id": sl_order_id,
+                "tp_order_id": tp_order_id,
             }
             self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
-
-            sl_side = "sell" if side == "buy" else "buy"
-
-            # Stop-loss limit order
-            sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
-            await self.exchange.create_order(
-                symbol=ex_symbol,
-                type="STOP_LOSS_LIMIT" if self.exchange_id == "binance" else "stop_limit",
-                side=sl_side,
-                amount=fmt_size,
-                price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
-            )
-            logger.info(f"[Executor] SL attached at {stop_loss}")
-
-            # Take-profit limit order
-            await self.exchange.create_order(
-                symbol=ex_symbol,
-                type="limit",
-                side=sl_side,
-                amount=fmt_size,
-                price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                params={"timeInForce": "GTC"},
-            )
-            logger.info(f"[Executor] TP attached at {take_profit}")
 
         except ccxt.InsufficientFunds as e:
             logger.error(f"[Executor] Insufficient funds: {e}")
@@ -376,3 +391,25 @@ class TradingExecutor:
                 return True, pnl
 
         return False, 0.0
+
+    async def cancel_opposing_orders(self, filled_side: str = "sl"):
+        """
+        Cancel the opposing order after one side fills.
+        In LIVE mode: if SL fills, cancel TP order (and vice versa).
+        Prevents naked re-entries from orphaned orders.
+        """
+        pos = self.active_position
+        if pos is None:
+            return
+
+        cancel_id = pos.get("tp_order_id") if filled_side == "sl" else pos.get("sl_order_id")
+        symbol = pos.get("symbol", "")
+
+        if cancel_id:
+            try:
+                await self.exchange.cancel_order(cancel_id, symbol)
+                label = "TP" if filled_side == "sl" else "SL"
+                logger.info(f"[Executor] Cancelled opposing {label} order {cancel_id} ✓")
+            except Exception as e:
+                logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
+

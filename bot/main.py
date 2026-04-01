@@ -67,7 +67,7 @@ except Exception as e:
 # Config from environment
 # ──────────────────────────────────────────────────────────────────────
 EXCHANGE            = os.environ.get("BOT_EXCHANGE",            "coinbase").lower()
-SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USD" if EXCHANGE == "coinbase" else "BTCUSDT")
+SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USDC" if EXCHANGE == "coinbase" else "BTCUSDT")
 TESTNET             = os.environ.get("BOT_TESTNET",             "true").lower() != "false"
 MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        "1.0"))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  "3.0"))
@@ -643,7 +643,9 @@ async def execution_loop(
                     SYMBOL, metrics["price"], verdict_json, MAX_RISK_PCT,
                     account_size=ACCOUNT_SIZE, ulis_verdict=ulis_str
                 )
-                stats["total_trades"] += 1
+                # Only count the trade if execution actually opened a position
+                if executor.active_position is not None:
+                    stats["total_trades"] += 1
             else:
                 logger.info(f"[Main] WAIT — {analysis[:120]}")
 

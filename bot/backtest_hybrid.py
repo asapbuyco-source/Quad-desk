@@ -419,9 +419,18 @@ def backtest_hybrid(df, config, symbol):
         is_long = t['dir'] == 1
         eff_entry = t['entry'] * (1.0 + slip) if is_long else t['entry'] * (1.0 - slip)
         eff_exit  = last_px  * (1.0 - slip) if is_long else last_px  * (1.0 + slip)
-        risk_usd  = balance * config['base_risk_pct'] / 100.0
-        raw_pnl   = (eff_exit - eff_entry) / eff_entry * balance * config['base_risk_pct'] / 100.0 * t['dir']
-        commission_cost = risk_usd * 2.0 * comm
+
+        # Correct position sizing (same as main loop)
+        risk_usd = balance * (config['base_risk_pct'] / 100.0)
+        sl_distance = abs(t['entry'] - t['sl'])
+        size_coin = risk_usd / max(sl_distance, 1e-9)
+        notional_value = size_coin * t['entry']
+
+        price_diff = (eff_exit - eff_entry) if is_long else (eff_entry - eff_exit)
+        raw_pnl = size_coin * price_diff
+
+        exit_notional = size_coin * eff_exit
+        commission_cost = (notional_value + exit_notional) * comm
         pnl = raw_pnl - commission_cost
         balance += pnl
         trades.append({
