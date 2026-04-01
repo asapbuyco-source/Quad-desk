@@ -73,7 +73,7 @@ MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        "1.0"))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  "3.0"))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
-MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.70"))
+MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.60"))
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
 
@@ -152,11 +152,11 @@ def _detect_regime(metrics: Dict[str, Any],
     if near_wall:
         return "LIQUIDITY"
 
-    TREND_ATR_THRESHOLD = 0.006
+    TREND_ATR_THRESHOLD = 0.004
     if atr_pct > TREND_ATR_THRESHOLD and tape == "SCREAMING":
         return "TREND"
 
-    if z < 1.5:
+    if z < 2.0:
         return "RANGE"
 
     return "NEUTRAL"
@@ -218,8 +218,8 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     elif "SELL" in dominant: score -= 1.0
 
     logger.info(f"[TrendStrategy] score={score:+.2f}")
-    if score >= 2.0:  return "BUY"
-    if score <= -2.0: return "SELL"
+    if score >= 1.5:  return "BUY"
+    if score <= -1.5: return "SELL"
     return None
 
 
@@ -227,11 +227,11 @@ def _strategy_mean_reversion(metrics: Dict[str, Any]) -> Optional[str]:
     z   = metrics["zScore"]
     rsi = metrics["rsi"]
 
-    if z >= 2.5 and rsi > 45:
+    if z >= 2.2 and rsi > 45:
         logger.info(f"[MeanRev] SELL — Z={z:.2f} RSI={rsi:.1f}")
         return "MEAN_REVERSAL_SHORT"
 
-    if z <= -2.5 and rsi < 55:
+    if z <= -2.2 and rsi < 55:
         logger.info(f"[MeanRev] BUY — Z={z:.2f} RSI={rsi:.1f}")
         return "MEAN_REVERSAL_LONG"
 
