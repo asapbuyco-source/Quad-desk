@@ -1396,6 +1396,27 @@ async def run_backtest(req: BacktestRequest):
         "commission_pct":  req.commission_pct,
     }
 
+    # Print the core stats to the server console for easy terminal debugging
+    stats = result.get("stats", {})
+    logger.info(
+        f"📊 RESULTS | Return: {stats.get('totalReturn', 0)}% | "
+        f"Win Rate: {stats.get('winRate', 0)}% ({stats.get('wins', 0)}W/{stats.get('losses', 0)}L) | "
+        f"Total Trades: {stats.get('totalTrades', 0)} | "
+        f"Sharpe: {stats.get('sharpe', 0)} | "
+        f"Fee Drag Paid: ${stats.get('totalCostsPaid', 0)}"
+    )
+
+    # Print a summary of the trades so you can debug the internal decisions 
+    trades = result.get("trades", [])
+    if trades:
+        logger.info("--- 📝 FULL TRADE LOG ---")
+        for idx, t in enumerate(trades):  # Print all trades
+            logger.info(
+                f"Trade {idx+1}: {t['side']} at {t['entry']} | "
+                f"Result: {t['result']} (${t['pnl']}) | "
+                f"🧠 Decisions -> [Conf: {t['confidence']}, Z-Score: {t['z_score']}, RSI: {t['rsi']}]"
+            )
+
     return result
 
 
