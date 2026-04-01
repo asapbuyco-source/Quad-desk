@@ -336,15 +336,16 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
     # ------------------------------------------------------------------
-    def check_position_exit(self, current_price: float) -> bool:
+    def check_position_exit(self, current_price: float) -> tuple:
         """
         Check SL/TP for dry-run mode.
         In live mode the exchange handles OCO orders.
-        Returns True and clears position if exit is triggered.
+        Returns (exited: bool, pnl: float).
+        PnL is 0.0 when the position has not yet exited.
         """
         pos = self.active_position
         if pos is None:
-            return False
+            return False, 0.0
 
         side = pos["side"]
         sl   = pos["stop_loss"]
@@ -353,24 +354,24 @@ class TradingExecutor:
         if side == "buy":
             if current_price <= sl:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
-                logger.info(f"[Executor] STOP LOSS HIT. PnL={pnl:.2f}")
+                logger.info(f"[Executor] STOP LOSS HIT. PnL=${pnl:.2f}")
                 self.active_position = None
-                return True
+                return True, pnl
             if current_price >= tp:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
-                logger.info(f"[Executor] TAKE PROFIT HIT. PnL={pnl:.2f}")
+                logger.info(f"[Executor] TAKE PROFIT HIT. PnL=${pnl:.2f}")
                 self.active_position = None
-                return True
+                return True, pnl
         else:
             if current_price >= sl:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
-                logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL={pnl:.2f}")
+                logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
-                return True
+                return True, pnl
             if current_price <= tp:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
-                logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL={pnl:.2f}")
+                logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
-                return True
+                return True, pnl
 
-        return False
+        return False, 0.0

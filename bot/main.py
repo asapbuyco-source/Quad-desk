@@ -34,6 +34,7 @@ import logging
 import os
 import re
 import signal
+from datetime import date
 from typing import Dict, Any, Optional, Tuple, List
 
 from dotenv import load_dotenv
@@ -552,11 +553,30 @@ async def execution_loop(
                 logger.info(f"[Main] Warming up… {n_candles}/{QuantEngine.MIN_CANDLES} candles")
                 continue
 
+            # ── Daily loss reset at midnight ─────────────────────────────────
+            today = date.today()
+            if stats.get("_last_trade_day") != today:
+                stats["_last_trade_day"] = today
+                stats["daily_pnl"]       = 0.0
+                stats["daily_loss_halt"] = False
+                logger.info("[RiskEngine] 🌅 Daily counters reset for new trading session.")
+
             current_price = feed.state.candles[-1]["close"]
 
-            # Position exit check (dry-run)
+            # ── Position exit check (dry-run) — track PnL for daily halt ─────
             if executor.active_position and executor.dry_run:
-                executor.check_position_exit(current_price)
+                exited, pnl = executor.check_position_exit(current_price)
+                if exited:
+                    new_daily_pnl = stats.get("daily_pnl", 0.0) + pnl
+                    stats["daily_pnl"] = new_daily_pnl
+                    max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
+                    if new_daily_pnl < -max_loss_usd and not stats.get("daily_loss_halt"):
+                        stats["daily_loss_halt"] = True
+                        logger.warning(
+                            f"[RiskEngine] ⛔ Daily loss limit breached: "
+                            f"${new_daily_pnl:.2f} (limit=-${max_loss_usd:.2f}). "
+                            f"All trading halted until tomorrow."
+                        )
 
             stats["active_position"] = executor.active_position
 
