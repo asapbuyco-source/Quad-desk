@@ -144,11 +144,11 @@ const HBDot: React.FC<{ status: string }> = ({ status }) => {
 
 // ── Main component ───────────────────────────────────────────────────────────
 
-const TABS = ['exchange', 'strategy', 'backtest', 'history'] as const;
+const TABS = ['exchange', 'strategy', 'backtest', 'history', 'terminal'] as const;
 type Tab = typeof TABS[number];
 
 const AdminBotControl: React.FC = () => {
-  const { botSettings, setBotSettings, botTrades, subscribeToBotTrades } = useStore();
+  const { botSettings, setBotSettings, botTrades, subscribeToBotTrades, botLogs, subscribeToBotLogs, subscribeToBotStatus } = useStore();
   const [tab, setTab] = useState<Tab>('exchange');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
@@ -167,11 +167,17 @@ const AdminBotControl: React.FC = () => {
   const [btPage, setBtPage] = useState(0);
   const BT_PAGE_SIZE = 20;
 
-  // Subscribe to Firestore bot trades on mount
+  // Subscribe to Firestore bot trades, logs and status on mount
   useEffect(() => {
     unsubRef.current = subscribeToBotTrades();
-    return () => { unsubRef.current?.(); };
-  }, [subscribeToBotTrades]);
+    const unsubLogs = subscribeToBotLogs();
+    const unsubStatus = subscribeToBotStatus();
+    return () => { 
+      unsubRef.current?.(); 
+      unsubLogs();
+      unsubStatus();
+    };
+  }, [subscribeToBotTrades, subscribeToBotLogs, subscribeToBotStatus]);
 
   // Heartbeat age
   const [hbAge, setHbAge] = useState<string>('—');
@@ -281,6 +287,7 @@ const AdminBotControl: React.FC = () => {
         <TabBtn icon="⚙️" label="Strategy" active={tab === 'strategy'} onClick={() => setTab('strategy')} />
         <TabBtn icon="📊" label="Backtest Lab" active={tab === 'backtest'} onClick={() => setTab('backtest')} />
         <TabBtn icon="📋" label="Trade History" active={tab === 'history'} onClick={() => setTab('history')} />
+        <TabBtn icon="💻" label="Terminal" active={tab === 'terminal'} onClick={() => setTab('terminal')} />
       </div>
 
       {/* ══════════════════════════════════════ */}
@@ -706,6 +713,38 @@ const AdminBotControl: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* ══════════════════════════════════════ */}
+      {/* SECTION E — TERMINAL                   */}
+      {/* ══════════════════════════════════════ */}
+      {tab === 'terminal' && (
+        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 220px)', minHeight: 400 }}>
+          <SectionHeader icon="💻" title="Live Terminal"
+            subtitle="Raw execution logs directly from the backend bot engine." />
+            
+          <div style={{ flex: 1, background: '#090a0f', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '16px 20px', fontFamily: '"Fira Code", monospace', fontSize: 13, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}>
+            {botLogs.length === 0 ? (
+              <div style={{ color: '#556677', textAlign: 'center', marginTop: 'auto', marginBottom: 'auto' }}>Waiting for bot logs...</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {botLogs.map((log: any) => {
+                  const err = log.level === 'ERROR' || log.level === 'CRITICAL';
+                  const warn = log.level === 'WARNING';
+                  const time = new Date(log.ts_ms || 0).toLocaleTimeString([], { hour12: false });
+                  return (
+                    <div key={log.id} style={{ color: err ? '#f44771' : warn ? '#ffe566' : '#a0b4cc', wordBreak: 'break-all', fontFamily: 'monospace' }}>
+                      <span style={{ color: '#556677', marginRight: 12 }}>[{time}]</span>
+                      <span style={{ display: 'inline-block', width: 68, color: err ? '#f44771' : warn ? '#ffe566' : '#8899bb', fontWeight: 600 }}>{log.level}</span>
+                      <span style={{ color: err ? '#ff88aa' : warn ? '#fff2aa' : '#e0eaff' }}>{log.message}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

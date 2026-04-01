@@ -243,7 +243,12 @@ def backtest_hybrid(df, config, symbol):
             hit_tp = (t['dir'] == 1 and high[i] >= t['tp']) or (t['dir'] == -1 and low[i] <= t['tp'])
             
             if hit_sl or hit_tp:
-                raw_exit = t['tp'] if hit_tp else t['sl']
+                # Pessimistic Bias: if both hit in the same candle, assume Stop Loss occurred first
+                if hit_sl and hit_tp:
+                    raw_exit = t['sl']
+                else:
+                    raw_exit = t['sl'] if hit_sl else t['tp']
+                    
                 is_long  = t['dir'] == 1
 
                 # ── Apply realistic friction ─────────────────────────────
@@ -258,15 +263,21 @@ def backtest_hybrid(df, config, symbol):
                     eff_entry = t['entry'] * (1.0 - slip)
                     eff_exit  = raw_exit  * (1.0 + slip)
 
-                # Percentage-based PnL on risk capital
-                entry_pct = eff_entry / t['entry']    # entry degradation factor
-                exit_pct  = eff_exit  / raw_exit      # exit degradation factor
+                # ── Correct Risk Position Sizing ─────────────────────────
+                risk_usd = balance * (config['base_risk_pct'] / 100.0)
+                sl_distance = abs(t['entry'] - t['sl'])
+                
+                # How much coin to buy so that sl_distance == risk_usd
+                size_coin = risk_usd / max(sl_distance, 1e-9)
+                notional_value = size_coin * t['entry']
+                
+                # Raw directional PnL based on nominal cost vs exit
+                price_diff = (eff_exit - eff_entry) if is_long else (eff_entry - eff_exit)
+                raw_pnl = size_coin * price_diff
 
-                raw_pnl = (eff_exit - eff_entry) / eff_entry * balance * config['base_risk_pct'] / 100.0 * t['dir']
-
-                # Commission on round-trip notional (proxy: 2× commission_pct on risk amount)
-                risk_usd = balance * config['base_risk_pct'] / 100.0
-                commission_cost = risk_usd * 2.0 * comm
+                # Commission is paid on total notional volume traded (Entry + Exit)
+                exit_notional = size_coin * eff_exit
+                commission_cost = (notional_value + exit_notional) * comm
 
                 pnl = raw_pnl - commission_cost
                 r_mult = pnl / max(risk_usd, 1e-9)

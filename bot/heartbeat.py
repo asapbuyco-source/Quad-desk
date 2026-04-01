@@ -59,6 +59,50 @@ def init_firebase() -> Optional[Any]:
         logger.error(f"[Heartbeat] Firebase init failed: {e}")
     return None
 
+import threading
+import queue
+
+class FirestoreLogHandler(logging.Handler):
+    """
+    A custom logging handler that forwards log records to the 'botLogs'
+    Firestore collection asynchronously using a background thread.
+    """
+    def __init__(self):
+        super().__init__()
+        self.log_queue = queue.Queue()
+        self.worker_thread = threading.Thread(target=self._log_worker, daemon=True)
+        self.worker_thread.start()
+
+    def _log_worker(self):
+        while True:
+            try:
+                record = self.log_queue.get()
+                if record is None:
+                    break
+                    
+                if _db is None:
+                    self.log_queue.task_done()
+                    continue
+
+                from firebase_admin import firestore as fs
+                payload = {
+                    "level": record.levelname,
+                    "message": self.format(record),
+                    "timestamp": fs.SERVER_TIMESTAMP,
+                    "ts_ms": int(record.created * 1000)
+                }
+                _db.collection("botLogs").add(payload)
+                self.log_queue.task_done()
+            except Exception:
+                # Silently catch errors so logs do not crash the worker thread
+                pass
+                
+    def emit(self, record):
+        # We only care about root logger outputs from the bot strategies
+        # (mostly from main.py, quant_engine, and executor)
+        if record.name.startswith("bot.") or record.name == "__main__":
+            self.log_queue.put(record)
+
 
 def get_db() -> Optional[Any]:
     """Return the initialised Firestore client (or None if not available)."""
@@ -88,6 +132,8 @@ async def run_heartbeat(stats: dict) -> None:
                 "activePositions": 1 if stats.get("active_position") else 0,
                 "totalTrades":     stats.get("total_trades",  0),
                 "lastSignal":      stats.get("last_signal",   "WAIT"),
+                "exchange":        stats.get("exchange",       "coinbase").lower(),
+                "lastUlis":        stats.get("last_ulis",      "—"),
             }
             # firebase-admin is sync → run in a thread so we don't block the loop
             await asyncio.to_thread(doc_ref.set, payload)
@@ -123,6 +169,8 @@ async def write_offline(stats: dict) -> None:
             "activePositions": 0,
             "totalTrades":     stats.get("total_trades", 0),
             "lastSignal":      "BOT_STOPPED",
+            "exchange":        stats.get("exchange",      "coinbase").lower(),
+            "lastUlis":        "—",
         })
         logger.info("[Heartbeat] Offline status written to Firebase ✓")
     except Exception as e:

@@ -92,6 +92,8 @@ interface AppState {
     darkPoolBias: number;
     /** Bot trade history from Firestore botTrades collection */
     botTrades: BotTrade[];
+    /** Bot live console logs from Firestore botLogs collection */
+    botLogs: any[];
 
     cvdBaseline: number;
 
@@ -157,6 +159,10 @@ interface AppState {
     startDarkPoolPolling: () => () => void;
     /** Subscribe to Firestore botTrades and sync chart levels */
     subscribeToBotTrades: () => () => void;
+    /** Subscribe to Firestore botLogs for live terminal UI */
+    subscribeToBotLogs: () => () => void;
+    /** Subscribe to live bot status (heartbeat) */
+    subscribeToBotStatus: () => () => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -278,6 +284,7 @@ export const useStore = create<AppState>((set, get) => ({
     notifications: [],
     alertLogs: [],
     botTrades: [],
+    botLogs: [],
     cvdBaseline: 0,
     cofi: 0,
     ofiHistory: [],
@@ -1437,6 +1444,51 @@ export const useStore = create<AppState>((set, get) => ({
             }
         }, (err) => {
             console.warn('[Store] botTrades subscription error:', err);
+        });
+        return unsub;
+    },
+
+    subscribeToBotLogs: () => {
+        const q = query(
+            collection(db, 'botLogs'),
+            orderBy('ts_ms', 'desc'),
+            limit(50)
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const logs = snap.docs.map(d => ({
+                id: d.id,
+                ...d.data(),
+            }));
+            const sorted = logs.sort((a: any, b: any) => a.ts_ms - b.ts_ms);
+            set({ botLogs: sorted });
+        }, (err) => {
+            console.warn('[Store] botLogs subscription error:', err);
+        });
+        return unsub;
+    },
+
+    subscribeToBotStatus: () => {
+        const unsub = onSnapshot(doc(db, 'botStatus', 'live'), (snap) => {
+            if (snap.exists()) {
+                const data = snap.data();
+                set((state) => ({
+                    botSettings: {
+                        ...state.botSettings,
+                        status: data.isRunning ? 'ONLINE' : 'OFFLINE',
+                        lastHeartbeat: data.lastHeartbeat?.toMillis ? data.lastHeartbeat.toMillis() : Date.now(),
+                        exchange: data.exchange || state.botSettings.exchange,
+                        tradingPair: data.symbol || state.botSettings.tradingPair,
+                        botMode: data.mode,
+                        environment: data.environment,
+                        activePositions: data.activePositions || 0,
+                        totalTrades: data.totalTrades || 0,
+                        lastSignal: data.lastSignal || 'WAIT',
+                        lastUlis: data.lastUlis || '—',
+                    }
+                }));
+            }
+        }, (err) => {
+            console.warn('[Store] botStatus subscription error:', err);
         });
         return unsub;
     },

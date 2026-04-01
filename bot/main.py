@@ -56,6 +56,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bot.main")
 
+try:
+    from bot.heartbeat import FirestoreLogHandler
+    logging.getLogger().addHandler(FirestoreLogHandler())
+except Exception as e:
+    logger.warning(f"[Main] Could not attach FirestoreLogHandler: {e}")
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Config from environment
 # ──────────────────────────────────────────────────────────────────────
