@@ -151,6 +151,11 @@ async def generate_with_fallback(preferred: str, prompt: str) -> tuple:
 
     raise RuntimeError(f"All AI models exhausted. Last error: {last_err}")
 
+def sanitize_gemini_input(text: str, max_len: int = 500) -> str:
+    """Sanitize arbitrary user input to prevent prompt injection."""
+    if not text: return ""
+    return re.sub(r'[^a-zA-Z0-9\s.,;:\-\[\]@]', '', text)[:max_len].strip()
+
 class AnalysisRequest(BaseModel):
     symbol: str
     price: float

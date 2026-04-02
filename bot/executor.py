@@ -491,6 +491,10 @@ class TradingExecutor:
             old_sl_id = pos.get("sl_order_id")
             fmt_size  = pos["size"]
 
+            # Fix Race Condition: Set state BEFORE yielding via await
+            pos["be_triggered"] = True
+            pos["stop_loss"]    = entry
+
             cancel_success = True
             if old_sl_id:
                 for attempt in range(3):
@@ -508,6 +512,7 @@ class TradingExecutor:
                                 break
                             logger.warning(f"[Executor] Final failure to cancel old SL for Break-Even: {e}")
                             cancel_success = False
+                            pos["be_triggered"] = False # Revert
                             break
                         await asyncio.sleep(0.5)
             
@@ -541,11 +546,17 @@ class TradingExecutor:
                         break
                     await asyncio.sleep(0.5)
 
-            if new_sl:
+            if new_sl and new_sl.get("id"):
                 pos["sl_order_id"] = new_sl.get("id")
-                pos["be_triggered"] = True
-                pos["stop_loss"]    = entry
                 logger.info(f"[Executor] New Break-Even SL attached at {entry} (id={pos['sl_order_id']})")
+            else:
+                logger.critical("[Executor] SL placement failed during Break-Even update! FLATTENING NAKED POSITION!")
+                try:
+                    await self.exchange.create_market_order(ex_symbol, sl_side, fmt_size)
+                    self.active_position = None
+                    logger.info("[Executor] Flattened naked position successfully.")
+                except Exception as ex:
+                    logger.critical(f"[Executor] CRITICAL: Failed to flatten naked position! {ex}")
 
         except Exception as e:
             logger.error(f"[Executor] Break-Even API update failed: {e}", exc_info=True)
