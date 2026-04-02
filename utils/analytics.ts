@@ -223,10 +223,13 @@ export const calculateZScoreBands = (data: CandleData[], period = 20): CandleDat
         }
         const vwap = vwapDen > 0 ? vwapNum / vwapDen : typicals[typicals.length - 1];
 
-        // Population standard deviation of typical prices in the window
-        const mean = typicals.reduce((a, b) => a + b, 0) / typicals.length;
-        const variance = typicals.reduce((acc, p) => acc + Math.pow(p - mean, 2), 0) / typicals.length;
-        const std = Math.sqrt(variance);
+        // Volume-weighted standard deviation around VWAP
+        let vwVarSum = 0;
+        for (let j = 0; j < window.length; j++) {
+            const vol = window[j].volume || 1;
+            vwVarSum += vol * Math.pow(typicals[j] - vwap, 2);
+        }
+        const std = vwapDen > 0 ? Math.sqrt(vwVarSum / vwapDen) : 0;
 
         return {
             ...candle,

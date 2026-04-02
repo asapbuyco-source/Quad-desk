@@ -444,8 +444,14 @@ export const useStore = create<AppState>((set, get) => ({
                 vwapDen += vol;
             }
             const vwap20 = vwapDen > 0 ? vwapNum / vwapDen : tick.c;
-            const vwapMean = typicals20.reduce((a, b) => a + b, 0) / typicals20.length;
-            const vwapStd = Math.sqrt(typicals20.reduce((acc, p) => acc + Math.pow(p - vwapMean, 2), 0) / typicals20.length);
+            
+            // Volume-weighted std anchored to VWAP
+            let vwVarSum = 0;
+            for (let j = 0; j < window20.length; j++) {
+                const vol = window20[j].volume || 1;
+                vwVarSum += vol * Math.pow(typicals20[j] - vwap20, 2);
+            }
+            const vwapStd = vwapDen > 0 ? Math.sqrt(vwVarSum / vwapDen) : 0;
             const zScore = vwapStd > 0 ? (tick.c - vwap20) / vwapStd : 0;
 
             // --- RSI (retailSentiment) — computed fresh on every new bar ---
@@ -553,15 +559,14 @@ export const useStore = create<AppState>((set, get) => ({
         sumTyp += currTypical;
         
         const mbVwap20 = mbVwapDen > 0 ? mbVwapNum / mbVwapDen : tick.c;
-        const nBars = prev19.length + 1;
-        const mbTypMean = sumTyp / nBars;
         
-        let sumSq = Math.pow(currTypical - mbTypMean, 2);
+        let mbVwVarSum = (tick.v || 1) * Math.pow(currTypical - mbVwap20, 2);
         for (let j = 0; j < prev19.length; j++) {
             const tCost = (prev19[j].high + prev19[j].low + prev19[j].close) / 3.0;
-            sumSq += Math.pow(tCost - mbTypMean, 2);
+            const vol = prev19[j].volume || 1;
+            mbVwVarSum += vol * Math.pow(tCost - mbVwap20, 2);
         }
-        const mbStd20 = Math.sqrt(sumSq / nBars);
+        const mbStd20 = mbVwapDen > 0 ? Math.sqrt(mbVwVarSum / mbVwapDen) : 0;
         const mbZScore = mbStd20 > 0 ? (tick.c - mbVwap20) / mbStd20 : 0;
 
         return {

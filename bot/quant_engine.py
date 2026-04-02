@@ -103,7 +103,10 @@ class QuantEngine:
         if vol_sum <= 0:
             return 0.0
         vwap = np.sum(typical * v) / vol_sum
-        std = np.std(typical)
+        
+        vw_variance = np.sum(v * (typical - vwap)**2) / vol_sum
+        std = np.sqrt(vw_variance)
+        
         if std <= 0:
             return 0.0
         return float((current_price - vwap) / std)
