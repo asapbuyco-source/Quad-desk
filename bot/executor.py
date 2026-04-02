@@ -147,6 +147,10 @@ class TradingExecutor:
             # Manual fallback for the core symbol so trade execution doesn't fail
             # These are the standard BTC/USDC parameters for Coinbase Advanced Trade
             if self.exchange_id == "coinbase":
+                # Ensure CCXT internal structures are initialized if load_markets failed completely
+                if self.exchange.markets is None: self.exchange.markets = {}
+                if self.exchange.symbols is None: self.exchange.symbols = []
+                
                 self.exchange.markets['BTC/USDC'] = {
                     'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
                     'precision': {'amount': 8, 'price': 2},

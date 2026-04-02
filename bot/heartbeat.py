@@ -157,7 +157,8 @@ async def run_heartbeat(stats: dict) -> None:
             logger.error(f"[Heartbeat] Firebase sync error: {e}")
 
         try:
-            await asyncio.sleep(10)
+            # Increase interval to 60s to save Firebase free tier quota
+            await asyncio.sleep(60)
         except asyncio.CancelledError:
             break
 
