@@ -143,7 +143,24 @@ class TradingExecutor:
         except Exception as e:
             # CDP keys often fail on public V2 currency fetches during load_markets
             logger.warning(f"[Executor] Exchange initialised with warnings (CDP/V3 compatibility): {e}")
-            logger.info(f"[Executor] Proceeding with manual market state...")
+            
+            # Manual fallback for the core symbol so trade execution doesn't fail
+            # These are the standard BTC/USDC parameters for Coinbase Advanced Trade
+            if self.exchange_id == "coinbase":
+                self.exchange.markets['BTC/USDC'] = {
+                    'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
+                    'precision': {'amount': 8, 'price': 2},
+                    'limits': {
+                        'amount': {'min': 0.00001, 'max': 1000},
+                        'price': {'min': 0.01, 'max': 1000000},
+                        'cost': {'min': 1.0}
+                    },
+                    'active': True,
+                    'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+                }
+                if 'BTC/USDC' not in self.exchange.symbols:
+                    self.exchange.symbols.append('BTC/USDC')
+            logger.info(f"[Executor] Proceeding with manual market state for BTC/USDC...")
 
     async def close(self):
         await self.exchange.close()
