@@ -102,8 +102,6 @@ class TelegramPayload(BaseModel):
     chatId: Optional[str] = None
 
 VALID_GEMINI_MODELS = {
-    "gemini-3-pro-preview",
-    "gemini-3-flash-preview",
     "gemini-2.5-flash-preview",
     "gemini-2.5-pro-preview-03-25",
     "gemini-2.0-flash",
@@ -117,8 +115,6 @@ DEFAULT_MODEL = "gemini-2.0-flash"
 # Ordered fallback chain: newest/fastest → oldest
 # When the preferred model fails, the next one in the chain is tried automatically.
 FALLBACK_CHAIN = [
-    "gemini-3-pro-preview",
-    "gemini-3-flash-preview",
     "gemini-2.5-flash-preview",
     "gemini-2.5-pro-preview-03-25",
     "gemini-2.0-flash",
@@ -1129,7 +1125,8 @@ def _run_backtest_engine(
 
     MIN_WARM = 55
 
-    for i in range(MIN_WARM, len(candles)):
+    i = MIN_WARM
+    while i < len(candles):
         window = candles[max(0, i - WIN): i]
         atr_window = candles[max(0, i - ATR_WIN - 1): i]
 
@@ -1193,6 +1190,7 @@ def _run_backtest_engine(
             confidence = 0.55 + (0.35 - bayes) * 2.0
 
         if direction is None or confidence < min_confidence:
+            i += 1
             continue
 
         # ── Risk sizing ───────────────────────────────────────────────
@@ -1205,6 +1203,7 @@ def _run_backtest_engine(
         risk_usd  = equity * (risk_pct / 100.0)
         qty       = risk_usd / sl_dist if sl_dist > 0 else 0.0
         if qty <= 0:
+            i += 1
             continue
 
         # ── Simulate exit on subsequent candles ───────────────────────
@@ -1246,6 +1245,7 @@ def _run_backtest_engine(
                     break
 
         if result == "OPEN":
+            i += 1
             continue  # Skip unresolved trades in stats
 
         # ── Apply realistic friction ──────────────────────────────────────────
@@ -1289,7 +1289,7 @@ def _run_backtest_engine(
         equity_curve.append(round(equity, 2))
 
         # Skip to after the exit candle (no overlapping trades)
-        i = exit_idx
+        i = exit_idx + 1
 
     # ── Performance statistics ─────────────────────────────────────────
     if not trades:
@@ -1321,12 +1321,13 @@ def _run_backtest_engine(
         if dd > max_dd:
             max_dd = dd
 
-    # Sharpe ratio (annualised, assume 252 trading days)
+    # Sharpe ratio (annualised assuming 24/7 market, scaled to interval)
     pnls = [t["pnl"] for t in trades]
     if len(pnls) > 1:
         avg_pnl  = sum(pnls) / len(pnls)
         std_pnl  = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
-        sharpe   = round((avg_pnl / std_pnl) * (252 ** 0.5) if std_pnl > 0 else 0.0, 2)
+        # 15m candles over 24/7 market = 96 per day * 365 days = 35040 periods
+        sharpe   = round((avg_pnl / std_pnl) * (35040 ** 0.5) if std_pnl > 0 else 0.0, 2)
     else:
         sharpe = 0.0
 

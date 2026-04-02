@@ -339,53 +339,99 @@ def backtest_hybrid(df, config, symbol):
             elif prev_l < nav_l and px > nav_l:
                 sweep = "BELOW_LOWS"
                 
-        # 4. Strategy Layer
+        # 4. Synthese Pre-Bayes matching live `quant_engine.py`
+        curr_rsi = rsi[i]
+        curr_z = zscore[i]
+        curr_skew = skew[i]
+        curr_ofi = ofi_proxy[i] * 10.0 # Proxy dynamic scaling
+
+        L_rsi  = 1.8 if curr_rsi > 60 else 0.55 if curr_rsi < 40 else 1.0
+        if curr_z < -1.5 and curr_ofi > 5:
+            L_flow = 2.0
+        elif curr_z > 1.5 and curr_ofi < -5:
+            L_flow = 0.5
+        else:
+            L_z = 1.3 if curr_z < -1.5 else 0.76 if curr_z > 1.5 else 1.0
+            L_o = 1.2 if curr_ofi > 10 else 0.83 if curr_ofi < -10 else 1.0
+            L_flow = L_z * L_o
+
+        L_skew = 1.2 if curr_skew > 0.3 else 0.83 if curr_skew < -0.3 else 1.0
+        bull_odds = L_rsi * L_flow * L_skew
+        bayes = bull_odds / (bull_odds + 1.0)
+                
+        # 5. Strategy Layer
         raw_direction = None
         strategy = ""
         
         if sweep:
             strategy = "SWEEP"
-            if sweep == "ABOVE_HIGHS" and (ofi_proxy[i] < 0 or cvd[i] < 0):
+            if sweep == "ABOVE_HIGHS" and (curr_ofi < -5 or cvd[i] < 0):
                 raw_direction = "SELL"
-            elif sweep == "BELOW_LOWS" and (ofi_proxy[i] > 0 or cvd[i] > 0):
+            elif sweep == "BELOW_LOWS" and (curr_ofi > 5 or cvd[i] > 0):
                 raw_direction = "BUY"
                 
         elif regime == "TREND":
             strategy = "TREND"
             score = 0.0
-            if ofi_proxy[i] > 0: score += 1.0
-            elif ofi_proxy[i] < 0: score -= 1.0
+            
+            if bayes > 0.65:    score += 2.0
+            elif bayes > 0.55:  score += 1.0
+            elif bayes < 0.35:  score -= 2.0
+            elif bayes < 0.45:  score -= 1.0
+
+            if curr_ofi > 20:         score += 1.5
+            elif curr_ofi > 8:        score += 0.75
+            elif curr_ofi < -20:      score -= 1.5
+            elif curr_ofi < -8:       score -= 0.75
+
             if cvd[i] > 0: score += 1.0
             elif cvd[i] < 0: score -= 1.0
+            
+            if curr_ofi > 0: score += 1.0
+            elif curr_ofi < 0: score -= 1.0
             
             if score >= 1.5: raw_direction = "BUY"
             elif score <= -1.5: raw_direction = "SELL"
             
         elif regime == "RANGE":
             strategy = "MEAN_REVERSION"
-            if zscore[i] >= 2.5 and rsi[i] > 45: raw_direction = "SELL"
-            elif zscore[i] <= -2.5 and rsi[i] < 55: raw_direction = "BUY"
+            if curr_z >= 2.2 and curr_rsi > 45: raw_direction = "SELL"
+            elif curr_z <= -2.2 and curr_rsi < 55: raw_direction = "BUY"
             
         if not raw_direction: continue
         
-        # 5. Bayesian Fusion
+        # 6. Bayesian Fusion + ULIS proxy
         odds = 1.0
-        if ofi_proxy[i] > 0: odds *= 1.4
-        elif ofi_proxy[i] < 0: odds *= 0.7
-        
+        if curr_ofi > 20:    odds *= 2.0
+        elif curr_ofi > 8:   odds *= 1.4
+        elif curr_ofi < -20: odds *= 0.5
+        elif curr_ofi < -8:  odds *= 0.7
+
         if cvd[i] > 0: odds *= 1.25
         elif cvd[i] < 0: odds *= 0.8
         
-        if skew[i] > 0.3: odds *= 1.12
-        elif skew[i] < -0.3: odds *= 0.88
+        if curr_ofi > 0 and vol_surge: odds *= 1.20
+        elif curr_ofi > 0:             odds *= 1.10
+        elif curr_ofi < 0 and vol_surge: odds *= 0.75
+        elif curr_ofi < 0:             odds *= 0.90
+        
+        if curr_skew > 0.3: odds *= 1.12
+        elif curr_skew < -0.3: odds *= 0.88
+        
+        if curr_rsi > 60: odds *= 1.15
+        elif curr_rsi < 40: odds *= 0.85
         
         p_bull = odds / (odds + 1.0)
         conf = p_bull if raw_direction == "BUY" else (1.0 - p_bull)
         
+        if (raw_direction == "BUY" and curr_ofi < 0 and curr_z < 0) or \
+           (raw_direction == "SELL" and curr_ofi > 0 and curr_z > 0):
+            conf -= 0.15 # ULIS cascade veto penalty simulation
+        
         if conf < config['min_confidence']:
             continue
             
-        # 6. Risk Engine
+        # 7. Risk Engine
         is_long = raw_direction == "BUY"
         cur_atr = atr[i]
         

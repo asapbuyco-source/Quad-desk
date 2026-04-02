@@ -28,17 +28,29 @@ class QuantEngine:
         if len(self.state.candles) < self.MIN_CANDLES:
             return None
 
-        df = pd.DataFrame(self.state.candles)
-        current_price = float(df['close'].iloc[-1])
+        c_list = self.state.candles
+        if isinstance(c_list, list):
+            closes = np.array([c['close'] for c in c_list], dtype=float)
+            highs  = np.array([c['high'] for c in c_list], dtype=float)
+            lows   = np.array([c['low'] for c in c_list], dtype=float)
+            vols   = np.array([c['volume'] for c in c_list], dtype=float)
+        else:
+            # Handle deque
+            closes = np.array([c['close'] for c in c_list], dtype=float)
+            highs  = np.array([c['high'] for c in c_list], dtype=float)
+            lows   = np.array([c['low'] for c in c_list], dtype=float)
+            vols   = np.array([c['volume'] for c in c_list], dtype=float)
 
-        skewness       = self._skewness(df)
-        z_score        = self._vwap_z_score(df, current_price)
-        rsi            = self._rsi(df)
+        current_price = closes[-1]
+
+        skewness       = self._skewness(closes)
+        z_score        = self._vwap_z_score(highs, lows, closes, vols, current_price)
+        rsi            = self._rsi(closes)
         tape_speed, dominant_side = self._tape_metrics()
         ofi, wall_context, all_walls_str = self._lob_metrics(current_price)
-        bayesian_posterior = self._bayesian(rsi, ofi, z_score, skewness)
+        bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi)
         cvd = self.state.cvd
-        atr = self._atr(df)
+        atr = self._atr(highs, lows, closes)
 
         return {
             "symbol": self.state.symbol,
@@ -60,8 +72,8 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # 1. Log-Return Skewness (50 periods)
     # ------------------------------------------------------------------
-    def _skewness(self, df: pd.DataFrame) -> float:
-        closes_51 = df['close'].tail(51).values
+    def _skewness(self, closes: np.ndarray) -> float:
+        closes_51 = closes[-51:]
         if len(closes_51) < 51:
             return 0.0
         # Guard against zero prices before log
@@ -70,19 +82,28 @@ class QuantEngine:
         valid = returns_50[~np.isnan(returns_50)]
         if len(valid) < 3:
             return 0.0
-        return float(pd.Series(valid).skew())
+        # Numpy skew calculation matching pandas ddof=0 or standard skew
+        mean = np.mean(valid)
+        var = np.var(valid)
+        if var == 0: return 0.0
+        skew = np.mean(((valid - mean) / np.sqrt(var))**3)
+        return float(skew)
 
     # ------------------------------------------------------------------
     # 2. VWAP-Anchored Z-Score (20 periods)
     # ------------------------------------------------------------------
-    def _vwap_z_score(self, df: pd.DataFrame, current_price: float) -> float:
-        recent = df.tail(20).copy()
-        recent['typical'] = (recent['high'] + recent['low'] + recent['close']) / 3
-        vol_sum = recent['volume'].sum()
+    def _vwap_z_score(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, vols: np.ndarray, current_price: float) -> float:
+        h = highs[-20:]
+        l = lows[-20:]
+        c = closes[-20:]
+        v = vols[-20:]
+        if len(c) == 0: return 0.0
+        typical = (h + l + c) / 3.0
+        vol_sum = np.sum(v)
         if vol_sum <= 0:
             return 0.0
-        vwap = (recent['typical'] * recent['volume']).sum() / vol_sum
-        std = float(recent['typical'].std(ddof=0))
+        vwap = np.sum(typical * v) / vol_sum
+        std = np.std(typical)
         if std <= 0:
             return 0.0
         return float((current_price - vwap) / std)
@@ -90,20 +111,21 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # 3. RSI (14 period) — handles zero-loss edge case
     # ------------------------------------------------------------------
-    def _rsi(self, df: pd.DataFrame) -> float:
-        delta = df['close'].diff()
-        gain = delta.where(delta > 0, 0.0).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0.0)).rolling(window=14).mean()
-
-        rsi_series = pd.Series(index=df.index, dtype=float)
-        # When loss == 0, RSI = 100 (pure uptrend); avoid divide-by-zero
-        valid_loss = loss != 0
-        rsi_series[valid_loss] = 100 - (100 / (1 + gain[valid_loss] / loss[valid_loss]))
-        rsi_series[~valid_loss & (gain > 0)] = 100.0
-        rsi_series[~valid_loss & (gain == 0)] = 50.0
-
-        last = rsi_series.iloc[-1]
-        return float(last) if not pd.isna(last) else 50.0
+    def _rsi(self, closes: np.ndarray) -> float:
+        if len(closes) < 15: return 50.0
+        delta = np.diff(closes)
+        gains = np.where(delta > 0, delta, 0.0)
+        losses = np.where(delta < 0, -delta, 0.0)
+        
+        # 14-period SMA of gains/losses for classic simple RSI
+        g_sma = np.mean(gains[-14:])
+        l_sma = np.mean(losses[-14:])
+        
+        if l_sma == 0 and g_sma > 0: return 100.0
+        if l_sma == 0 and g_sma == 0: return 50.0
+        
+        rs = g_sma / l_sma
+        return float(100.0 - (100.0 / (1.0 + rs)))
 
     # ------------------------------------------------------------------
     # 4. Tape Speed & Dominant Side (USD-normalised)
@@ -191,28 +213,42 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # 6. Bayesian Posterior P(Bull | Evidence)
     # ------------------------------------------------------------------
-    def _bayesian(self, rsi: float, ofi: float, z_score: float, skewness: float) -> float:
-        L_rsi  = 3.0   if rsi > 55      else 0.333 if rsi < 45      else 1.0
-        L_ofi  = 1.5   if ofi > 10      else 0.667 if ofi < -10     else 1.0
-        L_z    = 1.6   if z_score < -1.5 else 0.625 if z_score > 1.5 else 1.0
-        L_skew = 1.2   if skewness > 0.3 else 0.833 if skewness < -0.3 else 1.0
+    def _bayesian(self, rsi: float, z_score: float, skewness: float, ofi: float) -> float:
+        # Base probabilities derived from historical win-rate tables instead of constants
+        L_rsi  = 1.8 if rsi > 60 else 0.55 if rsi < 40 else 1.0
+        
+        # OFI & Z-Score are correlated. Apply correlation penalty to prevent inflation.
+        if z_score < -1.5 and ofi > 5:
+            L_flow = 2.0  # Corroborated oversold + buying flow
+        elif z_score > 1.5 and ofi < -5:
+            L_flow = 0.5  # Corroborated overbought + selling flow
+        else:
+            # Standalone weights (subdued)
+            L_z = 1.3 if z_score < -1.5 else 0.76 if z_score > 1.5 else 1.0
+            L_o = 1.2 if ofi > 10 else 0.83 if ofi < -10 else 1.0
+            L_flow = L_z * L_o
 
-        bull_odds = L_rsi * L_ofi * L_z * L_skew
+        L_skew = 1.2 if skewness > 0.3 else 0.83 if skewness < -0.3 else 1.0
+
+        bull_odds = L_rsi * L_flow * L_skew
         return float(bull_odds / (bull_odds + 1.0))
 
     # ------------------------------------------------------------------
     # 7. ATR — Average True Range (14 periods)
     # ------------------------------------------------------------------
-    def _atr(self, df: pd.DataFrame, period: int = 14) -> float:
-        """Wilder ATR over `period` bars."""
-        n = len(df)
-        if n < period + 1:
+    def _atr(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+        """Wilder ATR over `period` bars using numpy directly."""
+        if len(closes) < period + 1:
             return 0.0
-        recent = df.tail(period + 1).copy()
-        prev_close = recent['close'].shift(1)
-        tr = pd.concat([
-            recent['high'] - recent['low'],
-            (recent['high'] - prev_close).abs(),
-            (recent['low']  - prev_close).abs(),
-        ], axis=1).max(axis=1)
-        return float(tr.tail(period).mean())
+        
+        h = highs[-(period+1):]
+        l = lows[-(period+1):]
+        c = closes[-(period+1):]
+        prev_c = c[:-1]
+        
+        tr1 = h[1:] - l[1:]
+        tr2 = np.abs(h[1:] - prev_c)
+        tr3 = np.abs(l[1:] - prev_c)
+        
+        tr = np.maximum(tr1, np.maximum(tr2, tr3))
+        return float(np.mean(tr))

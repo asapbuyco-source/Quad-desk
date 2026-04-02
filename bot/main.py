@@ -571,10 +571,24 @@ async def execution_loop(
 
             current_price = feed.state.candles[-1]["close"]
 
-            # ── Position exit check (dry-run) — track PnL for daily halt ─────
-            if executor.active_position and executor.dry_run:
+            # ── Position exit check — track PnL for daily halt ─────
+            if executor.active_position:
+                pos_snapshot = dict(executor.active_position)
                 exited, pnl = executor.check_position_exit(current_price)
                 if exited:
+                    # In live mode, simulate the exchange fill through crossover and clean up
+                    if not executor.dry_run:
+                        # Cancel orphaned opposing order (SL or TP)
+                        filled_side = "sl" if pnl < 0 else "tp"
+                        cancel_id = pos_snapshot.get("tp_order_id") if filled_side == "sl" else pos_snapshot.get("sl_order_id")
+                        if cancel_id:
+                            try:
+                                await executor.exchange.cancel_order(cancel_id, pos_snapshot.get("symbol", ""))
+                                label = "TP" if filled_side == "sl" else "SL"
+                                logger.info(f"[Executor] Cancelled opposing {label} order {cancel_id} ✓")
+                            except Exception as e:
+                                logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
+
                     new_daily_pnl = stats.get("daily_pnl", 0.0) + pnl
                     stats["daily_pnl"] = new_daily_pnl
                     max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0

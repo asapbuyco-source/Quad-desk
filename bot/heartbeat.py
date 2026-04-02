@@ -69,7 +69,7 @@ class FirestoreLogHandler(logging.Handler):
     """
     def __init__(self):
         super().__init__()
-        self.log_queue = queue.Queue()
+        self.log_queue = queue.Queue(maxsize=500)
         self.worker_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.worker_thread.start()
 
@@ -101,7 +101,10 @@ class FirestoreLogHandler(logging.Handler):
         # We only care about root logger outputs from the bot strategies
         # (mostly from main.py, quant_engine, and executor)
         if record.name.startswith("bot.") or record.name == "__main__":
-            self.log_queue.put(record)
+            try:
+                self.log_queue.put_nowait(record)
+            except queue.Full:
+                pass # Silently drop logs under severe backpressure to protect memory
 
 
 def get_db() -> Optional[Any]:

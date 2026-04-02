@@ -378,6 +378,7 @@ export const useStore = create<AppState>((set, get) => ({
         } else if (tickTimeSec > last.time) {
             const updatedBaseline = state.cvdBaseline + (last.delta || 0);
             const newCvd = updatedBaseline + realDelta;
+            const newOfiHistory = [...state.ofiHistory, _latestOfi].slice(-60);
 
             const newCandle: CandleData = {
                 time: tickTimeSec,
@@ -509,6 +510,7 @@ export const useStore = create<AppState>((set, get) => ({
 
             return {
                 cvdBaseline: updatedBaseline,
+                ofiHistory: newOfiHistory,
                 market: {
                     ...state.market,
                     candles: newCandles,
@@ -534,19 +536,32 @@ export const useStore = create<AppState>((set, get) => ({
         }
 
         // Mid-bar update: keep institutionalCVD and zScore in sync without heavy stats
-        // Bug Fix #1: Use the same VWAP-anchored typical-price formula as the new-bar
-        // update to prevent Z-Score from jumping at bar boundaries.
-        const mbWindow20 = newCandles.slice(-20);
-        const mbTypicals20 = mbWindow20.map(c => (c.high + c.low + c.close) / 3);
-        let mbVwapNum = 0, mbVwapDen = 0;
-        for (let j = 0; j < mbWindow20.length; j++) {
-            const vol = mbWindow20[j].volume || 1;
-            mbVwapNum += mbTypicals20[j] * vol;
+        const prev19 = newCandles.length >= 20 ? newCandles.slice(-20, -1) : newCandles.slice(0, -1);
+        const currTypical = (tick.h + tick.l + tick.c) / 3.0;
+        
+        let mbVwapNum = 0, mbVwapDen = 0, sumTyp = 0;
+        for (let j = 0; j < prev19.length; j++) {
+            const tCost = (prev19[j].high + prev19[j].low + prev19[j].close) / 3.0;
+            const vol = prev19[j].volume || 1;
+            mbVwapNum += tCost * vol;
             mbVwapDen += vol;
+            sumTyp += tCost;
         }
+        
+        mbVwapNum += currTypical * (tick.v || 1);
+        mbVwapDen += (tick.v || 1);
+        sumTyp += currTypical;
+        
         const mbVwap20 = mbVwapDen > 0 ? mbVwapNum / mbVwapDen : tick.c;
-        const mbTypMean = mbTypicals20.reduce((a, b) => a + b, 0) / mbTypicals20.length;
-        const mbStd20 = Math.sqrt(mbTypicals20.reduce((acc, p) => acc + Math.pow(p - mbTypMean, 2), 0) / mbTypicals20.length);
+        const nBars = prev19.length + 1;
+        const mbTypMean = sumTyp / nBars;
+        
+        let sumSq = Math.pow(currTypical - mbTypMean, 2);
+        for (let j = 0; j < prev19.length; j++) {
+            const tCost = (prev19[j].high + prev19[j].low + prev19[j].close) / 3.0;
+            sumSq += Math.pow(tCost - mbTypMean, 2);
+        }
+        const mbStd20 = Math.sqrt(sumSq / nBars);
         const mbZScore = mbStd20 > 0 ? (tick.c - mbVwap20) / mbStd20 : 0;
 
         return {
@@ -636,12 +651,8 @@ export const useStore = create<AppState>((set, get) => ({
         const prevOfi = state.market.metrics.ofi || 0;
         const newCofi = state.cofi + ofi - prevOfi;
 
-        // ─── OFI History: rolling 60-reading buffer ──────────────────────────
-        const newOfiHistory = [...state.ofiHistory, ofi].slice(-60);
-
         return {
             cofi: newCofi,
-            ofiHistory: newOfiHistory,
             market: {
                 ...state.market,
                 asks: sortedAsks.map((a, i) => ({ ...a, classification: classify(a, i) as any })),

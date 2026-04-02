@@ -81,10 +81,10 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
     # Latent liquidity: inverse of reflexivity (stable market = more resting liquidity)
     latent_liquidity = _clamp(1.0 - reflexivity_score, 0.0, 1.0)
 
-    # GLR component proxies (stablecoins, ETF flows as neutral estimates)
+    bayesian_baseline = bayes * 100.0
     glr_components = {
-        "stablecoins": 55.0 + (ofi * 0.3),   # slight OFI tilt on stablecoin proxy
-        "etfFlows":    50.0 + (cvd / 5000.0),  # slight CVD tilt on ETF proxy
+        "stablecoins": bayesian_baseline + (ofi * 0.3),
+        "etfFlows":    bayesian_baseline + (cvd / 5000.0),
     }
 
     return {
@@ -223,15 +223,23 @@ def compute_ulis_verdict(
     sweep_bear = min(sweep_count / 6.0, 1.0) if sweep_count > 0 and bayes_signal < 0 else 0.0
 
     # ── Phase 2: ALDE Market State Classifier ────────────────────────────────
-    cascade_risk = _sigmoid(
-        scores["reflexivityScore"] * 3.0 +
-        scores["fragility"] * 2.0 +
-        leverage_proxy * 2.0 - 3.0
-    )
     trend_agreement = (
         math.copysign(1, ofi_signal) == math.copysign(1, bayes_signal) and
         abs(ofi_signal) > 0.15 and abs(bayes_signal) > 0.15
     )
+
+    if trend_agreement:
+        cascade_risk = _sigmoid(
+            scores["reflexivityScore"] * 1.5 +
+            scores["fragility"] * 1.5 +
+            leverage_proxy * 2.0 - 4.0
+        )
+    else:
+        cascade_risk = _sigmoid(
+            scores["reflexivityScore"] * 3.0 +
+            scores["fragility"] * 2.0 +
+            leverage_proxy * 2.0 - 3.0
+        )
     if cascade_risk > 0.70 or scores["fragility"] > 0.65:
         market_state = "UNSTABLE"
     elif abs(bayes_signal) > 0.25 and trend_agreement:
@@ -336,7 +344,7 @@ def compute_ulis_verdict(
     elif verdict == "AVOID" or verdict == "UNWIND":
         confidence_boost = -1.0   # This ensures confidence drops below threshold
     elif verdict == "NEUTRAL" or verdict == "BREAKOUT_WATCH":
-        confidence_boost = 0.0
+        confidence_boost = -0.05
 
     logger.info(
         f"[ULIS] verdict={verdict} | vector={liquidity_vector:.3f} | "

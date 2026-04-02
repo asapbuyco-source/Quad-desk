@@ -254,6 +254,9 @@ class TradingExecutor:
             return
 
         raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
+        if raw_size <= 0.0:
+            logger.warning("[Executor] Calculated position size is 0. Aborting.")
+            return
 
         # Translate symbol to exchange format
         ex_symbol = self._to_exchange_symbol(symbol)
@@ -372,6 +375,16 @@ class TradingExecutor:
             logger.error(f"[Executor] Invalid order: {e}")
         except Exception as e:
             logger.error(f"[Executor] Order placement failed: {e}", exc_info=True)
+            
+            # FLAT PREVENT NAKED POSITION
+            if self.active_position is None and 'order' in locals() and order and order.get('id'):
+                logger.error("[Executor] SL/TP failed after Market Fill. FLATTENING NAKED POSITION IMMEDIATELY!")
+                close_side = "sell" if side == "buy" else "buy"
+                try:
+                    await self.exchange.create_market_order(ex_symbol, close_side, fmt_size)
+                    logger.info("[Executor] Flattened naked position successfully.")
+                except Exception as ex:
+                    logger.critical(f"[Executor] CRITICAL: Failed to flatten naked position! MANUAL INTERVENTION REQUIRED! {ex}")
 
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
@@ -463,13 +476,13 @@ class TradingExecutor:
         if not triggered:
             return
 
-        # Trigger Break-Even
-        logger.info("[Executor] RUNNER SECURED: Target halfway reached. Moving Stop-Loss to Break-Even.")
-        pos["be_triggered"] = True
-        pos["stop_loss"]    = entry
+        # Trigger Break-Even log
+        logger.info("[Executor] RUNNER SECURED: Target halfway reached. Attempting Break-Even SL.")
 
         if self.dry_run:
-            return  # The pos dictionary is updated, check_position_exit will now use the new stop_loss
+            pos["be_triggered"] = True
+            pos["stop_loss"]    = entry
+            return
 
         # LIVE MODE: Cancel old SL and place new one at Entry
         import asyncio
@@ -478,19 +491,28 @@ class TradingExecutor:
             old_sl_id = pos.get("sl_order_id")
             fmt_size  = pos["size"]
 
+            cancel_success = True
             if old_sl_id:
                 for attempt in range(3):
                     try:
                         await self.exchange.cancel_order(old_sl_id, ex_symbol)
+                        cancel_success = True
+                        pos["sl_order_id"] = None
                         break
                     except Exception as e:
                         if attempt == 2:
+                            err_str = str(e).lower()
+                            if "not found" in err_str or "not_found" in err_str:
+                                cancel_success = True
+                                pos["sl_order_id"] = None
+                                break
                             logger.warning(f"[Executor] Final failure to cancel old SL for Break-Even: {e}")
-                            # We abort here to prevent naked double-stops from consuming liquidation margins
-                            pos["be_triggered"] = False
-                            return
-                        logger.warning(f"[Executor] Cancel SL Error: {e}. Retrying in 0.5s...")
+                            cancel_success = False
+                            break
                         await asyncio.sleep(0.5)
+            
+            if not cancel_success:
+                return
 
             sl_side = "sell" if side == "buy" else "buy"
             sl_limit = entry * 0.999 if side == "buy" else entry * 1.001
@@ -515,14 +537,15 @@ class TradingExecutor:
                     break
                 except Exception as e:
                     if attempt == 2:
-                        raise e
-                    logger.warning(f"[Executor] Create BE Order Error: {e}. Retrying {attempt+1}/3...")
+                        logger.error(f"[Executor] Failed to create Break-Even SL: {e}")
+                        break
                     await asyncio.sleep(0.5)
 
             if new_sl:
                 pos["sl_order_id"] = new_sl.get("id")
+                pos["be_triggered"] = True
+                pos["stop_loss"]    = entry
                 logger.info(f"[Executor] New Break-Even SL attached at {entry} (id={pos['sl_order_id']})")
+
         except Exception as e:
             logger.error(f"[Executor] Break-Even API update failed: {e}", exc_info=True)
-            # Revert the trigger if it failed so we can try again on the next tick
-            pos["be_triggered"] = False

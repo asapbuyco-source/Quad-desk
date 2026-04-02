@@ -12,10 +12,7 @@ logger = logging.getLogger(__name__)
 class MarketState:
     def __init__(self, symbol: str):
         self.symbol = symbol.upper()
-        # Use a plain list for candles so we can mutate the last element
-        # We cap it at 200 candles manually to save memory
-        self.candles: list = []
-        self.MAX_CANDLES = 200
+        self.candles: deque = deque(maxlen=200)
         # Keep all trades received; prune old ones in add_trade
         self.recent_trades: deque = deque()
         # Order Book snapshot { price_float: size_float }
@@ -40,16 +37,12 @@ class MarketState:
         if is_final:
             # Closed candle — always append
             self.candles.append(candle)
-            if len(self.candles) > self.MAX_CANDLES:
-                self.candles.pop(0)  # Remove oldest
         else:
             # Live candle — replace if same timestamp, otherwise append
             if self.candles and self.candles[-1]['time'] == candle['time']:
                 self.candles[-1] = candle
             else:
                 self.candles.append(candle)
-                if len(self.candles) > self.MAX_CANDLES:
-                    self.candles.pop(0)
 
     # ------------------------------------------------------------------
     # Trade tape
@@ -167,9 +160,11 @@ class BinanceDataFeed:
                 resp.raise_for_status()
                 data = resp.json()
 
+            # Reset CVD to re-anchor perfectly based on REST history
+            self.state.cvd = 0.0
             for k in data:
                 # Binance REST returns an array of arrays
-                # [openTime, open, high, low, close, volume, closeTime, qav, trades, ...]
+                # [openTime, open, high, low, close, volume, closeTime, qav, trades, taker_buy_base, taker_buy_quote, ...]
                 c_data = {
                     't': int(k[0]),
                     'o': float(k[1]),
@@ -178,8 +173,12 @@ class BinanceDataFeed:
                     'c': float(k[4]),
                     'v': float(k[5]),
                 }
-                # Simulate websocket feed: treat all historical candles as "closed"
                 self.state.add_candle(c_data, is_final=True)
+                
+                # Rebuild CVD analytically
+                taker_buy_base = float(k[9])
+                vol = float(k[5])
+                self.state.cvd += (2.0 * taker_buy_base) - vol
             
             logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles.")
         except Exception as e:

@@ -320,3 +320,13 @@ This prompt is designed as a **self-contained audit template**. Feed it to an LL
 4. Any recent incidents or customer complaints
 
 The model will decompose the system against all 8 pillars and provide a **CTO-grade assessment** suitable for board presentations or investment due diligence.
+
+
+
+Perform a comprehensive, production-grade audit of the Quad-Desk trading platform. Analyze the codebase across the Bot (Python), Backend (FastAPI), and Dashboard (Next.js) for the following critical vectors:
+1. Algorithmic Integrity: Evaluate the 7-stage hybrid strategy. Is the 'Bayesian Fusion' logic mathematically sound for 15m scalping, or does it introduce signal lag? Audit the ULIS/ALDE gate for potential 'deadlock' scenarios where it might veto valid winning trades.
+2. Execution Hazards: Stress-test the `executor.py` logic. Identify edge cases where a Coinbase '503 Service Unavailable' or rate limit could leave a position 'naked' (without a Stop Loss). Is the Break-Even update logic robust enough to handle high-volatility slippage?
+3. Security Architecture: Audit the authentication flow. Verify that enforcement is consistent across all sensitive endpoints. Check for sensitive credential leaks in logs or environment handling. Evaluate the Firestore security rules—can a malicious client inject bot stats?
+4. Infrastructure & Latency: Analyze the `data_feed.py` pipeline. Identify any bottlenecks where WebSocket congestion could lead to stale metrics (Stage 1). Check for Python memory leaks in the 24/7 `execution_loop`.
+5. Risk Management Guardrails: Verify the 'Daily Loss' circuit breaker. Does it correctly halt all execution across both Dry-Run and Live modes? Audit the ATR-based SL/TP math for potential 'fat-finger' or division-by-zero errors.
+Deliverable: Provide a graded report (A-F) for each category, a prioritized list of 'Critical Vulnerabilities' needing immediate fixes, and a 'Production Readiness' verdic
