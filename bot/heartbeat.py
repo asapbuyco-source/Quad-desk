@@ -101,6 +101,16 @@ class FirestoreLogHandler(logging.Handler):
         # We only care about root logger outputs from the bot strategies
         # (mostly from main.py, quant_engine, and executor)
         if record.name.startswith("bot.") or record.name == "__main__":
+            msg = record.getMessage()
+            # Filter out high-frequency cyclic logs to stay under Firebase 20K/day free tier quota
+            if record.levelno < logging.WARNING and (
+                msg.startswith("[Metrics]") or msg.startswith("[Regime]") or 
+                msg.startswith("[Sweep]") or msg.startswith("[MetaModel]") or 
+                msg.startswith("[BayesFusion]") or msg.startswith("[SweepStrat]") or
+                "[Main] WAIT" in msg or "strategy_analysis" in msg
+            ):
+                return
+                
             try:
                 self.log_queue.put_nowait(record)
             except queue.Full:

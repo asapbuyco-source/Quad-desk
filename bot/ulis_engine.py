@@ -123,7 +123,7 @@ def _count_sweeps(candles: list, bids_dict: Dict, asks_dict: Dict) -> Tuple[int,
     nearest_bid = bid_prices[0]
     nearest_ask = ask_prices[0]
 
-    recent = candles[-10:]
+    recent = list(candles)[-10:]
     for i in range(1, len(recent)):
         c = recent[i]
         p = recent[i - 1]
@@ -147,7 +147,7 @@ def _count_sweeps(candles: list, bids_dict: Dict, asks_dict: Dict) -> Tuple[int,
 def _count_fvgs(candles: list) -> int:
     """Count fair-value gaps in last 15 candles (3-candle gap pattern)."""
     count = 0
-    recent = candles[-15:]
+    recent = list(candles)[-15:]
     for i in range(2, len(recent)):
         prev2 = recent[i - 2]
         curr = recent[i]
