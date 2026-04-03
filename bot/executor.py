@@ -250,6 +250,18 @@ class TradingExecutor:
             logger.info(f"[Executor] Security Fallback: Using configured account_size={account_size}")
             return account_size
 
+    async def get_btc_balance(self) -> float:
+        """Return free BTC balance directly from exchange."""
+        if self.dry_run:
+            return 0.0
+        try:
+            bal = await self.exchange.fetch_balance()
+            free = bal.get("free", {})
+            return float(free.get("BTC", 0.0))
+        except Exception as e:
+            logger.warning(f"[Executor] Failed to fetch BTC balance: {e}")
+            return 0.0
+
     # ------------------------------------------------------------------
     # Position sizing
     # ------------------------------------------------------------------
@@ -307,10 +319,18 @@ class TradingExecutor:
             logger.warning(f"[Executor] SL {stop_loss} ≤ price {current_price} for SELL. Aborting.")
             return
 
-        equity = await self.get_usdt_balance(account_size)
-        if equity < 5:
-            logger.warning(f"[Executor] Insufficient equity ({equity:.2f}). Min $5 required.")
-            return
+        if side == "buy":
+            equity = await self.get_usdt_balance(account_size)
+            if equity < 5:
+                logger.warning(f"[Executor] Insufficient equity ({equity:.2f}). Min $5 required.")
+                return
+        else:
+            # For SELL (Short) on Spot: Check if we actually have asset to sell
+            btc_bal = await self.get_btc_balance()
+            if btc_bal <= 0.00001: # Roughly 60 cents
+                logger.warning(f"[Executor] Aborting SELL signal: No BTC balance available to sell on spot account.")
+                return
+            equity = await self.get_usdt_balance(account_size)
 
         raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
         if raw_size <= 0.0:

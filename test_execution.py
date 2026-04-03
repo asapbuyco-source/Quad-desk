@@ -36,8 +36,10 @@ async def test_coinbase_live():
     await executor.initialize()
     
     logger.info("Testing 2: Fetching Account Balance (Proves Advanced Trade API keys work)")
-    balance = await executor.get_usdt_balance()
-    logger.info(f"SUCCESS: Account Balance retrieved: ${balance:.2f}")
+    usdt_bal = await executor.get_usdt_balance()
+    btc_bal = await executor.get_btc_balance()
+    logger.info(f"SUCCESS: USDC/USD/USDT Balance: ${usdt_bal:.2f}")
+    logger.info(f"SUCCESS: BTC Balance: {btc_bal:.8f} BTC")
     
     logger.info("Testing 3: Dry-Fire Order Validation (Testing API permissions directly)")
     symbol = "BTC/USDC" 
