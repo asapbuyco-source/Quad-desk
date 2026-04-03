@@ -229,38 +229,49 @@ class TradingExecutor:
     async def get_usdt_balance(self, account_size: float = 100.0) -> float:
         """Return free stablecoin balance (USDC/USD/USDT) or simulated equity in dry-run."""
         if self.dry_run:
-            return account_size   # Configurable simulated equity
+            return account_size
         try:
             bal = await self.exchange.fetch_balance()
             free = bal.get("free", {})
-            # Sum all stablecoin balances — funds may be split across wallets
-            usdt = float(free.get("USDT", 0.0))
-            usd  = float(free.get("USD",  0.0))
-            usdc = float(free.get("USDC", 0.0))
-            total = usdt + usdc + usd
-            
+            total = float(free.get("USDT", 0.0)) + float(free.get("USD", 0.0)) + float(free.get("USDC", 0.0))
             if total <= 0:
-                logger.warning(f"[Executor] Balance fetched as zero. Falling back to account_size={account_size}")
                 return account_size
-                
-            logger.info(f"[Executor] Balance: USDC={usdc:.2f} USD={usd:.2f} USDT={usdt:.2f} → total={total:.2f}")
             return total
         except Exception as e:
-            logger.warning(f"[Executor] fetch_balance failed or restricted: {e}")
-            logger.info(f"[Executor] Security Fallback: Using configured account_size={account_size}")
+            logger.warning(f"[Executor] get_usdt_balance fallback: {e}")
             return account_size
 
     async def get_btc_balance(self) -> float:
         """Return free BTC balance directly from exchange."""
-        if self.dry_run:
-            return 0.0
+        if self.dry_run: return 0.0
+        try:
+            bal = await self.exchange.fetch_balance()
+            return float(bal.get("free", {}).get("BTC", 0.0))
+        except: return 0.0
+
+    async def get_total_equity(self, current_price: float, account_size: float = 100.0) -> float:
+        """
+        Calculate total account value: (Sum of Stables) + (BTC * Price).
+        Ensures risk (position size) is based on entire portfolio, not just cash.
+        """
+        if self.dry_run: return account_size
+        
         try:
             bal = await self.exchange.fetch_balance()
             free = bal.get("free", {})
-            return float(free.get("BTC", 0.0))
+            
+            cash = float(free.get("USDT", 0.0)) + float(free.get("USD", 0.0)) + float(free.get("USDC", 0.0))
+            crypto_val = float(free.get("BTC", 0.0)) * current_price
+            
+            total = cash + crypto_val
+            if total <= 5.0: # If effectively zero, fall back
+                return account_size
+            
+            logger.info(f"[Executor] Equity: Cash=${cash:.2f} + BTC_Val=${crypto_val:.2f} → Total=${total:.2f}")
+            return total
         except Exception as e:
-            logger.warning(f"[Executor] Failed to fetch BTC balance: {e}")
-            return 0.0
+            logger.warning(f"[Executor] get_total_equity failed: {e}")
+            return account_size
 
     # ------------------------------------------------------------------
     # Position sizing
@@ -319,18 +330,20 @@ class TradingExecutor:
             logger.warning(f"[Executor] SL {stop_loss} ≤ price {current_price} for SELL. Aborting.")
             return
 
+        # 1. Calculate Total Equity (Cash + Crypto Value) for accurate risk sizing
+        equity = await self.get_total_equity(current_price, account_size)
+        
         if side == "buy":
-            equity = await self.get_usdt_balance(account_size)
-            if equity < 5:
-                logger.warning(f"[Executor] Insufficient equity ({equity:.2f}). Min $5 required.")
+            usdc_equity = await self.get_usdt_balance(account_size)
+            if usdc_equity < 5:
+                logger.warning(f"[Executor] Insufficient USDC ({usdc_equity:.2f}) to open LONG. Min $5 required.")
                 return
         else:
-            # For SELL (Short) on Spot: Check if we actually have asset to sell
+            # For SELL (Short) on Spot: Check if we actually have assets to sell
             btc_bal = await self.get_btc_balance()
-            if btc_bal <= 0.00001: # Roughly 60 cents
+            if btc_bal <= 0.00001: 
                 logger.warning(f"[Executor] Aborting SELL signal: No BTC balance available to sell on spot account.")
                 return
-            equity = await self.get_usdt_balance(account_size)
 
         raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
         if raw_size <= 0.0:
@@ -427,11 +440,19 @@ class TradingExecutor:
                             params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
                         )
                     else:
+                        # Coinbase Advanced Trade V3 specific stop directions
+                        stop_params = {"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss))}
+                        if self.exchange_id == "coinbase":
+                            # Fix: stop_price > current_price (Short SL) needs STOP_DIRECTION_STOP_UP
+                            # Fix: stop_price < current_price (Long SL) needs STOP_DIRECTION_STOP_DOWN
+                            direction = "STOP_DIRECTION_STOP_UP" if stop_loss > current_price else "STOP_DIRECTION_STOP_DOWN"
+                            stop_params["stop_direction"] = direction
+                            
                         sl_order = await self.exchange.create_order(
                             symbol=ex_symbol, type="limit", side=sl_side,
                             amount=fmt_size,
                             price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                            params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
+                            params=stop_params,
                         )
                     break
                 except Exception as e:
