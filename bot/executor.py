@@ -163,7 +163,7 @@ class TradingExecutor:
                 # Register BTC/USDC in markets cache (required for amount_to_precision)
                 self.exchange.markets['BTC/USDC'] = {
                     'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
-                    'precision': {'amount': 8, 'price': 2},
+                    'precision': {'amount': 0.00000001, 'price': 0.01},
                     'limits': {
                         'amount': {'min': 0.00001, 'max': 1000},
                         'price': {'min': 0.01, 'max': 1000000},
@@ -175,7 +175,7 @@ class TradingExecutor:
                 # Also register BTC/USD as fallback
                 self.exchange.markets['BTC/USD'] = {
                     'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                    'precision': {'amount': 8, 'price': 2},
+                    'precision': {'amount': 0.00000001, 'price': 0.01},
                     'limits': {
                         'amount': {'min': 0.00001, 'max': 1000},
                         'price': {'min': 0.01, 'max': 1000000},
@@ -332,7 +332,7 @@ class TradingExecutor:
                 if "BTC" in ex_symbol.upper() and "USDC" in ex_symbol.upper():
                     self.exchange.markets['BTC/USDC'] = {
                         'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
-                        'precision': {'amount': 8, 'price': 2},
+                        'precision': {'amount': 0.00000001, 'price': 0.01},
                         'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
                         'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
                     }
@@ -340,7 +340,7 @@ class TradingExecutor:
                 elif "BTC" in ex_symbol.upper() and "USD" in ex_symbol.upper():
                     self.exchange.markets['BTC/USD'] = {
                         'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                        'precision': {'amount': 8, 'price': 2},
+                        'precision': {'amount': 0.00000001, 'price': 0.01},
                         'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
                         'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
                     }
