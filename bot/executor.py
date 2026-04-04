@@ -3,6 +3,7 @@ import time
 from typing import Dict, Any, Optional
 import ccxt.async_support as ccxt
 from bot import heartbeat
+from bot.notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,16 @@ class TradingExecutor:
         exchange_id: str = "binance",
         coinbase_key_name: str = "",
         coinbase_private_key: str = "",
+        tg_token: str = "",
+        tg_chat_id: str = "",
     ):
         self.testnet   = testnet
         self.exchange_id = exchange_id.lower()
         self.dry_run   = dry_run or not self._has_credentials(
             exchange_id, api_key, api_secret, coinbase_key_name, coinbase_private_key
         )
+        
+        self.notifier = TelegramNotifier(tg_token, tg_chat_id)
 
         if self.dry_run:
             logger.warning("[Executor] DRY-RUN mode: no real orders will be placed.")
@@ -48,6 +53,7 @@ class TradingExecutor:
             self.exchange = self._init_binance(api_key, api_secret, testnet)
 
         self.active_position: Optional[Dict[str, Any]] = None
+        self.pending_order: Optional[Dict[str, Any]] = None  # Track unfilled orders
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -270,7 +276,9 @@ class TradingExecutor:
             logger.info(f"[Executor] Equity: Cash=${cash:.2f} + BTC_Val=${crypto_val:.2f} → Total=${total:.2f}")
             return total
         except Exception as e:
-            logger.warning(f"[Executor] get_total_equity failed: {e}")
+            err_msg = f"Failed to calculate total equity: {e}"
+            logger.error(f"[Executor] {err_msg}")
+            await self.notifier.send_error_alert(err_msg)
             return account_size
 
     # ------------------------------------------------------------------
@@ -318,6 +326,11 @@ class TradingExecutor:
             logger.info("[Executor] Already in a position. Skipping new entry.")
             return
 
+        # Check if previous order is still pending (unfilled)
+        if self.pending_order is not None:
+            logger.info(f"[Executor] Pending order {self.pending_order['id']} still unfilled. Rejecting new signal.")
+            return
+
         if stop_loss <= 0 or take_profit <= 0:
             logger.warning("[Executor] Invalid SL/TP. Aborting.")
             return
@@ -336,13 +349,17 @@ class TradingExecutor:
         if side == "buy":
             usdc_equity = await self.get_usdt_balance(account_size)
             if usdc_equity < 5:
-                logger.warning(f"[Executor] Insufficient USDC ({usdc_equity:.2f}) to open LONG. Min $5 required.")
+                err = f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. Min $5 required."
+                logger.warning(f"[Executor] {err}")
+                await self.notifier.send_error_alert(err)
                 return
         else:
             # For SELL (Short) on Spot: Check if we actually have assets to sell
             btc_bal = await self.get_btc_balance()
             if btc_bal <= 0.00001: 
-                logger.warning(f"[Executor] Aborting SELL signal: No BTC balance available to sell on spot account.")
+                err = f"Aborting SELL signal: No BTC balance available to sell on spot account."
+                logger.warning(f"[Executor] {err}")
+                await self.notifier.send_error_alert(err)
                 return
 
         raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
@@ -399,10 +416,19 @@ class TradingExecutor:
                 "dry_run":     True,
             }
             self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
+            
+            # Telegram Notification
+            await self.notifier.send_trade_alert(
+                symbol=ex_symbol, side=side, price=current_price, 
+                size=raw_size, sl=stop_loss, tp=take_profit, is_dry=True
+            )
             return
 
         # ── LIVE EXECUTION ────────────────────────────────────────────────
         try:
+            ex_symbol = symbol.replace("-", "/").replace("_", "/")
+            if self.exchange_id == "coinbase" and "USDC" in ex_symbol:
+                ex_symbol = ex_symbol.replace("USDC", "USD")
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
             if cost > equity:
@@ -422,6 +448,22 @@ class TradingExecutor:
                     logger.warning(f"[Executor] Market order failed: {e}. Retrying {attempt+1}/3...")
                     await asyncio.sleep(0.5)
             logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
+            
+            # Track this order as pending until it fills or is cancelled
+            self.pending_order = {
+                "id": order.get('id'),
+                "symbol": ex_symbol,
+                "side": side,
+                "size": fmt_size,
+                "entry_price": current_price,
+                "status": order.get('status', 'open')
+            }
+            
+            # Telegram Notification (Success)
+            await self.notifier.send_trade_alert(
+                symbol=ex_symbol, side=side, price=current_price, 
+                size=fmt_size, sl=stop_loss, tp=take_profit, is_dry=False
+            )
 
             sl_side = "sell" if side == "buy" else "buy"
             sl_order_id = None
@@ -493,6 +535,9 @@ class TradingExecutor:
                 "sl_order_id": sl_order_id,
                 "tp_order_id": tp_order_id,
             }
+            
+            # Clear pending order since we now have an active position
+            self.pending_order = None
             self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
 
         except ccxt.InsufficientFunds as e:
@@ -500,7 +545,9 @@ class TradingExecutor:
         except ccxt.InvalidOrder as e:
             logger.error(f"[Executor] Invalid order: {e}")
         except Exception as e:
-            logger.error(f"[Executor] Order placement failed: {e}", exc_info=True)
+            err_msg = f"Live order failed: {e}"
+            logger.error(f"[Executor] {err_msg}", exc_info=True)
+            await self.notifier.send_error_alert(err_msg)
             
             # FLAT PREVENT NAKED POSITION
             if self.active_position is None and 'order' in locals() and order and order.get('id'):
@@ -511,6 +558,12 @@ class TradingExecutor:
                     logger.info("[Executor] Flattened naked position successfully.")
                 except Exception as ex:
                     logger.critical(f"[Executor] CRITICAL: Failed to flatten naked position! MANUAL INTERVENTION REQUIRED! {ex}")
+
+        finally:
+            # If we don't have an active position after all that, 
+            # we MUST clear pending_order so the bot isn't stuck "Waiting"
+            if self.active_position is None:
+                self.pending_order = None
 
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
@@ -535,22 +588,26 @@ class TradingExecutor:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
                 logger.info(f"[Executor] STOP LOSS HIT. PnL=${pnl:.2f}")
                 self.active_position = None
+                self.pending_order = None
                 return True, pnl
             if current_price >= tp:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
                 logger.info(f"[Executor] TAKE PROFIT HIT. PnL=${pnl:.2f}")
                 self.active_position = None
+                self.pending_order = None
                 return True, pnl
         else:
             if current_price >= sl:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
                 logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
+                self.pending_order = None
                 return True, pnl
             if current_price <= tp:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
                 logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
+                self.pending_order = None
                 return True, pnl
 
         return False, 0.0

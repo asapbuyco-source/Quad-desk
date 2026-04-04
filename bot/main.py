@@ -85,6 +85,10 @@ CB_PRIVATE_KEY  = os.environ.get("COINBASE_PRIVATE_KEY",   "")
 BINANCE_API_KEY    = os.environ.get("BINANCE_API_KEY",    "")
 BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET", "")
 
+# Telegram credentials
+TG_BOT_TOKEN   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TG_CHAT_ID     = os.environ.get("TELEGRAM_CHAT_ID",   "")
+
 # Derive dry-run: no credentials at all
 if EXCHANGE == "coinbase":
     DRY_RUN = not (CB_KEY_NAME and CB_PRIVATE_KEY)
@@ -260,42 +264,77 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
 # ── STAGE 5 — BAYESIAN SIGNAL FUSION ─────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
-def _bayesian_fusion(metrics: Dict[str, Any], direction: str) -> float:
-    ofi      = metrics["ofi"]
-    cvd      = metrics["cvd"]
-    bayes    = metrics["bayesianPosterior"]
-    skew     = metrics["skewness"]
-    dominant = metrics["tapeDominant"]
-    tape     = metrics["tapeSpeed"]
-    rsi      = metrics["rsi"]
+def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sweep: bool = False) -> float:
+    """
+    Stage 5: Macro Bayesian Logic
+    Updates the prior confidence (from QuantEngine) with current directional evidence.
+    Returns: Confidence score (0-1) in the *target signal direction*.
+    """
+    # 1. Start with the prior confidence from Quant Engine Stage 4 (which is P-Bull)
+    p_bull_prior = metrics.get("bayesianPosterior", 0.5)
+    is_long = direction in ("BUY", "MEAN_REVERSAL_LONG")
 
-    odds = 1.0
+    # 2. Base Signal Confidence
+    p_signal_prior = p_bull_prior if is_long else (1.0 - p_bull_prior)
+    
+    # [NEW] SWEEP NEUTRALIZER: If we find a sweep, don't let 
+    # a historical trend (Prior) handicap the reversion signal.
+    if is_sweep:
+        p_signal_prior = max(0.50, p_signal_prior)
 
-    if ofi > 20:    odds *= 2.0
-    elif ofi > 8:   odds *= 1.4
-    elif ofi < -20: odds *= 0.5
-    elif ofi < -8:  odds *= 0.7
+    # 3. Transform to Odds
+    # Clip to avoid division by zero/infinity during transformation
+    p_signal_prior = max(0.01, min(0.99, p_signal_prior))
+    odds = p_signal_prior / (1.0 - p_signal_prior)
 
-    if cvd > 0:   odds *= 1.25
-    elif cvd < 0: odds *= 0.80
+    ofi      = metrics.get("ofi", 0.0)
+    cvd      = metrics.get("cvd", 0.0)
+    skew     = metrics.get("skewness", 0.0)
+    dominant = metrics.get("tapeDominant", "BALANCED")
+    tape     = metrics.get("tapeSpeed", "NORMAL")
+    rsi      = metrics.get("rsi", 50.0)
 
-    screaming = tape == "SCREAMING"
-    if "BUY" in dominant and screaming:    odds *= 1.20
-    elif "BUY" in dominant:                odds *= 1.10
-    elif "SELL" in dominant and screaming: odds *= 0.75
-    elif "SELL" in dominant:               odds *= 0.90
+    # 4. Flow Multipliers (OFI/CVD) — direction-support check
+    # We apply multipliers (>1.0) if the evidence supports our target signal
+    flow_factor = 1.0
+    if is_long:
+        if ofi > 10:  flow_factor *= 1.25
+        if cvd > 0:   flow_factor *= 1.15
+    else: # SHORT signal
+        if ofi < -10: flow_factor *= 1.25
+        if cvd < 0:   flow_factor *= 1.15
+    
+    odds *= flow_factor
 
-    if skew > 0.3:    odds *= 1.12
-    elif skew < -0.3: odds *= 0.88
+    # 5. Contextual Oscillator check — Regime-aware
+    osc_factor = 1.0
+    if regime == "TREND":
+        # Trend continuation: RSI in signal direction confirms momentum
+        if is_long and rsi > 65:      osc_factor *= 1.15
+        elif not is_long and rsi < 35: osc_factor *= 1.15
+    elif regime == "LIQUIDITY":
+        # Sweep reversal: Overextended RSI supports a bounce/rejection
+        if not is_long and rsi > 60:   osc_factor *= 1.60  # Overbought strongly helps SELL
+        elif is_long and rsi < 40:     osc_factor *= 1.60  # Oversold strongly helps BUY
+        
+        # Momentum Chase Penalty: avoid entry if RSI already buried too deep
+        if not is_long and rsi < 32:   osc_factor *= 0.75
+        if is_long and rsi > 68:       osc_factor *= 0.75
 
-    if rsi > 60:   odds *= 1.15
-    elif rsi < 40: odds *= 0.85
+    odds *= osc_factor
 
-    p_bull = odds / (odds + 1.0)
+    # 6. Tape Check
+    if tape == "SCREAMING":
+        if is_long and "BUY" in dominant:        odds *= 1.20
+        elif not is_long and "SELL" in dominant: odds *= 1.20
 
-    if direction in ("BUY", "MEAN_REVERSAL_LONG"):
-        return p_bull
-    return 1.0 - p_bull
+    # 7. Skew check
+    if is_long and skew > 0.5:        odds *= 1.15
+    elif not is_long and skew < -0.5: odds *= 1.15
+
+    # 8. Convert back to probability (Confidence in Signal)
+    p_final = odds / (1.0 + odds)
+    return float(p_final)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -461,7 +500,7 @@ def _compute_signal(
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
 
     # Stage 5: Bayesian fusion
-    confidence = _bayesian_fusion(metrics, raw_direction)
+    confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
     logger.info(f"[BayesFusion] direction={raw_direction} | P={confidence:.2%}")
 
     if confidence < MIN_CONFIDENCE:
@@ -689,6 +728,8 @@ async def main():
         exchange_id=EXCHANGE,
         coinbase_key_name=CB_KEY_NAME,
         coinbase_private_key=CB_PRIVATE_KEY,
+        tg_token=TG_BOT_TOKEN,
+        tg_chat_id=TG_CHAT_ID,
     )
 
     heartbeat.init_firebase()
