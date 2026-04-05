@@ -426,9 +426,12 @@ class TradingExecutor:
 
         # ── LIVE EXECUTION ────────────────────────────────────────────────
         try:
-            ex_symbol = symbol.replace("-", "/").replace("_", "/")
-            if self.exchange_id == "coinbase" and "USDC" in ex_symbol:
-                ex_symbol = ex_symbol.replace("USDC", "USD")
+            if self.exchange_id == "coinbase":
+                # Coinbase Advanced Trade V3 requires hyphen: BTC-USD
+                ex_symbol = symbol.replace("/", "-").replace("_", "-")
+            else:
+                # Standard CCXT slash format for other exchanges: BTC/USD
+                ex_symbol = symbol.replace("-", "/").replace("_", "/")
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
             if cost > equity:

@@ -100,7 +100,8 @@ else:
 FEED_SYMBOL = SYMBOL.replace("-", "").replace("/", "")  # BTC-USD → BTCUSD --- fix below
 if EXCHANGE == "coinbase":
     # BTC-USD → BTCUSDT for the Binance public data feed
-    base = SYMBOL.split("-")[0] if "-" in SYMBOL else SYMBOL[:3]
+    # BTC-USD or BTC/USD → BTCUSDT for the Binance public data feed
+    base = SYMBOL.replace("/", "-").split("-")[0]
     FEED_SYMBOL = f"{base}USDT"
 else:
     FEED_SYMBOL = SYMBOL
