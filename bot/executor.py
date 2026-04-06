@@ -439,12 +439,36 @@ class TradingExecutor:
             # DO NOT convert to hyphen format here — it breaks CCXT's internal market() lookup.
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
-            if cost > equity:
-                # Cap to 95% of available equity
-                fmt_size = float(
-                    self.exchange.amount_to_precision(ex_symbol, equity * 0.95 / current_price)
-                )
-                cost = fmt_size * current_price  # recalculate after cap
+
+            # --- MINIMUM SIZE BUMP ---
+            # If the calculated risk size is smaller than a reasonable exchange minimum ($5.00),
+            # shift the size up so small accounts/percentages aren't perpetually blocked by exchange limits.
+            if cost > 0 and cost < 5.0:
+                logger.info(f"[Executor] Calculated trade value (${cost:.2f}) is too small. Bumping to $5.00 minimum.")
+                cost = 5.0
+                fmt_size = float(self.exchange.amount_to_precision(ex_symbol, cost / current_price))
+
+            if side == "buy":
+                # BUY: Cap by actually available USDC cash, not Total Portfolio Equity
+                usdc_available = await self.get_usdt_balance(account_size)
+                max_cost = usdc_available * 0.95  # Leave 5% buffer for fees/slippage
+                if cost > max_cost:
+                    fmt_size = float(
+                        self.exchange.amount_to_precision(ex_symbol, max_cost / current_price)
+                    )
+            else:
+                # SELL on SPOT: Cap by actually available BTC balance
+                btc_available = await self.get_btc_balance()
+                # Subtract tiny buffer so sell order doesn't round up and exceed balance
+                max_sell = max(0.0, btc_available * 0.999) 
+                if fmt_size > max_sell:
+                    fmt_size = float(self.exchange.amount_to_precision(ex_symbol, max_sell))
+
+            cost = fmt_size * current_price  # recalculate after potential cap
+
+            if fmt_size <= 0.0 or cost < 1.0:
+                logger.warning(f"[Executor] Final size/cost too small after caps (qty={fmt_size}, cost=${cost:.2f}). Aborting live order.")
+                return
 
             import asyncio
             order = None
