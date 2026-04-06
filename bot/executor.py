@@ -440,16 +440,35 @@ class TradingExecutor:
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
             if cost > equity:
+                # Cap to 95% of available equity
                 fmt_size = float(
                     self.exchange.amount_to_precision(ex_symbol, equity * 0.95 / current_price)
                 )
+                cost = fmt_size * current_price  # recalculate after cap
 
-            logger.info(f"[Executor] Placing MARKET {side.upper()} {fmt_size} {ex_symbol} @ ~{current_price}")
             import asyncio
             order = None
             for attempt in range(3):
                 try:
-                    order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
+                    if self.exchange_id == "coinbase" and side == "buy":
+                        # Coinbase Advanced Trade spot BUY: the API expects the USDC cost
+                        # to spend (quote_size), NOT the BTC quantity to receive (base_size).
+                        # Setting createMarketBuyOrderRequiresPrice=False tells CCXT to treat
+                        # the 'amount' argument as cost (quote currency) instead of base amount.
+                        usdc_cost = round(cost, 2)  # round to cents
+                        logger.info(
+                            f"[Executor] Placing MARKET BUY {usdc_cost} USDC → {ex_symbol} @ ~{current_price}"
+                        )
+                        order = await self.exchange.create_market_order(
+                            ex_symbol, side, usdc_cost,
+                            params={"createMarketBuyOrderRequiresPrice": False}
+                        )
+                    else:
+                        # SELL orders: standard base-amount (BTC quantity)
+                        logger.info(
+                            f"[Executor] Placing MARKET SELL {fmt_size} BTC {ex_symbol} @ ~{current_price}"
+                        )
+                        order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
                     break
                 except Exception as e:
                     if attempt == 2: raise e

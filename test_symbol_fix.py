@@ -38,8 +38,11 @@ class FakeCoinbaseExchange:
     symbols = []
     precisionMode = 4  # TICK_SIZE
 
+    # Recorded calls for assertion in tests
+    last_market_order = None   # (symbol, side, amount, params)
+
     async def load_markets(self):
-        raise Exception("CDP key: public V2 currency fetch not supported — simulated failure")
+        raise Exception("CDP key: public V2 currency fetch not supported - simulated failure")
 
     def market(self, symbol: str):
         """Exact replication of ccxt/base/exchange.py line ~6500"""
@@ -50,28 +53,32 @@ class FakeCoinbaseExchange:
         raise Exception(f"coinbase does not have market symbol {symbol}")
 
     def amount_to_precision(self, symbol: str, amount: float) -> str:
-        """Replicates ccxt line 6587 — calls self.market(symbol) internally"""
-        market = self.market(symbol)  # ← this is where BadSymbol was thrown
+        """Replicates ccxt line 6587 - calls self.market(symbol) internally"""
+        market = self.market(symbol)  # this is where BadSymbol was thrown
         step = market["precision"]["amount"]
-        # Simple tick-size rounding
         import math
         rounded = math.floor(amount / step) * step
-        decimals = len(str(step).rstrip('0').split('.')[-1]) if '.' in str(step) else 0
-        return f"{rounded:.{decimals}f}"
+        # To avoid scientific notation issues, just use formatting directly
+        return f"{rounded:.8f}"
 
     def price_to_precision(self, symbol: str, price: float) -> str:
         market = self.market(symbol)
         step = market["precision"]["price"]
         import math
         rounded = math.floor(price / step) * step
-        decimals = len(str(step).rstrip('0').split('.')[-1]) if '.' in str(step) else 0
-        return f"{rounded:.{decimals}f}"
+        return f"{rounded:.2f}"
 
     async def fetch_balance(self):
         return {"free": {"USDC": 100.0, "BTC": 0.001}}
 
-    async def create_market_order(self, symbol, side, amount):
-        # Ensure unified format reaches here too
+    async def create_market_order(self, symbol, side, amount, params=None):
+        # Record the call so tests can assert on it
+        self.last_market_order = {
+            "symbol": symbol,
+            "side":   side,
+            "amount": amount,
+            "params": params or {},
+        }
         assert "/" in symbol, f"create_market_order called with non-unified symbol: {symbol}"
         return {"id": "mock-order-001", "status": "filled", "symbol": symbol}
 
@@ -299,34 +306,154 @@ def test_on_the_fly_registration():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TEST 7: Coinbase BUY passes USDC cost, not BTC amount
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def test_coinbase_buy_sends_usdc_cost():
+    """
+    Coinbase spot BUY orders must pass the USDC cost to spend, NOT the BTC quantity.
+    Verifies createMarketBuyOrderRequiresPrice=False is set and amount is in USDC.
+    """
+    exc = make_executor(dry_run=False)
+    await exc.initialize()
+
+    PRICE    = 69185.60
+    EQUITY   = 112.40   # controlled equity
+    RISK_PCT = 3.0
+    SL       = 69075.96
+
+    # Patch balance helpers so the test is self-contained
+    async def fake_total_equity(price, acct_size=100.0): return EQUITY
+    async def fake_usdt_balance(acct_size=100.0): return EQUITY
+    exc.get_total_equity  = fake_total_equity
+    exc.get_usdt_balance  = fake_usdt_balance
+
+    signal = {
+        "verdict":     "BUY",
+        "confidence":  0.65,
+        "stop_loss":   SL,
+        "take_profit": 69390.99,
+        "ulis_verdict": "NEUTRAL",
+    }
+
+    await exc.execute_signal(
+        symbol="BTC-USDC",
+        current_price=PRICE,
+        signal=signal,
+        max_risk_pct=RISK_PCT,
+        account_size=EQUITY,
+        ulis_verdict="NEUTRAL",
+    )
+
+    call = exc.exchange.last_market_order
+    assert call is not None, "create_market_order was never called (order aborted before placement)"
+
+    # 1. Symbol must be unified
+    assert call["symbol"] == "BTC/USDC", \
+        f"BUY order used wrong symbol: {call['symbol']!r}"
+
+    # 2. Side must be buy
+    assert call["side"] == "buy"
+
+    # 3. Amount must be in USDC (> 1.0 and <= equity), NOT a tiny BTC quantity (< 0.01)
+    amount = call["amount"]
+    assert amount > 1.0, \
+        f"BUY amount looks like BTC quantity ({amount:.8f}), expected USDC cost > $1"
+    assert amount <= EQUITY, \
+        f"BUY amount {amount} exceeds available equity {EQUITY}"
+
+    # 4. createMarketBuyOrderRequiresPrice must be False in params
+    assert call["params"].get("createMarketBuyOrderRequiresPrice") is False, \
+        f"Missing createMarketBuyOrderRequiresPrice=False in params: {call['params']}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TEST 8: Coinbase SELL passes BTC base amount (not USDC)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def test_coinbase_sell_sends_btc_amount():
+    """
+    Coinbase spot SELL orders must pass the BTC quantity (base amount), not USDC.
+    No createMarketBuyOrderRequiresPrice param should be set.
+    """
+    exc = make_executor(dry_run=False)
+    await exc.initialize()
+
+    PRICE  = 69185.60
+    EQUITY = 100.0
+
+    signal = {
+        "verdict":     "SELL",
+        "confidence":  0.65,
+        "stop_loss":   70500.0,
+        "take_profit": 68000.0,
+        "ulis_verdict": "SHORT",
+    }
+
+    # Patch balance helpers so the test is self-contained
+    async def fake_total_equity(price, acct_size=100.0): return EQUITY
+    async def fake_usdt_balance(acct_size=100.0): return 0.0  # not buying
+    async def fake_btc_bal(): return 0.01                     # we own BTC to sell
+    exc.get_total_equity = fake_total_equity
+    exc.get_usdt_balance = fake_usdt_balance
+    exc.get_btc_balance  = fake_btc_bal
+
+    await exc.execute_signal(
+        symbol="BTC-USDC",
+        current_price=PRICE,
+        signal=signal,
+        max_risk_pct=1.0,
+        account_size=EQUITY,
+        ulis_verdict="SHORT",
+    )
+
+    call = exc.exchange.last_market_order
+    assert call is not None, "create_market_order was never called (order aborted before placement)"
+
+    # 1. Symbol must be unified
+    assert call["symbol"] == "BTC/USDC"
+
+    # 2. Amount must be a small BTC quantity (< 1.0), not a large USDC cost
+    amount = call["amount"]
+    assert amount < 1.0, \
+        f"SELL amount looks like USDC cost ({amount:.2f}), expected BTC quantity < 1.0"
+
+    # 3. createMarketBuyOrderRequiresPrice must NOT be set for SELL
+    assert "createMarketBuyOrderRequiresPrice" not in call["params"], \
+        f"SELL order should not have createMarketBuyOrderRequiresPrice in params"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # RUN ALL TESTS
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("\n" + "═" * 60)
-    print("  Quad-Desk — Symbol Fix Test Suite")
-    print("  Verifying BTC/USDC vs BTC-USDC handling in executor.py")
-    print("═" * 60)
+    print("\n" + "=" * 62)
+    print("  Quad-Desk Executor Test Suite")
+    print("  Coinbase BTC/USDC symbol + market order format verification")
+    print("=" * 62)
 
-    test("1. _to_exchange_symbol normalises all formats → BTC/USDC",         test_to_exchange_symbol)
-    test("2. Hyphenated symbol raises BadSymbol (old bug reproduced)",         test_bad_symbol_with_hyphen)
-    test("3. initialize() populates markets AND marketsById",                  test_initialize_populates_markets)
-    test("4. DRY-RUN: position uses unified symbol BTC/USDC",                 test_dry_run_uses_unified_symbol)
-    test("5. LIVE: amount_to_precision called with BTC/USDC not BTC-USDC",    test_live_mode_unified_symbol)
-    test("6. On-the-fly registration works for any pair",                      test_on_the_fly_registration)
+    test("1. _to_exchange_symbol normalises all formats to BTC/USDC",        test_to_exchange_symbol)
+    test("2. Hyphenated symbol raises BadSymbol (old bug reproduced)",        test_bad_symbol_with_hyphen)
+    test("3. initialize() populates markets AND marketsById",                 test_initialize_populates_markets)
+    test("4. DRY-RUN: position uses unified symbol BTC/USDC",                test_dry_run_uses_unified_symbol)
+    test("5. LIVE: amount_to_precision called with BTC/USDC not BTC-USDC",   test_live_mode_unified_symbol)
+    test("6. On-the-fly registration works for any pair",                     test_on_the_fly_registration)
+    test("7. Coinbase BUY sends USDC cost with RequiresPrice=False",         test_coinbase_buy_sends_usdc_cost)
+    test("8. Coinbase SELL sends BTC base amount (no RequiresPrice param)",   test_coinbase_sell_sends_btc_amount)
 
     print()
     passed = sum(1 for _, ok, _ in results if ok)
     failed = sum(1 for _, ok, _ in results if not ok)
     print(f"  Results: {passed} passed, {failed} failed out of {len(results)} tests")
-    print("═" * 60 + "\n")
+    print("=" * 62 + "\n")
 
     if failed:
         print("FAILED TESTS:")
         for name, ok, err in results:
             if not ok:
-                print(f"  • {name}\n    {err}")
+                print(f"  - {name}\n    {err}")
         sys.exit(1)
     else:
-        print("  All tests passed ✓")
+        print("  All tests passed")
         sys.exit(0)
