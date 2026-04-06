@@ -160,41 +160,51 @@ class TradingExecutor:
             # These are the standard BTC/USDC parameters for Coinbase Advanced Trade
             if self.exchange_id == "coinbase":
                 # Ensure CCXT internal structures are initialized
-                # Initialize as empty dict if None, and ensure structures exist
                 if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
                     self.exchange.markets = {}
+                if not hasattr(self.exchange, 'marketsById') or self.exchange.marketsById is None:
+                    self.exchange.marketsById = {}
                 if not hasattr(self.exchange, 'symbols') or self.exchange.symbols is None:
                     self.exchange.symbols = []
-                
-                # Register BTC/USDC in markets cache (required for amount_to_precision)
-                self.exchange.markets['BTC/USDC'] = {
+
+                # BTC/USDC market spec — precision uses TICK_SIZE (raw float step values)
+                _btc_usdc = {
                     'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
-                    'precision': {'amount': 0.00000001, 'price': 0.01},
+                    'precision': {'amount': 1e-8, 'price': 0.01},
                     'limits': {
                         'amount': {'min': 0.00001, 'max': 1000},
-                        'price': {'min': 0.01, 'max': 1000000},
-                        'cost': {'min': 1.0}
+                        'price':  {'min': 0.01,    'max': 1_000_000},
+                        'cost':   {'min': 1.0}
                     },
                     'active': True,
                     'type': 'spot', 'spot': True, 'margin': False, 'contract': False
                 }
-                # Also register BTC/USD as fallback
-                self.exchange.markets['BTC/USD'] = {
+                # BTC/USD market spec
+                _btc_usd = {
                     'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                    'precision': {'amount': 0.00000001, 'price': 0.01},
+                    'precision': {'amount': 1e-8, 'price': 0.01},
                     'limits': {
                         'amount': {'min': 0.00001, 'max': 1000},
-                        'price': {'min': 0.01, 'max': 1000000},
-                        'cost': {'min': 1.0}
+                        'price':  {'min': 0.01,    'max': 1_000_000},
+                        'cost':   {'min': 1.0}
                     },
                     'active': True,
                     'type': 'spot', 'spot': True, 'margin': False, 'contract': False
                 }
+
+                # Populate both unified-symbol keyed dict (used by amount_to_precision / market())
+                # AND the exchange-id keyed dict (used internally by some CCXT methods)
+                self.exchange.markets['BTC/USDC']     = _btc_usdc
+                self.exchange.markets['BTC/USD']      = _btc_usd
+                self.exchange.marketsById['BTC-USDC'] = _btc_usdc
+                self.exchange.marketsById['BTC-USD']  = _btc_usd
+
                 if 'BTC/USDC' not in self.exchange.symbols:
                     self.exchange.symbols.append('BTC/USDC')
                 if 'BTC/USD' not in self.exchange.symbols:
                     self.exchange.symbols.append('BTC/USD')
-            logger.info(f"[Executor] Proceeding with manual market state for BTC/USDC and BTC/USD...")
+
+            logger.info("[Executor] Proceeding with manual market state for BTC/USDC and BTC/USD...")
 
     async def close(self):
         await self.exchange.close()
@@ -371,30 +381,28 @@ class TradingExecutor:
         ex_symbol = self._to_exchange_symbol(symbol)
 
         # For Coinbase, ensure the symbol is in the markets cache
+        # ex_symbol is in CCXT unified format (BTC/USDC) thanks to _to_exchange_symbol above
         if self.exchange_id == "coinbase":
-            if ex_symbol not in self.exchange.markets or self.exchange.markets.get(ex_symbol) is None:
-                # Try to add it to markets cache if missing
-                logger.warning(f"[Executor] Symbol {ex_symbol} not in markets cache. Attempting to register...")
+            if ex_symbol not in (self.exchange.markets or {}) or self.exchange.markets.get(ex_symbol) is None:
+                logger.warning(f"[Executor] Symbol {ex_symbol} not in markets cache. Registering on-the-fly...")
                 if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
                     self.exchange.markets = {}
-                
-                # Use default market spec for BTC/USDC or BTC/USD
-                if "BTC" in ex_symbol.upper() and "USDC" in ex_symbol.upper():
-                    self.exchange.markets['BTC/USDC'] = {
-                        'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
-                        'precision': {'amount': 0.00000001, 'price': 0.01},
-                        'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
-                        'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-                    }
-                    logger.info("[Executor] Registered BTC/USDC to markets cache.")
-                elif "BTC" in ex_symbol.upper() and "USD" in ex_symbol.upper():
-                    self.exchange.markets['BTC/USD'] = {
-                        'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                        'precision': {'amount': 0.00000001, 'price': 0.01},
-                        'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
-                        'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-                    }
-                    logger.info("[Executor] Registered BTC/USD to markets cache.")
+                if not hasattr(self.exchange, 'marketsById') or self.exchange.marketsById is None:
+                    self.exchange.marketsById = {}
+
+                base, quote = (ex_symbol.split("/") + ["USDC"])[:2]  # safe unpack
+                ex_id = f"{base}-{quote}"
+                market_spec = {
+                    'id': ex_id, 'symbol': ex_symbol, 'base': base, 'quote': quote,
+                    'precision': {'amount': 1e-8, 'price': 0.01},
+                    'limits': {'amount': {'min': 0.00001, 'max': 1000},
+                               'price':  {'min': 0.01,    'max': 1_000_000},
+                               'cost':   {'min': 1.0}},
+                    'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+                }
+                self.exchange.markets[ex_symbol] = market_spec
+                self.exchange.marketsById[ex_id]  = market_spec
+                logger.info(f"[Executor] Registered {ex_symbol} (id={ex_id}) to markets cache.")
 
         if self.dry_run:
             # ── DRY RUN ──────────────────────────────────────────────────
@@ -426,12 +434,9 @@ class TradingExecutor:
 
         # ── LIVE EXECUTION ────────────────────────────────────────────────
         try:
-            if self.exchange_id == "coinbase":
-                # Coinbase Advanced Trade V3 requires hyphen: BTC-USD
-                ex_symbol = symbol.replace("/", "-").replace("_", "-")
-            else:
-                # Standard CCXT slash format for other exchanges: BTC/USD
-                ex_symbol = symbol.replace("-", "/").replace("_", "/")
+            # ex_symbol is already in CCXT unified format (e.g. BTC/USDC) from _to_exchange_symbol.
+            # CCXT internally translates unified symbols → exchange-native IDs (BTC-USDC) for API calls.
+            # DO NOT convert to hyphen format here — it breaks CCXT's internal market() lookup.
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
             if cost > equity:
