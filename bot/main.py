@@ -34,6 +34,7 @@ import logging
 import os
 import re
 import signal
+import time
 from datetime import date
 from typing import Dict, Any, Optional, Tuple, List
 
@@ -66,8 +67,8 @@ except Exception as e:
 # ──────────────────────────────────────────────────────────────────────
 # Config from environment
 # ──────────────────────────────────────────────────────────────────────
-EXCHANGE            = os.environ.get("BOT_EXCHANGE",            "coinbase").lower()
-SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USDC" if EXCHANGE == "coinbase" else "BTCUSDT")
+EXCHANGE            = os.environ.get("BOT_EXCHANGE",            "binanceusdm").lower()
+SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USDC" if EXCHANGE == "coinbase" else "BTC/USDT")
 TESTNET             = os.environ.get("BOT_TESTNET",             "true").lower() != "false"
 MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        "1.0"))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  "3.0"))
@@ -75,10 +76,17 @@ ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
 MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.70"))
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
+LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "1"))    # futures leverage (1 = same risk as spot)
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
 
-# Fee rate used for pre-trade profitability check (Coinbase taker ~1.2%, Binance ~0.1%)
-_EXCHANGE_FEE_RATE  = 0.012 if os.environ.get("BOT_EXCHANGE", "coinbase").lower() == "coinbase" else 0.001
+# Fee rates: Coinbase Spot 1.2% | Binance Spot 0.1% | Binance USDM Futures 0.04%
+_EXCHANGE_FEE_RATE  = 0.012 if EXCHANGE == "coinbase" else (0.0004 if EXCHANGE == "binanceusdm" else 0.001)
+
+# Panic mode: trigger if price drops this % within PANIC_LOOKBACK candles
+# e.g. 3.0 = 3% crash within 5 candles → engage panic mode
+PANIC_DROP_PCT     = float(os.environ.get("BOT_PANIC_DROP_PCT",   "3.0"))
+PANIC_LOOKBACK     = int(os.environ.get("BOT_PANIC_LOOKBACK",     "5"))   # candles
+PANIC_LOCK_SECONDS = int(os.environ.get("BOT_PANIC_LOCK_SECONDS", "300")) # 5 min default
 
 # Coinbase credentials
 CB_KEY_NAME     = os.environ.get("COINBASE_API_KEY_NAME",  "")
@@ -98,16 +106,13 @@ if EXCHANGE == "coinbase":
 else:
     DRY_RUN = not (BINANCE_API_KEY and BINANCE_API_SECRET)
 
-# The data feed always uses Binance public WS (deepest data, free)
-# but we translate the symbol to a Binance-compatible format
-FEED_SYMBOL = SYMBOL.replace("-", "").replace("/", "")  # BTC-USD → BTCUSD --- fix below
+# Data feed always uses Binance public WS; normalise symbol to BTCUSDT style
 if EXCHANGE == "coinbase":
-    # BTC-USD → BTCUSDT for the Binance public data feed
-    # BTC-USD or BTC/USD → BTCUSDT for the Binance public data feed
     base = SYMBOL.replace("/", "-").split("-")[0]
     FEED_SYMBOL = f"{base}USDT"
 else:
-    FEED_SYMBOL = SYMBOL
+    # BTC/USDT  → BTCUSDT  |  BTCUSDT → BTCUSDT
+    FEED_SYMBOL = SYMBOL.replace("/", "").split(":")[0]
 
 # ──────────────────────────────────────────────────────────────────────
 # Shared stats (written to Firestore by heartbeat)
@@ -429,8 +434,10 @@ def _risk_engine(
     tp_from_wall = (sell_walls[0] * 0.9995 if sell_walls else None) if is_long \
                else (buy_walls[0] * 1.0005 if buy_walls else None)
 
-    TP_MULT = 3.0   # was 1.5 — must exceed 2× fee rate to be profitable
-    SL_MULT = 1.5   # was 1.0 — wider stop gives larger moves room to develop
+    TP_MULT = 2.0   # 2:1 R:R — Binance futures fees (0.08% round-trip) are negligible,
+                    # so we no longer need the Coinbase-era 3.0× to overcome fees.
+                    # 2.0× = TP at 3.0×ATR from entry (SL=1.5×ATR × 2.0 = 3.0×ATR).
+    SL_MULT = 1.5   # 1.5×ATR stop — wide enough for BTC noise on 15m candles.
 
     def sl_tp(sl_dist: float) -> Tuple[float, float]:
         if is_long:
@@ -644,6 +651,34 @@ async def execution_loop(
 
             current_price = feed.state.candles[-1]["close"]
 
+            # ── System lock check (Panic Mode cooldown) ─────────────────────
+            if executor.is_system_locked():
+                remaining = max(0, executor.lock_expiry - time.time())
+                logger.warning(
+                    f"[PanicMode] System locked — {remaining:.0f}s remaining. "
+                    f"Reason: {executor.last_panic_reason}"
+                )
+                continue
+
+            # ── Panic trigger: Flash-crash detection ────────────────────────
+            # If price has dropped >= PANIC_DROP_PCT% in the last PANIC_LOOKBACK
+            # candles, engage panic mode regardless of current position.
+            n_hist = len(feed.state.candles)
+            if n_hist >= PANIC_LOOKBACK:
+                lookback_price = feed.state.candles[-PANIC_LOOKBACK]["close"]
+                if lookback_price > 0:
+                    drop_pct = (lookback_price - current_price) / lookback_price * 100
+                    if drop_pct >= PANIC_DROP_PCT:
+                        panic_reason = (
+                            f"Flash crash detected: "
+                            f"-{drop_pct:.2f}% in {PANIC_LOOKBACK} candles "
+                            f"(from ${lookback_price:.2f} → ${current_price:.2f})"
+                        )
+                        await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)
+                        stats["active_position"] = None
+                        continue
+
+
             # ── Position exit check — track PnL for daily halt ─────
             if executor.active_position:
                 pos_snapshot = dict(executor.active_position)
@@ -724,6 +759,15 @@ async def execution_loop(
             stats["last_signal"] = action
             stats["last_ulis"]   = ulis_str
 
+            # ── Panic trigger: ULIS AVOID/UNWIND while holding a position ──
+            # If we are IN a trade and the market suddenly turns AVOID/UNWIND,
+            # get out immediately rather than waiting for SL to be hit.
+            if executor.active_position and ulis_str in ("AVOID", "UNWIND"):
+                panic_reason = f"ULIS verdict={ulis_str} while holding position — pre-cascade danger"
+                await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)
+                stats["active_position"] = None
+                continue
+
             logger.info(f"[Main] {action} | conf={conf:.0%} | SL={stop_loss} TP={take_profit} | ULIS={ulis_str}")
             if analysis:
                 logger.info(f"[Main] {analysis}")
@@ -764,6 +808,7 @@ async def main():
         coinbase_private_key=CB_PRIVATE_KEY,
         tg_token=TG_BOT_TOKEN,
         tg_chat_id=TG_CHAT_ID,
+        leverage=LEVERAGE,
     )
 
     heartbeat.init_firebase()
