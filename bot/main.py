@@ -73,9 +73,12 @@ MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        "1.0"))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  "3.0"))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
-MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.60"))
+MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.70"))
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
+
+# Fee rate used for pre-trade profitability check (Coinbase taker ~1.2%, Binance ~0.1%)
+_EXCHANGE_FEE_RATE  = 0.012 if os.environ.get("BOT_EXCHANGE", "coinbase").lower() == "coinbase" else 0.001
 
 # Coinbase credentials
 CB_KEY_NAME     = os.environ.get("COINBASE_API_KEY_NAME",  "")
@@ -410,19 +413,33 @@ def _risk_engine(
     sell_walls: List[float],
     sweep: Optional[str],
 ) -> Tuple[float, float]:
+    """
+    ATR-based SL/TP calculator.
+
+    TP multiplier is set to 3.0× to ensure the expected gain can cover
+    Coinbase's ~1.2% taker fee per leg (2.4% round-trip). At 1.5× ATR the
+    TP distance was smaller than the fee cost — every trade lost money even
+    when TP was reached. 3.0× gives meaningful profit room above fees.
+
+    SL is widened from 1.0× → 1.5× ATR so the trade isn't shaken out by
+    normal noise before the larger TP move has time to develop.
+    """
     is_long = direction in ("BUY", "MEAN_REVERSAL_LONG")
 
     tp_from_wall = (sell_walls[0] * 0.9995 if sell_walls else None) if is_long \
                else (buy_walls[0] * 1.0005 if buy_walls else None)
 
+    TP_MULT = 3.0   # was 1.5 — must exceed 2× fee rate to be profitable
+    SL_MULT = 1.5   # was 1.0 — wider stop gives larger moves room to develop
+
     def sl_tp(sl_dist: float) -> Tuple[float, float]:
         if is_long:
             sl = price - sl_dist
-            tp_target = price + (sl_dist * 1.5)
+            tp_target = price + (sl_dist * TP_MULT)
             tp = tp_from_wall if (tp_from_wall and tp_from_wall > tp_target) else tp_target
         else:
             sl = price + sl_dist
-            tp_target = price - (sl_dist * 1.5)
+            tp_target = price - (sl_dist * TP_MULT)
             tp = tp_from_wall if (tp_from_wall and tp_from_wall < tp_target) else tp_target
         return round(sl, 2), round(tp, 2)
 
@@ -432,12 +449,12 @@ def _risk_engine(
         elif sweep == "BELOW_LOWS" and buy_walls:
             sl_dist = abs(price - buy_walls[0]) + (atr * 0.5)
         else:
-            sl_dist = atr * 1.0
-        return sl_tp(max(sl_dist, atr * 0.5))
+            sl_dist = atr * SL_MULT
+        return sl_tp(max(sl_dist, atr * SL_MULT))
     elif strategy_type == "TREND":
-        return sl_tp(atr * 1.5)
+        return sl_tp(atr * SL_MULT)
     elif strategy_type == "MEAN_REVERSION":
-        return sl_tp(atr * 1.0)
+        return sl_tp(atr * SL_MULT)
     else:
         return sl_tp(price * 0.008)
 
@@ -528,7 +545,7 @@ def _compute_signal(
         raw_direction, strategy_type, price, atr, buy_walls, sell_walls, sweep
     )
 
-    # Sanity check
+    # Sanity check — geometry must be valid
     is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
     if is_long and (stop_loss >= price or take_profit <= price):
         logger.warning("[RiskEngine] Invalid geometry for LONG — skipped.")
@@ -536,6 +553,22 @@ def _compute_signal(
     if not is_long and (stop_loss <= price or take_profit >= price):
         logger.warning("[RiskEngine] Invalid geometry for SHORT — skipped.")
         return {**WAIT, "analysis": "Invalid SL/TP geometry — skipped."}
+
+    # ── Pre-trade fee profitability check ──────────────────────────────
+    # Reject any trade where the expected TP gain (as % of entry) is less
+    # than the round-trip exchange fee cost. Without this check the bot will
+    # consistently lose money even on winning trades.
+    tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
+    round_trip_fee = _EXCHANGE_FEE_RATE * 2                  # entry + exit fee
+    min_viable_tp_pct = round_trip_fee * 1.5                 # 1.5× fee = meaningful profit buffer
+    if tp_gain_pct < min_viable_tp_pct:
+        logger.warning(
+            f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
+            f"(round-trip fee={round_trip_fee:.2%}). Trade not profitable after fees. Skipping."
+        )
+        return {**WAIT, "analysis": (
+            f"TP gain {tp_gain_pct:.3%} below fee break-even {min_viable_tp_pct:.3%}. Skipped."
+        ), "ulis_verdict": ulis_verdict_str}
 
     verdict_map = {
         "BUY":               "BUY",

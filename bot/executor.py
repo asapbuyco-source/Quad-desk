@@ -54,6 +54,12 @@ class TradingExecutor:
 
         self.active_position: Optional[Dict[str, Any]] = None
         self.pending_order: Optional[Dict[str, Any]] = None  # Track unfilled orders
+        self._last_insuf_warn_ts: float = 0.0  # Cooldown for insufficient-funds spam
+
+        # Coinbase Advanced Trade charges ~1.2% taker fee (confirmed from live CSV data).
+        # This is a percentage fee, NOT a flat $1 fee.
+        # We reserve this as a multiplier so size caps don't overshoot available USDC.
+        self.EXCHANGE_FEE_RATE: float = 0.012 if self.exchange_id == "coinbase" else 0.001
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -215,7 +221,7 @@ class TradingExecutor:
     def _log_trade(self, symbol: str, side: str, verdict: str,
                    entry: float, stop_loss: float, take_profit: float,
                    ulis_verdict: str = ""):
-        """Write a trade record to Firestore `botTrades` collection."""
+        """Write an OPEN trade record to Firestore `botTrades` collection."""
         db = heartbeat.get_db()
         if db is None:
             return
@@ -233,11 +239,40 @@ class TradingExecutor:
                 "exchange":     self.exchange_id,
                 "ulis_verdict": ulis_verdict,
                 "ts_ms":        int(time.time() * 1000),
+                "type":         "OPEN",
             }
             db.collection("botTrades").add(doc)
-            logger.info("[Executor] Trade logged to Firestore ✓")
+            logger.info("[Executor] Trade open logged to Firestore ✓")
         except Exception as e:
             logger.warning(f"[Executor] Failed to log trade to Firestore: {e}")
+
+    def _log_trade_close(self, symbol: str, side: str, pnl: float, exit_reason: str):
+        """Write a CLOSE record to Firestore with WIN/LOSS outcome."""
+        outcome = "WIN" if pnl > 0 else "LOSS"
+        logger.info(
+            f"[Executor] Trade CLOSED | {exit_reason} | PnL=${pnl:.2f} ({outcome})"
+        )
+        db = heartbeat.get_db()
+        if db is None:
+            return
+        try:
+            from firebase_admin import firestore as fs
+            doc = {
+                "symbol":       symbol,
+                "side":         side,
+                "pnl":          round(pnl, 4),
+                "outcome":      outcome,
+                "exit_reason":  exit_reason,   # "STOP_LOSS" or "TAKE_PROFIT"
+                "timestamp":    fs.SERVER_TIMESTAMP,
+                "mode":         "DRY-RUN" if self.dry_run else "LIVE",
+                "exchange":     self.exchange_id,
+                "ts_ms":        int(time.time() * 1000),
+                "type":         "CLOSE",
+            }
+            db.collection("botTrades").add(doc)
+            logger.info(f"[Executor] Trade close logged to Firestore ({outcome}) ✓")
+        except Exception as e:
+            logger.warning(f"[Executor] Failed to log trade close to Firestore: {e}")
 
     # ------------------------------------------------------------------
     # Balance
@@ -358,15 +393,27 @@ class TradingExecutor:
         
         if side == "buy":
             usdc_equity = await self.get_usdt_balance(account_size)
-            if usdc_equity < 5:
-                err = f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. Min $5 required."
-                logger.warning(f"[Executor] {err}")
-                await self.notifier.send_error_alert(err)
+            # Minimum: $5 order + fee reserve at exchange rate (~1.2% on Coinbase)
+            fee_reserve = usdc_equity * self.EXCHANGE_FEE_RATE
+            min_required = 5.0 + fee_reserve
+            if usdc_equity < min_required:
+                # Cooldown: only warn once per 60 seconds to avoid log spam
+                now = time.time()
+                if now - self._last_insuf_warn_ts >= 60:
+                    self._last_insuf_warn_ts = now
+                    fee_pct = self.EXCHANGE_FEE_RATE * 100
+                    err = (
+                        f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. "
+                        f"Min ${min_required:.2f} required "
+                        f"(incl. ~{fee_pct:.1f}% {self.exchange_id} taker fee)."
+                    )
+                    logger.warning(f"[Executor] {err}")
+                    await self.notifier.send_error_alert(err)
                 return
         else:
             # For SELL (Short) on Spot: Check if we actually have assets to sell
             btc_bal = await self.get_btc_balance()
-            if btc_bal <= 0.00001: 
+            if btc_bal <= 0.00001:
                 err = f"Aborting SELL signal: No BTC balance available to sell on spot account."
                 logger.warning(f"[Executor] {err}")
                 await self.notifier.send_error_alert(err)
@@ -449,9 +496,10 @@ class TradingExecutor:
                 fmt_size = float(self.exchange.amount_to_precision(ex_symbol, cost / current_price))
 
             if side == "buy":
-                # BUY: Cap by actually available USDC cash, not Total Portfolio Equity
+                # BUY: Cap by actually available USDC cash, not Total Portfolio Equity.
+                # Reserve the exchange fee percentage so the order doesn't exceed available balance.
                 usdc_available = await self.get_usdt_balance(account_size)
-                max_cost = usdc_available * 0.95  # Leave 5% buffer for fees/slippage
+                max_cost = usdc_available * (1.0 - self.EXCHANGE_FEE_RATE)
                 if cost > max_cost:
                     fmt_size = float(
                         self.exchange.amount_to_precision(ex_symbol, max_cost / current_price)
@@ -634,31 +682,32 @@ class TradingExecutor:
         sl   = pos["stop_loss"]
         tp   = pos["take_profit"]
 
+        symbol = pos.get("symbol", "")
         if side == "buy":
             if current_price <= sl:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
-                logger.info(f"[Executor] STOP LOSS HIT. PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
+                self._log_trade_close(symbol, side, pnl, "STOP_LOSS")
                 return True, pnl
             if current_price >= tp:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
-                logger.info(f"[Executor] TAKE PROFIT HIT. PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
+                self._log_trade_close(symbol, side, pnl, "TAKE_PROFIT")
                 return True, pnl
         else:
             if current_price >= sl:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
-                logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
+                self._log_trade_close(symbol, side, pnl, "STOP_LOSS")
                 return True, pnl
             if current_price <= tp:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
-                logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
+                self._log_trade_close(symbol, side, pnl, "TAKE_PROFIT")
                 return True, pnl
 
         return False, 0.0
