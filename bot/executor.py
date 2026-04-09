@@ -114,8 +114,12 @@ class TradingExecutor:
             "apiKey":          api_key,
             "secret":          api_secret,
             "enableRateLimit": True,
-            "options": {"defaultType": "spot"},
+            "options": {
+                "defaultType": "spot",
+                "adjustForTimeDifference": True
+            },
         })
+        exchange.load_time_difference()
         if testnet:
             exchange.set_sandbox_mode(True)
         logger.info(f"[Executor] Binance Spot ({'testnet' if testnet else 'live'}) initialised.")
@@ -132,8 +136,12 @@ class TradingExecutor:
             "apiKey":          api_key,
             "secret":          api_secret,
             "enableRateLimit": True,
-            "options": {"defaultType": "future"},
+            "options": {
+                "defaultType": "future",
+                "adjustForTimeDifference": True
+            },
         })
+        exchange.load_time_difference()
         if testnet:
             exchange.set_sandbox_mode(True)
         logger.info(f"[Executor] Binance USDM Futures ({'testnet' if testnet else 'LIVE'}) initialised.")

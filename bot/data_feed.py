@@ -102,9 +102,9 @@ class BinanceDataFeed:
             self.rest_url = "https://testnet.binance.vision"
             base_url = "wss://testnet.binance.vision"
         else:
-            # Using Binance.US to avoid HTTP 451 (Region Blocked) errors
-            self.rest_url = "https://api.binance.us"
-            base_url = "wss://stream.binance.us:9443"
+            # Connect to Binance Global explicitly to match CCXT's default routing
+            self.rest_url = "https://api.binance.com"
+            base_url = "wss://stream.binance.com:9443"
 
         streams = (
             f"{self.symbol}@kline_{self.interval}"
