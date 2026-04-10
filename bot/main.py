@@ -143,6 +143,8 @@ BOT_STATS: Dict[str, Any] = {
     "daily_loss_halt": False,
 }
 
+LAST_CASCADE_TIME = 0.0
+
 
 # ══════════════════════════════════════════════════════════════════════
 # ── STAGE 1 — FEATURE ENGINE HELPERS ─────────────────────────────────
@@ -407,6 +409,32 @@ def _apply_ulis_gate(
         logger.warning(f"[ULIS] Direction conflict — bot=SHORT, ULIS={verdict_str}. Skipping.")
         return False, 0.0, verdict_str
 
+    # --- PROPER ALIGNMENT FRAMEWORK: Triple Alignment Gate ---
+    rsi = metrics.get("rsi", 50.0)
+    ofi = metrics.get("ofi", 0.0)
+    atr_pct = metrics.get("atr_pct", 0.005)
+
+    is_atr_extended = atr_pct > 0.008  # Typically >0.8% in 15m is massively extended
+
+    if is_long:
+        rsi_valid = 40 <= rsi <= 70
+        ofi_valid = ofi > -5.0
+    else:
+        rsi_valid = 30 <= rsi <= 60
+        ofi_valid = ofi < 5.0
+
+    red_lights = 0
+    if not rsi_valid: red_lights += 1
+    if not ofi_valid: red_lights += 1
+    if is_atr_extended: red_lights += 1
+
+    if red_lights >= 2:
+        logger.warning(f"[Alignment] GATE FAILED: {red_lights} Red Lights (RSI={rsi:.1f}, OFI={ofi:.1f}, ATR Extended={is_atr_extended})")
+        return False, 0.0, f"{verdict_str} + Weak Alignment (R={red_lights})"
+    elif red_lights == 1:
+        confidence *= 0.80  # Penalty equivalent to active size reduction
+        logger.info(f"[Alignment] 1 Red Light. Penalising confidence to {confidence:.2%}.")
+        
     # Confidence adjustment
     adjusted = min(1.0, confidence + ulis["confidence_boost"])
     logger.info(
@@ -498,6 +526,12 @@ def _compute_signal(
     if daily_loss_halt:
         logger.warning("[RiskEngine] Daily loss limit hit — all trading halted today.")
         return {**WAIT, "analysis": "Daily loss limit reached. Halted."}
+
+    global LAST_CASCADE_TIME
+    import time
+    time_since_cascade = time.time() - LAST_CASCADE_TIME
+    if time_since_cascade < 300:  # 5 minutes
+        return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {300 - int(time_since_cascade)}s remain)"}
 
     price = metrics["price"]
     atr   = metrics.get("atr", price * 0.005)
@@ -697,6 +731,12 @@ async def execution_loop(
                 pos_snapshot = dict(executor.active_position)
                 exited, pnl = executor.check_position_exit(current_price)
                 if exited:
+                    if pnl < 0:
+                        global LAST_CASCADE_TIME
+                        import time
+                        LAST_CASCADE_TIME = time.time()
+                        logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
+                    
                     # In live mode, simulate the exchange fill through crossover and clean up
                     if not executor.dry_run:
                         # Cancel orphaned opposing order (SL or TP)
@@ -723,25 +763,27 @@ async def execution_loop(
 
             stats["active_position"] = executor.active_position
 
+            # Stage 1: Compute metrics (Needed for ATR trailing stop in V3 monitor)
+            metrics = quant.compute_metrics()
+
             if executor.active_position:
-                if not executor.active_position.get("be_triggered", False):
-                    await executor.update_breakeven_stop(current_price)
+                if metrics is not None:
+                    await executor.monitor_active_position_v3(current_price, metrics)
 
                 pos = executor.active_position
-                pnl_pct = (
-                    (current_price - pos["entry_price"]) / pos["entry_price"] * 100
-                    if pos["side"] == "buy" else
-                    (pos["entry_price"] - current_price) / pos["entry_price"] * 100
-                )
-                logger.info(
-                    f"[Main] HOLDING {pos['side'].upper()} @ {pos['entry_price']:.2f}"
-                    f" | now={current_price:.2f} | PnL={pnl_pct:+.2f}%"
-                    f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
-                )
+                if pos:  # Might have been exited by the monitor
+                    pnl_pct = (
+                        (current_price - pos["entry_price"]) / pos["entry_price"] * 100
+                        if pos["side"] == "buy" else
+                        (pos["entry_price"] - current_price) / pos["entry_price"] * 100
+                    )
+                    logger.info(
+                        f"[Main] HOLDING {pos['side'].upper()} @ {pos['entry_price']:.2f}"
+                        f" | now={current_price:.2f} | PnL={pnl_pct:+.2f}%"
+                        f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
+                    )
                 continue
 
-            # Stage 1: Compute metrics
-            metrics = quant.compute_metrics()
             if metrics is None:
                 continue
 

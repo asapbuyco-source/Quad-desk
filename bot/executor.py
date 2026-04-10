@@ -746,6 +746,9 @@ class TradingExecutor:
                 tp_order_id = tp_order.get("id")
                 logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
 
+            import time
+            calculated_atr = abs(current_price - stop_loss) / 1.5 if stop_loss else current_price * 0.005
+            
             self.active_position = {
                 "symbol":      ex_symbol,
                 "side":        side,
@@ -756,6 +759,11 @@ class TradingExecutor:
                 "order_id":    order.get("id"),
                 "sl_order_id": sl_order_id,
                 "tp_order_id": tp_order_id,
+                "tp1_hit":     False,
+                "tp2_hit":     False,
+                "entry_time":  time.time(),
+                "atr_at_entry": calculated_atr,
+                "original_size": fmt_size,
             }
             
             # Clear pending order since we now have an active position
@@ -856,128 +864,82 @@ class TradingExecutor:
             except Exception as e:
                 logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
 
-    async def update_breakeven_stop(self, current_price: float):
-        """
-        If the current price reaches 50% of the Take-Profit distance,
-        move the Stop-Loss up to the Entry Price (Break-Even).
-        For Live: cancels old SL and creates new SL order.
-        """
+    async def _move_stop_loss(self, new_sl_price: float):
+        """Helper to safely cancel the old SL and place a new one at `new_sl_price`."""
         pos = self.active_position
-        if not pos or pos.get("be_triggered", False):
-            return
+        if not pos: return
+        if self.dry_run: return
 
-        side  = pos["side"]
-        entry = pos["entry_price"]
-        tp    = pos["take_profit"]
-
-        # Calculate 50% trigger line
-        be_target = entry + ((tp - entry) * 0.5)
-
-        triggered = False
-        if side == "buy" and current_price >= be_target:
-            triggered = True
-        elif side == "sell" and current_price <= be_target:
-            triggered = True
-
-        if not triggered:
-            return
-
-        # Trigger Break-Even log
-        logger.info("[Executor] RUNNER SECURED: Target halfway reached. Attempting Break-Even SL.")
-
-        if self.dry_run:
-            pos["be_triggered"] = True
-            pos["stop_loss"]    = entry
-            return
-
-        # LIVE MODE: Cancel old SL and place new one at Entry
+        ex_symbol = pos["symbol"]
+        old_sl_id = pos.get("sl_order_id")
+        fmt_size = pos["size"]
+        side = pos["side"]
+        
         import asyncio
-        try:
-            ex_symbol = pos["symbol"]
-            old_sl_id = pos.get("sl_order_id")
-            fmt_size  = pos["size"]
-
-            # Fix Race Condition: Set state BEFORE yielding via await
-            pos["be_triggered"] = True
-            pos["stop_loss"]    = entry
-
-            cancel_success = True
-            if old_sl_id:
-                for attempt in range(3):
-                    try:
-                        await self.exchange.cancel_order(old_sl_id, ex_symbol)
-                        cancel_success = True
-                        pos["sl_order_id"] = None
-                        break
-                    except Exception as e:
-                        if attempt == 2:
-                            err_str = str(e).lower()
-                            if "not found" in err_str or "not_found" in err_str:
-                                cancel_success = True
-                                pos["sl_order_id"] = None
-                                break
-                            logger.warning(f"[Executor] Final failure to cancel old SL for Break-Even: {e}")
-                            cancel_success = False
-                            pos["be_triggered"] = False # Revert
-                            break
-                        await asyncio.sleep(0.5)
-            
-            if not cancel_success:
-                return
-
-            sl_side = "sell" if side == "buy" else "buy"
-
-            new_sl = None
+        cancel_success = True
+        if old_sl_id:
             for attempt in range(3):
                 try:
-                    if self.is_futures:
-                        # Futures break-even: replace with a new STOP_MARKET at entry
-                        new_sl = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
-                            amount=fmt_size,
-                            params={
-                                "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, entry)),
-                                "closePosition": True,
-                                "workingType":   "MARK_PRICE",
-                            },
-                        )
-                    elif self.exchange_id == "binance":
-                        sl_limit = entry * 0.999 if side == "buy" else entry * 1.001
-                        new_sl = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
-                            amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                            params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, entry))},
-                        )
-                    else:
-                        sl_limit = entry * 0.999 if side == "buy" else entry * 1.001
-                        new_sl = await self.exchange.create_order(
-                            symbol=ex_symbol, type="limit", side=sl_side,
-                            amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                            params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, entry))},
-                        )
+                    await self.exchange.cancel_order(old_sl_id, ex_symbol)
+                    cancel_success = True
+                    pos["sl_order_id"] = None
                     break
                 except Exception as e:
                     if attempt == 2:
-                        logger.error(f"[Executor] Failed to create Break-Even SL: {e}")
+                        err_str = str(e).lower()
+                        if "not found" in err_str or "not_found" in err_str:
+                            cancel_success = True
+                            pos["sl_order_id"] = None
+                            break
+                        logger.warning(f"[Executor] Final failure to cancel old SL: {e}")
+                        cancel_success = False
                         break
                     await asyncio.sleep(0.5)
 
-            if new_sl and new_sl.get("id"):
-                pos["sl_order_id"] = new_sl.get("id")
-                logger.info(f"[Executor] New Break-Even SL attached at {entry} (id={pos['sl_order_id']})")
-            else:
-                logger.critical("[Executor] SL placement failed during Break-Even update! FLATTENING NAKED POSITION!")
-                try:
-                    await self.exchange.create_market_order(ex_symbol, sl_side, fmt_size)
-                    self.active_position = None
-                    logger.info("[Executor] Flattened naked position successfully.")
-                except Exception as ex:
-                    logger.critical(f"[Executor] CRITICAL: Failed to flatten naked position! {ex}")
+        if not cancel_success:
+            return
 
-        except Exception as e:
-            logger.error(f"[Executor] Break-Even API update failed: {e}", exc_info=True)
+        sl_side = "sell" if side == "buy" else "buy"
+        new_sl = None
+        for attempt in range(3):
+            try:
+                if self.is_futures:
+                    new_sl = await self.exchange.create_order(
+                        symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
+                        amount=fmt_size,
+                        params={
+                            "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, new_sl_price)),
+                            "closePosition": True,
+                            "workingType":   "MARK_PRICE",
+                        },
+                    )
+                elif self.exchange_id == "binance":
+                    sl_limit = new_sl_price * 0.999 if side == "buy" else new_sl_price * 1.001
+                    new_sl = await self.exchange.create_order(
+                        symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
+                        amount=fmt_size,
+                        price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                        params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, new_sl_price))},
+                    )
+                else:
+                    direction = "STOP_DIRECTION_STOP_UP" if new_sl_price > pos["entry_price"] else "STOP_DIRECTION_STOP_DOWN" 
+                    sl_limit = new_sl_price * 0.999 if side == "buy" else new_sl_price * 1.001
+                    new_sl = await self.exchange.create_order(
+                        symbol=ex_symbol, type="limit", side=sl_side,
+                        amount=fmt_size,
+                        price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                        params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, new_sl_price)),
+                                "stop_direction": direction},
+                    )
+                break
+            except Exception as e:
+                if attempt == 2:
+                    logger.error(f"[Executor] Failed to place modified SL at {new_sl_price}: {e}")
+                    break
+                await asyncio.sleep(0.5)
+
+        if new_sl:
+            pos["sl_order_id"] = new_sl.get("id")
 
     # ------------------------------------------------------------------
     # System lock helpers (used by Panic Mode)
