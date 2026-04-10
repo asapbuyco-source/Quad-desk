@@ -1,11 +1,11 @@
 """
-Macro Strategy Execution Bot — Coinbase Edition (7-Stage Hybrid)
-=================================================================
+Macro Strategy Execution Bot — Binance USDM Futures Edition (7-Stage Hybrid)
+=============================================================================
 Launch with:
     python -m bot.main
 
 Architecture (7 stages):
-  1. Feature Engine      — all signals from live market data (Binance WS)
+  1. Feature Engine      — all signals from live market data (Binance Futures WS)
   2. Regime Detection    — classify: TREND | RANGE | LIQUIDITY | NEUTRAL
   3. Liquidity Sweep     — detect stop-hunts above/below walls
   4. Strategy Layer      — A: Trend, B: Mean Reversion, C: Liquidity Sweep
@@ -14,19 +14,27 @@ Architecture (7 stages):
   7. Risk Engine         — ATR-based SL/TP, daily-loss guard
 
 Environment variables:
-    BOT_EXCHANGE                — default: coinbase (or binance)
-    COINBASE_API_KEY_NAME       — Coinbase RSA key name
-    COINBASE_PRIVATE_KEY        — Coinbase EC private key (PEM)
-    BINANCE_API_KEY             — legacy Binance key (if exchange=binance)
-    BINANCE_API_SECRET          — legacy Binance secret
-    BOT_SYMBOL                  — default: BTC-USD (Coinbase) / BTCUSDT (Binance)
-    BOT_TESTNET                 — default: true (Binance only)
+    BOT_EXCHANGE                — binanceusdm (Binance USDM Futures, default)
+    BINANCE_API_KEY             — Binance Futures API key
+    BINANCE_API_SECRET          — Binance Futures API secret
+    BOT_SYMBOL                  — default: BTC/USDT
+    BOT_TESTNET                 — default: false (live trading)
+    BOT_LEVERAGE                — default: 3  (futures leverage, 1–20×)
     BOT_MAX_RISK_PCT            — default: 1.0  (% of equity per trade)
     BOT_MAX_DAILY_LOSS_PCT      — default: 3.0  (% of equity; pauses if hit)
-    BOT_ANALYSIS_INTERVAL       — default: 15   (seconds between cycles)
-    BOT_MIN_CONFIDENCE          — default: 0.70 (Bayesian fusion threshold)
-    BOT_ACCOUNT_SIZE            — default: 100  (simulated equity for dry-run)
-    BOT_ULIS_GATE               — default: true (enable Stage 7 ULIS gate)
+    BOT_ANALYSIS_INTERVAL       — default: 10   (seconds between cycles)
+    BOT_CANDLE_INTERVAL         — default: 15m  (kline interval)
+    BOT_MIN_CONFIDENCE          — default: 0.65 (Bayesian fusion threshold)
+    BOT_ACCOUNT_SIZE            — default: 100  (USDT equity in futures wallet)
+    BOT_ULIS_GATE               — default: true (enable Stage 6 ULIS gate)
+    BOT_PANIC_DROP_PCT          — default: 3.0  (% flash-crash triggers panic mode)
+    BOT_PANIC_LOOKBACK          — default: 5    (candles to look back for crash)
+    BOT_PANIC_LOCK_SECONDS      — default: 300  (seconds to lock after panic)
+
+Geographic note (Railway USA ↔ Binance Europe account):
+    No issue. Binance USDM Futures API (fapi.binance.com) is globally accessible.
+    The adjustForTimeDifference + recvWindow=10000 options in executor.py handle
+    cross-continental clock skew automatically.
 """
 
 import asyncio
@@ -92,9 +100,13 @@ PANIC_LOCK_SECONDS = int(os.environ.get("BOT_PANIC_LOCK_SECONDS", "300")) # 5 mi
 CB_KEY_NAME     = os.environ.get("COINBASE_API_KEY_NAME",  "")
 CB_PRIVATE_KEY  = os.environ.get("COINBASE_PRIVATE_KEY",   "")
 
-# Legacy Binance credentials
-BINANCE_API_KEY    = os.environ.get("BINANCE_API_KEY",    "")
-BINANCE_API_SECRET = os.environ.get("BINANCE_API_SECRET", "")
+# Binance credentials
+BINANCE_API_KEY        = os.environ.get("BINANCE_API_KEY",             "")
+BINANCE_API_SECRET     = os.environ.get("BINANCE_API_SECRET",          "")
+BINANCE_ED25519_PRIVKEY = os.environ.get("BINANCE_ED25519_PRIVATE_KEY", "")
+# Normalise escaped newlines from .env (stored as literal \n)
+if BINANCE_ED25519_PRIVKEY:
+    BINANCE_ED25519_PRIVKEY = BINANCE_ED25519_PRIVKEY.replace("\\n", "\n").strip()
 
 # Telegram credentials
 TG_BOT_TOKEN   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -104,7 +116,8 @@ TG_CHAT_ID     = os.environ.get("TELEGRAM_CHAT_ID",   "")
 if EXCHANGE == "coinbase":
     DRY_RUN = not (CB_KEY_NAME and CB_PRIVATE_KEY)
 else:
-    DRY_RUN = not (BINANCE_API_KEY and BINANCE_API_SECRET)
+    # For Binance: either HMAC secret OR Ed25519 private key is sufficient
+    DRY_RUN = not (BINANCE_API_KEY and (BINANCE_API_SECRET or BINANCE_ED25519_PRIVKEY))
 
 # Data feed always uses Binance public WS; normalise symbol to BTCUSDT style
 if EXCHANGE == "coinbase":
@@ -809,6 +822,7 @@ async def main():
         tg_token=TG_BOT_TOKEN,
         tg_chat_id=TG_CHAT_ID,
         leverage=LEVERAGE,
+        ed25519_private_key=BINANCE_ED25519_PRIVKEY,
     )
 
     heartbeat.init_firebase()

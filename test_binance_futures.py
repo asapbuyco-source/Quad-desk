@@ -1,156 +1,249 @@
 """
-Binance USDM Futures — Connection & Permissions Diagnostic
-===========================================================
-Tests (NO real orders placed):
-  1. Load markets / connectivity
-  2. API key read permissions (account balance)
-  3. Futures wallet USDT balance
-  4. BTC/USDT market spec (tick size, min size)
-  5. Mark price fetch
-  6. Leverage set (dry-run check)
-  7. Testnet vs live detection
+Binance USDM Futures - API Key Diagnostic
+==========================================
+Bypasses ccxt.load_markets() (which hangs due to an internal
+ccxt bug calling extra endpoints). Tests auth, balance,
+permissions, leverage and positions via direct ccxt calls.
+
+Run with:
+    python test_binance_futures.py
 """
 
 import asyncio
 import os
 import sys
+import httpx
+import hashlib
+import hmac
+import time
+import urllib.parse
+import base64
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from dotenv import load_dotenv
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 load_dotenv()
 
 API_KEY    = os.environ.get("BINANCE_API_KEY",    "")
 API_SECRET = os.environ.get("BINANCE_API_SECRET", "")
-TESTNET    = os.environ.get("BOT_TESTNET", "true").lower() != "false"
-LEVERAGE   = int(os.environ.get("BOT_LEVERAGE", "1"))
+ED25519_PRIVKEY = os.environ.get("BINANCE_ED25519_PRIVATE_KEY", "")
+if ED25519_PRIVKEY:
+    ED25519_PRIVKEY = ED25519_PRIVKEY.replace("\\n", "\n").strip()
+
+TESTNET    = os.environ.get("BOT_TESTNET", "false").lower() != "false"
+LEVERAGE   = int(os.environ.get("BOT_LEVERAGE", "3"))
 SYMBOL     = os.environ.get("BOT_SYMBOL", "BTC/USDT")
 
-OK   = "  ✅"
-FAIL = "  ❌"
-WARN = "  ⚠️ "
+BASE = "https://testnet.binancefuture.com" if TESTNET else "https://fapi.binance.com"
 
-def banner(text):
-    print(f"\n{'═'*55}")
-    print(f"  {text}")
-    print(f"{'═'*55}")
+def ok(m):   print(f"  [OK]    {m}")
+def fail(m): print(f"  [FAIL]  {m}")
+def warn(m): print(f"  [WARN]  {m}")
+def head(m): print(f"\n{'='*55}\n  {m}\n{'='*55}")
+
+
+def _sign(params: dict) -> str:
+    query = urllib.parse.urlencode(params)
+    if ED25519_PRIVKEY:
+        priv_key = load_pem_private_key(ED25519_PRIVKEY.encode('utf-8'), password=None)
+        sig = priv_key.sign(query.encode('utf-8'))
+        return base64.b64encode(sig).decode('utf-8')
+    else:
+        return hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+
+
+async def sget(client, path, extra=None):
+    p = {"timestamp": int(time.time() * 1000), "recvWindow": 10000}
+    if extra:
+        p.update(extra)
+    p["signature"] = _sign(p)
+    r = await client.get(
+        f"{BASE}{path}", params=p,
+        headers={"X-MBX-APIKEY": API_KEY}, timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+async def spost(client, path, params):
+    params["timestamp"] = int(time.time() * 1000)
+    params["recvWindow"] = 10000
+    params["signature"] = _sign(params)
+    r = await client.post(
+        f"{BASE}{path}", params=params,
+        headers={"X-MBX-APIKEY": API_KEY}, timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
+
 
 async def run():
-    banner("Binance USDM Futures — Diagnostic")
+    head("Binance USDM Futures - API Diagnostic")
 
-    # ── 1. Credentials present ─────────────────────────────────
-    print("\n[1] Checking .env credentials...")
-    if not API_KEY:
-        print(f"{FAIL} BINANCE_API_KEY is missing from .env")
-        sys.exit(1)
-    if not API_SECRET:
-        print(f"{FAIL} BINANCE_API_SECRET is missing from .env")
-        sys.exit(1)
-    print(f"{OK} API Key   : ...{API_KEY[-6:]}")
-    print(f"{OK} API Secret: ...{API_SECRET[-6:]}")
-    print(f"{OK} Mode      : {'TESTNET' if TESTNET else '🔴 LIVE'}")
-    print(f"{OK} Leverage  : {LEVERAGE}×")
-    print(f"{OK} Symbol    : {SYMBOL}")
+    # ── 0. Credentials ───────────────────────────────────────────
+    if not API_KEY or (not API_SECRET and not ED25519_PRIVKEY):
+        fail("BINANCE_API_KEY / BINANCE_API_SECRET / BINANCE_ED25519_PRIVATE_KEY missing from .env!")
+        return
 
-    # ── 2. Import ccxt ─────────────────────────────────────────
-    print("\n[2] Importing ccxt...")
-    try:
-        import ccxt.async_support as ccxt
-        print(f"{OK} ccxt version: {ccxt.__version__}")
-    except ImportError:
-        print(f"{FAIL} ccxt not installed. Run: pip install ccxt")
-        sys.exit(1)
+    print(f"\n[Config]")
+    ok(f"API Key    : {API_KEY[:8]}...{API_KEY[-6:]}")
+    ok(f"Signing    : {'Ed25519' if ED25519_PRIVKEY else 'HMAC-SHA256'}")
+    ok(f"Mode       : {'TESTNET' if TESTNET else 'LIVE (real money)'}")
+    ok(f"Leverage   : {LEVERAGE}x")
+    ok(f"Symbol     : {SYMBOL}")
+    ok(f"API Base   : {BASE}")
 
-    # ── 3. Initialise exchange ─────────────────────────────────
-    print("\n[3] Initialising Binance USDM Futures exchange...")
-    exchange = ccxt.binanceusdm({
-        "apiKey":          API_KEY,
-        "secret":          API_SECRET,
-        "enableRateLimit": True,
-        "options":         {
-            "defaultType": "future",
-            "fetchMarkets": ["future"],
-        },
-    })
-    if TESTNET:
-        exchange.set_sandbox_mode(True)
-        print(f"{WARN} Sandbox/testnet mode active — using testnet.binancefutures.com")
+    async with httpx.AsyncClient(timeout=15) as client:
 
-    # ── 4. Load markets ────────────────────────────────────────
-    print("\n[4] Loading markets (connectivity test)...")
-    try:
-        markets = await exchange.load_markets()
-        print(f"{OK} Markets loaded: {len(markets)} instruments available")
-    except Exception as e:
-        print(f"{WARN} Could not load markets (often happens if apiKey lacks spot/margin permission): {e}")
-        print(f"      → Ignored. Will attempt direct futures endpoint calls anyway.")
+        # ── 1. Ping ──────────────────────────────────────────────
+        print(f"\n[1] Connectivity ping...")
+        try:
+            r = await client.get(f"{BASE}/fapi/v1/ping", timeout=8)
+            r.raise_for_status()
+            ok("fapi.binance.com reachable")
+        except Exception as e:
+            fail(f"Cannot reach {BASE}: {e}")
+            return
 
-    # ── 5. Market spec for BTC/USDT ───────────────────────────
-    print(f"\n[5] Checking {SYMBOL} market spec...")
-    try:
-        market = exchange.market(SYMBOL)
-        min_qty   = market.get("limits", {}).get("amount", {}).get("min", "?")
-        tick_size = market.get("precision", {}).get("price", "?")
-        base_prec = market.get("precision", {}).get("amount", "?")
-        print(f"{OK} {SYMBOL} exists on exchange")
-        print(f"     Min order qty : {min_qty} BTC")
-        print(f"     Price tick    : {tick_size}")
-        print(f"     Qty precision : {base_prec}")
-    except Exception as e:
-        print(f"{FAIL} {SYMBOL} not found: {e}")
+        # ── 2. Server time / clock drift ─────────────────────────
+        print(f"\n[2] Clock skew check...")
+        try:
+            r = await client.get(f"{BASE}/fapi/v1/time", timeout=8)
+            r.raise_for_status()
+            server_ms = r.json()["serverTime"]
+            local_ms  = int(time.time() * 1000)
+            drift = local_ms - server_ms
+            if abs(drift) < 5000:
+                ok(f"Clock drift: {drift:+d} ms  (safe, within +/-5000 ms)")
+            elif abs(drift) < 10000:
+                warn(f"Clock drift: {drift:+d} ms  (covered by recvWindow=10000 ms)")
+            else:
+                fail(f"Clock drift: {drift:+d} ms  -> EXCEEDS recvWindow. Bot will get -1021 errors!")
+        except Exception as e:
+            warn(f"Server time fetch failed: {e}")
 
-    # ── 6. Mark price ──────────────────────────────────────────
-    print(f"\n[6] Fetching {SYMBOL} mark price...")
-    try:
-        ticker = await exchange.fetch_ticker(SYMBOL)
-        price  = ticker.get("last") or ticker.get("mark", 0)
-        print(f"{OK} Current price: ${price:,.2f}")
-    except Exception as e:
-        print(f"{FAIL} Could not fetch price: {e}")
+        # ── 3. Public market info  ────────────────────────────────
+        print(f"\n[3] BTC/USDT futures market spec...")
+        try:
+            r = await client.get(f"{BASE}/fapi/v1/exchangeInfo", timeout=15)
+            r.raise_for_status()
+            syms = {s["symbol"]: s for s in r.json().get("symbols", [])}
+            btc = syms.get("BTCUSDT")
+            if btc:
+                ok(f"BTCUSDT status : {btc.get('status')}")
+                ok(f"Contract type  : {btc.get('contractType')}")
+                for f in btc.get("filters", []):
+                    if f["filterType"] == "LOT_SIZE":
+                        ok(f"Min qty        : {f['minQty']} BTC  |  step: {f['stepSize']} BTC")
+                    if f["filterType"] == "MIN_NOTIONAL":
+                        ok(f"Min notional   : ${f.get('notional', '?')}")
+            else:
+                warn("BTCUSDT not found in exchangeInfo")
+        except Exception as e:
+            warn(f"exchangeInfo: {e}")
 
-    # ── 7. Account balance (requires read permission) ──────────
-    print("\n[7] Fetching futures wallet balance (read permission)...")
-    try:
-        balance  = await exchange.fetch_balance()
-        usdt_free  = float(balance.get("free",  {}).get("USDT", 0.0))
-        usdt_total = float(balance.get("total", {}).get("USDT", 0.0))
-        print(f"{OK} Read permission confirmed")
-        print(f"     USDT Free  : ${usdt_free:,.2f}")
-        print(f"     USDT Total : ${usdt_total:,.2f}")
-        if usdt_total < 5.0:
-            print(f"{WARN} Balance is very low — transfer USDT to your futures wallet to trade")
-    except ccxt.AuthenticationError as e:
-        print(f"{FAIL} Authentication failed: {e}")
-        print(f"     → Check API key permissions: 'Enable Futures' must be ticked")
-        await exchange.close()
-        sys.exit(1)
-    except Exception as e:
-        print(f"{FAIL} Could not fetch balance: {e}")
+        # ── 4. Signed: wallet balance ─────────────────────────────
+        print(f"\n[4] Signed request -> futures wallet balance...")
+        usdt_free = 0.0
+        try:
+            data = await sget(client, "/fapi/v2/balance")
+            assets = {a["asset"]: a for a in data}
+            usdt = assets.get("USDT", {})
+            usdt_free   = float(usdt.get("availableBalance", 0))
+            usdt_wallet = float(usdt.get("walletBalance", 0))
+            usdt_pnl    = float(usdt.get("unrealizedProfit", 0))
+            ok("Signed request accepted -> API key & secret are VALID")
+            ok(f"USDT wallet balance   : ${usdt_wallet:.4f}")
+            ok(f"USDT available (free) : ${usdt_free:.4f}")
+            ok(f"USDT unrealised PnL   : ${usdt_pnl:.4f}")
+            if usdt_free < 1.0:
+                warn("Available USDT < $1. Transfer USDT to your Binance FUTURES wallet (not Spot) before going live!")
+        except httpx.HTTPStatusError as e:
+            sc = e.response.status_code
+            body = e.response.text[:200]
+            if sc == 401:
+                fail(f"401 Unauthorised -> API key INVALID or secret wrong")
+            elif sc == 403:
+                fail(f"403 Forbidden -> IP restriction? Key may be whitelisted to another IP")
+            else:
+                fail(f"HTTP {sc}: {body}")
+            return
+        except Exception as e:
+            fail(f"Balance fetch failed: {e}")
+            return
 
-    # ── 8. Leverage set check ──────────────────────────────────
-    print(f"\n[8] Testing leverage set ({LEVERAGE}×) for {SYMBOL}...")
-    try:
-        result = await exchange.set_leverage(LEVERAGE, SYMBOL)
-        print(f"{OK} Leverage set to {LEVERAGE}× successfully")
-    except ccxt.BadRequest as e:
-        # Binance returns this if leverage is already at target — treat as success
-        if "leverage not modified" in str(e).lower():
-            print(f"{OK} Leverage already at {LEVERAGE}× (no change needed)")
-        else:
-            print(f"{WARN} Leverage set returned warning: {e}")
-    except ccxt.PermissionDenied as e:
-        print(f"{FAIL} No futures trading permission: {e}")
-        print(f"     → Enable 'Futures Trading' in Binance API settings")
-    except Exception as e:
-        print(f"{FAIL} Leverage set failed: {e}")
+        # ── 5. Account permission flags ───────────────────────────
+        print(f"\n[5] Account & permission flags...")
+        try:
+            acct = await sget(client, "/fapi/v2/account")
+            can_trade = acct.get("canTrade", False)
+            if can_trade:
+                ok("canTrade = True  ->  Futures trading ENABLED on this key")
+            else:
+                fail("canTrade = False  ->  Futures trading NOT enabled!")
+                warn("Fix: Binance.com -> API Management -> Edit -> tick 'Enable Futures'")
 
-    # ── Summary ────────────────────────────────────────────────
-    banner("Diagnostic Complete")
-    print("  If all checks passed, your bot is ready to trade on")
-    print(f"  Binance USDM Futures ({'TESTNET' if TESTNET else 'LIVE'}).")
+            for flag in ("canDeposit", "canWithdraw", "multiAssetsMargin"):
+                v = acct.get(flag)
+                if v is not None:
+                    ok(f"{flag} = {v}")
+
+            ft = acct.get("feeTier")
+            if ft is not None:
+                rates = [0.040, 0.040, 0.035, 0.032, 0.030, 0.027, 0.025, 0.022, 0.020, 0.017]
+                r = rates[min(ft, 9)]
+                ok(f"Fee tier: {ft}  (taker ~{r:.3f}%  |  maker ~{r*0.5:.3f}%)")
+        except Exception as e:
+            warn(f"Account flags error: {e}")
+
+        # ── 6. Set leverage (non-destructive) ─────────────────────
+        print(f"\n[6] Set leverage {LEVERAGE}x on BTCUSDT (no order placed)...")
+        try:
+            resp = await spost(client, "/fapi/v1/leverage",
+                               {"symbol": "BTCUSDT", "leverage": LEVERAGE})
+            ok(f"Leverage set -> {resp.get('leverage')}x on {resp.get('symbol')}")
+        except httpx.HTTPStatusError as e:
+            j = e.response.json() if e.response.content else {}
+            code = j.get("code", "?")
+            msg  = j.get("msg",  "?")
+            if code == -4028:
+                ok(f"Leverage already at {LEVERAGE}x (no change, code {code})")
+            else:
+                fail(f"set_leverage failed [{code}]: {msg}")
+                if "permission" in str(msg).lower():
+                    warn("Key missing 'Enable Futures' permission in Binance API settings")
+        except Exception as e:
+            fail(f"set_leverage error: {e}")
+
+        # ── 7. Open positions ─────────────────────────────────────
+        print(f"\n[7] Open positions on BTCUSDT...")
+        try:
+            data = await sget(client, "/fapi/v2/positionRisk", {"symbol": "BTCUSDT"})
+            active = [p for p in data if float(p.get("positionAmt", 0)) != 0]
+            if active:
+                for p in active:
+                    side  = "LONG" if float(p["positionAmt"]) > 0 else "SHORT"
+                    size  = abs(float(p["positionAmt"]))
+                    entry = p.get("entryPrice", "?")
+                    pnl   = p.get("unRealizedProfit", "?")
+                    warn(f"OPEN {side}: {size} BTC @ ${entry}  PnL=${pnl}")
+            else:
+                ok("No open positions on BTCUSDT")
+        except Exception as e:
+            warn(f"Positions error: {e}")
+
+    # ── Summary ───────────────────────────────────────────────────
+    head("RESULT")
+    if usdt_free >= 1.0:
+        ok("API key VALID + funded. Bot is ready for LIVE futures trading.")
+        ok("The Railway (USA) server will connect to fapi.binance.com with no regional issues.")
+    else:
+        warn("API key VALID but Futures wallet is empty.")
+        warn("Go to Binance -> Wallet -> Futures -> Transfer USDT from Spot to Futures wallet.")
     print()
-    print("  Next step: set BOT_TESTNET=false in Railway when ready to go live.")
-    print()
 
-    await exchange.close()
 
 if __name__ == "__main__":
     asyncio.run(run())

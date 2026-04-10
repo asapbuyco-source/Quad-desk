@@ -32,6 +32,7 @@ class TradingExecutor:
         tg_token: str = "",
         tg_chat_id: str = "",
         leverage: int = 1,
+        ed25519_private_key: str = "",  # Ed25519 PEM key — no IP whitelist required
     ):
         self.testnet     = testnet
         self.exchange_id = exchange_id.lower()
@@ -50,7 +51,9 @@ class TradingExecutor:
         if self.exchange_id == "coinbase":
             self.exchange = self._init_coinbase(coinbase_key_name, coinbase_private_key)
         elif self.exchange_id == "binanceusdm":
-            self.exchange = self._init_binance_futures(api_key, api_secret, testnet)
+            self.exchange = self._init_binance_futures(
+                api_key, api_secret, testnet, ed25519_private_key
+            )
         else:
             # Binance Spot (legacy / fallback)
             self.exchange = self._init_binance(api_key, api_secret, testnet)
@@ -126,25 +129,60 @@ class TradingExecutor:
         return exchange
 
     @staticmethod
-    def _init_binance_futures(api_key: str, api_secret: str, testnet: bool) -> ccxt.Exchange:
+    def _init_binance_futures(
+        api_key: str,
+        api_secret: str,
+        testnet: bool,
+        ed25519_private_key: str = "",
+    ) -> ccxt.Exchange:
         """
         Binance USDM Perpetual Futures (ccxt.binanceusdm).
-        Same API key/secret as Binance Spot but routed to the USDM futures endpoint.
-        Testnet uses Binance's dedicated futures testnet.
+
+        Signing modes (auto-detected by ccxt from the 'secret' field):
+        ─────────────────────────────────────────────────────────────
+        • Ed25519 (preferred):
+            Pass the PEM private key as 'secret'.
+            ccxt detects the '-----BEGIN' header and uses Ed25519 signing.
+            Advantage: NO IP whitelist required on Binance — works from
+            Railway dynamic IPs and your local machine simultaneously.
+
+        • HMAC-SHA256 (fallback):
+            Pass the API secret string as 'secret'.
+            Requires IP whitelisting when Futures permission is enabled.
+
+        Railway (USA) <-> Binance Europe:
+        - adjustForTimeDifference=True  : auto-corrects server clock skew
+          (prevents -1021 timestamp errors across time zones).
+        - recvWindow=10000              : 10 s tolerance for cross-continental
+          latency (default 5 s is too tight under load).
+        - fapi.binance.com is globally accessible — no regional block.
         """
+        # Normalise Ed25519 PEM: .env stores \n as literal backslash-n
+        effective_secret = api_secret
+        if ed25519_private_key:
+            effective_secret = ed25519_private_key.replace("\\n", "\n").strip()
+            logger.info("[Executor] Using Ed25519 signing (no IP whitelist required)")
+        else:
+            logger.info("[Executor] Using HMAC-SHA256 signing")
+
         exchange = ccxt.binanceusdm({
             "apiKey":          api_key,
-            "secret":          api_secret,
+            "secret":          effective_secret,
             "enableRateLimit": True,
             "options": {
-                "defaultType": "future",
-                "adjustForTimeDifference": True
+                "defaultType":             "future",
+                "adjustForTimeDifference": True,
+                "recvWindow":              10000,
+                "fetchCurrencies":         False,  # skip Spot /sapi detour
             },
         })
+        exchange.has["fetchCurrencies"] = False
         exchange.load_time_difference()
         if testnet:
             exchange.set_sandbox_mode(True)
-        logger.info(f"[Executor] Binance USDM Futures ({'testnet' if testnet else 'LIVE'}) initialised.")
+        mode = "TESTNET" if testnet else "LIVE"
+        sig  = "Ed25519" if ed25519_private_key else "HMAC-SHA256"
+        logger.info(f"[Executor] Binance USDM Futures ({mode}) | signing={sig}")
         return exchange
 
     # ------------------------------------------------------------------
@@ -890,12 +928,23 @@ class TradingExecutor:
                 return
 
             sl_side = "sell" if side == "buy" else "buy"
-            sl_limit = entry * 0.999 if side == "buy" else entry * 1.001
 
             new_sl = None
             for attempt in range(3):
                 try:
-                    if self.exchange_id == "binance":
+                    if self.is_futures:
+                        # Futures break-even: replace with a new STOP_MARKET at entry
+                        new_sl = await self.exchange.create_order(
+                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
+                            amount=fmt_size,
+                            params={
+                                "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, entry)),
+                                "closePosition": True,
+                                "workingType":   "MARK_PRICE",
+                            },
+                        )
+                    elif self.exchange_id == "binance":
+                        sl_limit = entry * 0.999 if side == "buy" else entry * 1.001
                         new_sl = await self.exchange.create_order(
                             symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
                             amount=fmt_size,
@@ -903,6 +952,7 @@ class TradingExecutor:
                             params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, entry))},
                         )
                     else:
+                        sl_limit = entry * 0.999 if side == "buy" else entry * 1.001
                         new_sl = await self.exchange.create_order(
                             symbol=ex_symbol, type="limit", side=sl_side,
                             amount=fmt_size,

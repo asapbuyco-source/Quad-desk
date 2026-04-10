@@ -86,10 +86,15 @@ class MarketState:
 
 class BinanceDataFeed:
     """
-    Async WebSocket feed for Binance Spot (Live or Testnet).
+    Async WebSocket feed for Binance USDM Futures (Live or Testnet).
 
-    Testnet endpoint: wss://testnet.binance.vision/stream?streams=...
-    Live endpoint:    wss://stream.binance.com:9443/stream?streams=...
+    Live endpoint:    wss://fstream.binance.com/stream?streams=...
+    Testnet endpoint: wss://stream.binancefuture.com/stream?streams=...
+
+    REST klines use fapi.binance.com/fapi/v1/klines (futures),
+    NOT api.binance.com/api/v3/klines (spot).
+    Using spot endpoints for a futures bot produces slightly different
+    price/volume data and misses funding-rate-driven price divergence.
     """
 
     def __init__(self, symbol: str = "BTCUSDT", interval: str = "15m", testnet: bool = True):
@@ -97,18 +102,18 @@ class BinanceDataFeed:
         self.interval = interval.lower()
         self.state = MarketState(symbol)
 
-        # FIX: Binance Testnet Spot uses a different base URL
+        # Binance USDM Futures endpoints (separate from Spot)
         if testnet:
-            self.rest_url = "https://testnet.binance.vision"
-            base_url = "wss://testnet.binance.vision"
+            self.rest_url = "https://testnet.binancefuture.com"
+            base_url = "wss://stream.binancefuture.com"
         else:
-            # Connect to Binance Global explicitly to match CCXT's default routing
-            self.rest_url = "https://api.binance.com"
-            base_url = "wss://stream.binance.com:9443"
+            # Live Futures — global endpoint, no regional block on Railway/USA
+            self.rest_url = "https://fapi.binance.com"
+            base_url = "wss://fstream.binance.com"
 
         streams = (
             f"{self.symbol}@kline_{self.interval}"
-            f"/{self.symbol}@trade"
+            f"/{self.symbol}@aggTrade"      # Futures uses aggTrade, not trade
             f"/{self.symbol}@depth20@100ms"
         )
         self.ws_url = f"{base_url}/stream?streams={streams}"
@@ -133,7 +138,8 @@ class BinanceDataFeed:
         try:
             if '@kline_' in stream:
                 self.state.add_candle(data['k'], data['k']['x'])
-            elif '@trade' in stream:
+            elif '@aggTrade' in stream:
+                # Futures aggTrade uses same fields as Spot trade (p, q, m, T)
                 self.state.add_trade(data)
             elif '@depth' in stream:
                 self.state.update_depth(data)
@@ -146,8 +152,9 @@ class BinanceDataFeed:
     # REST API Prefetch
     # ------------------------------------------------------------------
     async def _fetch_historical_candles_rest(self):
-        """Fetch 100 recent candles to warm up the Quant Engine immediately."""
-        url = f"{self.rest_url}/api/v3/klines"
+        """Fetch 100 recent candles from Binance USDM Futures REST to warm up the Quant Engine."""
+        # Futures klines live under /fapi/v1/klines, NOT /api/v3/klines (spot)
+        url = f"{self.rest_url}/fapi/v1/klines"
         params = {
             "symbol": self.symbol.upper(),
             "interval": self.interval,
