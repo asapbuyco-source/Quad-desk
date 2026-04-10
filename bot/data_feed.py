@@ -77,8 +77,8 @@ class MarketState:
     # ------------------------------------------------------------------
     def update_depth(self, depth_data: dict):
         """Full snapshot of the top-20 levels."""
-        self.bids = {float(p): float(q) for p, q in depth_data['bids']}
-        self.asks = {float(p): float(q) for p, q in depth_data['asks']}
+        self.bids = {float(p): float(q) for p, q in depth_data.get('b', [])}
+        self.asks = {float(p): float(q) for p, q in depth_data.get('a', [])}
         # Remove levels with zero quantity (Binance sends these as deletes)
         self.bids = {p: q for p, q in self.bids.items() if q > 0}
         self.asks = {p: q for p, q in self.asks.items() if q > 0}
@@ -160,10 +160,14 @@ class BinanceDataFeed:
             "interval": self.interval,
             "limit": 100
         }
+        import os
+        api_key = os.environ.get("BINANCE_API_KEY", "")
+        headers = {"X-MBX-APIKEY": api_key} if api_key else {}
+        
         try:
             logger.info(f"[DataFeed] Fetching historical {self.interval} candles from {url}...")
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 

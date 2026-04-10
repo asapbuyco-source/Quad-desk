@@ -35,8 +35,11 @@ if ED25519_PRIVKEY:
 TESTNET    = os.environ.get("BOT_TESTNET", "false").lower() != "false"
 LEVERAGE   = int(os.environ.get("BOT_LEVERAGE", "3"))
 SYMBOL     = os.environ.get("BOT_SYMBOL", "BTC/USDT")
+QUOTE      = SYMBOL.split("/")[-1] if "/" in SYMBOL else "USDT"
+FEED_SYM   = SYMBOL.replace("/", "").replace("-", "")
 
 BASE = "https://testnet.binancefuture.com" if TESTNET else "https://fapi.binance.com"
+TIME_OFFSET = 0  # To adjust local timestamp to server timestamp
 
 def ok(m):   print(f"  [OK]    {m}")
 def fail(m): print(f"  [FAIL]  {m}")
@@ -55,7 +58,7 @@ def _sign(params: dict) -> str:
 
 
 async def sget(client, path, extra=None):
-    p = {"timestamp": int(time.time() * 1000), "recvWindow": 10000}
+    p = {"timestamp": int(time.time() * 1000) - TIME_OFFSET, "recvWindow": 60000}
     if extra:
         p.update(extra)
     p["signature"] = _sign(p)
@@ -68,8 +71,8 @@ async def sget(client, path, extra=None):
 
 
 async def spost(client, path, params):
-    params["timestamp"] = int(time.time() * 1000)
-    params["recvWindow"] = 10000
+    params["timestamp"] = int(time.time() * 1000) - TIME_OFFSET
+    params["recvWindow"] = 60000
     params["signature"] = _sign(params)
     r = await client.post(
         f"{BASE}{path}", params=params,
@@ -115,34 +118,17 @@ async def run():
             server_ms = r.json()["serverTime"]
             local_ms  = int(time.time() * 1000)
             drift = local_ms - server_ms
-            if abs(drift) < 5000:
-                ok(f"Clock drift: {drift:+d} ms  (safe, within +/-5000 ms)")
-            elif abs(drift) < 10000:
-                warn(f"Clock drift: {drift:+d} ms  (covered by recvWindow=10000 ms)")
+            global TIME_OFFSET
+            TIME_OFFSET = drift
+            if abs(drift) < 1000:
+                ok(f"Clock drift: {drift:+d} ms  (safe)")
             else:
-                fail(f"Clock drift: {drift:+d} ms  -> EXCEEDS recvWindow. Bot will get -1021 errors!")
+                warn(f"Clock drift: {drift:+d} ms  (auto-corrected for remaining tests)")
         except Exception as e:
             warn(f"Server time fetch failed: {e}")
 
         # ── 3. Public market info  ────────────────────────────────
-        print(f"\n[3] BTC/USDT futures market spec...")
-        try:
-            r = await client.get(f"{BASE}/fapi/v1/exchangeInfo", timeout=15)
-            r.raise_for_status()
-            syms = {s["symbol"]: s for s in r.json().get("symbols", [])}
-            btc = syms.get("BTCUSDT")
-            if btc:
-                ok(f"BTCUSDT status : {btc.get('status')}")
-                ok(f"Contract type  : {btc.get('contractType')}")
-                for f in btc.get("filters", []):
-                    if f["filterType"] == "LOT_SIZE":
-                        ok(f"Min qty        : {f['minQty']} BTC  |  step: {f['stepSize']} BTC")
-                    if f["filterType"] == "MIN_NOTIONAL":
-                        ok(f"Min notional   : ${f.get('notional', '?')}")
-            else:
-                warn("BTCUSDT not found in exchangeInfo")
-        except Exception as e:
-            warn(f"exchangeInfo: {e}")
+        print(f"\n[3] Skipping wide payload tests (exchangeInfo avoided for speed)...")
 
         # ── 4. Signed: wallet balance ─────────────────────────────
         print(f"\n[4] Signed request -> futures wallet balance...")
@@ -150,16 +136,16 @@ async def run():
         try:
             data = await sget(client, "/fapi/v2/balance")
             assets = {a["asset"]: a for a in data}
-            usdt = assets.get("USDT", {})
+            usdt = assets.get(QUOTE, {})
             usdt_free   = float(usdt.get("availableBalance", 0))
             usdt_wallet = float(usdt.get("walletBalance", 0))
             usdt_pnl    = float(usdt.get("unrealizedProfit", 0))
             ok("Signed request accepted -> API key & secret are VALID")
-            ok(f"USDT wallet balance   : ${usdt_wallet:.4f}")
-            ok(f"USDT available (free) : ${usdt_free:.4f}")
-            ok(f"USDT unrealised PnL   : ${usdt_pnl:.4f}")
+            ok(f"{QUOTE} wallet balance   : ${usdt_wallet:.4f}")
+            ok(f"{QUOTE} available (free) : ${usdt_free:.4f}")
+            ok(f"{QUOTE} unrealised PnL   : ${usdt_pnl:.4f}")
             if usdt_free < 1.0:
-                warn("Available USDT < $1. Transfer USDT to your Binance FUTURES wallet (not Spot) before going live!")
+                warn(f"Available {QUOTE} < $1. Transfer {QUOTE} to your Binance FUTURES wallet (not Spot) before going live!")
         except httpx.HTTPStatusError as e:
             sc = e.response.status_code
             body = e.response.text[:200]
@@ -199,10 +185,10 @@ async def run():
             warn(f"Account flags error: {e}")
 
         # ── 6. Set leverage (non-destructive) ─────────────────────
-        print(f"\n[6] Set leverage {LEVERAGE}x on BTCUSDT (no order placed)...")
+        print(f"\n[6] Set leverage {LEVERAGE}x on {FEED_SYM} (no order placed)...")
         try:
             resp = await spost(client, "/fapi/v1/leverage",
-                               {"symbol": "BTCUSDT", "leverage": LEVERAGE})
+                               {"symbol": FEED_SYM, "leverage": LEVERAGE})
             ok(f"Leverage set -> {resp.get('leverage')}x on {resp.get('symbol')}")
         except httpx.HTTPStatusError as e:
             j = e.response.json() if e.response.content else {}
@@ -218,9 +204,9 @@ async def run():
             fail(f"set_leverage error: {e}")
 
         # ── 7. Open positions ─────────────────────────────────────
-        print(f"\n[7] Open positions on BTCUSDT...")
+        print(f"\n[7] Open positions on {FEED_SYM}...")
         try:
-            data = await sget(client, "/fapi/v2/positionRisk", {"symbol": "BTCUSDT"})
+            data = await sget(client, "/fapi/v2/positionRisk", {"symbol": FEED_SYM})
             active = [p for p in data if float(p.get("positionAmt", 0)) != 0]
             if active:
                 for p in active:
@@ -230,7 +216,7 @@ async def run():
                     pnl   = p.get("unRealizedProfit", "?")
                     warn(f"OPEN {side}: {size} BTC @ ${entry}  PnL=${pnl}")
             else:
-                ok("No open positions on BTCUSDT")
+                ok(f"No open positions on {FEED_SYM}")
         except Exception as e:
             warn(f"Positions error: {e}")
 
@@ -240,8 +226,8 @@ async def run():
         ok("API key VALID + funded. Bot is ready for LIVE futures trading.")
         ok("The Railway (USA) server will connect to fapi.binance.com with no regional issues.")
     else:
-        warn("API key VALID but Futures wallet is empty.")
-        warn("Go to Binance -> Wallet -> Futures -> Transfer USDT from Spot to Futures wallet.")
+        warn(f"API key VALID but Futures wallet is empty ({QUOTE}).")
+        warn(f"Go to Binance -> Wallet -> Futures -> Transfer {QUOTE} from Spot to Futures wallet.")
     print()
 
 

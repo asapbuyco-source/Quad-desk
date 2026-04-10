@@ -122,7 +122,6 @@ class TradingExecutor:
                 "adjustForTimeDifference": True
             },
         })
-        exchange.load_time_difference()
         if testnet:
             exchange.set_sandbox_mode(True)
         logger.info(f"[Executor] Binance Spot ({'testnet' if testnet else 'live'}) initialised.")
@@ -177,7 +176,6 @@ class TradingExecutor:
             },
         })
         exchange.has["fetchCurrencies"] = False
-        exchange.load_time_difference()
         if testnet:
             exchange.set_sandbox_mode(True)
         mode = "TESTNET" if testnet else "LIVE"
