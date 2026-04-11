@@ -11,8 +11,13 @@ builder      = "nixpacks"
 watchPatterns = ["bot/**"]
 
 [deploy]
+# Set region to Amsterdam (Europe) to avoid Binance USA restrictions
+# NOTE: If this doesn't automatically switch the region, you MUST still update 
+# it manually in your Railway Dashboard -> Service Settings -> Region
+region = "eu-west-1"
+
 # Create a virtualenv in /tmp (always writable even on Nix) so pip can
 # install freely without hitting the externally-managed-environment wall.
-startCommand      = "python3 -m venv /tmp/botenv && /tmp/botenv/bin/pip install --quiet -r bot/requirements.txt && /tmp/botenv/bin/python -m bot.main"
+startCommand      = "python3 -m venv /tmp/botenv && /tmp/botenv/bin/pip install --quiet -r bot/requirements.txt && /tmp/botenv/bin/python bot/verify_region.py && /tmp/botenv/bin/python -m bot.main"
 restartPolicyType = "ON_FAILURE"
 numReplicas       = 1
