@@ -798,6 +798,72 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
     # ------------------------------------------------------------------
+    async def monitor_active_position_v3(self, current_price: float, metrics: Dict[str, Any]):
+        """
+        Dynamic trade management:
+        - Locks SL to break-even at +1 ATR profit
+        - Trails SL progressively as profit increases
+        - Checks exchange for exit fills
+        """
+        pos = self.active_position
+        if not pos:
+            return
+
+        if self.dry_run:
+            self.check_position_exit(current_price)
+            return
+
+        side = pos["side"]
+        entry = pos["entry_price"]
+        sl = pos["stop_loss"]
+        atr = pos.get("atr_at_entry", current_price * 0.005)
+        
+        is_long = side == "buy"
+        
+        # Calculate R-multiple (profit in terms of initial risk / ATR)
+        profit_r = (current_price - entry) / atr if is_long else (entry - current_price) / atr
+            
+        # 1. Break-Even Lock at +1R
+        if profit_r >= 1.0 and not pos.get("tp1_hit"):
+            pos["tp1_hit"] = True
+            new_sl = entry + (atr * 0.1) if is_long else entry - (atr * 0.1) # BE + slight buffer
+            
+            # Ensure we only move SL strictly in the direction of profit
+            if (is_long and new_sl > sl) or (not is_long and new_sl < sl):
+                logger.info(f"[Monitor] +1.0R Reached. Moving SL to Break-Even ({new_sl:.2f})")
+                pos["stop_loss"] = new_sl
+                await self._move_stop_loss(new_sl)
+
+        # 2. Dynamic Trailing Stop at +2R
+        if profit_r >= 2.0 and not pos.get("tp2_hit"):
+            pos["tp2_hit"] = True
+            # Trail by 1.5 ATR behind current price
+            new_sl = current_price - (atr * 1.5) if is_long else current_price + (atr * 1.5)
+            
+            if (is_long and new_sl > pos["stop_loss"]) or (not is_long and new_sl < pos["stop_loss"]):
+                logger.info(f"[Monitor] +2.0R Reached. Trailing SL to {new_sl:.2f}")
+                pos["stop_loss"] = new_sl
+                await self._move_stop_loss(new_sl)
+        
+        # 3. Position Sync Check
+        # Every cycle we also check if CCXT reports the position as closed via our exchange SL/TP hit
+        try:
+            if self.is_futures:
+                positions = await self.exchange.fetch_positions([pos["symbol"]])
+                for p in positions:
+                    if p["symbol"] == self._to_exchange_symbol(pos["symbol"]):
+                        if float(p.get("contracts", 0.0)) == 0.0:
+                            logger.info(f"[Monitor] Exchange shows {pos['symbol']} is flat. Clearing local state.")
+                            self.active_position = None
+                            self.pending_order = None
+                            # A side filled, so cancel any orphaned opposing limit/stop orders
+                            await self.cancel_opposing_orders(filled_side="unknown")
+                            break
+        except Exception as e:
+            # We don't want a network hiccup here to crash the loop
+            logger.debug(f"[Monitor] Failed to sync remote position status: {e}")
+
+
     def check_position_exit(self, current_price: float) -> tuple:
         """
         Check SL/TP for dry-run mode.
