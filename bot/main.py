@@ -714,11 +714,13 @@ async def execution_loop(
             if n_hist >= PANIC_LOOKBACK:
                 lookback_price = feed.state.candles[-PANIC_LOOKBACK]["close"]
                 if lookback_price > 0:
-                    drop_pct = (lookback_price - current_price) / lookback_price * 100
-                    if drop_pct >= PANIC_DROP_PCT:
+                    abs_divergence_pct = abs(current_price - lookback_price) / lookback_price * 100
+                    if abs_divergence_pct >= PANIC_DROP_PCT:
+                        direction = "crash" if current_price < lookback_price else "squeeze"
+                        sign = "-" if current_price < lookback_price else "+"
                         panic_reason = (
-                            f"Flash crash detected: "
-                            f"-{drop_pct:.2f}% in {PANIC_LOOKBACK} candles "
+                            f"Flash {direction} detected: "
+                            f"{sign}{abs_divergence_pct:.2f}% in {PANIC_LOOKBACK} candles "
                             f"(from ${lookback_price:.2f} → ${current_price:.2f})"
                         )
                         await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)

@@ -283,6 +283,48 @@ class TradingExecutor:
 
             logger.info("[Executor] Proceeding with manual market state for BTC/USDC and BTC/USD...")
 
+        # --- Phase 1: Robust System State Recovery (Cross-reboot sync) ---
+        if not self.dry_run and self.is_futures:
+            try:
+                positions = await self.exchange.fetch_positions()
+                for pos in positions:
+                    size_amt = pos.get('info', {}).get('positionAmt', pos.get('contracts', 0))
+                    if size_amt is not None and abs(float(size_amt)) > 0:
+                        ex_symbol = pos.get('symbol', 'UNKNOWN')
+                        size = abs(float(size_amt))
+                        side = "buy" if float(size_amt) > 0 else "sell"
+                        
+                        logger.info(f"[Executor] Recovered active position on boot: {ex_symbol} | Size: {size_amt}")
+                        
+                        sl, tp = 0.0, 0.0
+                        try:
+                            # Safely fetch open orders to derive the running SL/TP triggers
+                            orders = await self.exchange.fetch_open_orders(ex_symbol)
+                            for o in orders:
+                                o_type = o.get('type', '').lower()
+                                if 'stop' in o_type:
+                                    sl = float(o.get('stopPrice', 0.0))
+                                elif 'take_profit' in o_type or 'limit' in o_type:
+                                    tp = float(o.get('price', o.get('stopPrice', 0.0)))
+                        except Exception as e:
+                            logger.warning(f"[Executor] Could not fully sync open orders for {ex_symbol}: {e}")
+                            
+                        entry_price = float(pos.get('entryPrice', 0.0))
+                        
+                        self.active_position = {
+                            "symbol":      ex_symbol,
+                            "side":        side,
+                            "size":        size,
+                            "entry_price": entry_price,
+                            "stop_loss":   sl,
+                            "take_profit": tp,
+                            "dry_run":     False,
+                        }
+                        logger.info(f"[Executor] Reconstructed Internal State: SL={sl} TP={tp} Entry={entry_price}")
+                        break
+            except Exception as e:
+                logger.warning(f"[Executor] Failed to automatically sync positions on boot: {e}")
+
     async def close(self):
         await self.exchange.close()
 
@@ -572,6 +614,14 @@ class TradingExecutor:
             # Futures: with Nx leverage the max notional = usdt × N
             lev_factor = self.leverage if self.is_futures else 1.0
             max_cost   = usdt_avail * lev_factor * (1.0 - self.EXCHANGE_FEE_RATE)
+
+            # --- Minimum Notional Hard-Block ---
+            min_notional = 5.0
+            if self.is_futures and max_cost < min_notional:
+                err = f"Account max notional (${max_cost:.2f}) is below exchange minimum (${min_notional:.2f}). Aborting trade to avoid API loop."
+                logger.warning(f"[Executor] {err}")
+                await self.notifier.send_error_alert(err)
+                return
 
             if side == "buy" or self.is_futures:
                 # BUY (spot or futures) and Futures SHORT — cap by USDT margin
