@@ -85,6 +85,15 @@ class TradingExecutor:
         return bool(api_key and api_secret)
 
     @staticmethod
+    def _is_position_closed_error(e: Exception) -> bool:
+        """
+        Detects Binance's '-4509' and related errors indicating a `closePosition`
+        or `reduceOnly` order was placed when the position was already 0.0 remotely.
+        """
+        err_str = str(e).lower()
+        return "-4509" in err_str or "gte can only be used" in err_str or "reduceonly" in err_str or "-2022" in err_str
+
+    @staticmethod
     def _init_coinbase(key_name: str, private_key: str) -> ccxt.Exchange:
         """
         Coinbase Advanced Trade uses EC/RSA private keys, not HMAC secrets.
@@ -722,6 +731,9 @@ class TradingExecutor:
                         )
                         break
                     except Exception as e:
+                        if self._is_position_closed_error(e):
+                            logger.info("[Executor] Position closed instantly on exchange. Ignoring SL placement.")
+                            break
                         if attempt == 2: raise e
                         logger.warning(f"[Executor] Futures SL failed: {e}. Retrying {attempt+1}/3...")
                         await asyncio.sleep(0.5)
@@ -742,6 +754,9 @@ class TradingExecutor:
                         )
                         break
                     except Exception as e:
+                        if self._is_position_closed_error(e):
+                            logger.info("[Executor] Position closed instantly on exchange. Ignoring TP placement.")
+                            break
                         if attempt == 2: raise e
                         logger.warning(f"[Executor] Futures TP failed: {e}. Retrying {attempt+1}/3...")
                         await asyncio.sleep(0.5)
@@ -910,7 +925,10 @@ class TradingExecutor:
                         f"| Realized PnL ≈ ${realized_pnl:.2f} | Remaining: {pos['size']:.4f}"
                     )
                 except Exception as e:
-                    logger.warning(f"[Monitor] Partial close failed at +1R: {e}. Proceeding with BE lock only.")
+                    if self._is_position_closed_error(e):
+                        logger.info(f"[Monitor] Position {ex_symbol} already closed on exchange (-4509). Ignoring partial TP.")
+                    else:
+                        logger.warning(f"[Monitor] Partial close failed at +1R: {e}. Proceeding with BE lock only.")
 
             # Lock SL to break-even + 0.1 ATR buffer
             new_sl = entry + (atr * 0.1) if is_long else entry - (atr * 0.1)
@@ -1085,6 +1103,9 @@ class TradingExecutor:
                     )
                 break
             except Exception as e:
+                if self._is_position_closed_error(e):
+                    logger.info("[Executor] Position already closed remotely (-4509). Ignoring SL move.")
+                    break
                 if attempt == 2:
                     logger.error(f"[Executor] Failed to place modified SL at {new_sl_price}: {e}")
                     break
