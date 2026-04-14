@@ -26,13 +26,57 @@ logger = logging.getLogger(__name__)
 _db: Optional[Any] = None
 
 
+def _normalize_pem(raw_key: str) -> str:
+    """
+    Normalize a PEM private key string from any storage encoding to a valid PEM.
+
+    Environment variables can encode newlines as:
+      - Literal \\n (single backslash-n, standard JSON)  → replace with \n
+      - Literal \\\\n (double backslash-n, some CI/CD tools) → replace with \n
+      - \\r\\n (Windows line endings)                     → replace with \n
+
+    The 'InvalidData(InvalidPadding)' Firebase error is caused by a PEM key
+    that has its header/footer on separate lines but the base64 body is a
+    single long string (missing internal newlines). All three patterns above
+    produce that broken structure if not normalized correctly.
+    """
+    # Step 1: collapse any double-escaped sequences first (\\\\n → \\n)
+    key = raw_key.replace("\\\\n", "\n")
+    # Step 2: replace remaining single-escaped (\\n → \n) and Windows (\\r\\n)
+    key = key.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
+    return key.strip()
+
+
+def _validate_pem(key: str) -> bool:
+    """
+    Quick structural validation of a PEM private key without full cryptographic
+    loading. Checks that the key has a BEGIN header, END footer, and at least
+    one line of base64-encoded content between them.
+    Returns True if the key looks valid, False otherwise.
+    """
+    lines = [l.strip() for l in key.splitlines() if l.strip()]
+    if len(lines) < 3:
+        return False
+    has_header = any("BEGIN" in l for l in lines)
+    has_footer = any("END" in l for l in lines)
+    has_body   = len(lines) >= 3  # at least header + 1 body line + footer
+    return has_header and has_footer and has_body
+
+
 def init_firebase() -> Optional[Any]:
     """
     Initialise Firebase Admin SDK.
     Returns a Firestore client on success, None on any failure.
+
+    Credential source priority:
+    1. FIREBASE_ADMIN_CREDENTIALS — full JSON string of service account key
+    2. FIREBASE_CREDENTIALS        — legacy alias (same format)
     """
     global _db
-    cred_json = os.environ.get("FIREBASE_ADMIN_CREDENTIALS", "").strip()
+    cred_json = (
+        os.environ.get("FIREBASE_ADMIN_CREDENTIALS", "").strip() or
+        os.environ.get("FIREBASE_CREDENTIALS", "").strip()
+    )
     if not cred_json:
         logger.warning(
             "[Heartbeat] FIREBASE_ADMIN_CREDENTIALS not set — "
@@ -45,8 +89,19 @@ def init_firebase() -> Optional[Any]:
         from firebase_admin import credentials, firestore as fs
 
         cred_dict = json.loads(cred_json)
+
+        # ── Fix PEM newlines (the root cause of 'InvalidPadding') ──────────
         if "private_key" in cred_dict:
-            cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+            raw = cred_dict["private_key"]
+            normalized = _normalize_pem(raw)
+            if not _validate_pem(normalized):
+                logger.error(
+                    "[Heartbeat] Firebase private_key PEM is malformed after normalization.\n"
+                    "  → Re-export the service account JSON from Firebase Console and paste\n"
+                    "    the raw file contents (not the escaped string) into FIREBASE_ADMIN_CREDENTIALS."
+                )
+                return None
+            cred_dict["private_key"] = normalized
 
         if not firebase_admin._apps:
             cred = credentials.Certificate(cred_dict)
@@ -57,9 +112,17 @@ def init_firebase() -> Optional[Any]:
         return _db
 
     except json.JSONDecodeError:
-        logger.error("[Heartbeat] FIREBASE_ADMIN_CREDENTIALS is not valid JSON.")
+        logger.error(
+            "[Heartbeat] FIREBASE_ADMIN_CREDENTIALS is not valid JSON. "
+            "Ensure the entire service account JSON is set as a single-line env var."
+        )
     except Exception as e:
-        logger.error(f"[Heartbeat] Firebase init failed: {e}")
+        logger.error(
+            f"[Heartbeat] Firebase init failed: {e}\n"
+            "  → Fix: Re-export the service account key from Firebase Console → "
+            "Project Settings → Service Accounts → Generate New Private Key.\n"
+            "  → Then set FIREBASE_ADMIN_CREDENTIALS to the full raw JSON content."
+        )
     return None
 
 import threading
@@ -127,18 +190,34 @@ def get_db() -> Optional[Any]:
 
 async def run_heartbeat(stats: dict) -> None:
     """
-    Continuously writes bot status to Firestore every 10 s.
+    Continuously writes bot status to Firestore every 60 s.
     `stats` is a shared dict mutated by the main execution loop.
     Gracefully exits if Firebase is not initialised.
-    """
-    if _db is None:
-        return
 
+    If Firebase was not available at startup (e.g. bad credentials), this
+    function will retry initialisation every 5 minutes so a credential fix
+    at runtime is picked up automatically without restarting the bot.
+    """
     from firebase_admin import firestore as fs
-    doc_ref = _db.collection("botStatus").document("live")
+
+    RETRY_INTERVAL   = 300   # seconds between init retries when _db is None
+    WRITE_INTERVAL   = 60    # seconds between heartbeat writes
+    retry_countdown  = 0
 
     while True:
         try:
+            # ── Retry init if Firebase not yet connected ───────────────────
+            if _db is None:
+                if retry_countdown <= 0:
+                    logger.info("[Heartbeat] Retrying Firebase initialisation…")
+                    init_firebase()
+                    retry_countdown = RETRY_INTERVAL
+                else:
+                    retry_countdown -= WRITE_INTERVAL
+                await asyncio.sleep(WRITE_INTERVAL)
+                continue
+
+            doc_ref = _db.collection("botStatus").document("live")
             payload = {
                 "isRunning":       True,
                 "lastHeartbeat":   fs.SERVER_TIMESTAMP,
@@ -157,11 +236,10 @@ async def run_heartbeat(stats: dict) -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"[Heartbeat] Firebase sync error: {e}")
+            logger.warning(f"[Heartbeat] Firebase sync error (will retry): {e}")
 
         try:
-            # Increase interval to 60s to save Firebase free tier quota
-            await asyncio.sleep(60)
+            await asyncio.sleep(WRITE_INTERVAL)
         except asyncio.CancelledError:
             break
 

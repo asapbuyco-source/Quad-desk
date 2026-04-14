@@ -52,6 +52,8 @@ class QuantEngine:
         cvd = self.state.cvd
         atr = self._atr(highs, lows, closes)
 
+        vpoc = self._volume_poc(c_list)
+
         return {
             "symbol": self.state.symbol,
             "price": current_price,
@@ -67,6 +69,7 @@ class QuantEngine:
             "allWalls": all_walls_str,
             "atr": atr,
             "atr_pct": atr / current_price if current_price > 0 else 0.0,
+            "vpoc": vpoc,
         }
 
     # ------------------------------------------------------------------
@@ -237,21 +240,45 @@ class QuantEngine:
         return float(bull_odds / (bull_odds + 1.0))
 
     # ------------------------------------------------------------------
+    # 8. Volume Point of Control (VPOC)
+    # ------------------------------------------------------------------
+    def _volume_poc(self, candles, n: int = 24) -> Optional[float]:
+        """
+        Identify the $10 price bucket with the highest cumulative traded
+        volume over the last N candles (default 24 = ~6 hours on 15m bars).
+
+        This is the session's strongest mean-reversion magnet:
+        - BUY entries near/below VPOC have a higher probability of reverting up.
+        - SELL entries near/above VPOC have higher rejection probability.
+        Returns None if insufficient candle data.
+        """
+        candle_list = list(candles)[-n:]
+        if len(candle_list) < 2:
+            return None
+        price_vol: Dict[int, float] = {}
+        for c in candle_list:
+            bucket = int(round(float(c["close"]) / 10.0)) * 10
+            price_vol[bucket] = price_vol.get(bucket, 0.0) + float(c.get("volume", 0.0))
+        if not price_vol:
+            return None
+        return float(max(price_vol, key=price_vol.get))
+
+    # ------------------------------------------------------------------
     # 7. ATR — Average True Range (14 periods)
     # ------------------------------------------------------------------
     def _atr(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
         """Wilder ATR over `period` bars using numpy directly."""
         if len(closes) < period + 1:
             return 0.0
-        
+
         h = highs[-(period+1):]
         l = lows[-(period+1):]
         c = closes[-(period+1):]
         prev_c = c[:-1]
-        
+
         tr1 = h[1:] - l[1:]
         tr2 = np.abs(h[1:] - prev_c)
         tr3 = np.abs(l[1:] - prev_c)
-        
+
         tr = np.maximum(tr1, np.maximum(tr2, tr3))
         return float(np.mean(tr))

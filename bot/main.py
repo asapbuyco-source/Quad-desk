@@ -77,14 +77,14 @@ except Exception as e:
 # ──────────────────────────────────────────────────────────────────────
 EXCHANGE            = os.environ.get("BOT_EXCHANGE",            "binanceusdm").lower()
 SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USDC" if EXCHANGE == "coinbase" else "BTC/USDT")
-TESTNET             = os.environ.get("BOT_TESTNET",             "true").lower() != "false"
+TESTNET             = os.environ.get("BOT_TESTNET",             "false").lower() != "false"
 MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        "1.0"))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  "3.0"))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
-MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.70"))
+MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.62"))  # 62% — achievable by Bayesian engine in normal market conditions
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
-LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "1"))    # futures leverage (1 = same risk as spot)
+LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "3"))    # futures leverage (3× = efficient margin on Binance USDM)
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
 
 # Fee rates: Coinbase Spot 1.2% | Binance Spot 0.1% | Binance USDM Futures 0.04%
@@ -144,6 +144,8 @@ BOT_STATS: Dict[str, Any] = {
 }
 
 LAST_CASCADE_TIME = 0.0
+LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can compute delta
+LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -167,6 +169,57 @@ def _parse_walls(all_walls_str: Optional[str]) -> Tuple[List[float], List[float]
 # ── STAGE 2 — MARKET REGIME DETECTION ────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
+
+def _htf_trend(candle_history: list) -> str:
+    """
+    Derive a higher-timeframe (4H) trend direction from the last 16 15m candles.
+    16 × 15m = 4 hours.  Returns 'BULL', 'BEAR', or 'NEUTRAL'.
+
+    Blocks counter-trend entries:
+    - HTF = BULL  →  block SELL / MEAN_REVERSAL_SHORT
+    - HTF = BEAR  →  block BUY  / MEAN_REVERSAL_LONG
+    - HTF = NEUTRAL → allow either direction
+    """
+    if len(candle_history) < 16:
+        return "NEUTRAL"
+    htf_open  = float(candle_history[-16]["open"])
+    htf_close = float(candle_history[-1]["close"])
+    if htf_open <= 0:
+        return "NEUTRAL"
+    change_pct = (htf_close - htf_open) / htf_open
+    if change_pct >  0.002:   # +0.2% over 4H = clear uptrend
+        return "BULL"
+    if change_pct < -0.002:   # -0.2% over 4H = clear downtrend
+        return "BEAR"
+    return "NEUTRAL"
+
+
+def _vpoc_confidence_boost(price: float, vpoc: Optional[float], direction: str) -> float:
+    """
+    Return a confidence addend (+0.0 to +0.06) based on how close the entry
+    price is to the Volume Point of Control (VPOC — the session's highest-volume
+    price level, acting as a mean-reversion magnet).
+
+    Logic:
+    - BUY near/below VPOC → buyer is entering at a proven value area → boost
+    - SELL near/above VPOC → seller is fading from a proven resistance → boost
+    - Entry far from VPOC on the wrong side → no boost (returns 0.0)
+    """
+    if vpoc is None or price <= 0:
+        return 0.0
+    dist_pct = abs(price - vpoc) / price   # distance as fraction of price
+    is_long  = direction in ("BUY", "MEAN_REVERSAL_LONG")
+
+    aligned = (is_long and price <= vpoc * 1.002) or (not is_long and price >= vpoc * 0.998)
+    if not aligned:
+        return 0.0
+
+    # Graduated boost: 0.06 when at VPOC, falling to 0 at 0.3% away
+    if dist_pct <= 0.003:
+        return round(0.06 * (1.0 - dist_pct / 0.003), 4)
+    return 0.0
+
+
 def _detect_regime(metrics: Dict[str, Any],
                    buy_walls: List[float],
                    sell_walls: List[float]) -> str:
@@ -175,7 +228,7 @@ def _detect_regime(metrics: Dict[str, Any],
     tape    = metrics["tapeSpeed"]
     atr_pct = metrics["atr_pct"]
 
-    WALL_PROXIMITY = 0.001
+    WALL_PROXIMITY = 0.0005  # Tightened: only walls within 0.05% of price trigger LIQUIDITY regime
     near_wall = any(abs(price - w) / price <= WALL_PROXIMITY for w in (buy_walls[:1] + sell_walls[:1]))
     if near_wall:
         return "LIQUIDITY"
@@ -293,6 +346,13 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     Stage 5: Macro Bayesian Logic
     Updates the prior confidence (from QuantEngine) with current directional evidence.
     Returns: Confidence score (0-1) in the *target signal direction*.
+
+    Improvements over original:
+    - Sweep Neutralizer is context-aware: higher floor when OFI/CVD confirm direction
+    - Metrics extracted before Neutralizer (needed for context)
+    - Mid-range OFI tier (5-10) now gets a partial boost (was binary ≥10 only)
+    - CVD delta (rate-of-change) used: recovering CVD = bullish even when absolute CVD < 0
+    - Scaled skew boost: gradual 0→15% as |skew| 0.05→0.30 (was never triggered at > 0.5)
     """
     # 1. Start with the prior confidence from Quant Engine Stage 4 (which is P-Bull)
     p_bull_prior = metrics.get("bayesianPosterior", 0.5)
@@ -300,47 +360,69 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
 
     # 2. Base Signal Confidence
     p_signal_prior = p_bull_prior if is_long else (1.0 - p_bull_prior)
-    
-    # [NEW] SWEEP NEUTRALIZER: If we find a sweep, don't let 
-    # a historical trend (Prior) handicap the reversion signal.
+
+    # --- Extract all market metrics before Sweep Neutralizer (needed for context check) ---
+    ofi       = metrics.get("ofi", 0.0)
+    cvd       = metrics.get("cvd", 0.0)
+    cvd_delta = metrics.get("cvd_delta", 0.0)  # positive = buy pressure returning
+    skew      = metrics.get("skewness", 0.0)
+    dominant  = metrics.get("tapeDominant", "BALANCED")
+    tape      = metrics.get("tapeSpeed", "NORMAL")
+    rsi       = metrics.get("rsi", 50.0)
+
+    # [IMPROVED] SWEEP NEUTRALIZER: context-aware confidence floor.
+    # Strong OFI+CVD alignment → floor 0.60 | mild alignment → 0.55 | bare sweep → 0.52
     if is_sweep:
-        p_signal_prior = max(0.50, p_signal_prior)
+        strong_confirm = (
+            (is_long  and ofi >  5 and cvd_delta > 0) or
+            (not is_long and ofi < -5 and cvd_delta < 0)
+        )
+        mild_confirm = (
+            (is_long  and (ofi > 0 or cvd_delta > 0)) or
+            (not is_long and (ofi < 0 or cvd_delta < 0))
+        )
+        if strong_confirm:
+            p_signal_prior = max(0.60, p_signal_prior)
+        elif mild_confirm:
+            p_signal_prior = max(0.55, p_signal_prior)
+        else:
+            p_signal_prior = max(0.52, p_signal_prior)
 
     # 3. Transform to Odds
     # Clip to avoid division by zero/infinity during transformation
     p_signal_prior = max(0.01, min(0.99, p_signal_prior))
     odds = p_signal_prior / (1.0 - p_signal_prior)
 
-    ofi      = metrics.get("ofi", 0.0)
-    cvd      = metrics.get("cvd", 0.0)
-    skew     = metrics.get("skewness", 0.0)
-    dominant = metrics.get("tapeDominant", "BALANCED")
-    tape     = metrics.get("tapeSpeed", "NORMAL")
-    rsi      = metrics.get("rsi", 50.0)
-
-    # 4. Flow Multipliers (OFI/CVD) — direction-support check
-    # We apply multipliers (>1.0) if the evidence supports our target signal
+    # 4. Flow Multipliers (OFI/CVD/CVD-delta) — direction-support check
+    # Tiered OFI: >10 = strong, 5-10 = moderate. CVD delta captures recovering buy pressure
+    # even when absolute CVD is still negative (key for post-selloff BUY entries).
     flow_factor = 1.0
     if is_long:
-        if ofi > 10:  flow_factor *= 1.25
-        if cvd > 0:   flow_factor *= 1.15
-    else: # SHORT signal
-        if ofi < -10: flow_factor *= 1.25
-        if cvd < 0:   flow_factor *= 1.15
-    
+        if ofi > 10:           flow_factor *= 1.25
+        elif ofi > 5:          flow_factor *= 1.10   # Mid-range OFI: partial boost
+        if cvd > 0:            flow_factor *= 1.15
+        elif cvd_delta > 100:  flow_factor *= 1.08   # CVD recovering → mild bullish tailwind
+        elif cvd_delta < -100: flow_factor *= 0.90   # CVD accelerating down → headwind
+    else:  # SHORT signal
+        if ofi < -10:          flow_factor *= 1.25
+        elif ofi < -5:         flow_factor *= 1.10   # Mid-range OFI: partial boost
+        if cvd < 0:            flow_factor *= 1.15
+        elif cvd_delta < -100: flow_factor *= 1.08   # CVD dropping → mild bearish tailwind
+        elif cvd_delta > 100:  flow_factor *= 0.90   # CVD recovering → headwind for shorts
+
     odds *= flow_factor
 
     # 5. Contextual Oscillator check — Regime-aware
     osc_factor = 1.0
     if regime == "TREND":
         # Trend continuation: RSI in signal direction confirms momentum
-        if is_long and rsi > 65:      osc_factor *= 1.15
+        if is_long and rsi > 65:       osc_factor *= 1.15
         elif not is_long and rsi < 35: osc_factor *= 1.15
     elif regime == "LIQUIDITY":
         # Sweep reversal: Overextended RSI supports a bounce/rejection
         if not is_long and rsi > 60:   osc_factor *= 1.60  # Overbought strongly helps SELL
         elif is_long and rsi < 40:     osc_factor *= 1.60  # Oversold strongly helps BUY
-        
+
         # Momentum Chase Penalty: avoid entry if RSI already buried too deep
         if not is_long and rsi < 32:   osc_factor *= 0.75
         if is_long and rsi > 68:       osc_factor *= 0.75
@@ -352,9 +434,16 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
         if is_long and "BUY" in dominant:        odds *= 1.20
         elif not is_long and "SELL" in dominant: odds *= 1.20
 
-    # 7. Skew check
-    if is_long and skew > 0.5:        odds *= 1.15
-    elif not is_long and skew < -0.5: odds *= 1.15
+    # 7. [IMPROVED] Scaled Skew boost — proportional to skew magnitude.
+    # Old: binary cutoff at ±0.5 (never reached; max observed was 0.142).
+    # New: scales from 1.0→1.15 as |skew| goes from 0.05→0.30.
+    if abs(skew) >= 0.05:
+        skew_magnitude = min(abs(skew), 0.30) / 0.30   # normalise 0→1, cap at |0.30|
+        skew_boost     = 1.0 + skew_magnitude * 0.15   # 1.00 → 1.15
+        if is_long and skew > 0:
+            odds *= skew_boost
+        elif not is_long and skew < 0:
+            odds *= skew_boost
 
     # 8. Convert back to probability (Confidence in Signal)
     p_final = odds / (1.0 + odds)
@@ -418,10 +507,10 @@ def _apply_ulis_gate(
 
     if is_long:
         rsi_valid = 40 <= rsi <= 70
-        ofi_valid = ofi > -5.0
+        ofi_valid = ofi > -8.0   # Loosened: near-zero OFI should not block valid LONG entries
     else:
         rsi_valid = 30 <= rsi <= 60
-        ofi_valid = ofi < 5.0
+        ofi_valid = ofi < 8.0    # Symmetrical: near-zero OFI should not block valid SHORT entries
 
     red_lights = 0
     if not rsi_valid: red_lights += 1
@@ -533,8 +622,12 @@ def _compute_signal(
     if time_since_cascade < 300:  # 5 minutes
         return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {300 - int(time_since_cascade)}s remain)"}
 
+    global LAST_CANDLE_TS
+    import time as _time
+
     price = metrics["price"]
     atr   = metrics.get("atr", price * 0.005)
+    vpoc  = metrics.get("vpoc")
 
     # Stage 1: Parse walls
     buy_walls, sell_walls = _parse_walls(metrics.get("allWalls"))
@@ -544,8 +637,23 @@ def _compute_signal(
     logger.info(f"[Regime] {regime} | Z={metrics['zScore']:.2f} | "
                 f"ATR%={metrics.get('atr_pct', 0):.3%} | Tape={metrics['tapeSpeed']}")
 
+    # Stage 2b: HTF (4H) Trend Filter — block counter-trend entries
+    htf = _htf_trend(candle_history)
+    if htf != "NEUTRAL":
+        logger.info(f"[HTF] 4H trend = {htf}")
+
     # Stage 3: Sweep detection
     sweep = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
+
+    # Stage 3b: Candle-Close Confirmation Gate (LIQUIDITY_SWEEP only)
+    # Only allow sweep entries in the first 2 analysis cycles (~20s) after a
+    # new 15m candle opens. Mid-candle sweeps are often wicks that revert before close.
+    if sweep:
+        current_candle_ts = float(candle_history[-1]["time"]) if candle_history else 0.0
+        age_s = _time.time() - current_candle_ts   # seconds since this candle opened
+        if age_s > 20:   # more than ~2 cycles into the candle
+            logger.info(f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s). Waiting for next candle open.")
+            sweep = None  # suppress the sweep signal
 
     # Stage 4: Strategy
     raw_direction: Optional[str] = None
@@ -571,8 +679,24 @@ def _compute_signal(
     if raw_direction is None:
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
 
+    # Stage 4b: HTF Counter-Trend Block
+    is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
+    if htf == "BEAR" and is_long_dir:
+        logger.warning(f"[HTF] Blocking LONG — 4H trend is BEAR. Waiting for HTF alignment.")
+        return {**WAIT, "analysis": f"HTF=BEAR blocks {raw_direction} entry. No counter-trend trade."}
+    if htf == "BULL" and not is_long_dir:
+        logger.warning(f"[HTF] Blocking SHORT — 4H trend is BULL. Waiting for HTF alignment.")
+        return {**WAIT, "analysis": f"HTF=BULL blocks {raw_direction} entry. No counter-trend trade."}
+
     # Stage 5: Bayesian fusion
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
+
+    # Stage 5b: VPOC Proximity Confidence Boost
+    vpoc_boost = _vpoc_confidence_boost(price, vpoc, raw_direction)
+    if vpoc_boost > 0.0:
+        confidence = min(1.0, confidence + vpoc_boost)
+        logger.info(f"[VPOC] Near VPOC ({vpoc:.0f}). Confidence boosted by +{vpoc_boost:.2%} → {confidence:.2%}")
+
     logger.info(f"[BayesFusion] direction={raw_direction} | P={confidence:.2%}")
 
     if confidence < MIN_CONFIDENCE:
@@ -767,6 +891,20 @@ async def execution_loop(
 
             # Stage 1: Compute metrics (Needed for ATR trailing stop in V3 monitor)
             metrics = quant.compute_metrics()
+
+            # Inject CVD delta (rate-of-change) for Bayesian fusion.
+            # A recovering CVD (e.g. -1450 → -950) is a bullish signal even when absolute CVD < 0.
+            if metrics is not None:
+                global LAST_CVD
+                _current_cvd = metrics.get("cvd", 0.0)
+                metrics["cvd_delta"] = _current_cvd - LAST_CVD
+                LAST_CVD = _current_cvd
+
+                # Update candle-close tracker so the candle-close gate in _compute_signal
+                # knows how old the current candle is.
+                global LAST_CANDLE_TS
+                if feed.state.candles:
+                    LAST_CANDLE_TS = float(feed.state.candles[-1]["time"])
 
             if executor.active_position:
                 if metrics is not None:

@@ -613,7 +613,7 @@ class TradingExecutor:
             usdt_avail = await self.get_usdt_balance(account_size)
             # Futures: with Nx leverage the max notional = usdt × N
             lev_factor = self.leverage if self.is_futures else 1.0
-            max_cost   = usdt_avail * lev_factor * (1.0 - self.EXCHANGE_FEE_RATE)
+            max_cost   = usdt_avail * lev_factor * 0.90   # 90% cap: 10% buffer prevents "insufficient margin" errors when wallet is partially depleted
 
             # --- Minimum Notional Hard-Block ---
             min_notional = 5.0
@@ -873,14 +873,49 @@ class TradingExecutor:
         # Calculate R-multiple (profit in terms of initial risk / ATR)
         profit_r = (current_price - entry) / atr if is_long else (entry - current_price) / atr
             
-        # 1. Break-Even Lock at +1R
+        # 1. Partial Close (50%) + Break-Even Lock at +1R
+        # ─────────────────────────────────────────────────────────────────────
+        # When profit reaches +1 ATR:
+        #   a) Close 50% of the position at market (reduceOnly) → book half the gain
+        #   b) Move SL to break-even + small buffer
+        # Net effect: the remaining 50% now rides to TP2 risk-free.
+        # Converts trades that hit +1R then reverse into flat sessions instead of losses.
         if profit_r >= 1.0 and not pos.get("tp1_hit"):
-            pos["tp1_hit"] = True
-            new_sl = entry + (atr * 0.1) if is_long else entry - (atr * 0.1) # BE + slight buffer
-            
-            # Ensure we only move SL strictly in the direction of profit
+            pos["tp1_hit"]  = True
+            ex_symbol       = pos["symbol"]
+            close_side      = "sell" if is_long else "buy"
+            original_size   = pos.get("original_size", pos["size"])
+            partial_size    = original_size * 0.50  # Close half
+
+            # Precision-format the partial size
+            try:
+                partial_fmt = float(self.exchange.amount_to_precision(ex_symbol, partial_size))
+            except Exception:
+                partial_fmt = round(partial_size, 4)
+
+            # Place the partial close market order
+            if partial_fmt > 0:
+                try:
+                    partial_order = await self.exchange.create_market_order(
+                        ex_symbol, close_side, partial_fmt,
+                        params={"reduceOnly": True}
+                    )
+                    realized_pnl = (
+                        (current_price - entry) * partial_fmt if is_long
+                        else (entry - current_price) * partial_fmt
+                    )
+                    pos["size"] = original_size - partial_fmt   # Remaining position
+                    logger.info(
+                        f"[Monitor] +1.0R — Partial close: {partial_fmt} {ex_symbol} @ {current_price:.2f} "
+                        f"| Realized PnL ≈ ${realized_pnl:.2f} | Remaining: {pos['size']:.4f}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[Monitor] Partial close failed at +1R: {e}. Proceeding with BE lock only.")
+
+            # Lock SL to break-even + 0.1 ATR buffer
+            new_sl = entry + (atr * 0.1) if is_long else entry - (atr * 0.1)
             if (is_long and new_sl > sl) or (not is_long and new_sl < sl):
-                logger.info(f"[Monitor] +1.0R Reached. Moving SL to Break-Even ({new_sl:.2f})")
+                logger.info(f"[Monitor] Moving SL to Break-Even ({new_sl:.2f})")
                 pos["stop_loss"] = new_sl
                 await self._move_stop_loss(new_sl)
 
@@ -889,11 +924,12 @@ class TradingExecutor:
             pos["tp2_hit"] = True
             # Trail by 1.5 ATR behind current price
             new_sl = current_price - (atr * 1.5) if is_long else current_price + (atr * 1.5)
-            
+
             if (is_long and new_sl > pos["stop_loss"]) or (not is_long and new_sl < pos["stop_loss"]):
                 logger.info(f"[Monitor] +2.0R Reached. Trailing SL to {new_sl:.2f}")
                 pos["stop_loss"] = new_sl
                 await self._move_stop_loss(new_sl)
+
         
         # 3. Position Sync Check
         # Every cycle we also check if CCXT reports the position as closed via our exchange SL/TP hit
