@@ -77,8 +77,10 @@ class MarketState:
     # ------------------------------------------------------------------
     def update_depth(self, depth_data: dict):
         """Full snapshot of the top-20 levels."""
-        self.bids = {float(p): float(q) for p, q in depth_data.get('b', [])}
-        self.asks = {float(p): float(q) for p, q in depth_data.get('a', [])}
+        raw_b = depth_data.get('b', depth_data.get('bids', []))
+        raw_a = depth_data.get('a', depth_data.get('asks', []))
+        self.bids = {float(p): float(q) for p, q in raw_b}
+        self.asks = {float(p): float(q) for p, q in raw_a}
         # Remove levels with zero quantity (Binance sends these as deletes)
         self.bids = {p: q for p, q in self.bids.items() if q > 0}
         self.asks = {p: q for p, q in self.asks.items() if q > 0}

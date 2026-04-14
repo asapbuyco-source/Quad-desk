@@ -237,21 +237,24 @@ const App: React.FC = () => {
                     processTradeTick(trade);
                 }
                 else if (stream.includes('@depth')) {
-                    const asks: OrderBookLevel[] = data.asks.map((a: any) => {
+                    const rawAsks = data.asks || data.a || [];
+                    const rawBids = data.bids || data.b || [];
+
+                    const asks: OrderBookLevel[] = rawAsks.map((a: any) => {
                         const price = parseFloat(a[0]);
                         const size = parseFloat(a[1]);
                         const prevSize = lastDispatchedBookRef.current.asks.get(price) ?? size;
                         return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
                     });
-                    const bids: OrderBookLevel[] = data.bids.map((b: any) => {
+                    const bids: OrderBookLevel[] = rawBids.map((b: any) => {
                         const price = parseFloat(b[0]);
                         const size = parseFloat(b[1]);
                         const prevSize = lastDispatchedBookRef.current.bids.get(price) ?? size;
                         return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
                     });
 
-                    data.asks.forEach((a: any) => lastDispatchedBookRef.current.asks.set(parseFloat(a[0]), parseFloat(a[1])));
-                    data.bids.forEach((b: any) => lastDispatchedBookRef.current.bids.set(parseFloat(b[0]), parseFloat(b[1])));
+                    rawAsks.forEach((a: any) => lastDispatchedBookRef.current.asks.set(parseFloat(a[0]), parseFloat(a[1])));
+                    rawBids.forEach((b: any) => lastDispatchedBookRef.current.bids.set(parseFloat(b[0]), parseFloat(b[1])));
 
                     processDepthUpdate({ asks, bids, metrics: {} });
                 }
