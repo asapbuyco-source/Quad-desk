@@ -368,13 +368,23 @@ class TradingExecutor:
                 await self.notifier.send_error_alert(err)
                 return
         else:
-            # For SELL (Short) on Spot: Check if we actually have assets to sell
-            btc_bal = await self.get_btc_balance()
-            if btc_bal <= 0.00001: 
-                err = f"Aborting SELL signal: No BTC balance available to sell on spot account."
-                logger.warning(f"[Executor] {err}")
-                await self.notifier.send_error_alert(err)
-                return
+            # For SELL: Check balance appropriately
+            if self.is_futures:
+                # Futures: Need USDC margin to open short
+                usdc_equity = await self.get_usdt_balance(account_size)
+                if usdc_equity < 5:
+                    err = f"Insufficient USDC margin (${usdc_equity:.2f}) to open SHORT on Binance Futures. Min $5 required."
+                    logger.warning(f"[Executor] {err}")
+                    await self.notifier.send_error_alert(err)
+                    return
+            else:
+                # Spot: Need BTC in account to sell
+                btc_bal = await self.get_btc_balance()
+                if btc_bal <= 0.00001: 
+                    err = f"Aborting SELL signal: No BTC balance available to sell on spot account."
+                    logger.warning(f"[Executor] {err}")
+                    await self.notifier.send_error_alert(err)
+                    return
 
         raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
         if raw_size <= 0.0:
