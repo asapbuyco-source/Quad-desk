@@ -1017,6 +1017,16 @@ async def main():
     heartbeat.init_firebase()
 
     feed     = BinanceDataFeed(symbol=FEED_SYMBOL, interval=CANDLE_INTERVAL, testnet=TESTNET)
+    quant    = QuantEngine(feed.state)
+    executor = TradingExecutor(
+        api_key=BINANCE_API_KEY,
+        api_secret=BINANCE_API_SECRET or BINANCE_ED25519_PRIVKEY,
+        testnet=TESTNET,
+        dry_run=DRY_RUN,
+        exchange_id=EXCHANGE,
+        tg_token=TG_BOT_TOKEN,
+        tg_chat_id=TG_CHAT_ID
+    )
 
     loop           = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()

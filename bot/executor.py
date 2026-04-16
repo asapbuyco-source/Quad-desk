@@ -34,6 +34,7 @@ class TradingExecutor:
     ):
         self.testnet   = testnet
         self.exchange_id = exchange_id.lower()
+        self.is_futures  = "binanceusdm" in self.exchange_id or "future" in self.exchange_id
         self.dry_run   = dry_run or not self._has_credentials(
             exchange_id, api_key, api_secret, coinbase_key_name, coinbase_private_key
         )
@@ -98,9 +99,14 @@ class TradingExecutor:
             "secret":          api_secret,
             "enableRateLimit": True,
             "options": {
-                "defaultType": "spot",
+                "defaultType": "future" if "binanceusdm" in str(api_key).lower() or "future" in str(api_key).lower() else "spot",
+                "adjustForTimeDifference": True,
             },
         })
+        # If exchange_id wasn't specific, but we targeted binanceusdm in main.py, force it here
+        if "binanceusdm" in str(ccxt.binance.__name__).lower() or testnet:
+             exchange.options["defaultType"] = "future"
+        
         if testnet:
             exchange.set_sandbox_mode(True)
         logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised.")
@@ -469,60 +475,103 @@ class TradingExecutor:
             sl_order_id = None
             tp_order_id = None
 
-            # Stop-loss order (exchange-specific type)
-            sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
-            sl_order = None
-            for attempt in range(3):
-                try:
-                    if self.exchange_id == "binance":
+            if self.is_futures:
+                # ── FUTURES: STOP_MARKET + TAKE_PROFIT_MARKET ────────────────
+                # closePosition=True closes the full position; workingType=MARK_PRICE
+                # avoids wick-triggered stops from momentary spread spikes.
+                sl_order = None
+                for attempt in range(3):
+                    try:
                         sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
+                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
                             amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                            params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
+                            params={
+                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
+                                "closePosition": True,
+                                "workingType":  "MARK_PRICE",
+                            },
                         )
-                    else:
-                        # Coinbase Advanced Trade V3 specific stop directions
-                        stop_params = {"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss))}
-                        if self.exchange_id == "coinbase":
-                            # Fix: stop_price > current_price (Short SL) needs STOP_DIRECTION_STOP_UP
-                            # Fix: stop_price < current_price (Long SL) needs STOP_DIRECTION_STOP_DOWN
-                            direction = "STOP_DIRECTION_STOP_UP" if stop_loss > current_price else "STOP_DIRECTION_STOP_DOWN"
-                            stop_params["stop_direction"] = direction
-                            
-                        sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="limit", side=sl_side,
-                            amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                            params=stop_params,
-                        )
-                    break
-                except Exception as e:
-                    if attempt == 2: raise e
-                    logger.warning(f"[Executor] SL placement failed: {e}. Retrying {attempt+1}/3...")
-                    await asyncio.sleep(0.5)
-            sl_order_id = sl_order.get("id")
-            logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id})")
+                        break
+                    except Exception as e:
+                        if attempt == 2: raise e
+                        logger.warning(f"[Executor] Futures SL failed: {e}. Retrying {attempt+1}/3...")
+                        await asyncio.sleep(0.5)
+                sl_order_id = sl_order.get("id")
+                logger.info(f"[Executor] Futures STOP_MARKET at {stop_loss} (id={sl_order_id})")
 
-            # Take-profit limit order
-            tp_order = None
-            for attempt in range(3):
-                try:
-                    tp_order = await self.exchange.create_order(
-                        symbol=ex_symbol,
-                        type="limit",
-                        side=sl_side,
-                        amount=fmt_size,
-                        price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                        params={"timeInForce": "GTC"},
-                    )
-                    break
-                except Exception as e:
-                    if attempt == 2: raise e
-                    logger.warning(f"[Executor] TP placement failed: {e}. Retrying {attempt+1}/3...")
-                    await asyncio.sleep(0.5)
-            tp_order_id = tp_order.get("id")
-            logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
+                tp_order = None
+                for attempt in range(3):
+                    try:
+                        tp_order = await self.exchange.create_order(
+                            symbol=ex_symbol, type="TAKE_PROFIT_MARKET", side=sl_side,
+                            amount=fmt_size,
+                            params={
+                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                                "closePosition": True,
+                                "workingType":  "MARK_PRICE",
+                            },
+                        )
+                        break
+                    except Exception as e:
+                        if attempt == 2: raise e
+                        logger.warning(f"[Executor] Futures TP failed: {e}. Retrying {attempt+1}/3...")
+                        await asyncio.sleep(0.5)
+                tp_order_id = tp_order.get("id")
+                logger.info(f"[Executor] Futures TAKE_PROFIT_MARKET at {take_profit} (id={tp_order_id})")
+
+            else:
+                # ── SPOT: Exchange-specific limit SL/TP orders ────────────────
+                sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
+                sl_order = None
+                for attempt in range(3):
+                    try:
+                        if self.exchange_id == "binance":
+                            sl_order = await self.exchange.create_order(
+                                symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
+                                amount=fmt_size,
+                                price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                                params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
+                            )
+                        else:
+                            # Coinbase Advanced Trade V3 specific stop directions
+                            stop_params = {"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss))}
+                            if self.exchange_id == "coinbase":
+                                direction = "STOP_DIRECTION_STOP_UP" if stop_loss > current_price else "STOP_DIRECTION_STOP_DOWN"
+                                stop_params["stop_direction"] = direction
+                                
+                            sl_order = await self.exchange.create_order(
+                                symbol=ex_symbol, type="limit", side=sl_side,
+                                amount=fmt_size,
+                                price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                                params=stop_params,
+                            )
+                        break
+                    except Exception as e:
+                        if attempt == 2: raise e
+                        logger.warning(f"[Executor] SL placement failed: {e}. Retrying {attempt+1}/3...")
+                        await asyncio.sleep(0.5)
+                sl_order_id = sl_order.get("id")
+                logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id})")
+
+                # Take-profit limit order
+                tp_order = None
+                for attempt in range(3):
+                    try:
+                        tp_order = await self.exchange.create_order(
+                            symbol=ex_symbol,
+                            type="limit",
+                            side=sl_side,
+                            amount=fmt_size,
+                            price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                            params={"timeInForce": "GTC"},
+                        )
+                        break
+                    except Exception as e:
+                        if attempt == 2: raise e
+                        logger.warning(f"[Executor] TP placement failed: {e}. Retrying {attempt+1}/3...")
+                        await asyncio.sleep(0.5)
+                tp_order_id = tp_order.get("id")
+                logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
 
             self.active_position = {
                 "symbol":      ex_symbol,
@@ -714,7 +763,17 @@ class TradingExecutor:
             new_sl_order = None
             for attempt in range(3):
                 try:
-                    if self.exchange_id == "binance":
+                    if self.is_futures:
+                        new_sl_order = await self.exchange.create_order(
+                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
+                            amount=fmt_size,
+                            params={
+                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, be_stop_loss)),
+                                "closePosition": True,
+                                "workingType":  "MARK_PRICE",
+                            },
+                        )
+                    elif self.exchange_id == "binance":
                         new_sl_order = await self.exchange.create_order(
                             symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
                             amount=fmt_size,
