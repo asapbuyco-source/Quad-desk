@@ -1016,11 +1016,14 @@ async def main():
     # 1. Initialise Firebase connection early so FirestoreLogHandler can sync startup logs
     heartbeat.init_firebase()
 
+    # Preference: Use Ed25519 if it exists, otherwise fall back to HMAC secret
+    effective_secret = BINANCE_ED25519_PRIVKEY.strip() or BINANCE_API_SECRET.strip()
+
     feed     = BinanceDataFeed(symbol=FEED_SYMBOL, interval=CANDLE_INTERVAL, testnet=TESTNET)
     quant    = QuantEngine(feed.state)
     executor = TradingExecutor(
         api_key=BINANCE_API_KEY,
-        api_secret=BINANCE_API_SECRET or BINANCE_ED25519_PRIVKEY,
+        api_secret=effective_secret,
         testnet=TESTNET,
         dry_run=DRY_RUN,
         exchange_id=EXCHANGE,

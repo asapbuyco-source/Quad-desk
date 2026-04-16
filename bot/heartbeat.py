@@ -29,22 +29,35 @@ _db: Optional[Any] = None
 def _normalize_pem(raw_key: str) -> str:
     """
     Normalize a PEM private key string from any storage encoding to a valid PEM.
-
-    Environment variables can encode newlines as:
-      - Literal \\n (single backslash-n, standard JSON)  → replace with \n
-      - Literal \\\\n (double backslash-n, some CI/CD tools) → replace with \n
-      - \\r\\n (Windows line endings)                     → replace with \n
-
-    The 'InvalidData(InvalidPadding)' Firebase error is caused by a PEM key
-    that has its header/footer on separate lines but the base64 body is a
-    single long string (missing internal newlines). All three patterns above
-    produce that broken structure if not normalized correctly.
+    Includes wrapping long base64 strings to 64 chars to avoid InvalidPadding.
     """
-    # Step 1: collapse any double-escaped sequences first (\\\\n → \\n)
-    key = raw_key.replace("\\\\n", "\n")
-    # Step 2: replace remaining single-escaped (\\n → \n) and Windows (\\r\\n)
-    key = key.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
-    return key.strip()
+    # Step 1: clean newlines and quotes
+    key = raw_key.replace("\\\\n", "\n").replace("\\n", "\n")
+    key = key.replace("\\r\\n", "\n").replace("\r\n", "\n").strip()
+    key = key.strip('"').strip("'") # remove surrounding quotes if any
+
+    if not key: return ""
+
+    lines = [l.strip() for l in key.splitlines() if l.strip()]
+    if not lines: return ""
+
+    header, footer = "", ""
+    body_lines = []
+    
+    for l in lines:
+        if "BEGIN" in l: header = l
+        elif "END" in l: footer = l
+        else: body_lines.append(l)
+
+    if not header or not footer:
+        return key # fallback to original if structure is unknown
+
+    # Step 2: Flatten body and re-wrap at 64 chars
+    # This is crucial for 'InvalidPadding' errors
+    full_body = "".join(body_lines).replace(" ", "")
+    wrapped_body = [full_body[i:i+64] for i in range(0, len(full_body), 64)]
+
+    return "\n".join([header] + wrapped_body + [footer])
 
 
 def _validate_pem(key: str) -> bool:

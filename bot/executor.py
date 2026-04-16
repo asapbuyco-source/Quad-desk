@@ -96,13 +96,19 @@ class TradingExecutor:
 
     @staticmethod
     def _init_binance(api_key: str, api_secret: str, testnet: bool) -> ccxt.Exchange:
+        # ── Key Format Check (Ed25519 vs HMAC) ──────────────────────────
+        # If the secret contains BEGIN header, it's an Ed25519/RSA key.
+        is_ed25519 = str(api_secret).strip().startswith("-----BEGIN")
+        logger.info(f"[Executor] Initialising Binance ({'Ed25519' if is_ed25519 else 'HMAC'})")
+
         exchange = ccxt.binance({
             "apiKey":          api_key,
             "secret":          api_secret,
             "enableRateLimit": True,
             "options": {
-                "defaultType": "future" if "binanceusdm" in str(api_key).lower() or "future" in str(api_key).lower() else "spot",
+                "defaultType": "future" if "usdm" in str(api_key).lower() or "future" in str(api_key).lower() else "spot",
                 "adjustForTimeDifference": True,
+                "recvWindow": 10000, # 10s window to avoid signature-invalid due to clock drift
             },
         })
         # If exchange_id wasn't specific, but we targeted binanceusdm in main.py, force it here
