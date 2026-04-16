@@ -662,7 +662,7 @@ def _compute_signal(
     if sweep:
         current_candle_ts = float(candle_history[-1]["time"]) if candle_history else 0.0
         age_s = _time.time() - current_candle_ts   # seconds since this candle opened
-        if age_s > 120:   # Extended to 120s (first 2 minutes of candle)
+        if age_s > 300:   # Extended to 300s (first 5 minutes of candle)
             logger.info(f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s). Waiting for next candle open.")
             sweep = None  # suppress the sweep signal
 
