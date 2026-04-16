@@ -1,0 +1,133 @@
+Now I have everything I need. Let me do the full analysis.Now I have everything I need for a thorough audit. Let me produce the full report.Here is the full audit report.
+
+---
+
+## Quad Desk Bot — Deep Audit Report (April 2026)
+
+I've analyzed all 16 position records, ~50,000 log lines across both files, and cross-referenced every finding against the source code. Here is what's happening and exactly what to fix.
+
+---
+
+### Trade history summary
+
+From the CSV: 16 closed trades between April 11–13, all on BTCUSDC. Net PnL: **–$3.22**. The drawdown is almost entirely explained by a single catastrophic trade.---
+
+### The root cause of your drawdown, in plain terms
+
+The bot lost –$3.22, of which –$3.52 came from a single short on April 13 at 14:34. That short should have been stopped at roughly –$1.80 (1.5× ATR), but it ran for 1h 36m to –$3.52, meaning the stop loss order either wasn't placed or wasn't confirmed before the bot registered the position as active. The other 15 trades essentially netted +$0.30 — the bot's core signal quality is marginal but not broken.
+
+Since April 14, the bot has produced zero trades. The LIQUIDITY regime and CandleGate bugs together form a complete deadlock: the regime check fires on every single cycle because BTC's DOM always has walls within $37 of price (your 0.05% threshold is far too tight), and the only strategy available inside LIQUIDITY mode is sweep trades, which the CandleGate suppresses for 97.8% of every candle.
+
+### Priority fix order
+
+Do these in sequence, in Railway env vars first, then code deploys:
+
+**Immediate (env var changes, no code):**
+1. `BOT_SYMBOL=BTC/USDC` (not `usdc/btc`)
+2. `BOT_MAX_RISK_PCT=1.0` (not 3.0)
+3. `BOT_LEVERAGE=2` (not 3)
+4. `BOT_MAX_DAILY_LOSS_PCT=3.0` (not 10.0)
+
+**Code changes (deploy required):**
+5. In `bot/main.py → _detect_regime()`: `WALL_PROXIMITY = 0.002`
+6. In `bot/main.py → _compute_signal()`: `if age_s > 120:` (not `> 20`)
+7. In `bot/executor.py`: add SL confirmation check before setting `active_position`
+8. In `bot/executor.py → monitor_active_position_v3()`: `round(new_sl, 2)` on break-even SL
+9. Fix Firebase credentials (re-export the service account JSON)
+
+I'll start by reading the uploaded files to understand the actual trading history and logs.Now I have everything I need for a thorough audit. Let me compile the full analysis.Now I have everything needed for the full audit. Let me write it up.Now I have everything needed. Let me build the full audit report.Here's the full audit summary and fix plan.
+
+---
+
+## Fix Implementation Plan
+
+### Priority 1 — Fix within the hour (stops the bleeding)
+
+**Fix 1: Wall proximity threshold (the root cause of everything)**
+
+In `bot/main.py`, `_detect_regime()`:
+```python
+# BEFORE (kills the bot)
+WALL_PROXIMITY = 0.0005  # 0.05% — always true at BTC $74k
+
+# AFTER
+WALL_PROXIMITY = 0.003   # 0.3% — a meaningful wall signal
+```
+
+This single change will immediately unlock TREND and RANGE strategy branches.
+
+**Fix 2: CandleGate window**
+
+In `bot/main.py`, find the CandleGate block:
+```python
+# BEFORE — blocks almost every sweep
+if age_s > 20:
+
+# AFTER — allow sweeps throughout the candle, just not carryovers from previous
+candle_duration = 15 * 60  # 900s for 15m candles
+if age_s > candle_duration - 30:  # only block sweeps in last 30s of candle
+```
+
+**Fix 3: Risk per trade**
+
+In your Railway/Render env vars:
+```
+BOT_MAX_RISK_PCT=1.0   # down from 3.0
+BOT_MAX_DAILY_LOSS_PCT=5.0   # tighten from 10.0
+```
+
+**Fix 4: Symbol env var**
+
+```
+BOT_SYMBOL=BTC/USDC
+```
+
+---
+
+### Priority 2 — Fix within the day (stop churn and improve R:R)
+
+**Fix 5: Add a between-trade cooldown**
+
+In `bot/main.py`, after a position closes (in the execution loop where `exited=True` is detected), enforce a minimum wait regardless of whether it was a win or loss:
+
+```python
+# Add to BOT_STATS tracking
+LAST_TRADE_CLOSE_TIME = 0.0
+
+# In execution loop after exit detected:
+LAST_TRADE_CLOSE_TIME = time.time()
+
+# Before signal execution:
+if time.time() - LAST_TRADE_CLOSE_TIME < 300:  # 5-min cooldown after any close
+    continue
+```
+
+**Fix 6: Improve R:R by widening TP multiplier**
+
+In `bot/main.py`, `_risk_engine()`:
+```python
+TP_MULT = 2.5   # raise from 2.0 — give TP more room
+SL_MULT = 1.2   # tighten from 1.5 — reduce loss per trade
+```
+
+---
+
+### Priority 3 — Fix this week (reliability)
+
+**Fix 7: Firebase credential** — Re-export the service account JSON from Firebase Console → Project Settings → Service Accounts → Generate New Private Key. Paste the raw file contents (single line, escaped) into `FIREBASE_ADMIN_CREDENTIALS`. The current key has malformed PEM newlines.
+
+**Fix 8: Add a regime sanity check log** — After the regime detection, add a one-time startup assertion that checks if the regime has been LIQUIDITY for 10+ consecutive cycles and logs a WARNING. This gives you an early signal if the proximity bug re-emerges.
+
+---
+
+### Summary of expected improvements after fixes
+
+| Metric | Before | After (estimated) |
+|---|---|---|
+| Signals fired per 1,000 cycles | 0.4 | 15–30 |
+| Fee drag per week | ~$10 | ~$2–3 |
+| R:R target | 0.69 | 2.0–2.5 |
+| Risk per trade | 3% ($3) | 1% ($1) |
+| Churn risk | High | Eliminated by cooldown |
+
+The architecture is genuinely good — the ULIS gate, Bayesian fusion, HTF filter, and sweep detection are all sound designs. Once you fix the proximity constant, you'll finally get to see what the bot actually does.

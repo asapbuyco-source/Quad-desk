@@ -228,7 +228,7 @@ def _detect_regime(metrics: Dict[str, Any],
     tape    = metrics["tapeSpeed"]
     atr_pct = metrics["atr_pct"]
 
-    WALL_PROXIMITY = 0.0005  # Tightened: only walls within 0.05% of price trigger LIQUIDITY regime
+    WALL_PROXIMITY = 0.002  # Widened to 0.2% to prevent perpetual LIQUIDITY regime deadlock
     near_wall = any(abs(price - w) / price <= WALL_PROXIMITY for w in (buy_walls[:1] + sell_walls[:1]))
     if near_wall:
         return "LIQUIDITY"
@@ -662,7 +662,7 @@ def _compute_signal(
     if sweep:
         current_candle_ts = float(candle_history[-1]["time"]) if candle_history else 0.0
         age_s = _time.time() - current_candle_ts   # seconds since this candle opened
-        if age_s > 60:   # Extended from 20 to 60 seconds (first 1/15th of candle)
+        if age_s > 120:   # Extended to 120s (first 2 minutes of candle)
             logger.info(f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s). Waiting for next candle open.")
             sweep = None  # suppress the sweep signal
 
@@ -1013,23 +1013,10 @@ async def execution_loop(
 # ══════════════════════════════════════════════════════════════════════
 
 async def main():
-    feed     = BinanceDataFeed(symbol=FEED_SYMBOL, interval=CANDLE_INTERVAL, testnet=TESTNET)
-    quant    = QuantEngine(feed.state)
-    executor = TradingExecutor(
-        api_key=BINANCE_API_KEY,
-        api_secret=BINANCE_API_SECRET,
-        testnet=TESTNET,
-        dry_run=DRY_RUN,
-        exchange_id=EXCHANGE,
-        coinbase_key_name=CB_KEY_NAME,
-        coinbase_private_key=CB_PRIVATE_KEY,
-        tg_token=TG_BOT_TOKEN,
-        tg_chat_id=TG_CHAT_ID,
-        leverage=LEVERAGE,
-        ed25519_private_key=BINANCE_ED25519_PRIVKEY,
-    )
-
+    # 1. Initialise Firebase connection early so FirestoreLogHandler can sync startup logs
     heartbeat.init_firebase()
+
+    feed     = BinanceDataFeed(symbol=FEED_SYMBOL, interval=CANDLE_INTERVAL, testnet=TESTNET)
 
     loop           = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()

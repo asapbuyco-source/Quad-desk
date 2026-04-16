@@ -814,6 +814,15 @@ class TradingExecutor:
             import time
             calculated_atr = abs(current_price - stop_loss) / 1.5 if stop_loss else current_price * 0.005
             
+            # --- STAGE 9 — SL/TP CONFIRMATION GATE ---
+            # Audit requirement: Ensure we don't hold a naked position.
+            # If sl_order_id or tp_order_id is missing (order failed), we raise an 
+            # Exception here which will trigger the 'FLATTEN NAKED POSITION' block below.
+            if not sl_order_id:
+                raise Exception("Stop-Loss order placement failed after 3 attempts. Position is naked!")
+            if not tp_order_id:
+                raise Exception("Take-Profit order placement failed after 3 attempts. Position is naked!")
+
             self.active_position = {
                 "symbol":      ex_symbol,
                 "side":        side,

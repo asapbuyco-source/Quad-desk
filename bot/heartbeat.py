@@ -146,8 +146,10 @@ class FirestoreLogHandler(logging.Handler):
                 if record is None:
                     break
                     
+                # Wait for Firebase to be initialised if it isn't yet (race condition fix)
                 if _db is None:
-                    self.log_queue.task_done()
+                    import time
+                    time.sleep(1)
                     continue
 
                 from firebase_admin import firestore as fs
