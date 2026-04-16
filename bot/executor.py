@@ -26,22 +26,18 @@ class TradingExecutor:
         api_secret: str,
         testnet: bool = True,
         dry_run: bool = True,
-        exchange_id: str = "binanceusdm",
+        exchange_id: str = "binance",
         coinbase_key_name: str = "",
         coinbase_private_key: str = "",
         tg_token: str = "",
         tg_chat_id: str = "",
-        leverage: int = 1,
-        ed25519_private_key: str = "",  # Ed25519 PEM key — no IP whitelist required
     ):
-        self.testnet     = testnet
+        self.testnet   = testnet
         self.exchange_id = exchange_id.lower()
-        self.leverage    = max(1, min(leverage, 20))   # clamp 1-20×
-        self.is_futures  = self.exchange_id == "binanceusdm"
-        self.dry_run     = dry_run or not self._has_credentials(
+        self.dry_run   = dry_run or not self._has_credentials(
             exchange_id, api_key, api_secret, coinbase_key_name, coinbase_private_key
         )
-
+        
         self.notifier = TelegramNotifier(tg_token, tg_chat_id)
 
         if self.dry_run:
@@ -49,31 +45,15 @@ class TradingExecutor:
 
         # ── Exchange initialisation ───────────────────────────────────────
         if self.exchange_id == "coinbase":
-            self.exchange = self._init_coinbase(coinbase_key_name, coinbase_private_key)
-        elif self.exchange_id == "binanceusdm":
-            self.exchange = self._init_binance_futures(
-                api_key, api_secret, testnet, ed25519_private_key
+            self.exchange = self._init_coinbase(
+                coinbase_key_name, coinbase_private_key
             )
         else:
-            # Binance Spot (legacy / fallback)
+            # Binance (legacy / fallback)
             self.exchange = self._init_binance(api_key, api_secret, testnet)
 
         self.active_position: Optional[Dict[str, Any]] = None
         self.pending_order: Optional[Dict[str, Any]] = None  # Track unfilled orders
-        self._last_insuf_warn_ts: float = 0.0  # Cooldown for insufficient-funds spam
-
-        # ── Panic Mode State ─────────────────────────────────────────────────
-        self.system_locked: bool = False          # True = no new entries allowed
-        self.lock_expiry: float = 0.0             # Unix timestamp when lock expires
-        self.last_panic_reason: str = ""          # For logging/Telegram
-
-        # Fee rates per exchange:  Coinbase Spot 1.2% | Binance Spot 0.1% | Binance Futures 0.04%
-        if self.exchange_id == "coinbase":
-            self.EXCHANGE_FEE_RATE: float = 0.012
-        elif self.exchange_id == "binanceusdm":
-            self.EXCHANGE_FEE_RATE: float = 0.0004
-        else:
-            self.EXCHANGE_FEE_RATE: float = 0.001
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -83,15 +63,6 @@ class TradingExecutor:
         if exchange_id.lower() == "coinbase":
             return bool(cb_name and cb_key)
         return bool(api_key and api_secret)
-
-    @staticmethod
-    def _is_position_closed_error(e: Exception) -> bool:
-        """
-        Detects Binance's '-4509' and related errors indicating a `closePosition`
-        or `reduceOnly` order was placed when the position was already 0.0 remotely.
-        """
-        err_str = str(e).lower()
-        return "-4509" in err_str or "gte can only be used" in err_str or "reduceonly" in err_str or "-2022" in err_str
 
     @staticmethod
     def _init_coinbase(key_name: str, private_key: str) -> ccxt.Exchange:
@@ -128,68 +99,11 @@ class TradingExecutor:
             "enableRateLimit": True,
             "options": {
                 "defaultType": "spot",
-                "adjustForTimeDifference": True
             },
         })
         if testnet:
             exchange.set_sandbox_mode(True)
-        logger.info(f"[Executor] Binance Spot ({'testnet' if testnet else 'live'}) initialised.")
-        return exchange
-
-    @staticmethod
-    def _init_binance_futures(
-        api_key: str,
-        api_secret: str,
-        testnet: bool,
-        ed25519_private_key: str = "",
-    ) -> ccxt.Exchange:
-        """
-        Binance USDM Perpetual Futures (ccxt.binanceusdm).
-
-        Signing modes (auto-detected by ccxt from the 'secret' field):
-        ─────────────────────────────────────────────────────────────
-        • Ed25519 (preferred):
-            Pass the PEM private key as 'secret'.
-            ccxt detects the '-----BEGIN' header and uses Ed25519 signing.
-            Advantage: NO IP whitelist required on Binance — works from
-            Railway dynamic IPs and your local machine simultaneously.
-
-        • HMAC-SHA256 (fallback):
-            Pass the API secret string as 'secret'.
-            Requires IP whitelisting when Futures permission is enabled.
-
-        Railway (USA) <-> Binance Europe:
-        - adjustForTimeDifference=True  : auto-corrects server clock skew
-          (prevents -1021 timestamp errors across time zones).
-        - recvWindow=10000              : 10 s tolerance for cross-continental
-          latency (default 5 s is too tight under load).
-        - fapi.binance.com is globally accessible — no regional block.
-        """
-        # Normalise Ed25519 PEM: .env stores \n as literal backslash-n
-        effective_secret = api_secret
-        if ed25519_private_key:
-            effective_secret = ed25519_private_key.replace("\\n", "\n").strip()
-            logger.info("[Executor] Using Ed25519 signing (no IP whitelist required)")
-        else:
-            logger.info("[Executor] Using HMAC-SHA256 signing")
-
-        exchange = ccxt.binanceusdm({
-            "apiKey":          api_key,
-            "secret":          effective_secret,
-            "enableRateLimit": True,
-            "options": {
-                "defaultType":             "future",
-                "adjustForTimeDifference": True,
-                "recvWindow":              10000,
-                "fetchCurrencies":         False,  # skip Spot /sapi detour
-            },
-        })
-        exchange.has["fetchCurrencies"] = False
-        if testnet:
-            exchange.set_sandbox_mode(True)
-        mode = "TESTNET" if testnet else "LIVE"
-        sig  = "Ed25519" if ed25519_private_key else "HMAC-SHA256"
-        logger.info(f"[Executor] Binance USDM Futures ({mode}) | signing={sig}")
+        logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised.")
         return exchange
 
     # ------------------------------------------------------------------
@@ -246,93 +160,41 @@ class TradingExecutor:
             # These are the standard BTC/USDC parameters for Coinbase Advanced Trade
             if self.exchange_id == "coinbase":
                 # Ensure CCXT internal structures are initialized
+                # Initialize as empty dict if None, and ensure structures exist
                 if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
                     self.exchange.markets = {}
-                if not hasattr(self.exchange, 'marketsById') or self.exchange.marketsById is None:
-                    self.exchange.marketsById = {}
                 if not hasattr(self.exchange, 'symbols') or self.exchange.symbols is None:
                     self.exchange.symbols = []
-
-                # BTC/USDC market spec — precision uses TICK_SIZE (raw float step values)
-                _btc_usdc = {
+                
+                # Register BTC/USDC in markets cache (required for amount_to_precision)
+                self.exchange.markets['BTC/USDC'] = {
                     'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
-                    'precision': {'amount': 1e-8, 'price': 0.01},
+                    'precision': {'amount': 0.00000001, 'price': 0.01},
                     'limits': {
                         'amount': {'min': 0.00001, 'max': 1000},
-                        'price':  {'min': 0.01,    'max': 1_000_000},
-                        'cost':   {'min': 1.0}
+                        'price': {'min': 0.01, 'max': 1000000},
+                        'cost': {'min': 1.0}
                     },
                     'active': True,
                     'type': 'spot', 'spot': True, 'margin': False, 'contract': False
                 }
-                # BTC/USD market spec
-                _btc_usd = {
+                # Also register BTC/USD as fallback
+                self.exchange.markets['BTC/USD'] = {
                     'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                    'precision': {'amount': 1e-8, 'price': 0.01},
+                    'precision': {'amount': 0.00000001, 'price': 0.01},
                     'limits': {
                         'amount': {'min': 0.00001, 'max': 1000},
-                        'price':  {'min': 0.01,    'max': 1_000_000},
-                        'cost':   {'min': 1.0}
+                        'price': {'min': 0.01, 'max': 1000000},
+                        'cost': {'min': 1.0}
                     },
                     'active': True,
                     'type': 'spot', 'spot': True, 'margin': False, 'contract': False
                 }
-
-                # Populate both unified-symbol keyed dict (used by amount_to_precision / market())
-                # AND the exchange-id keyed dict (used internally by some CCXT methods)
-                self.exchange.markets['BTC/USDC']     = _btc_usdc
-                self.exchange.markets['BTC/USD']      = _btc_usd
-                self.exchange.marketsById['BTC-USDC'] = _btc_usdc
-                self.exchange.marketsById['BTC-USD']  = _btc_usd
-
                 if 'BTC/USDC' not in self.exchange.symbols:
                     self.exchange.symbols.append('BTC/USDC')
                 if 'BTC/USD' not in self.exchange.symbols:
                     self.exchange.symbols.append('BTC/USD')
-
-            logger.info("[Executor] Proceeding with manual market state for BTC/USDC and BTC/USD...")
-
-        # --- Phase 1: Robust System State Recovery (Cross-reboot sync) ---
-        if not self.dry_run and self.is_futures:
-            try:
-                positions = await self.exchange.fetch_positions()
-                for pos in positions:
-                    size_amt = pos.get('info', {}).get('positionAmt', pos.get('contracts', 0))
-                    if size_amt is not None and abs(float(size_amt)) > 0:
-                        ex_symbol = pos.get('symbol', 'UNKNOWN')
-                        size = abs(float(size_amt))
-                        side = "buy" if float(size_amt) > 0 else "sell"
-                        
-                        logger.info(f"[Executor] Recovered active position on boot: {ex_symbol} | Size: {size_amt}")
-                        
-                        sl, tp = 0.0, 0.0
-                        try:
-                            # Safely fetch open orders to derive the running SL/TP triggers
-                            orders = await self.exchange.fetch_open_orders(ex_symbol)
-                            for o in orders:
-                                o_type = o.get('type', '').lower()
-                                if 'stop' in o_type:
-                                    sl = float(o.get('stopPrice', 0.0))
-                                elif 'take_profit' in o_type or 'limit' in o_type:
-                                    tp = float(o.get('price', o.get('stopPrice', 0.0)))
-                        except Exception as e:
-                            logger.warning(f"[Executor] Could not fully sync open orders for {ex_symbol}: {e}")
-                            
-                        entry_price = float(pos.get('entryPrice', 0.0))
-                        
-                        self.active_position = {
-                            "symbol":      ex_symbol,
-                            "side":        side,
-                            "size":        size,
-                            "entry_price": entry_price,
-                            "stop_loss":   sl,
-                            "take_profit": tp,
-                            "dry_run":     False,
-                        }
-                        logger.info(f"[Executor] Reconstructed Internal State: SL={sl} TP={tp} Entry={entry_price}")
-                        break
-            except Exception as e:
-                logger.warning(f"[Executor] Failed to automatically sync positions on boot: {e}")
+            logger.info(f"[Executor] Proceeding with manual market state for BTC/USDC and BTC/USD...")
 
     async def close(self):
         await self.exchange.close()
@@ -343,7 +205,7 @@ class TradingExecutor:
     def _log_trade(self, symbol: str, side: str, verdict: str,
                    entry: float, stop_loss: float, take_profit: float,
                    ulis_verdict: str = ""):
-        """Write an OPEN trade record to Firestore `botTrades` collection."""
+        """Write a trade record to Firestore `botTrades` collection."""
         db = heartbeat.get_db()
         if db is None:
             return
@@ -361,40 +223,11 @@ class TradingExecutor:
                 "exchange":     self.exchange_id,
                 "ulis_verdict": ulis_verdict,
                 "ts_ms":        int(time.time() * 1000),
-                "type":         "OPEN",
             }
             db.collection("botTrades").add(doc)
-            logger.info("[Executor] Trade open logged to Firestore ✓")
+            logger.info("[Executor] Trade logged to Firestore ✓")
         except Exception as e:
             logger.warning(f"[Executor] Failed to log trade to Firestore: {e}")
-
-    def _log_trade_close(self, symbol: str, side: str, pnl: float, exit_reason: str):
-        """Write a CLOSE record to Firestore with WIN/LOSS outcome."""
-        outcome = "WIN" if pnl > 0 else "LOSS"
-        logger.info(
-            f"[Executor] Trade CLOSED | {exit_reason} | PnL=${pnl:.2f} ({outcome})"
-        )
-        db = heartbeat.get_db()
-        if db is None:
-            return
-        try:
-            from firebase_admin import firestore as fs
-            doc = {
-                "symbol":       symbol,
-                "side":         side,
-                "pnl":          round(pnl, 4),
-                "outcome":      outcome,
-                "exit_reason":  exit_reason,   # "STOP_LOSS" or "TAKE_PROFIT"
-                "timestamp":    fs.SERVER_TIMESTAMP,
-                "mode":         "DRY-RUN" if self.dry_run else "LIVE",
-                "exchange":     self.exchange_id,
-                "ts_ms":        int(time.time() * 1000),
-                "type":         "CLOSE",
-            }
-            db.collection("botTrades").add(doc)
-            logger.info(f"[Executor] Trade close logged to Firestore ({outcome}) ✓")
-        except Exception as e:
-            logger.warning(f"[Executor] Failed to log trade close to Firestore: {e}")
 
     # ------------------------------------------------------------------
     # Balance
@@ -515,33 +348,19 @@ class TradingExecutor:
         
         if side == "buy":
             usdc_equity = await self.get_usdt_balance(account_size)
-            # Minimum: $5 order + fee reserve at exchange rate (~1.2% on Coinbase)
-            fee_reserve = usdc_equity * self.EXCHANGE_FEE_RATE
-            min_required = 5.0 + fee_reserve
-            if usdc_equity < min_required:
-                # Cooldown: only warn once per 60 seconds to avoid log spam
-                now = time.time()
-                if now - self._last_insuf_warn_ts >= 60:
-                    self._last_insuf_warn_ts = now
-                    fee_pct = self.EXCHANGE_FEE_RATE * 100
-                    err = (
-                        f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. "
-                        f"Min ${min_required:.2f} required "
-                        f"(incl. ~{fee_pct:.1f}% {self.exchange_id} taker fee)."
-                    )
-                    logger.warning(f"[Executor] {err}")
-                    await self.notifier.send_error_alert(err)
+            if usdc_equity < 5:
+                err = f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. Min $5 required."
+                logger.warning(f"[Executor] {err}")
+                await self.notifier.send_error_alert(err)
                 return
         else:
-            # Futures SHORT only needs USDT margin — no BTC required.
-            # Spot SHORT requires holding BTC to sell.
-            if not self.is_futures:
-                btc_bal = await self.get_btc_balance()
-                if btc_bal <= 0.00001:
-                    err = "Aborting SELL signal: No BTC balance on spot. Use futures for shorting."
-                    logger.warning(f"[Executor] {err}")
-                    await self.notifier.send_error_alert(err)
-                    return
+            # For SELL (Short) on Spot: Check if we actually have assets to sell
+            btc_bal = await self.get_btc_balance()
+            if btc_bal <= 0.00001: 
+                err = f"Aborting SELL signal: No BTC balance available to sell on spot account."
+                logger.warning(f"[Executor] {err}")
+                await self.notifier.send_error_alert(err)
+                return
 
         raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
         if raw_size <= 0.0:
@@ -552,28 +371,30 @@ class TradingExecutor:
         ex_symbol = self._to_exchange_symbol(symbol)
 
         # For Coinbase, ensure the symbol is in the markets cache
-        # ex_symbol is in CCXT unified format (BTC/USDC) thanks to _to_exchange_symbol above
         if self.exchange_id == "coinbase":
-            if ex_symbol not in (self.exchange.markets or {}) or self.exchange.markets.get(ex_symbol) is None:
-                logger.warning(f"[Executor] Symbol {ex_symbol} not in markets cache. Registering on-the-fly...")
+            if ex_symbol not in self.exchange.markets or self.exchange.markets.get(ex_symbol) is None:
+                # Try to add it to markets cache if missing
+                logger.warning(f"[Executor] Symbol {ex_symbol} not in markets cache. Attempting to register...")
                 if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
                     self.exchange.markets = {}
-                if not hasattr(self.exchange, 'marketsById') or self.exchange.marketsById is None:
-                    self.exchange.marketsById = {}
-
-                base, quote = (ex_symbol.split("/") + ["USDC"])[:2]  # safe unpack
-                ex_id = f"{base}-{quote}"
-                market_spec = {
-                    'id': ex_id, 'symbol': ex_symbol, 'base': base, 'quote': quote,
-                    'precision': {'amount': 1e-8, 'price': 0.01},
-                    'limits': {'amount': {'min': 0.00001, 'max': 1000},
-                               'price':  {'min': 0.01,    'max': 1_000_000},
-                               'cost':   {'min': 1.0}},
-                    'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-                }
-                self.exchange.markets[ex_symbol] = market_spec
-                self.exchange.marketsById[ex_id]  = market_spec
-                logger.info(f"[Executor] Registered {ex_symbol} (id={ex_id}) to markets cache.")
+                
+                # Use default market spec for BTC/USDC or BTC/USD
+                if "BTC" in ex_symbol.upper() and "USDC" in ex_symbol.upper():
+                    self.exchange.markets['BTC/USDC'] = {
+                        'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
+                        'precision': {'amount': 0.00000001, 'price': 0.01},
+                        'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
+                        'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+                    }
+                    logger.info("[Executor] Registered BTC/USDC to markets cache.")
+                elif "BTC" in ex_symbol.upper() and "USD" in ex_symbol.upper():
+                    self.exchange.markets['BTC/USD'] = {
+                        'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
+                        'precision': {'amount': 0.00000001, 'price': 0.01},
+                        'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
+                        'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+                    }
+                    logger.info("[Executor] Registered BTC/USD to markets cache.")
 
         if self.dry_run:
             # ── DRY RUN ──────────────────────────────────────────────────
@@ -605,87 +426,22 @@ class TradingExecutor:
 
         # ── LIVE EXECUTION ────────────────────────────────────────────────
         try:
-            # ex_symbol is already in CCXT unified format (e.g. BTC/USDC) from _to_exchange_symbol.
-            # CCXT internally translates unified symbols → exchange-native IDs (BTC-USDC) for API calls.
-            # DO NOT convert to hyphen format here — it breaks CCXT's internal market() lookup.
+            ex_symbol = symbol.replace("-", "/").replace("_", "/")
+            if self.exchange_id == "coinbase" and "USDC" in ex_symbol:
+                ex_symbol = ex_symbol.replace("USDC", "USD")
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
+            if cost > equity:
+                fmt_size = float(
+                    self.exchange.amount_to_precision(ex_symbol, equity * 0.95 / current_price)
+                )
 
-            # --- MINIMUM SIZE BUMP ---
-            # If the calculated risk size is smaller than a reasonable exchange minimum ($5.00),
-            # shift the size up so small accounts/percentages aren't perpetually blocked by exchange limits.
-            if cost > 0 and cost < 5.0:
-                logger.info(f"[Executor] Calculated trade value (${cost:.2f}) is too small. Bumping to $5.00 minimum.")
-                cost = 5.0
-                fmt_size = float(self.exchange.amount_to_precision(ex_symbol, cost / current_price))
-
-            usdt_avail = await self.get_usdt_balance(account_size)
-            # Futures: with Nx leverage the max notional = usdt × N
-            lev_factor = self.leverage if self.is_futures else 1.0
-            max_cost   = usdt_avail * lev_factor * 0.90   # 90% cap: 10% buffer prevents "insufficient margin" errors when wallet is partially depleted
-
-            # --- Minimum Notional Hard-Block ---
-            min_notional = 5.0
-            if self.is_futures and max_cost < min_notional:
-                err = f"Account max notional (${max_cost:.2f}) is below exchange minimum (${min_notional:.2f}). Aborting trade to avoid API loop."
-                logger.warning(f"[Executor] {err}")
-                await self.notifier.send_error_alert(err)
-                return
-
-            if side == "buy" or self.is_futures:
-                # BUY (spot or futures) and Futures SHORT — cap by USDT margin
-                if cost > max_cost:
-                    fmt_size = float(
-                        self.exchange.amount_to_precision(ex_symbol, max_cost / current_price)
-                    )
-            else:
-                # SELL on SPOT: must cap by available BTC balance
-                btc_available = await self.get_btc_balance()
-                max_sell = max(0.0, btc_available * 0.999)
-                if fmt_size > max_sell:
-                    fmt_size = float(self.exchange.amount_to_precision(ex_symbol, max_sell))
-
-            cost = fmt_size * current_price  # recalculate after potential cap
-
-            if fmt_size <= 0.0 or cost < 1.0:
-                logger.warning(f"[Executor] Final size/cost too small after caps (qty={fmt_size}, cost=${cost:.2f}). Aborting live order.")
-                return
-
+            logger.info(f"[Executor] Placing MARKET {side.upper()} {fmt_size} {ex_symbol} @ ~{current_price}")
             import asyncio
-
-            # Set leverage per-symbol for futures just before the entry order
-            if self.is_futures:
-                try:
-                    await self.exchange.set_leverage(self.leverage, ex_symbol)
-                    logger.info(f"[Executor] Futures leverage set to {self.leverage}× for {ex_symbol}")
-                except Exception as e:
-                    logger.warning(f"[Executor] set_leverage skipped (may already be set): {e}")
-
             order = None
             for attempt in range(3):
                 try:
-                    if self.is_futures:
-                        # Futures: both LONG and SHORT use base-quantity market orders
-                        logger.info(
-                            f"[Executor] Futures MARKET {side.upper()} "
-                            f"{fmt_size} BTC {ex_symbol} @ ~{current_price} ({self.leverage}×)"
-                        )
-                        order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
-                    elif self.exchange_id == "coinbase" and side == "buy":
-                        # Coinbase spot BUY expects quote cost, not base quantity
-                        usdc_cost = round(cost, 2)
-                        logger.info(
-                            f"[Executor] Placing MARKET BUY {usdc_cost} USDC → {ex_symbol} @ ~{current_price}"
-                        )
-                        order = await self.exchange.create_market_order(
-                            ex_symbol, side, usdc_cost,
-                            params={"createMarketBuyOrderRequiresPrice": False}
-                        )
-                    else:
-                        logger.info(
-                            f"[Executor] Placing MARKET {side.upper()} {fmt_size} BTC {ex_symbol} @ ~{current_price}"
-                        )
-                        order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
+                    order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
                     break
                 except Exception as e:
                     if attempt == 2: raise e
@@ -713,115 +469,60 @@ class TradingExecutor:
             sl_order_id = None
             tp_order_id = None
 
-            if self.is_futures:
-                # ── FUTURES: STOP_MARKET + TAKE_PROFIT_MARKET ────────────────
-                # closePosition=True closes the full position; workingType=MARK_PRICE
-                # avoids wick-triggered stops from momentary spread spikes.
-                sl_order = None
-                for attempt in range(3):
-                    try:
+            # Stop-loss order (exchange-specific type)
+            sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
+            sl_order = None
+            for attempt in range(3):
+                try:
+                    if self.exchange_id == "binance":
                         sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
+                            symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
                             amount=fmt_size,
-                            params={
-                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
-                                "closePosition": True,
-                                "workingType":  "MARK_PRICE",
-                            },
+                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                            params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
                         )
-                        break
-                    except Exception as e:
-                        if self._is_position_closed_error(e):
-                            logger.info("[Executor] Position closed instantly on exchange. Ignoring SL placement.")
-                            break
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] Futures SL failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
-                sl_order_id = sl_order.get("id")
-                logger.info(f"[Executor] Futures STOP_MARKET at {stop_loss} (id={sl_order_id})")
-
-                tp_order = None
-                for attempt in range(3):
-                    try:
-                        tp_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="TAKE_PROFIT_MARKET", side=sl_side,
-                            amount=fmt_size,
-                            params={
-                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                                "closePosition": True,
-                                "workingType":  "MARK_PRICE",
-                            },
-                        )
-                        break
-                    except Exception as e:
-                        if self._is_position_closed_error(e):
-                            logger.info("[Executor] Position closed instantly on exchange. Ignoring TP placement.")
-                            break
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] Futures TP failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
-                tp_order_id = tp_order.get("id")
-                logger.info(f"[Executor] Futures TAKE_PROFIT_MARKET at {take_profit} (id={tp_order_id})")
-
-            else:
-                # ── SPOT: Exchange-specific limit SL/TP orders ────────────────
-                sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
-                sl_order = None
-                for attempt in range(3):
-                    try:
-                        if self.exchange_id == "binance":
-                            sl_order = await self.exchange.create_order(
-                                symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
-                                amount=fmt_size,
-                                price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                                params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss))},
-                            )
-                        else:
-                            # Coinbase V3 stop direction
+                    else:
+                        # Coinbase Advanced Trade V3 specific stop directions
+                        stop_params = {"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss))}
+                        if self.exchange_id == "coinbase":
+                            # Fix: stop_price > current_price (Short SL) needs STOP_DIRECTION_STOP_UP
+                            # Fix: stop_price < current_price (Long SL) needs STOP_DIRECTION_STOP_DOWN
                             direction = "STOP_DIRECTION_STOP_UP" if stop_loss > current_price else "STOP_DIRECTION_STOP_DOWN"
-                            sl_order = await self.exchange.create_order(
-                                symbol=ex_symbol, type="limit", side=sl_side,
-                                amount=fmt_size,
-                                price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                                params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
-                                        "stop_direction": direction},
-                            )
-                        break
-                    except Exception as e:
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] SL placement failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
-                sl_order_id = sl_order.get("id")
-                logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id})")
-
-                tp_order = None
-                for attempt in range(3):
-                    try:
-                        tp_order = await self.exchange.create_order(
+                            stop_params["stop_direction"] = direction
+                            
+                        sl_order = await self.exchange.create_order(
                             symbol=ex_symbol, type="limit", side=sl_side,
                             amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                            params={"timeInForce": "GTC"},
+                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                            params=stop_params,
                         )
-                        break
-                    except Exception as e:
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] TP placement failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
-                tp_order_id = tp_order.get("id")
-                logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
+                    break
+                except Exception as e:
+                    if attempt == 2: raise e
+                    logger.warning(f"[Executor] SL placement failed: {e}. Retrying {attempt+1}/3...")
+                    await asyncio.sleep(0.5)
+            sl_order_id = sl_order.get("id")
+            logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id})")
 
-            import time
-            calculated_atr = abs(current_price - stop_loss) / 1.5 if stop_loss else current_price * 0.005
-            
-            # --- STAGE 9 — SL/TP CONFIRMATION GATE ---
-            # Audit requirement: Ensure we don't hold a naked position.
-            # If sl_order_id or tp_order_id is missing (order failed), we raise an 
-            # Exception here which will trigger the 'FLATTEN NAKED POSITION' block below.
-            if not sl_order_id:
-                raise Exception("Stop-Loss order placement failed after 3 attempts. Position is naked!")
-            if not tp_order_id:
-                raise Exception("Take-Profit order placement failed after 3 attempts. Position is naked!")
+            # Take-profit limit order
+            tp_order = None
+            for attempt in range(3):
+                try:
+                    tp_order = await self.exchange.create_order(
+                        symbol=ex_symbol,
+                        type="limit",
+                        side=sl_side,
+                        amount=fmt_size,
+                        price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                        params={"timeInForce": "GTC"},
+                    )
+                    break
+                except Exception as e:
+                    if attempt == 2: raise e
+                    logger.warning(f"[Executor] TP placement failed: {e}. Retrying {attempt+1}/3...")
+                    await asyncio.sleep(0.5)
+            tp_order_id = tp_order.get("id")
+            logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
 
             self.active_position = {
                 "symbol":      ex_symbol,
@@ -833,11 +534,6 @@ class TradingExecutor:
                 "order_id":    order.get("id"),
                 "sl_order_id": sl_order_id,
                 "tp_order_id": tp_order_id,
-                "tp1_hit":     False,
-                "tp2_hit":     False,
-                "entry_time":  time.time(),
-                "atr_at_entry": calculated_atr,
-                "original_size": fmt_size,
             }
             
             # Clear pending order since we now have an active position
@@ -872,113 +568,6 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
     # ------------------------------------------------------------------
-    async def monitor_active_position_v3(self, current_price: float, metrics: Dict[str, Any]):
-        """
-        Dynamic trade management:
-        - Locks SL to break-even at +1 ATR profit
-        - Trails SL progressively as profit increases
-        - Checks exchange for exit fills
-        """
-        pos = self.active_position
-        if not pos:
-            return
-
-        if self.dry_run:
-            self.check_position_exit(current_price)
-            return
-
-        side = pos["side"]
-        entry = pos["entry_price"]
-        sl = pos["stop_loss"]
-        atr = pos.get("atr_at_entry", current_price * 0.005)
-        
-        is_long = side == "buy"
-        
-        # Calculate R-multiple (profit in terms of initial risk / ATR)
-        profit_r = (current_price - entry) / atr if is_long else (entry - current_price) / atr
-            
-        # 1. Partial Close (50%) + Break-Even Lock at +1R
-        # ─────────────────────────────────────────────────────────────────────
-        # When profit reaches +1 ATR:
-        #   a) Close 50% of the position at market (reduceOnly) → book half the gain
-        #   b) Move SL to break-even + small buffer
-        # Net effect: the remaining 50% now rides to TP2 risk-free.
-        # Converts trades that hit +1R then reverse into flat sessions instead of losses.
-        if profit_r >= 1.0 and not pos.get("tp1_hit"):
-            pos["tp1_hit"]  = True
-            ex_symbol       = pos["symbol"]
-            close_side      = "sell" if is_long else "buy"
-            original_size   = pos.get("original_size", pos["size"])
-            partial_size    = original_size * 0.50  # Close half
-
-            # Precision-format the partial size
-            try:
-                partial_fmt = float(self.exchange.amount_to_precision(ex_symbol, partial_size))
-            except Exception:
-                partial_fmt = round(partial_size, 4)
-
-            # Place the partial close market order
-            if partial_fmt > 0:
-                try:
-                    partial_order = await self.exchange.create_market_order(
-                        ex_symbol, close_side, partial_fmt,
-                        params={"reduceOnly": True}
-                    )
-                    realized_pnl = (
-                        (current_price - entry) * partial_fmt if is_long
-                        else (entry - current_price) * partial_fmt
-                    )
-                    pos["size"] = original_size - partial_fmt   # Remaining position
-                    logger.info(
-                        f"[Monitor] +1.0R — Partial close: {partial_fmt} {ex_symbol} @ {current_price:.2f} "
-                        f"| Realized PnL ≈ ${realized_pnl:.2f} | Remaining: {pos['size']:.4f}"
-                    )
-                except Exception as e:
-                    if self._is_position_closed_error(e):
-                        logger.info(f"[Monitor] Position {ex_symbol} already closed on exchange (-4509). Ignoring partial TP.")
-                    else:
-                        logger.warning(f"[Monitor] Partial close failed at +1R: {e}. Proceeding with BE lock only.")
-
-            # Lock SL above break-even to cover 0.08% round-trip fees + small profit margin
-            # 0.15R ≈ 0.75% on BTC — just enough to ensure the trade is genuinely free-riding (Patch #4)
-            fee_buffer_r = 0.15  # covers Binance Futures 0.04% entry + 0.04% exit fees
-            new_sl = entry + (atr * fee_buffer_r) if is_long else entry - (atr * fee_buffer_r)
-            if (is_long and new_sl > sl) or (not is_long and new_sl < sl):
-                logger.info(f"[Monitor] Moving SL to BE+fees ({new_sl:.2f}, +{fee_buffer_r}R)")
-                pos["stop_loss"] = round(new_sl, 2)
-                await self._move_stop_loss(round(new_sl, 2))
-
-        # 2. Dynamic Trailing Stop at +2R
-        if profit_r >= 2.0 and not pos.get("tp2_hit"):
-            pos["tp2_hit"] = True
-            # Trail by 1.5 ATR behind current price
-            new_sl = current_price - (atr * 1.5) if is_long else current_price + (atr * 1.5)
-
-            if (is_long and new_sl > pos["stop_loss"]) or (not is_long and new_sl < pos["stop_loss"]):
-                logger.info(f"[Monitor] +2.0R Reached. Trailing SL to {new_sl:.2f}")
-                pos["stop_loss"] = new_sl
-                await self._move_stop_loss(new_sl)
-
-        
-        # 3. Position Sync Check
-        # Every cycle we also check if CCXT reports the position as closed via our exchange SL/TP hit
-        try:
-            if self.is_futures:
-                positions = await self.exchange.fetch_positions([pos["symbol"]])
-                for p in positions:
-                    if p["symbol"] == self._to_exchange_symbol(pos["symbol"]):
-                        if float(p.get("contracts", 0.0)) == 0.0:
-                            logger.info(f"[Monitor] Exchange shows {pos['symbol']} is flat. Clearing local state.")
-                            self.active_position = None
-                            self.pending_order = None
-                            # A side filled, so cancel any orphaned opposing limit/stop orders
-                            await self.cancel_opposing_orders(filled_side="unknown")
-                            break
-        except Exception as e:
-            # We don't want a network hiccup here to crash the loop
-            logger.debug(f"[Monitor] Failed to sync remote position status: {e}")
-
-
     def check_position_exit(self, current_price: float) -> tuple:
         """
         Check SL/TP for dry-run mode.
@@ -994,32 +583,31 @@ class TradingExecutor:
         sl   = pos["stop_loss"]
         tp   = pos["take_profit"]
 
-        symbol = pos.get("symbol", "")
         if side == "buy":
             if current_price <= sl:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
+                logger.info(f"[Executor] STOP LOSS HIT. PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
-                self._log_trade_close(symbol, side, pnl, "STOP_LOSS")
                 return True, pnl
             if current_price >= tp:
                 pnl = (current_price - pos["entry_price"]) * pos["size"]
+                logger.info(f"[Executor] TAKE PROFIT HIT. PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
-                self._log_trade_close(symbol, side, pnl, "TAKE_PROFIT")
                 return True, pnl
         else:
             if current_price >= sl:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
+                logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
-                self._log_trade_close(symbol, side, pnl, "STOP_LOSS")
                 return True, pnl
             if current_price <= tp:
                 pnl = (pos["entry_price"] - current_price) * pos["size"]
+                logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL=${pnl:.2f}")
                 self.active_position = None
                 self.pending_order = None
-                self._log_trade_close(symbol, side, pnl, "TAKE_PROFIT")
                 return True, pnl
 
         return False, 0.0
@@ -1045,217 +633,119 @@ class TradingExecutor:
             except Exception as e:
                 logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
 
-    async def _move_stop_loss(self, new_sl_price: float):
-        """Helper to safely cancel the old SL and place a new one at `new_sl_price`."""
+    async def update_breakeven_stop(self, current_price: float):
+        """
+        If the current price reaches 50% of the Take-Profit distance,
+        move the Stop-Loss up to the Entry Price (Break-Even).
+        For Live: cancels old SL and creates new SL order.
+        """
         pos = self.active_position
-        if not pos: return
-        if self.dry_run: return
-
-        ex_symbol = pos["symbol"]
-        old_sl_id = pos.get("sl_order_id")
-        fmt_size = pos["size"]
-        side = pos["side"]
-        
-        import asyncio
-        cancel_success = True
-        if old_sl_id:
-            for attempt in range(3):
-                try:
-                    await self.exchange.cancel_order(old_sl_id, ex_symbol)
-                    cancel_success = True
-                    pos["sl_order_id"] = None
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        err_str = str(e).lower()
-                        if "not found" in err_str or "not_found" in err_str:
-                            cancel_success = True
-                            pos["sl_order_id"] = None
-                            break
-                        logger.warning(f"[Executor] Final failure to cancel old SL: {e}")
-                        cancel_success = False
-                        break
-                    await asyncio.sleep(0.5)
-
-        if not cancel_success:
+        if not pos or pos.get("be_triggered", False):
             return
 
-        sl_side = "sell" if side == "buy" else "buy"
-        new_sl = None
-        for attempt in range(3):
-            try:
-                if self.is_futures:
-                    new_sl = await self.exchange.create_order(
-                        symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
-                        amount=fmt_size,
-                        params={
-                            "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, new_sl_price)),
-                            "closePosition": True,
-                            "workingType":   "MARK_PRICE",
-                        },
-                    )
-                elif self.exchange_id == "binance":
-                    sl_limit = new_sl_price * 0.999 if side == "buy" else new_sl_price * 1.001
-                    new_sl = await self.exchange.create_order(
-                        symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
-                        amount=fmt_size,
-                        price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                        params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, new_sl_price))},
-                    )
-                else:
-                    direction = "STOP_DIRECTION_STOP_UP" if new_sl_price > pos["entry_price"] else "STOP_DIRECTION_STOP_DOWN" 
-                    sl_limit = new_sl_price * 0.999 if side == "buy" else new_sl_price * 1.001
-                    new_sl = await self.exchange.create_order(
-                        symbol=ex_symbol, type="limit", side=sl_side,
-                        amount=fmt_size,
-                        price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                        params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, new_sl_price)),
-                                "stop_direction": direction},
-                    )
-                break
-            except Exception as e:
-                if self._is_position_closed_error(e):
-                    logger.info("[Executor] Position already closed remotely (-4509). Ignoring SL move.")
-                    break
-                if attempt == 2:
-                    logger.error(f"[Executor] Failed to place modified SL at {new_sl_price}: {e}")
-                    break
-                await asyncio.sleep(0.5)
+        side  = pos["side"]
+        entry = pos["entry_price"]
+        tp    = pos["take_profit"]
 
-        if new_sl:
-            pos["sl_order_id"] = new_sl.get("id")
+        # Calculate 50% trigger line
+        be_target = entry + ((tp - entry) * 0.5)
 
-    # ------------------------------------------------------------------
-    # System lock helpers (used by Panic Mode)
-    # ------------------------------------------------------------------
-    def is_system_locked(self) -> bool:
-        """Return True if the bot is in a panic-mode cooldown lock."""
-        if self.system_locked and time.time() >= self.lock_expiry:
-            self.system_locked = False
-            self.lock_expiry = 0.0
-            logger.info("[PanicMode] System lock expired — bot is resuming normal operation.")
-        return self.system_locked
+        triggered = False
+        if side == "buy" and current_price >= be_target:
+            triggered = True
+        elif side == "sell" and current_price <= be_target:
+            triggered = True
 
-    # ------------------------------------------------------------------
-    # Panic Mode — Emergency Flatten & System Lock
-    # ------------------------------------------------------------------
-    async def engage_panic_mode(self, reason: str, lock_seconds: int = 300):
-        """
-        Emergency capital-protection routine.
+        if not triggered:
+            return
 
-        Triggered when a dangerous market condition is detected (e.g. sudden
-        BTC flash-crash, ULIS AVOID verdict, or cascade risk spike).
+        # Trigger Break-Even log
+        logger.info("[Executor] RUNNER SECURED: Target halfway reached. Attempting Break-Even SL.")
 
-        Steps:
-          1. Log and alert immediately.
-          2. Cancel all known open orders (SL / TP).
-          3. Flatten any active position with a market order (IOC intent).
-          4. Lock the system for `lock_seconds` (default 5 min) to prevent
-             re-entry while conditions are still dangerous.
-        """
+        if self.dry_run:
+            pos["be_triggered"] = True
+            # ── PATCH #4: Apply fee buffer to break-even lock ──
+            fee_buffer_pct = 0.0015  # 0.15% buffer covers round-trip fees (~0.08%) + margin
+            new_sl = entry * (1.0 + fee_buffer_pct) if side == "buy" else entry * (1.0 - fee_buffer_pct)
+            pos["stop_loss"] = round(new_sl, 2)
+            return
+
+        # LIVE MODE: Cancel old SL and place new one at Entry
         import asyncio
-
-        logger.critical(f"[PanicMode] !!! PANIC MODE ENGAGED: {reason} !!!")
-
-        # --- 1. Notify immediately ----------------------------------------
         try:
-            await self.notifier.send_message(
-                f"🚨 <b>PANIC MODE ENGAGED</b>\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"Reason: <code>{reason}</code>\n"
-                f"Bot locked for {lock_seconds // 60} min. All positions flattened."
-            )
-        except Exception as e:
-            logger.warning(f"[PanicMode] Telegram alert failed: {e}")
+            ex_symbol = pos["symbol"]
+            old_sl_id = pos.get("sl_order_id")
+            fmt_size  = pos["size"]
 
-        # --- 2. Cancel all known open orders --------------------------------
-        orders_to_cancel = []
-        if self.active_position:
-            sl_id = self.active_position.get("sl_order_id")
-            tp_id = self.active_position.get("tp_order_id")
-            sym   = self.active_position.get("symbol", "")
-            if sl_id:
-                orders_to_cancel.append((sl_id, sym, "SL"))
-            if tp_id:
-                orders_to_cancel.append((tp_id, sym, "TP"))
+            # Fix Race Condition: Set state BEFORE yielding via await
+            pos["be_triggered"] = True
+            # ── PATCH #4: Apply fee buffer to break-even lock ──
+            fee_buffer_pct = 0.0015  # 0.15% buffer covers round-trip fees (~0.08%) + margin
+            be_stop_loss = entry * (1.0 + fee_buffer_pct) if side == "buy" else entry * (1.0 - fee_buffer_pct)
+            pos["stop_loss"] = round(be_stop_loss, 2)
 
-        if self.pending_order:
-            pid = self.pending_order.get("id")
-            psym = self.pending_order.get("symbol", "")
-            if pid:
-                orders_to_cancel.append((pid, psym, "PENDING"))
-
-        if not self.dry_run:
-            for order_id, sym, label in orders_to_cancel:
-                try:
-                    await self.exchange.cancel_order(order_id, sym)
-                    logger.info(f"[PanicMode] Cancelled {label} order {order_id} ✓")
-                except Exception as e:
-                    logger.warning(f"[PanicMode] Could not cancel {label} order {order_id}: {e}")
-        else:
-            for order_id, sym, label in orders_to_cancel:
-                logger.info(f"[PanicMode][DRY-RUN] Would cancel {label} order {order_id}")
-
-        # --- 3. Flatten active position -------------------------------------
-        if self.active_position:
-            pos      = self.active_position
-            ex_sym   = pos["symbol"]
-            pos_side = pos["side"]           # "buy" or "sell"
-            pos_size = pos["size"]
-            close_side = "sell" if pos_side == "buy" else "buy"
-
-            if self.dry_run:
-                pnl_est = 0.0  # Can't calculate without live price here
-                logger.info(
-                    f"[PanicMode][DRY-RUN] Would flatten {pos_side.upper()} "
-                    f"{pos_size:.6f} {ex_sym} via MARKET {close_side.upper()}"
-                )
-            else:
+            cancel_success = True
+            if old_sl_id:
                 for attempt in range(3):
                     try:
-                        if self.exchange_id == "coinbase" and close_side == "buy":
-                            # Coinbase BUY needs quote cost, not base amount
-                            # Approximate cost from position size * last known price
-                            # We pass size as base amount with createMarketBuyOrderRequiresPrice=False
-                            await self.exchange.create_market_order(
-                                ex_sym, close_side, pos_size,
-                                params={"createMarketBuyOrderRequiresPrice": False}
-                            )
-                        else:
-                            await self.exchange.create_market_order(ex_sym, close_side, pos_size)
-                        logger.info(
-                            f"[PanicMode] Emergency MARKET {close_side.upper()} "
-                            f"{pos_size:.6f} {ex_sym} — position flattened ✓"
-                        )
+                        await self.exchange.cancel_order(old_sl_id, ex_symbol)
+                        cancel_success = True
+                        pos["sl_order_id"] = None
                         break
                     except Exception as e:
                         if attempt == 2:
-                            logger.critical(
-                                f"[PanicMode] CRITICAL: Failed to flatten position after 3 attempts! "
-                                f"MANUAL INTERVENTION REQUIRED! {e}"
-                            )
-                            try:
-                                await self.notifier.send_message(
-                                    f"🆘 <b>CRITICAL — MANUAL INTERVENTION REQUIRED</b>\n"
-                                    f"━━━━━━━━━━━━━━━\n"
-                                    f"Bot could not flatten <code>{ex_sym}</code> position!\n"
-                                    f"Error: <code>{e}</code>"
-                                )
-                            except Exception:
-                                pass
-                        else:
-                            logger.warning(f"[PanicMode] Flatten attempt {attempt + 1} failed: {e}. Retrying…")
-                            await asyncio.sleep(0.5)
+                            err_str = str(e).lower()
+                            if "not found" in err_str or "not_found" in err_str:
+                                cancel_success = True
+                                pos["sl_order_id"] = None
+                                break
+                            logger.warning(f"[Executor] Final failure to cancel old SL for Break-Even: {e}")
+                            cancel_success = False
+                            pos["be_triggered"] = False # Revert
+                            break
+                        await asyncio.sleep(0.5)
+            
+            if not cancel_success:
+                return
 
-            self.active_position = None
-            self.pending_order   = None
+            sl_side = "sell" if side == "buy" else "buy"
+            sl_limit = be_stop_loss * 0.999 if side == "buy" else be_stop_loss * 1.001
 
-        # --- 4. Lock system -------------------------------------------------
-        self.system_locked   = True
-        self.lock_expiry     = time.time() + lock_seconds
-        self.last_panic_reason = reason
-        logger.warning(
-            f"[PanicMode] System locked for {lock_seconds}s "
-            f"(until {time.strftime('%H:%M:%S', time.localtime(self.lock_expiry))}). "
-            f"Reason: {reason}"
-        )
+            new_sl_order = None
+            for attempt in range(3):
+                try:
+                    if self.exchange_id == "binance":
+                        new_sl_order = await self.exchange.create_order(
+                            symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
+                            amount=fmt_size,
+                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                            params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, be_stop_loss))},
+                        )
+                    else:
+                        new_sl_order = await self.exchange.create_order(
+                            symbol=ex_symbol, type="limit", side=sl_side,
+                            amount=fmt_size,
+                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
+                            params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, be_stop_loss))},
+                        )
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        logger.error(f"[Executor] Failed to create Break-Even SL: {e}")
+                        break
+                    await asyncio.sleep(0.5)
+
+            if new_sl_order and new_sl_order.get("id"):
+                pos["sl_order_id"] = new_sl_order.get("id")
+                logger.info(f"[Executor] New Break-Even SL attached at {be_stop_loss:.2f} (fee-buffered, id={pos['sl_order_id']})")
+            else:
+                logger.critical("[Executor] SL placement failed during Break-Even update! FLATTENING NAKED POSITION!")
+                try:
+                    await self.exchange.create_market_order(ex_symbol, sl_side, fmt_size)
+                    self.active_position = None
+                    logger.info("[Executor] Flattened naked position successfully.")
+                except Exception as ex:
+                    logger.critical(f"[Executor] CRITICAL: Failed to flatten naked position! {ex}")
+
+        except Exception as e:
+            logger.error(f"[Executor] Break-Even API update failed: {e}", exc_info=True)
