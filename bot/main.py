@@ -276,10 +276,11 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
 # ══════════════════════════════════════════════════════════════════════
 
 def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
-    bayes    = metrics["bayesianPosterior"]
-    ofi      = metrics["ofi"]
-    cvd      = metrics["cvd"]
-    dominant = metrics["tapeDominant"]
+    bayes      = metrics["bayesianPosterior"]
+    ofi        = metrics["ofi"]
+    cvd        = metrics["cvd"]
+    dominant   = metrics["tapeDominant"]
+    tape_speed = metrics.get("tapeSpeed", "NORMAL")  # Added: differentiate SCREAMING vs NORMAL tape
 
     score = 0.0
     if bayes > 0.65:    score += 2.0
@@ -295,8 +296,12 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     if cvd > 0:          score += 1.0
     elif cvd < 0:        score -= 1.0
 
-    if "BUY" in dominant:    score += 1.0
-    elif "SELL" in dominant: score -= 1.0
+    # Require SCREAMING tape for full +1.0 boost; NORMAL tape only earns +0.5
+    # Prevents entering trend trades on weak marginal tape flow (Patch #8)
+    if "BUY" in dominant:
+        score += 1.0 if tape_speed == "SCREAMING" else 0.5
+    elif "SELL" in dominant:
+        score -= 1.0 if tape_speed == "SCREAMING" else 0.5
 
     logger.info(f"[TrendStrategy] score={score:+.2f}")
     if score >= 1.5:  return "BUY"
@@ -308,11 +313,13 @@ def _strategy_mean_reversion(metrics: Dict[str, Any]) -> Optional[str]:
     z   = metrics["zScore"]
     rsi = metrics["rsi"]
 
-    if z >= 2.2 and rsi > 45:
+    # Lowered from ±2.2 to ±1.8: on BTC/USDT 15m futures Z rarely exceeds ±2.2
+    # (funding rate divergence widens STD). ±1.8 still represents ~2σ (Patch #7)
+    if z >= 1.8 and rsi > 45:
         logger.info(f"[MeanRev] SELL — Z={z:.2f} RSI={rsi:.1f}")
         return "MEAN_REVERSAL_SHORT"
 
-    if z <= -2.2 and rsi < 55:
+    if z <= -1.8 and rsi < 55:
         logger.info(f"[MeanRev] BUY — Z={z:.2f} RSI={rsi:.1f}")
         return "MEAN_REVERSAL_LONG"
 
@@ -505,12 +512,15 @@ def _apply_ulis_gate(
 
     is_atr_extended = atr_pct > 0.008  # Typically >0.8% in 15m is massively extended
 
+    # ULIS Triple Alignment: OFI bounds widened from ±8 to ±15 for Binance Futures 15m.
+    # On USDM futures, normal OFI variance is ±15 (wider than spot) due to funding rate flows.
+    # Tight ±8 bounds were rejecting 25-30% of valid trades as false red-lights (Patch #3)
     if is_long:
         rsi_valid = 40 <= rsi <= 70
-        ofi_valid = ofi > -8.0   # Loosened: near-zero OFI should not block valid LONG entries
+        ofi_valid = ofi > -15.0   # Widened from -8 to -15 for futures variance
     else:
         rsi_valid = 30 <= rsi <= 60
-        ofi_valid = ofi < 8.0    # Symmetrical: near-zero OFI should not block valid SHORT entries
+        ofi_valid = ofi < 15.0    # Widened from 8 to 15 for futures variance
 
     red_lights = 0
     if not rsi_valid: red_lights += 1
@@ -521,7 +531,7 @@ def _apply_ulis_gate(
         logger.warning(f"[Alignment] GATE FAILED: {red_lights} Red Lights (RSI={rsi:.1f}, OFI={ofi:.1f}, ATR Extended={is_atr_extended})")
         return False, 0.0, f"{verdict_str} + Weak Alignment (R={red_lights})"
     elif red_lights == 1:
-        confidence *= 0.80  # Penalty equivalent to active size reduction
+        confidence *= 0.90  # Reduced penalty from 20% to 10% (Patch #3)
         logger.info(f"[Alignment] 1 Red Light. Penalising confidence to {confidence:.2%}.")
         
     # Confidence adjustment
@@ -646,12 +656,13 @@ def _compute_signal(
     sweep = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
 
     # Stage 3b: Candle-Close Confirmation Gate (LIQUIDITY_SWEEP only)
-    # Only allow sweep entries in the first 2 analysis cycles (~20s) after a
-    # new 15m candle opens. Mid-candle sweeps are often wicks that revert before close.
+    # Allow sweep entries in the first 60s of a new 15m candle.
+    # 20s was too tight: with a 10s analysis interval a sweep at 15s into the candle
+    # would be detected at 20s and immediately rejected. Extended to 60s (Patch #2)
     if sweep:
         current_candle_ts = float(candle_history[-1]["time"]) if candle_history else 0.0
         age_s = _time.time() - current_candle_ts   # seconds since this candle opened
-        if age_s > 20:   # more than ~2 cycles into the candle
+        if age_s > 60:   # Extended from 20 to 60 seconds (first 1/15th of candle)
             logger.info(f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s). Waiting for next candle open.")
             sweep = None  # suppress the sweep signal
 
@@ -679,14 +690,19 @@ def _compute_signal(
     if raw_direction is None:
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
 
-    # Stage 4b: HTF Counter-Trend Block
+    # Stage 4b: HTF Counter-Trend Block (TREND strategy only)
+    # Mean-reversion trades are DESIGNED to fade the trend — blocking them defeats the strategy.
+    # Only block TREND-following entries, allow mean-reversion against the HTF trend (Patch #1)
     is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
-    if htf == "BEAR" and is_long_dir:
-        logger.warning(f"[HTF] Blocking LONG — 4H trend is BEAR. Waiting for HTF alignment.")
-        return {**WAIT, "analysis": f"HTF=BEAR blocks {raw_direction} entry. No counter-trend trade."}
-    if htf == "BULL" and not is_long_dir:
-        logger.warning(f"[HTF] Blocking SHORT — 4H trend is BULL. Waiting for HTF alignment.")
-        return {**WAIT, "analysis": f"HTF=BULL blocks {raw_direction} entry. No counter-trend trade."}
+    is_trend_strat = strategy_type == "TREND"
+
+    if is_trend_strat:
+        if htf == "BEAR" and is_long_dir:
+            logger.warning(f"[HTF] Blocking LONG trend trade — 4H trend is BEAR.")
+            return {**WAIT, "analysis": f"HTF=BEAR blocks {raw_direction} trend entry."}
+        if htf == "BULL" and not is_long_dir:
+            logger.warning(f"[HTF] Blocking SHORT trend trade — 4H trend is BULL.")
+            return {**WAIT, "analysis": f"HTF=BULL blocks {raw_direction} trend entry."}
 
     # Stage 5: Bayesian fusion
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
@@ -738,7 +754,7 @@ def _compute_signal(
     # consistently lose money even on winning trades.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
     round_trip_fee = _EXCHANGE_FEE_RATE * 2                  # entry + exit fee
-    min_viable_tp_pct = round_trip_fee * 1.5                 # 1.5× fee = meaningful profit buffer
+    min_viable_tp_pct = round_trip_fee * 1.2                 # 1.2× fee buffer (reduced from 1.5×) — Patch #6
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
@@ -894,11 +910,17 @@ async def execution_loop(
 
             # Inject CVD delta (rate-of-change) for Bayesian fusion.
             # A recovering CVD (e.g. -1450 → -950) is a bullish signal even when absolute CVD < 0.
+            # LAST_CVD is 0.0 on first boot — naively computing delta would create a false spike
+            # (e.g. CVD=-1500 → delta=-1500, triggering a spurious bearish signal). (Patch #5)
             if metrics is not None:
                 global LAST_CVD
                 _current_cvd = metrics.get("cvd", 0.0)
-                metrics["cvd_delta"] = _current_cvd - LAST_CVD
-                LAST_CVD = _current_cvd
+                if LAST_CVD == 0.0:  # First cycle after bot restart — initialise without delta spike
+                    LAST_CVD = _current_cvd
+                    metrics["cvd_delta"] = 0.0
+                else:
+                    metrics["cvd_delta"] = _current_cvd - LAST_CVD
+                    LAST_CVD = _current_cvd
 
                 # Update candle-close tracker so the candle-close gate in _compute_signal
                 # knows how old the current candle is.

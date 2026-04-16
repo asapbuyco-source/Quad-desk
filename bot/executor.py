@@ -930,12 +930,14 @@ class TradingExecutor:
                     else:
                         logger.warning(f"[Monitor] Partial close failed at +1R: {e}. Proceeding with BE lock only.")
 
-            # Lock SL to break-even + 0.1 ATR buffer
-            new_sl = entry + (atr * 0.1) if is_long else entry - (atr * 0.1)
+            # Lock SL above break-even to cover 0.08% round-trip fees + small profit margin
+            # 0.15R ≈ 0.75% on BTC — just enough to ensure the trade is genuinely free-riding (Patch #4)
+            fee_buffer_r = 0.15  # covers Binance Futures 0.04% entry + 0.04% exit fees
+            new_sl = entry + (atr * fee_buffer_r) if is_long else entry - (atr * fee_buffer_r)
             if (is_long and new_sl > sl) or (not is_long and new_sl < sl):
-                logger.info(f"[Monitor] Moving SL to Break-Even ({new_sl:.2f})")
-                pos["stop_loss"] = new_sl
-                await self._move_stop_loss(new_sl)
+                logger.info(f"[Monitor] Moving SL to BE+fees ({new_sl:.2f}, +{fee_buffer_r}R)")
+                pos["stop_loss"] = round(new_sl, 2)
+                await self._move_stop_loss(round(new_sl, 2))
 
         # 2. Dynamic Trailing Stop at +2R
         if profit_r >= 2.0 and not pos.get("tp2_hit"):
