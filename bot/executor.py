@@ -55,6 +55,8 @@ class TradingExecutor:
 
         self.active_position: Optional[Dict[str, Any]] = None
         self.pending_order: Optional[Dict[str, Any]] = None  # Track unfilled orders
+        self.lock_expiry: float = 0.0
+        self.last_panic_reason: str = ""
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -808,3 +810,53 @@ class TradingExecutor:
 
         except Exception as e:
             logger.error(f"[Executor] Break-Even API update failed: {e}", exc_info=True)
+
+    def is_system_locked(self) -> bool:
+        """Check if the system is currently under a panic-mode lock."""
+        return time.time() < self.lock_expiry
+
+    async def engage_panic_mode(self, reason: str, lock_seconds: int = 300):
+        """
+        Engages the killswitch: closes any active position and locks the system.
+        """
+        logger.warning(f"[PanicMode] ENGAGED! Reason: {reason}. Locking system for {lock_seconds}s.")
+        self.lock_expiry = time.time() + lock_seconds
+        self.last_panic_reason = reason
+        
+        if self.active_position:
+            await self.emergency_flatten(f"PANIC: {reason}")
+        
+        # Notify user via Telegram
+        if self.notifier:
+            await self.notifier.send_message(f"🚨 PANIC MODE ENGAGED!\nReason: {reason}\nSystem locked for {lock_seconds}s.")
+
+    async def emergency_flatten(self, reason: str):
+        """Immediately closes the current position with a Market Order."""
+        if not self.active_position:
+            return
+
+        pos = self.active_position
+        ex_symbol = pos["symbol"]
+        side = pos["side"]
+        size = pos["size"]
+        close_side = "sell" if side == "buy" else "buy"
+        
+        logger.warning(f"[Executor] EMERGENCY FLATTEN triggered ({reason}) for {size} {ex_symbol}")
+        
+        try:
+            if not self.dry_run:
+                # 1. Cancel all open orders for this symbol first
+                try:
+                    await self.exchange.cancel_all_orders(ex_symbol)
+                except:
+                    pass
+                
+                # 2. Market close
+                await self.exchange.create_market_order(ex_symbol, close_side, size)
+            
+            logger.info(f"[Executor] Flattened {ex_symbol} ✅")
+            self.active_position = None
+        except Exception as e:
+            logger.error(f"[Executor] FAILED TO FLATTEN POSITION! {e}")
+            if self.notifier:
+                await self.notifier.send_message(f"‼️ CRITICAL: Failed to flatten position during {reason}! Error: {e}")
