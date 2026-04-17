@@ -116,8 +116,6 @@ class TradingExecutor:
             "enableRateLimit": True,
             "options": {
                 "defaultType": "future" if (is_futures_id or testnet) else "spot",
-                # [FIX] Explicitly only fetch futures to avoid -2015 on Margin SAPI endpoints 
-                "fetchMarkets": ["future"],
                 "adjustForTimeDifference": True,
                 "recvWindow": 10000,
             },
@@ -128,6 +126,8 @@ class TradingExecutor:
         
         # Prevent CCXT from trying to load margin info during load_markets
         exchange.has['fetchMarginAllPairs'] = False
+        exchange.has['fetchFundingHistory'] = False
+        exchange.has['fetchCurrencies'] = False
         
         active_type = exchange.options.get("defaultType", "spot")
         logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised as {active_type.upper()} via {exchange_class.__name__}.")
