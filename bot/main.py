@@ -146,6 +146,7 @@ BOT_STATS: Dict[str, Any] = {
 LAST_CASCADE_TIME = 0.0
 LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can compute delta
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
+LAST_ANY_TRADE_CLOSE_TIME = 0.0  # Track any trade exit for post-trade cooldown
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -632,6 +633,12 @@ def _compute_signal(
     if time_since_cascade < 300:  # 5 minutes
         return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {300 - int(time_since_cascade)}s remain)"}
 
+    # Universal post-trade cooldown: 60s after any exit (SL or TP)
+    global LAST_ANY_TRADE_CLOSE_TIME
+    time_since_last_trade = time.time() - LAST_ANY_TRADE_CLOSE_TIME
+    if time_since_last_trade < 60:
+        return {**WAIT, "analysis": f"Post-trade cooldown ({60 - int(time_since_last_trade)}s remain)"}
+
     global LAST_CANDLE_TS
     import time as _time
 
@@ -894,6 +901,11 @@ async def execution_loop(
 
                     new_daily_pnl = stats.get("daily_pnl", 0.0) + pnl
                     stats["daily_pnl"] = new_daily_pnl
+                    
+                    # Update post-trade cooldown tracker
+                    global LAST_ANY_TRADE_CLOSE_TIME
+                    LAST_ANY_TRADE_CLOSE_TIME = time.time()
+                    
                     max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
                     if new_daily_pnl < -max_loss_usd and not stats.get("daily_loss_halt"):
                         stats["daily_loss_halt"] = True
@@ -930,7 +942,7 @@ async def execution_loop(
 
             if executor.active_position:
                 if metrics is not None:
-                    await executor.monitor_active_position_v3(current_price, metrics)
+                    await executor.update_breakeven_stop(current_price)
 
                 pos = executor.active_position
                 if pos:  # Might have been exited by the monitor
@@ -1030,6 +1042,13 @@ async def main():
         tg_token=TG_BOT_TOKEN,
         tg_chat_id=TG_CHAT_ID
     )
+
+    # Wire leverage back to executor
+    try:
+        await executor.exchange.set_leverage(LEVERAGE, FEED_SYMBOL)
+        logger.info(f"[Main] Futures leverage set to {LEVERAGE}×")
+    except Exception as e:
+        logger.warning(f"[Main] Could not set leverage: {e}")
 
     loop           = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
