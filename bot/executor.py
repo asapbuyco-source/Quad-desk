@@ -170,58 +170,76 @@ class TradingExecutor:
     # Lifecycle
     # ------------------------------------------------------------------
     async def initialize(self):
-        """Load markets and confirm connectivity."""
+        """Load markets and confirm connectivity.
+
+        Binance USDM 'markets not loaded' fix:
+        - Retries load_markets() up to 3× with back-off on transient network errors.
+        - If all retries fail, injects a minimal BTC/USDT:USDT futures market spec so
+          amount_to_precision / price_to_precision calls don't crash on the next order.
+        """
         if self.dry_run and not self.exchange.apiKey:
             logger.info("[Executor] Skipping market load in keyless dry-run mode.")
             return
-        try:
-            await self.exchange.load_markets()
-            env = "TESTNET" if self.testnet else "LIVE"
-            exch = self.exchange_id.upper()
-            logger.info(f"[Executor] Connected to {exch} {env} ✓")
-        except Exception as e:
-            # CDP keys often fail on public V2 currency fetches during load_markets
-            logger.warning(f"[Executor] Exchange initialised with warnings (CDP/V3 compatibility): {e}")
-            
-            # Manual fallback for the core symbol so trade execution doesn't fail
-            # These are the standard BTC/USDC parameters for Coinbase Advanced Trade
-            if self.exchange_id == "coinbase":
-                # Ensure CCXT internal structures are initialized
-                # Initialize as empty dict if None, and ensure structures exist
-                if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
-                    self.exchange.markets = {}
-                if not hasattr(self.exchange, 'symbols') or self.exchange.symbols is None:
-                    self.exchange.symbols = []
-                
-                # Register BTC/USDC in markets cache (required for amount_to_precision)
-                self.exchange.markets['BTC/USDC'] = {
-                    'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
-                    'precision': {'amount': 0.00000001, 'price': 0.01},
-                    'limits': {
-                        'amount': {'min': 0.00001, 'max': 1000},
-                        'price': {'min': 0.01, 'max': 1000000},
-                        'cost': {'min': 1.0}
-                    },
-                    'active': True,
-                    'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-                }
-                # Also register BTC/USD as fallback
-                self.exchange.markets['BTC/USD'] = {
-                    'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                    'precision': {'amount': 0.00000001, 'price': 0.01},
-                    'limits': {
-                        'amount': {'min': 0.00001, 'max': 1000},
-                        'price': {'min': 0.01, 'max': 1000000},
-                        'cost': {'min': 1.0}
-                    },
-                    'active': True,
-                    'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-                }
-                if 'BTC/USDC' not in self.exchange.symbols:
-                    self.exchange.symbols.append('BTC/USDC')
-                if 'BTC/USD' not in self.exchange.symbols:
-                    self.exchange.symbols.append('BTC/USD')
-            logger.info(f"[Executor] Proceeding with manual market state for BTC/USDC and BTC/USD...")
+
+        env  = "TESTNET" if self.testnet else "LIVE"
+        exch = self.exchange_id.upper()
+
+        # --- Retry loop: up to 3 attempts with exponential back-off ---
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                await self.exchange.load_markets()
+                logger.info(f"[Executor] Connected to {exch} {env} ✓ (attempt {attempt + 1})")
+                return   # success — exit initialize
+            except Exception as e:
+                last_exc = e
+                wait_s   = 2 ** attempt          # 1s, 2s, 4s
+                logger.warning(
+                    f"[Executor] load_markets attempt {attempt + 1}/3 failed: {e}. "
+                    f"{'Retrying in ' + str(wait_s) + 's…' if attempt < 2 else 'All retries exhausted.'}"
+                )
+                if attempt < 2:
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(wait_s)
+
+        # All retries failed — inject minimal market fallback to prevent order failures
+        logger.warning(
+            f"[Executor] Could not load {exch} markets after 3 attempts ({last_exc}). "
+            "Injecting minimal market fallback — bot will attempt to continue."
+        )
+        self._inject_fallback_markets()
+
+    def _inject_fallback_markets(self):
+        """Injects minimal market data into CCXT to prevent crashes."""
+        if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
+            self.exchange.markets = {}
+        if not hasattr(self.exchange, 'symbols') or self.exchange.symbols is None:
+            self.exchange.symbols = []
+
+        if self.exchange_id == "coinbase":
+            self.exchange.markets['BTC/USDC'] = {
+                'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
+                'precision': {'amount': 0.00000001, 'price': 0.01},
+                'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
+                'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+            }
+            self.exchange.markets['BTC/USD'] = {
+                'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
+                'precision': {'amount': 0.00000001, 'price': 0.01},
+                'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
+                'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+            }
+            if 'BTC/USDC' not in self.exchange.symbols: self.exchange.symbols.append('BTC/USDC')
+            if 'BTC/USD' not in self.exchange.symbols: self.exchange.symbols.append('BTC/USD')
+        
+        elif self.is_futures:
+            self.exchange.markets['BTC/USDT:USDT'] = {
+                'id': 'BTCUSDT', 'symbol': 'BTC/USDT:USDT', 'base': 'BTC', 'quote': 'USDT', 'settle': 'USDT',
+                'precision': {'amount': 0.001, 'price': 0.1},
+                'limits': {'amount': {'min': 0.001, 'max': 1000}, 'price': {'min': 0.1, 'max': 1000000}},
+                'active': True, 'type': 'future', 'spot': False, 'margin': False, 'contract': True
+            }
+            if 'BTC/USDT:USDT' not in self.exchange.symbols: self.exchange.symbols.append('BTC/USDT:USDT')
 
     async def close(self):
         await self.exchange.close()

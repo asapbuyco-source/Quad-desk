@@ -45,35 +45,45 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
     Derive the ULIS score components directly from QuantEngine metrics.
     Since we don't have the full frontend data pipeline (GLR feeds, ETF flows, etc.)
     we use principled proxies derived from metrics we DO have.
+
+    v2 change: GLR score now uses FUNDING RATE instead of OFI.
+    OFI was collinear with bayesianPosterior (both driven by order-flow) causing
+    confidence inflation. Funding rate is orthogonal — it captures crowding/positioning
+    pressure rather than instantaneous order imbalance.
     """
-    ofi = metrics.get("ofi", 0.0)
-    rsi = metrics.get("rsi", 50.0)
-    z = metrics.get("zScore", 0.0)
-    bayes = metrics.get("bayesianPosterior", 0.5)
-    cvd = metrics.get("cvd", 0.0)
-    atr_pct = metrics.get("atr_pct", 0.005)
-    tape = metrics.get("tapeSpeed", "NORMAL")
-    dominant = metrics.get("tapeDominant", "BALANCED")
+    ofi          = metrics.get("ofi", 0.0)
+    rsi          = metrics.get("rsi", 50.0)
+    z            = metrics.get("zScore", 0.0)
+    bayes        = metrics.get("bayesianPosterior", 0.5)
+    cvd          = metrics.get("cvd", 0.0)
+    atr_pct      = metrics.get("atr_pct", 0.005)
+    tape         = metrics.get("tapeSpeed", "NORMAL")
+    dominant     = metrics.get("tapeDominant", "BALANCED")
+    funding_rate = metrics.get("funding_rate", 0.0)   # NEW: independent signal
 
     # NLF Score proxy: bayesian posterior is the best single-metric bull field indicator
     nlf_score = _clamp(bayes, 0.0, 1.0)
 
-    # GLR Score proxy: blend of RSI momentum + OFI + CVD direction
-    # RSI 40–60 → neutral (0.5), >60 → bullish, <40 → bearish
-    rsi_norm = _normalize(rsi, 20.0, 80.0)
-    ofi_norm = _normalize(ofi, -40.0, 40.0)
-    cvd_norm = 0.6 if cvd > 0 else 0.4
-    glr_score = _clamp(rsi_norm * 0.4 + ofi_norm * 0.35 + cvd_norm * 0.25, 0.0, 1.0)
+    # GLR Score proxy: RSI momentum + FUNDING RATE (orthogonal to OFI/Bayes) + CVD direction
+    # Funding rate interpretation:
+    #   Positive (+) = longs paying shorts → crowded long → bearish pressure on price
+    #   Negative (-) = shorts paying longs → crowded short → bullish squeeze risk
+    # We INVERT and normalise so that negative funding → high (bullish) score.
+    rsi_norm     = _normalize(rsi, 20.0, 80.0)
+    # Funding range: typical Binance USDM range is ±0.05% per 8h (±0.0005)
+    # Invert sign: negative funding is bullish→ maps to high norm value
+    funding_norm = _normalize(-funding_rate, -0.0005, 0.0005)
+    cvd_norm     = 0.6 if cvd > 0 else 0.4
+    glr_score    = _clamp(rsi_norm * 0.40 + funding_norm * 0.35 + cvd_norm * 0.25, 0.0, 1.0)
 
     # Reflexivity Score proxy: high ATR% + screaming tape = high reflexivity (instability)
-    atr_reflexivity = _normalize(atr_pct, 0.003, 0.025)
+    atr_reflexivity  = _normalize(atr_pct, 0.003, 0.025)
     tape_reflexivity = 0.7 if tape == "SCREAMING" else 0.2
     reflexivity_score = _clamp(atr_reflexivity * 0.6 + tape_reflexivity * 0.4, 0.0, 1.0)
 
     # Fragility proxy: distance from Z-Score extremes indicates fragility
-    # High |z| AND high ATR → fragile conditions
     z_fragility = _normalize(abs(z), 0.5, 3.0)
-    fragility = _clamp(z_fragility * 0.5 + atr_reflexivity * 0.5, 0.0, 1.0)
+    fragility   = _clamp(z_fragility * 0.5 + atr_reflexivity * 0.5, 0.0, 1.0)
 
     # Visible liquidity proxy from OFI depth
     visible_liquidity = _normalize(abs(ofi), 0.0, 40.0)
@@ -83,7 +93,7 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
 
     bayesian_baseline = bayes * 100.0
     glr_components = {
-        "stablecoins": bayesian_baseline + (ofi * 0.3),
+        "stablecoins": bayesian_baseline + (funding_rate * -10000.0),  # funding drag/boost in bps
         "etfFlows":    bayesian_baseline + (cvd / 5000.0),
     }
 

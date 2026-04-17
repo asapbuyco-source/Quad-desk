@@ -221,27 +221,193 @@ def _vpoc_confidence_boost(price: float, vpoc: Optional[float], direction: str) 
     return 0.0
 
 
-def _detect_regime(metrics: Dict[str, Any],
-                   buy_walls: List[float],
-                   sell_walls: List[float]) -> str:
+# ══════════════════════════════════════════════════════════════════════
+# ── HMM REGIME CLASSIFIER (3-state, pure numpy) ───────────────────────
+# ══════════════════════════════════════════════════════════════════════
+
+class _HMMRegimeClassifier:
+    """
+    3-state Gaussian Hidden Markov Model regime detector.
+
+    States:
+        0 = RANGE     — low ATR, low |Z|, quiet tape
+        1 = TREND     — moderate/high ATR, directional bias, louder tape
+        2 = VOLATILE  — high ATR, extreme |Z|, erratic — maps to NEUTRAL
+
+    Features (per observation):
+        f0 = atr_pct       (0 – 0.02)
+        f1 = abs(z_score)  (0 – 4)
+        f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
+
+    The model uses fixed emission parameters calibrated to BTC 15m futures
+    distributions, with a self-updating online step every 50 cycles.
+    Transition matrix is fixed (regime persistence on 15m is ~80-85%).
+    """
+
+    # --- Emission means (μ) per state × feature -----------------------
+    _MU = np.array([
+        [0.003, 0.8, 0.05],   # RANGE    — low ATR, low |Z|, quiet
+        [0.007, 1.5, 0.30],   # TREND    — moderate ATR, directional
+        [0.014, 2.5, 0.65],   # VOLATILE — high ATR, extreme Z, chaotic
+    ], dtype=float)
+
+    # --- Emission stds (σ) per state × feature ------------------------
+    _SIGMA = np.array([
+        [0.0015, 0.6, 0.15],
+        [0.003,  0.8, 0.25],
+        [0.005,  1.0, 0.30],
+    ], dtype=float)
+
+    # --- Transition matrix (rows = from-state, cols = to-state) -------
+    # 80% persistence, 10% to each neighbour state
+    _A = np.array([
+        [0.82, 0.12, 0.06],
+        [0.10, 0.80, 0.10],
+        [0.06, 0.12, 0.82],
+    ], dtype=float)
+
+    # --- Initial state distribution ------------------------------------
+    _PI = np.array([0.50, 0.35, 0.15], dtype=float)
+
+    # State labels (index → regime string)
+    _LABELS = ["RANGE", "TREND", "NEUTRAL"]  # VOLATILE maps to NEUTRAL
+
+    def __init__(self, window: int = 60, update_every: int = 50):
+        self._window    = window
+        self._update_n  = update_every
+        self._obs_buf   = []          # circular feature history
+        self._cycle     = 0           # count calls since last param update
+        # Mutable copies so online-update can adjust them
+        self._mu    = self._MU.copy()
+        self._sigma = self._SIGMA.copy()
+
+    # ------------------------------------------------------------------
+    def _gaussian_log_prob(self, obs: np.ndarray) -> np.ndarray:
+        """Log P(obs | state) for all 3 states. obs shape = (F,)."""
+        log_probs = np.zeros(3)
+        for s in range(3):
+            diff    = obs - self._mu[s]
+            log_p   = -0.5 * np.sum((diff / np.maximum(self._sigma[s], 1e-9)) ** 2)
+            log_p  -= np.sum(np.log(np.maximum(self._sigma[s], 1e-9)))
+            log_probs[s] = log_p
+        return log_probs
+
+    # ------------------------------------------------------------------
+    def _viterbi(self, obs_seq: np.ndarray) -> np.ndarray:
+        """Pure-numpy Viterbi — returns most-likely state sequence."""
+        T, _   = obs_seq.shape
+        n_s    = 3
+        log_A  = np.log(np.maximum(self._A, 1e-300))
+        log_pi = np.log(np.maximum(self._PI, 1e-300))
+
+        delta     = np.full((T, n_s), -np.inf)
+        psi       = np.zeros((T, n_s), dtype=int)
+
+        delta[0]  = log_pi + self._gaussian_log_prob(obs_seq[0])
+
+        for t in range(1, T):
+            log_emit = self._gaussian_log_prob(obs_seq[t])
+            for j in range(n_s):
+                trans    = delta[t - 1] + log_A[:, j]
+                psi[t, j]   = int(np.argmax(trans))
+                delta[t, j] = np.max(trans) + log_emit[j]
+
+        # Back-track
+        states      = np.zeros(T, dtype=int)
+        states[-1]  = int(np.argmax(delta[-1]))
+        for t in range(T - 2, -1, -1):
+            states[t] = psi[t + 1, states[t + 1]]
+        return states
+
+    # ------------------------------------------------------------------
+    def _online_update(self):
+        """
+        Lite Baum-Welch: re-estimate μ and σ from recent observations
+        using soft-assignment (posterior from Viterbi hard assignment).
+        Only runs every `update_every` cycles to avoid overhead.
+        """
+        if len(self._obs_buf) < 20:
+            return
+        obs = np.array(self._obs_buf[-self._window:], dtype=float)
+        states = self._viterbi(obs)
+        for s in range(3):
+            mask = states == s
+            if mask.sum() >= 3:
+                self._mu[s]    = obs[mask].mean(axis=0)
+                self._sigma[s] = np.maximum(obs[mask].std(axis=0), 1e-4)
+
+    # ------------------------------------------------------------------
+    def classify(self, atr_pct: float, z_score: float, tape: str) -> str:
+        """Main entry: add one observation and return current regime label."""
+        obs = np.array([
+            float(np.clip(atr_pct, 0.0, 0.03)),
+            float(np.clip(abs(z_score), 0.0, 4.0)),
+            1.0 if tape == "SCREAMING" else 0.0,
+        ], dtype=float)
+
+        self._obs_buf.append(obs)
+        self._cycle += 1
+
+        if self._cycle % self._update_n == 0:
+            self._online_update()
+
+        # Need at least 3 observations for a meaningful Viterbi path
+        n_obs = min(len(self._obs_buf), self._window)
+        seq   = np.array(self._obs_buf[-n_obs:], dtype=float)
+
+        if len(seq) < 3:
+            # Fall back to simple thresholds while warming up
+            if atr_pct > 0.01 and tape == "SCREAMING":
+                return "TREND"
+            if abs(z_score) > 2.5:
+                return "NEUTRAL"
+            return "RANGE"
+
+        states = self._viterbi(seq)
+        current_state = int(states[-1])
+        label = self._LABELS[current_state]
+
+        logger.debug(
+            f"[HMM] state={current_state} ({label}) | "
+            f"atr={atr_pct:.4%} z={z_score:.2f} tape={tape}"
+        )
+        return label
+
+
+# Module-level singleton — persists observations across cycles
+_hmm_classifier = _HMMRegimeClassifier(window=60, update_every=50)
+
+
+def _detect_regime(
+    metrics: Dict[str, Any],
+    buy_walls: List[float],
+    sell_walls: List[float],
+) -> str:
+    """
+    HMM-based regime classifier (replaces threshold chain).
+
+    Wall proximity is checked FIRST as a hard override — being within 0.3%
+    of a significant liquidity wall is always a LIQUIDITY regime regardless
+    of ATR/Z/tape state (the HMM doesn't model wall proximity).
+    """
     price   = metrics["price"]
-    z       = abs(metrics["zScore"])
+    z       = metrics["zScore"]
     tape    = metrics["tapeSpeed"]
     atr_pct = metrics["atr_pct"]
 
-    WALL_PROXIMITY = 0.003  # 0.3% — 0.2% caused 100% LIQUIDITY regime lock per live log analysis
-    near_wall = any(abs(price - w) / price <= WALL_PROXIMITY for w in (buy_walls[:1] + sell_walls[:1]))
+    # Hard override: proximity to a significant liquidity wall
+    WALL_PROXIMITY = 0.003
+    near_wall = any(
+        abs(price - w) / price <= WALL_PROXIMITY
+        for w in (buy_walls[:1] + sell_walls[:1])
+    )
     if near_wall:
         return "LIQUIDITY"
 
-    TREND_ATR_THRESHOLD = 0.004
-    if atr_pct > TREND_ATR_THRESHOLD and tape == "SCREAMING":
-        return "TREND"
-
-    if z < 2.0:
-        return "RANGE"
-
-    return "NEUTRAL"
+    # HMM classification
+    regime = _hmm_classifier.classify(atr_pct, z, tape)
+    logger.info(f"[HMM] Regime={regime} | atr={atr_pct:.3%} z={z:.2f} tape={tape}")
+    return regime
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -886,6 +1052,9 @@ async def execution_loop(
                         LAST_CASCADE_TIME = time.time()
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
                     
+                    # Update the Bayesian win-rate prior for self-calibration
+                    quant.update_win_rate(side=pos_snapshot.get("side", "buy"), won=(pnl >= 0))
+
                     # In live mode, simulate the exchange fill through crossover and clean up
                     if not executor.dry_run:
                         # Cancel orphaned opposing order (SL or TP)

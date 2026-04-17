@@ -20,6 +20,10 @@ class MarketState:
         self.asks: dict = {}
         # Running cumulative volume delta
         self.cvd: float = 0.0
+        # Binance USDM funding rate — fetched periodically via REST.
+        # Positive = longs pay shorts (crowded long → bearish pressure).
+        # Negative = shorts pay longs (crowded short → bullish squeeze).
+        self.funding_rate: float = 0.0
 
     # ------------------------------------------------------------------
     # Candle management
@@ -120,6 +124,7 @@ class BinanceDataFeed:
         )
         self.ws_url = f"{base_url}/stream?streams={streams}"
         self.is_running = False
+        self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
 
     # ------------------------------------------------------------------
     # Message routing
@@ -149,6 +154,31 @@ class BinanceDataFeed:
             logger.error(f"Missing key in {stream} payload: {e}")
         except Exception as e:
             logger.error(f"Error processing stream '{stream}': {e}", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Funding Rate Fetch (periodic, every 60 s)
+    # ------------------------------------------------------------------
+    async def _fetch_funding_rate(self):
+        """
+        Fetch the current funding rate from Binance USDM Futures REST.
+        Endpoint: GET /fapi/v1/premiumIndex?symbol=BTCUSDT
+        Runs every 60 s; independent signal used by ULIS engine.
+        """
+        url = f"{self.rest_url}/fapi/v1/premiumIndex"
+        params = {"symbol": self.symbol.upper()}
+        import os
+        api_key = os.environ.get("BINANCE_API_KEY", "")
+        headers = {"X-MBX-APIKEY": api_key} if api_key else {}
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.get(url, params=params, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+            rate = float(data.get("lastFundingRate", 0.0))
+            self.state.funding_rate = rate
+            logger.info(f"[DataFeed] Funding rate: {rate:+.6f} ({rate*100:+.4f}%)")
+        except Exception as e:
+            logger.warning(f"[DataFeed] Failed to fetch funding rate: {e}")
 
     # ------------------------------------------------------------------
     # REST API Prefetch
@@ -221,6 +251,11 @@ class BinanceDataFeed:
                     while self.is_running:
                         msg = await ws.recv()
                         await self._handle_message(msg)
+                        # Funding rate: fetch every 60 s without blocking the WS loop
+                        now = time.time()
+                        if now - self._last_funding_fetch >= 60.0:
+                            self._last_funding_fetch = now
+                            asyncio.ensure_future(self._fetch_funding_rate())
 
             except websockets.exceptions.ConnectionClosedOK:
                 logger.info("[DataFeed] Connection closed cleanly.")
