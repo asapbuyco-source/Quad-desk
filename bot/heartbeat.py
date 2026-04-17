@@ -29,35 +29,57 @@ _db: Optional[Any] = None
 def _normalize_pem(raw_key: str) -> str:
     """
     Normalize a PEM private key string from any storage encoding to a valid PEM.
-    Includes wrapping long base64 strings to 64 chars to avoid InvalidPadding.
+    Includes handling for double-escaped newlines (\\\\n) and re-wrapping long
+    base64 strings to 64 chars to avoid InvalidPadding errors in the cryptography lib.
     """
-    # Step 1: clean newlines and quotes
-    key = raw_key.replace("\\\\n", "\n").replace("\\n", "\n")
+    if not raw_key: return ""
+
+    # Step 1: Broad cleaning of escaping and quoting
+    # Handle literal backslash-n, literal double-backslash-n, and true newlines
+    key = str(raw_key).replace("\\\\n", "\n").replace("\\n", "\n")
     key = key.replace("\\r\\n", "\n").replace("\r\n", "\n").strip()
-    key = key.strip('"').strip("'") # remove surrounding quotes if any
+    key = key.strip('"').strip("'")
 
-    if not key: return ""
-
+    # Step 2: Extract core body and headers
     lines = [l.strip() for l in key.splitlines() if l.strip()]
     if not lines: return ""
 
     header, footer = "", ""
-    body_lines = []
+    body_parts = []
     
     for l in lines:
-        if "BEGIN" in l: header = l
-        elif "END" in l: footer = l
-        else: body_lines.append(l)
+        if "BEGIN" in l: 
+            header = l
+        elif "END" in l: 
+            footer = l
+        else:
+            # [STRICTER] Base64 body should ONLY contain: A-Z, a-z, 0-9, +, /, and =
+            # Any other characters (like backslashes or spaces) are artifacts.
+            clean_part = "".join([c for c in l if c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="])
+            if clean_part:
+                body_parts.append(clean_part)
 
     if not header or not footer:
-        return key # fallback to original if structure is unknown
+        return key
 
-    # Step 2: Flatten body and re-wrap at 64 chars
-    # This is crucial for 'InvalidPadding' errors
-    full_body = "".join(body_lines).replace(" ", "")
+    # Step 3: Flatten body and re-wrap strictly at 64 chars
+    # We also ensure the body has correct Base64 padding (multiple of 4)
+    # to fix 'InvalidPadding' errors caused by truncated environment variables.
+    full_body = "".join(body_parts).rstrip("=")
+    
+    remainder = len(full_body) % 4
+    if remainder == 2:
+        full_body += "=="
+    elif remainder == 3:
+        full_body += "="
+    elif remainder == 1:
+        # Invalid base64 (suggests truncation). 
+        full_body += "==="
+
     wrapped_body = [full_body[i:i+64] for i in range(0, len(full_body), 64)]
 
-    return "\n".join([header] + wrapped_body + [footer])
+    final_pem = "\n".join([header] + wrapped_body + [footer])
+    return final_pem
 
 
 def _validate_pem(key: str) -> bool:

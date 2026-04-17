@@ -344,7 +344,7 @@ def compute_ulis_verdict(
     elif verdict == "AVOID" or verdict == "UNWIND":
         confidence_boost = -1.0   # This ensures confidence drops below threshold
     elif verdict == "NEUTRAL" or verdict == "BREAKOUT_WATCH":
-        confidence_boost = -0.05
+        confidence_boost = -0.03  # Reduced from -0.05: was cutting valid 65-68% signals below 62% threshold
 
     logger.info(
         f"[ULIS] verdict={verdict} | vector={liquidity_vector:.3f} | "

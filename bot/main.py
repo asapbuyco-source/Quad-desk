@@ -228,7 +228,7 @@ def _detect_regime(metrics: Dict[str, Any],
     tape    = metrics["tapeSpeed"]
     atr_pct = metrics["atr_pct"]
 
-    WALL_PROXIMITY = 0.002  # Widened to 0.2% to prevent perpetual LIQUIDITY regime deadlock
+    WALL_PROXIMITY = 0.003  # 0.3% — 0.2% caused 100% LIQUIDITY regime lock per live log analysis
     near_wall = any(abs(price - w) / price <= WALL_PROXIMITY for w in (buy_walls[:1] + sell_walls[:1]))
     if near_wall:
         return "LIQUIDITY"

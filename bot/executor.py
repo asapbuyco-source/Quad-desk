@@ -51,12 +51,13 @@ class TradingExecutor:
             )
         else:
             # Binance (legacy / fallback)
-            self.exchange = self._init_binance(api_key, api_secret, testnet)
+            self.exchange = self._init_binance(api_key, api_secret, testnet, self.exchange_id)
 
         self.active_position: Optional[Dict[str, Any]] = None
         self.pending_order: Optional[Dict[str, Any]] = None  # Track unfilled orders
         self.lock_expiry: float = 0.0
         self.last_panic_reason: str = ""
+        self.failed_order_ts: float = 0.0  # Cooldown after live order failure (prevents -2015 spam)
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -95,29 +96,41 @@ class TradingExecutor:
         return exchange
 
     @staticmethod
-    def _init_binance(api_key: str, api_secret: str, testnet: bool) -> ccxt.Exchange:
+    def _init_binance(api_key: str, api_secret: str, testnet: bool, exchange_id: str = "binance") -> ccxt.Exchange:
         # ── Key Format Check (Ed25519 vs HMAC) ──────────────────────────
         # If the secret contains BEGIN header, it's an Ed25519/RSA key.
         is_ed25519 = str(api_secret).strip().startswith("-----BEGIN")
         logger.info(f"[Executor] Initialising Binance ({'Ed25519' if is_ed25519 else 'HMAC'})")
 
-        exchange = ccxt.binance({
+        # Determine if we should force Futures mode
+        is_futures_id = "usdm" in exchange_id.lower() or "future" in exchange_id.lower()
+        
+        # [FIX] Use specialized ccxt.binanceusdm if targeting USDM futures.
+        # This prevents CCXT's load_markets from hitting Spot/Margin SAPI endpoints
+        # which can trigger -2015 errors on Futures-only API keys.
+        exchange_class = ccxt.binanceusdm if is_futures_id else ccxt.binance
+        
+        exchange = exchange_class({
             "apiKey":          api_key,
             "secret":          api_secret,
             "enableRateLimit": True,
             "options": {
-                "defaultType": "future" if "usdm" in str(api_key).lower() or "future" in str(api_key).lower() else "spot",
+                "defaultType": "future" if (is_futures_id or testnet) else "spot",
+                # [FIX] Explicitly only fetch futures to avoid -2015 on Margin SAPI endpoints 
+                "fetchMarkets": ["future"],
                 "adjustForTimeDifference": True,
-                "recvWindow": 10000, # 10s window to avoid signature-invalid due to clock drift
+                "recvWindow": 10000,
             },
         })
-        # If exchange_id wasn't specific, but we targeted binanceusdm in main.py, force it here
-        if "binanceusdm" in str(ccxt.binance.__name__).lower() or testnet:
-             exchange.options["defaultType"] = "future"
         
         if testnet:
             exchange.set_sandbox_mode(True)
-        logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised.")
+        
+        # Prevent CCXT from trying to load margin info during load_markets
+        exchange.has['fetchMarginAllPairs'] = False
+        
+        active_type = exchange.options.get("defaultType", "spot")
+        logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised as {active_type.upper()} via {exchange_class.__name__}.")
         return exchange
 
     # ------------------------------------------------------------------
@@ -449,6 +462,13 @@ class TradingExecutor:
             return
 
         # ── LIVE EXECUTION ────────────────────────────────────────────────
+        # Guard: if the last order failed (e.g. -2015), wait before retrying.
+        # Without this, the bot re-attempts the same signal every 15s.
+        if time.time() < self.failed_order_ts:
+            remaining = int(self.failed_order_ts - time.time())
+            logger.info(f"[Executor] Failed-order cooldown active — {remaining}s remaining. Skipping.")
+            return
+
         try:
             ex_symbol = symbol.replace("-", "/").replace("_", "/")
             if self.exchange_id == "coinbase" and "USDC" in ex_symbol:
@@ -468,7 +488,11 @@ class TradingExecutor:
                     order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
                     break
                 except Exception as e:
-                    if attempt == 2: raise e
+                    if attempt == 2:
+                        # Engage 90s cooldown — avoids flooding -2015 errors every cycle
+                        self.failed_order_ts = time.time() + 90.0
+                        logger.error(f"[Executor] Live order failed: {e}")
+                        raise e
                     logger.warning(f"[Executor] Market order failed: {e}. Retrying {attempt+1}/3...")
                     await asyncio.sleep(0.5)
             logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
