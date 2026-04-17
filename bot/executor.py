@@ -370,8 +370,13 @@ class TradingExecutor:
             logger.warning(f"[Executor] SL {stop_loss} ≤ price {current_price} for SELL. Aborting.")
             return
 
-        # 1. Calculate Total Equity (Cash + Crypto Value) for accurate risk sizing
-        equity = await self.get_total_equity(current_price, account_size)
+        # 1. Calculate Available Equity for accurate risk sizing.
+        # Futures: Use only available margin (Cash) to prevent oversized rejected orders.
+        # Spot: Use Total Equity (Cash + BTC) to size based on full portfolio.
+        if self.is_futures:
+            equity = await self.get_usdt_balance(account_size)
+        else:
+            equity = await self.get_total_equity(current_price, account_size)
         
         if side == "buy":
             usdc_equity = await self.get_usdt_balance(account_size)
