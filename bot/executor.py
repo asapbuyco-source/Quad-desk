@@ -502,8 +502,11 @@ class TradingExecutor:
             logger.warning("[Executor] Calculated position size is 0. Aborting.")
             return
 
-        # Translate symbol to exchange format
-        ex_symbol = self._to_exchange_symbol(symbol)
+        # Translate symbol to exchange format (unified CCXT symbol)
+        if self.exchange_id == "coinbase":
+            ex_symbol = self._to_exchange_symbol(symbol)
+        else:
+            ex_symbol = self._get_ccxt_symbol(symbol)
 
         # For Coinbase, ensure the symbol is in the markets cache
         if self.exchange_id == "coinbase":
@@ -568,9 +571,11 @@ class TradingExecutor:
             return
 
         try:
-            ex_symbol = symbol.replace("-", "/").replace("_", "/")
+            # We already have ex_symbol correctly formatted at line ~506 (e.g. BTC/USDT:USDT)
+            # Only do the Coinbase USDC -> USD swap if applicable
             if self.exchange_id == "coinbase" and "USDC" in ex_symbol:
                 ex_symbol = ex_symbol.replace("USDC", "USD")
+                
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
             cost = fmt_size * current_price
             if cost > equity:
