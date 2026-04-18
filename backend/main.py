@@ -8,6 +8,7 @@ import psutil
 import numpy as np
 import pandas as pd
 import httpx
+import ccxt.async_support as ccxt
 from collections import deque, defaultdict
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
@@ -301,6 +302,62 @@ async def health_check():
 @app.get("/history")
 async def get_history(symbol: str = Query(..., pattern=r"^[A-Z0-9]{3,12}$"), interval: str = "1m", limit: int = 300):
     return await fetch_binance_candles(symbol, interval, limit)
+
+@app.get("/live-trades")
+async def get_live_trades(symbol: str = "BTCUSDT", limit: int = 50):
+    key = os.getenv("BINANCE_API_KEY")
+    secret = os.getenv("BINANCE_API_SECRET")
+    
+    if not key or not secret:
+        return {"error": "Binance API keys not configured on backend.", "success": False, "trades": []}
+        
+    try:
+        exchange = ccxt.binanceusdm({
+            "apiKey": key,
+            "secret": secret,
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"}
+        })
+        
+        # CCXT uses format BTC/USDT:USDT for USDM futures default handling
+        ex_symbol = "BTC/USDT:USDT" if symbol == "BTCUSDT" else symbol
+        
+        # Fetch my trades
+        trades = await exchange.fetch_my_trades(ex_symbol, limit=limit)
+        await exchange.close()
+        
+        # Determine performance metrics
+        formatted = []
+        equity_curve = [100.0]
+        current_eq = 100.0
+        
+        for t in trades:
+            pnl = float(t.get("info", {}).get("realizedPnl", 0))
+            fee = float(t.get("fee", {}).get("cost", 0)) if t.get("fee") else 0.0
+            net = pnl - fee
+            
+            if net != 0:
+                 current_eq += net
+                 equity_curve.append(round(current_eq, 2))
+                 
+            timestamp_ms = t.get('timestamp', time.time()*1000)
+            
+            formatted.append({
+                "date": datetime.fromtimestamp(timestamp_ms / 1000).strftime("%Y-%m-%d %H:%M"),
+                "side": t.get("side", "").upper(),
+                "entry": float(t.get("price", 0)),
+                "qty": float(t.get("amount", 0)),
+                "pnl": round(net, 2),
+                "fee": round(fee, 2),
+                "order_id": t.get("order", ""),
+                "timestamp": int(timestamp_ms / 1000)
+            })
+            
+        # Optional: flip to descending or ascending if UI expects it 
+        return {"trades": formatted, "success": True, "equity_curve": equity_curve}
+    except Exception as e:
+        logger.error(f"Live trades error: {e}")
+        return {"error": str(e), "success": False, "trades": []}
 
 @app.get("/heatmap")
 async def get_heatmap():
