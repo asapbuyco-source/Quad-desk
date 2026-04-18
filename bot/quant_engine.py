@@ -299,6 +299,20 @@ class QuantEngine:
                 dist = (current_price - p) / current_price * 100
                 wall_parts.append(f"BUY@{p:.1f} (-{dist:.2f}%, sz:{s:.2f})")
 
+        # ── OFI outlier clamp ─────────────────────────────────────────────
+        # Raw OFI occasionally spikes to ±400+ during exchange anomalies or
+        # brief LOB snapshots with extreme size imbalance. Values that far
+        # outside the normal ±40 range distort both the Bayesian fusion and
+        # the Triple Alignment Gate. Clamp to ±100 and log when triggered.
+        OFI_CLAMP = 100.0
+        if abs(ofi) > OFI_CLAMP:
+            logger.warning(
+                f"[QuantEngine] OFI outlier detected ({ofi:.1f}) — clamped to "
+                f"{'±' if ofi else ''}{OFI_CLAMP:.0f}. "
+                "Check LOB snapshot for data anomaly."
+            )
+            ofi = max(-OFI_CLAMP, min(OFI_CLAMP, ofi))
+
         return ofi, wall_context, "; ".join(wall_parts)
 
     # ------------------------------------------------------------------

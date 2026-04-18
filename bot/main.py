@@ -691,14 +691,21 @@ def _apply_ulis_gate(
 
     is_atr_extended = atr_pct > 0.008  # Typically >0.8% in 15m is massively extended
 
-    # ULIS Triple Alignment: OFI bounds widened from ±8 to ±15 for Binance Futures 15m.
-    # On USDM futures, normal OFI variance is ±15 (wider than spot) due to funding rate flows.
-    # Tight ±8 bounds were rejecting 25-30% of valid trades as false red-lights (Patch #3)
+    # ULIS Triple Alignment Gate — directionally aware RSI check.
+    #
+    # OLD (buggy): RSI < 40 was a red light for BUY — but deeply oversold RSI
+    # is SUPPORTIVE of a BUY, not a risk factor. This was blocking the exact
+    # high-quality mean-reversion entries the bot is designed to take.
+    #
+    # FIX: Red light fires only when RSI contradicts the signal direction:
+    #   BUY  → red light if RSI > 75  (overbought — don't chase)
+    #   SELL → red light if RSI < 25  (oversold  — don't chase)
+    # RSI in the middle zone or confirming direction = no red light.
     if is_long:
-        rsi_valid = 40 <= rsi <= 70
+        rsi_valid = rsi <= 75      # Block overbought BUY-chasing only
         ofi_valid = ofi > -15.0   # Widened from -8 to -15 for futures variance
     else:
-        rsi_valid = 30 <= rsi <= 60
+        rsi_valid = rsi >= 25     # Block oversold SELL-chasing only
         ofi_valid = ofi < 15.0    # Widened from 8 to 15 for futures variance
 
     red_lights = 0
@@ -841,14 +848,24 @@ def _compute_signal(
     sweep = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
 
     # Stage 3b: Candle-Close Confirmation Gate (LIQUIDITY_SWEEP only)
-    # Allow sweep entries in the first 60s of a new 15m candle.
-    # 20s was too tight: with a 10s analysis interval a sweep at 15s into the candle
-    # would be detected at 20s and immediately rejected. Extended to 60s (Patch #2)
+    # Allow sweep entries in the first 300s (5 minutes) of a new 15m candle.
+    # Sweeps detected after 300s are mid-candle noise — wait for the next open.
     if sweep:
         current_candle_ts = float(candle_history[-1]["time"]) if candle_history else 0.0
         age_s = _time.time() - current_candle_ts   # seconds since this candle opened
-        if age_s > 300:   # Extended to 300s (first 5 minutes of candle)
-            logger.info(f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s). Waiting for next candle open.")
+        if age_s > 300:   # First 5 minutes of candle only
+            remaining_s = max(0, 900 - int(age_s))  # 15m candle = 900s
+            if age_s > 600:
+                # In the last 5 minutes of the candle — entry window approaching
+                logger.info(
+                    f"[CandleGate] 🔔 Sweep blocked mid-candle (age={age_s:.0f}s) "
+                    f"— next candle open in ~{remaining_s}s. Entry window approaching."
+                )
+            else:
+                logger.info(
+                    f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s). "
+                    f"Waiting for next candle open (~{remaining_s}s remaining)."
+                )
             sweep = None  # suppress the sweep signal
 
     # Stage 4: Strategy
@@ -1108,7 +1125,12 @@ async def execution_loop(
                                 label = "TP" if filled_side == "sl" else "SL"
                                 logger.info(f"[Executor] Cancelled opposing {label} order {cancel_id} ✓")
                             except Exception as e:
-                                logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
+                                _e = str(e).lower()
+                                if "-2011" in _e or "unknown order" in _e or "not found" in _e:
+                                    label = "TP" if filled_side == "sl" else "SL"
+                                    logger.info(f"[Executor] Opposing {label} order {cancel_id} already gone (Binance cleaned it) ✓")
+                                else:
+                                    logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
 
                     new_daily_pnl = stats.get("daily_pnl", 0.0) + pnl
                     stats["daily_pnl"] = new_daily_pnl
@@ -1266,13 +1288,15 @@ async def main():
     )
 
     # Wire leverage back to executor
+    # _get_ccxt_symbol already returns the canonical ccxt format including :USDT settle
+    # for futures (e.g. BTCUSDT → BTC/USDT:USDT), so no extra reformatting is needed.
     try:
-        ccxt_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
-        if "future" in EXCHANGE.lower() or "binanceusdm" in EXCHANGE.lower():
-            if ":" not in ccxt_symbol:
-                ccxt_symbol = f"{ccxt_symbol}:{ccxt_symbol.split('/')[-1]}"
-        await executor.exchange.set_leverage(LEVERAGE, ccxt_symbol)
-        logger.info(f"[Main] Futures leverage set to {LEVERAGE}×")
+        if executor.is_futures:
+            ccxt_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
+            await executor.exchange.set_leverage(LEVERAGE, ccxt_symbol)
+            logger.info(f"[Main] Futures leverage set to {LEVERAGE}× on {ccxt_symbol}")
+        else:
+            logger.info(f"[Main] Skipping leverage set — not a futures exchange.")
     except Exception as e:
         logger.warning(f"[Main] Could not set leverage: {e}")
 

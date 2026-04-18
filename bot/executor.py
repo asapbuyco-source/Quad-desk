@@ -136,6 +136,42 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Symbol translation helpers
     # ------------------------------------------------------------------
+    def _get_ccxt_symbol(self, raw_symbol: str) -> str:
+        """
+        Convert a raw symbol (e.g. BTCUSDT) to ccxt unified format.
+        Binance USDM futures : BTCUSDT  → BTC/USDT:USDT
+        Spot / other         : BTCUSDT  → BTC/USDT
+        Called by main.py to set futures leverage at startup.
+        """
+        symbol = raw_symbol.strip().upper()
+
+        # Already unified (contains /)
+        if "/" in symbol:
+            if self.is_futures and ":" not in symbol:
+                quote = symbol.split("/")[-1]
+                return f"{symbol}:{quote}"
+            return symbol
+
+        # Dash format (BTC-USDT)
+        if "-" in symbol:
+            symbol = symbol.replace("-", "/")
+            if self.is_futures and ":" not in symbol:
+                quote = symbol.split("/")[-1]
+                return f"{symbol}:{quote}"
+            return symbol
+
+        # Raw concatenated form (BTCUSDT, ETHUSDT, …)
+        for quote in ("USDT", "USDC", "BUSD", "USD", "BTC", "ETH", "BNB"):
+            if symbol.endswith(quote):
+                base    = symbol[: -len(quote)]
+                unified = f"{base}/{quote}"
+                if self.is_futures:
+                    return f"{unified}:{quote}"
+                return unified
+
+        # Fallback — return as-is
+        return symbol
+
     def _to_exchange_symbol(self, symbol: str) -> str:
         """
         Translate a symbol to the exchange's native format for CCXT.
@@ -784,7 +820,20 @@ class TradingExecutor:
                 label = "TP" if filled_side == "sl" else "SL"
                 logger.info(f"[Executor] Cancelled opposing {label} order {cancel_id} ✓")
             except Exception as e:
-                logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
+                # -2011 "Unknown order sent" means Binance already cancelled it
+                # (closePosition=True orders are auto-cleaned when position closes).
+                err_str = str(e).lower()
+                already_gone = (
+                    "-2011" in err_str
+                    or "unknown order" in err_str
+                    or "not found" in err_str
+                    or "not_found" in err_str
+                )
+                if already_gone:
+                    label = "TP" if filled_side == "sl" else "SL"
+                    logger.info(f"[Executor] Opposing {label} order {cancel_id} already gone (Binance cleaned it) ✓")
+                else:
+                    logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
 
     async def update_breakeven_stop(self, current_price: float):
         """
@@ -844,20 +893,33 @@ class TradingExecutor:
                         await self.exchange.cancel_order(old_sl_id, ex_symbol)
                         cancel_success = True
                         pos["sl_order_id"] = None
+                        logger.info(f"[Executor] Cancelled old SL {old_sl_id} for Break-Even ✓")
                         break
                     except Exception as e:
+                        err_str = str(e).lower()
+                        # -2011 / "Unknown order sent" → Binance already removed it
+                        # (e.g. closePosition=True orders are auto-cleaned, or it was
+                        #  already triggered). Treat as success — the SL is gone.
+                        already_gone = (
+                            "-2011" in err_str
+                            or "unknown order" in err_str
+                            or "not found" in err_str
+                            or "not_found" in err_str
+                        )
+                        if already_gone:
+                            cancel_success = True
+                            pos["sl_order_id"] = None
+                            logger.info(f"[Executor] Old SL {old_sl_id} already gone on Binance — proceeding with BE placement ✓")
+                            break
                         if attempt == 2:
-                            err_str = str(e).lower()
-                            if "not found" in err_str or "not_found" in err_str:
-                                cancel_success = True
-                                pos["sl_order_id"] = None
-                                break
-                            logger.warning(f"[Executor] Final failure to cancel old SL for Break-Even: {e}")
-                            cancel_success = False
-                            pos["be_triggered"] = False # Revert
+                            # Genuinely failed — log but do NOT revert be_triggered.
+                            # The in-memory stop_loss was already updated; reverting
+                            # be_triggered would cause an infinite retry storm.
+                            logger.warning(f"[Executor] Could not cancel old SL for Break-Even (will proceed anyway): {e}")
+                            cancel_success = True  # attempt BE placement regardless
                             break
                         await asyncio.sleep(0.5)
-            
+
             if not cancel_success:
                 return
 
