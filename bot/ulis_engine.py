@@ -299,7 +299,7 @@ def compute_ulis_verdict(
     is_bos_confirmed     = len(bos_list) > 0
     cascade_warning      = cascade_risk > 0.60
 
-    if cascade_risk > 0.72 and scores["reflexivityScore"] > 0.55:
+    if cascade_risk > 0.65 and scores["reflexivityScore"] > 0.50:
         verdict = "AVOID"
         regime_label = "Cascade Risk Critical — Liquidity Singularity · STAND ASIDE"
     elif cascade_warning and is_high_volatility and cascade_risk > 0.55:
@@ -354,7 +354,7 @@ def compute_ulis_verdict(
     elif verdict == "AVOID" or verdict == "UNWIND":
         confidence_boost = -1.0   # This ensures confidence drops below threshold
     elif verdict == "NEUTRAL" or verdict == "BREAKOUT_WATCH":
-        confidence_boost = -0.03  # Reduced from -0.05: was cutting valid 65-68% signals below 62% threshold
+        confidence_boost = -0.08  # Increased from -0.03 to ensure stronger veto during neutral regimes
 
     logger.info(
         f"[ULIS] verdict={verdict} | vector={liquidity_vector:.3f} | "

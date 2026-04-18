@@ -141,6 +141,8 @@ BOT_STATS: Dict[str, Any] = {
     "last_ulis":       "—",
     "daily_pnl":       0.0,
     "daily_loss_halt": False,
+    "consecutive_losses": 0,
+    "cooldown_until":     0.0,
 }
 
 LAST_CASCADE_TIME = 0.0
@@ -375,7 +377,7 @@ class _HMMRegimeClassifier:
 
 
 # Module-level singleton — persists observations across cycles
-_hmm_classifier = _HMMRegimeClassifier(window=60, update_every=50)
+_hmm_classifier = _HMMRegimeClassifier(window=60, update_every=200)
 
 
 def _detect_regime(
@@ -470,6 +472,16 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     elif "SELL" in dominant:
         score -= 1.0 if tape_speed == "SCREAMING" else 0.5
 
+    # Multi-factor micro-structure confirmation gate
+    ofi_bull = ofi > 8
+    cvd_bull = cvd > 0
+    tape_bull = "BUY" in dominant
+    
+    micro_confirms = sum([ofi_bull, cvd_bull, tape_bull])
+    if micro_confirms < 2 and score < 3.0:
+        logger.info(f"[TrendStrategy] score={score:+.2f} rejected (micro_confirms={micro_confirms}/3)")
+        return None  # refuse single-signal entries
+
     logger.info(f"[TrendStrategy] score={score:+.2f}")
     if score >= 1.5:  return "BUY"
     if score <= -1.5: return "SELL"
@@ -480,13 +492,12 @@ def _strategy_mean_reversion(metrics: Dict[str, Any]) -> Optional[str]:
     z   = metrics["zScore"]
     rsi = metrics["rsi"]
 
-    # Lowered from ±2.2 to ±1.8: on BTC/USDT 15m futures Z rarely exceeds ±2.2
-    # (funding rate divergence widens STD). ±1.8 still represents ~2σ (Patch #7)
-    if z >= 1.8 and rsi > 45:
+    # Restored to ±2.2 (from ±1.8) to prevent over-trading on normal 15m noise
+    if z >= 2.2 and rsi > 45:
         logger.info(f"[MeanRev] SELL — Z={z:.2f} RSI={rsi:.1f}")
         return "MEAN_REVERSAL_SHORT"
 
-    if z <= -1.8 and rsi < 55:
+    if z <= -2.2 and rsi < 55:
         logger.info(f"[MeanRev] BUY — Z={z:.2f} RSI={rsi:.1f}")
         return "MEAN_REVERSAL_LONG"
 
@@ -799,11 +810,11 @@ def _compute_signal(
     if time_since_cascade < 300:  # 5 minutes
         return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {300 - int(time_since_cascade)}s remain)"}
 
-    # Universal post-trade cooldown: 60s after any exit (SL or TP)
+    # Universal post-trade cooldown: 180s after any exit (SL or TP)
     global LAST_ANY_TRADE_CLOSE_TIME
     time_since_last_trade = time.time() - LAST_ANY_TRADE_CLOSE_TIME
-    if time_since_last_trade < 60:
-        return {**WAIT, "analysis": f"Post-trade cooldown ({60 - int(time_since_last_trade)}s remain)"}
+    if time_since_last_trade < 180:
+        return {**WAIT, "analysis": f"Post-trade cooldown ({180 - int(time_since_last_trade)}s remain)"}
 
     global LAST_CANDLE_TS
     import time as _time
@@ -876,6 +887,18 @@ def _compute_signal(
         if htf == "BULL" and not is_long_dir:
             logger.warning(f"[HTF] Blocking SHORT trend trade — 4H trend is BULL.")
             return {**WAIT, "analysis": f"HTF=BULL blocks {raw_direction} trend entry."}
+
+        # Funding Rate Anti-Squeeze Protection
+        try:
+            fr = float(metrics.get("funding_rate", 0.0))
+            if is_long_dir and fr > 0.00015:
+                logger.warning(f"[Anti-Squeeze] Blocking LONG trend trade; crowded funding rate: {fr:.4%}")
+                return {**WAIT, "analysis": f"Funding Rate {fr:.4%} > 0.015%. Blocked long."}
+            if not is_long_dir and fr < -0.00015:
+                logger.warning(f"[Anti-Squeeze] Blocking SHORT trend trade; crowded funding rate: {fr:.4%}")
+                return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < -0.015%. Blocked short."}
+        except (ValueError, TypeError):
+            pass
 
     # Stage 5: Bayesian fusion
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
@@ -977,6 +1000,16 @@ async def execution_loop(
 ):
     await executor.initialize()
 
+    global ACCOUNT_SIZE
+    if not executor.dry_run:
+        try:
+            fetched_bal = await executor.get_usdt_balance(ACCOUNT_SIZE)
+            if fetched_bal != ACCOUNT_SIZE and fetched_bal > 0:
+                logger.info(f"[Main] Overriding BOT_ACCOUNT_SIZE with dynamically fetched live balance: ${fetched_bal:.2f}")
+                ACCOUNT_SIZE = fetched_bal
+        except Exception as e:
+            logger.warning(f"[Main] Could not dynamically fetch account balance at startup: {e}")
+
     mode = "DRY-RUN" if executor.dry_run else "LIVE"
     logger.info(
         f"╔══ Quad-Desk Bot ═════════════════════╗\n"
@@ -1051,6 +1084,14 @@ async def execution_loop(
                         import time
                         LAST_CASCADE_TIME = time.time()
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
+                        
+                        stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
+                        if stats["consecutive_losses"] >= 2:
+                            stats["cooldown_until"] = time.time() + 7200
+                            stats["consecutive_losses"] = 0
+                            logger.error("[RiskManager] 2 consecutive SL exits! Activating 2-Hour hard timeout.")
+                    else:
+                        stats["consecutive_losses"] = 0
                     
                     # Update the Bayesian win-rate prior for self-calibration
                     quant.update_win_rate(side=pos_snapshot.get("side", "buy"), won=(pnl >= 0))
@@ -1140,12 +1181,23 @@ async def execution_loop(
             )
 
             # Stages 2–7: Full signal engine
-            verdict_json = _compute_signal(
-                metrics,
-                candle_history=feed.state.candles,
-                feed_state=feed.state,
-                daily_loss_halt=stats.get("daily_loss_halt", False),
-            )
+            import time
+            if time.time() < stats.get("cooldown_until", 0.0):
+                verdict_json = {
+                    "verdict": "WAIT",
+                    "confidence": 0.0,
+                    "stop_loss": 0.0,
+                    "take_profit": 0.0,
+                    "analysis": f"Consecutive Loss Cooldown active. Resumes at {time.strftime('%H:%M:%S', time.localtime(stats['cooldown_until']))}",
+                    "ulis_verdict": "—"
+                }
+            else:
+                verdict_json = _compute_signal(
+                    metrics,
+                    candle_history=feed.state.candles,
+                    feed_state=feed.state,
+                    daily_loss_halt=stats.get("daily_loss_halt", False),
+                )
 
             action      = verdict_json.get("verdict", "WAIT")
             conf        = float(verdict_json.get("confidence", 0))
