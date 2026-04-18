@@ -14,7 +14,7 @@ class MarketState:
         self.symbol = symbol.upper()
         self.candles: deque = deque(maxlen=200)
         # Keep all trades received; prune old ones in add_trade
-        self.recent_trades: deque = deque()
+        self.recent_trades: deque = deque(maxlen=5000)
         # Order Book snapshot { price_float: size_float }
         self.bids: dict = {}
         self.asks: dict = {}
@@ -255,7 +255,7 @@ class BinanceDataFeed:
                         now = time.time()
                         if now - self._last_funding_fetch >= 60.0:
                             self._last_funding_fetch = now
-                            asyncio.ensure_future(self._fetch_funding_rate())
+                            asyncio.create_task(self._fetch_funding_rate())
 
             except websockets.exceptions.ConnectionClosedOK:
                 logger.info("[DataFeed] Connection closed cleanly.")

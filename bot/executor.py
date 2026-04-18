@@ -190,6 +190,45 @@ class TradingExecutor:
             try:
                 await self.exchange.load_markets()
                 logger.info(f"[Executor] Connected to {exch} {env} ✓ (attempt {attempt + 1})")
+                
+                # --- Position Reconciliation ---
+                try:
+                    positions = await self.exchange.fetch_positions()
+                    for pos in positions:
+                        qty = float(pos.get("contracts", 0) or pos.get("positionAmt", 0))
+                        if abs(qty) > 0:
+                            side = "buy" if qty > 0 else "sell"
+                            entry_p = float(pos.get("entryPrice", 0))
+                            logger.info(f"[Executor] Reconciled open position on boot: {side.upper()} {abs(qty)} @ {entry_p}")
+                            
+                            import time
+                            self.active_position = {
+                                "id": f"reconciled-{int(time.time())}",
+                                "symbol": pos.get("symbol"),
+                                "side": side,
+                                "entry_price": entry_p,
+                                "qty": abs(qty),
+                                "take_profit": 0,
+                                "stop_loss": 0,
+                                "tp_order_id": None,
+                                "sl_order_id": None,
+                                "ts": int(time.time() * 1000)
+                            }
+                            
+                            # Try binding existing SL/TP orders
+                            open_orders = await self.exchange.fetch_open_orders(pos.get("symbol"))
+                            for o in open_orders:
+                                o_type = str(o.get("type", "")).lower()
+                                price = o.get("stopPrice") or o.get("price")
+                                if "stop" in o_type:
+                                    self.active_position["sl_order_id"] = o.get("id")
+                                    self.active_position["stop_loss"] = price
+                                elif "take_profit" in o_type or "profit" in o_type:
+                                    self.active_position["tp_order_id"] = o.get("id")
+                                    self.active_position["take_profit"] = price
+                except Exception as e:
+                    logger.warning(f"[Executor] Could not reconcile historical positions: {e}")
+
                 return   # success — exit initialize
             except Exception as e:
                 last_exc = e

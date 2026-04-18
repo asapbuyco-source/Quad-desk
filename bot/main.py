@@ -1267,7 +1267,11 @@ async def main():
 
     # Wire leverage back to executor
     try:
-        await executor.exchange.set_leverage(LEVERAGE, FEED_SYMBOL)
+        ccxt_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
+        if "future" in EXCHANGE.lower() or "binanceusdm" in EXCHANGE.lower():
+            if ":" not in ccxt_symbol:
+                ccxt_symbol = f"{ccxt_symbol}:{ccxt_symbol.split('/')[-1]}"
+        await executor.exchange.set_leverage(LEVERAGE, ccxt_symbol)
         logger.info(f"[Main] Futures leverage set to {LEVERAGE}×")
     except Exception as e:
         logger.warning(f"[Main] Could not set leverage: {e}")
