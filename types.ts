@@ -397,10 +397,15 @@ export interface BotTrade {
   entry_price: number;
   stop_loss: number;
   take_profit: number;
+  size: number;
   ts_ms: number;          // client-side ms timestamp
   mode: string;           // 'DRY-RUN' | 'LIVE'
   exchange?: string;      // 'coinbase' | 'binance'
   ulis_verdict?: string;  // ULIS gate verdict that confirmed/rejected the trade
+  exit_price?: number;
+  pnl?: number;
+  result?: 'WIN' | 'LOSS';
+  exit_ts_ms?: number;
 }
 
 // --- Backtesting Types ---

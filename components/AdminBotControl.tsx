@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../store';
-import { BotSettingsState, BacktestResult, BacktestTrade } from '../types';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, AreaChart, Area } from 'recharts';
+import { BotSettingsState, BotTrade, BacktestResult, LogEntry } from '../types';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 
 const API_BASE = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000';
 
@@ -165,9 +165,6 @@ const AdminBotControl: React.FC = () => {
   const [btSymbol, setBtSymbol] = useState('BTCUSDT');
   const [btFrom, setBtFrom] = useState('2025-01-01');
   const [btTo, setBtTo] = useState('2025-03-01');
-  const [btRisk, setBtRisk] = useState(1.0);
-  const [btConf, setBtConf] = useState(0.70);
-  const [btInterval, setBtInterval] = useState('1h');
   const [btRunning, setBtRunning] = useState(false);
   const [btResult, setBtResult] = useState<BacktestResult | null>(null);
   const [btError, setBtError] = useState('');
@@ -218,7 +215,8 @@ const AdminBotControl: React.FC = () => {
         body: JSON.stringify({
           symbol: btSymbol.toUpperCase(),
           from_date: btFrom, to_date: btTo,
-          risk_pct: btRisk, min_confidence: btConf,
+          risk_pct: botSettings.maxRiskPerTradePct,
+          min_confidence: botSettings.minConfidence,
           account_size: botSettings.accountSize,
           interval: btInterval,
         }),
@@ -233,9 +231,9 @@ const AdminBotControl: React.FC = () => {
   };
 
   const equityCurveData = btResult?.equity_curve?.map((eq, i) => ({ i, equity: eq })) ?? [];
-  const btTrades = btResult?.trades ?? [];
-  const pagedTrades = btTrades.slice(btPage * BT_PAGE_SIZE, (btPage + 1) * BT_PAGE_SIZE);
-  const totalPages = Math.ceil(btTrades.length / BT_PAGE_SIZE);
+  const btTradeList = btResult?.trades ?? [];
+  const pagedTrades = btTradeList.slice(btPage * BT_PAGE_SIZE, (btPage + 1) * BT_PAGE_SIZE);
+  const totalPages = Math.ceil(btTradeList.length / BT_PAGE_SIZE);
   const stats = btResult?.stats;
 
   return (
@@ -478,10 +476,51 @@ const AdminBotControl: React.FC = () => {
                           </AreaChart>
                        </ResponsiveContainer>
                     </GlassCard>
+
+                    {btTradeList.length > 0 && (
+                      <GlassCard style={{ padding: '20px 0' }}>
+                        <div style={{ padding: '0 24px 16px', borderBottom: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Simulation Ledger</h3>
+                          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                            <button onClick={() => setBtPage(p => Math.max(0, p - 1))} style={{ background: 'none', border: 'none', color: COLORS.muted, cursor: 'pointer', fontSize: 12 }}>Previous</button>
+                            <span style={{ fontSize: 10, color: COLORS.muted }}>Page {btPage + 1} of {totalPages}</span>
+                            <button onClick={() => setBtPage(p => Math.min(totalPages - 1, p + 1))} style={{ background: 'none', border: 'none', color: COLORS.muted, cursor: 'pointer', fontSize: 12 }}>Next</button>
+                          </div>
+                        </div>
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                            <thead>
+                              <tr style={{ background: 'rgba(255,255,255,0.01)' }}>
+                                {['DATE', 'ENTRY', 'EXIT', 'PNL %', 'RESULT'].map(h => (
+                                  <th key={h} style={{ padding: '12px 24px', fontSize: 9, color: COLORS.muted }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pagedTrades.map((t, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                  <td style={{ padding: '12px 24px', fontSize: 11, color: COLORS.muted }}>{t.date}</td>
+                                  <td style={{ padding: '12px 24px', fontSize: 11 }}>${t.entry.toFixed(2)}</td>
+                                  <td style={{ padding: '12px 24px', fontSize: 11 }}>${t.exit_price.toFixed(2)}</td>
+                                  <td style={{ padding: '12px 24px', fontSize: 11, color: t.pnl > 0 ? COLORS.success : COLORS.danger }}>{t.pnl.toFixed(2)}%</td>
+                                  <td style={{ padding: '12px 24px' }}>
+                                    <span style={{ fontSize: 9, fontWeight: 900, color: t.result === 'WIN' ? COLORS.success : COLORS.danger }}>{t.result}</span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </GlassCard>
+                    )}
                  </div>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 400, background: 'rgba(255,255,255,0.01)', borderRadius: 20, border: '1px dashed rgba(255,255,255,0.05)' }}>
-                   <p style={{ color: COLORS.muted }}>Initialize backtest to visualize performance curve</p>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 400, background: 'rgba(255,255,255,0.01)', borderRadius: 20, border: '1px dashed rgba(255,255,255,0.05)', gap: 16 }}>
+                   {btError ? (
+                     <p style={{ color: COLORS.danger, background: `${COLORS.danger}11`, padding: '12px 24px', borderRadius: 12, border: `1px solid ${COLORS.danger}33` }}>{btError}</p>
+                   ) : (
+                     <p style={{ color: COLORS.muted }}>Initialize backtest to visualize performance curve</p>
+                   )}
                 </div>
               )}
             </div>
