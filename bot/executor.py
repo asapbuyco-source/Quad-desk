@@ -345,10 +345,34 @@ class TradingExecutor:
                 "ulis_verdict": ulis_verdict,
                 "ts_ms":        int(time.time() * 1000),
             }
-            db.collection("botTrades").add(doc)
-            logger.info("[Executor] Trade logged to Firestore ✓")
+            res = db.collection("botTrades").add(doc)
+            doc_id = res[1].id
+            logger.info(f"[Executor] Trade logged to Firestore (ID: {doc_id}) ✓")
+            return doc_id
         except Exception as e:
             logger.warning(f"[Executor] Failed to log trade to Firestore: {e}")
+            return None
+
+    def _update_trade_exit(self, doc_id: str, exit_price: float, pnl: float):
+        """Update an existing trade record with exit metadata."""
+        if not doc_id:
+            return
+        db = heartbeat.get_db()
+        if db is None:
+            return
+        try:
+            from firebase_admin import firestore as fs
+            result = "WIN" if pnl > 0 else "LOSS"
+            db.collection("botTrades").document(doc_id).update({
+                "exit_price": exit_price,
+                "pnl":        pnl,
+                "result":     result,
+                "exit_ts":    fs.SERVER_TIMESTAMP,
+                "exit_ts_ms": int(time.time() * 1000)
+            })
+            logger.info(f"[Executor] Trade {doc_id} exit updated in Firestore ✓")
+        except Exception as e:
+            logger.warning(f"[Executor] Failed to update trade exit for {doc_id}: {e}")
 
     # ------------------------------------------------------------------
     # Balance
@@ -545,6 +569,7 @@ class TradingExecutor:
                 f"| equity=${equity:.2f} risk={max_risk_pct}% "
                 f"| ULIS={ulis_verdict}"
             )
+            doc_id = self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
             self.active_position = {
                 "symbol":      ex_symbol,
                 "side":        side,
@@ -553,8 +578,8 @@ class TradingExecutor:
                 "stop_loss":   stop_loss,
                 "take_profit": take_profit,
                 "dry_run":     True,
+                "trade_doc_id": doc_id,
             }
-            self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
             
             # Telegram Notification
             await self.notifier.send_trade_alert(
@@ -719,6 +744,7 @@ class TradingExecutor:
                 tp_order_id = tp_order.get("id")
                 logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
 
+            doc_id = self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
             self.active_position = {
                 "symbol":      ex_symbol,
                 "side":        side,
@@ -729,11 +755,20 @@ class TradingExecutor:
                 "order_id":    order.get("id"),
                 "sl_order_id": sl_order_id,
                 "tp_order_id": tp_order_id,
+                "dry_run":     False,
+                "trade_doc_id": doc_id,
             }
             
             # Clear pending order since we now have an active position
             self.pending_order = None
-            self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
+            
+            # Telegram Notification
+            await self.notifier.send_trade_alert(
+                symbol=ex_symbol, side=side, price=current_price, 
+                size=fmt_size, sl=stop_loss, tp=take_profit, is_dry=False
+            )
+            return True
+
 
         except ccxt.InsufficientFunds as e:
             logger.error(f"[Executor] Insufficient funds: {e}")
@@ -798,6 +833,7 @@ class TradingExecutor:
                 await self.notifier.send_close_alert(
                     symbol=pos["symbol"], side=side, price=exit_price, type=exit_type, pnl=net_pnl, is_dry=self.dry_run
                 )
+            self._update_trade_exit(pos.get("trade_doc_id"), exit_price, net_pnl)
             self.active_position = None
             self.pending_order = None
             return True, net_pnl
@@ -1033,6 +1069,7 @@ class TradingExecutor:
                 await self.exchange.create_market_order(ex_symbol, close_side, size)
             
             logger.info(f"[Executor] Flattened {ex_symbol} ✅")
+            self._update_trade_exit(pos.get("trade_doc_id"), 0.0, 0.0) # Emergency exit PnL not calculated here
             self.active_position = None
         except Exception as e:
             logger.error(f"[Executor] FAILED TO FLATTEN POSITION! {e}")
