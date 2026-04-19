@@ -244,7 +244,7 @@ class TradingExecutor:
                                 "symbol": pos.get("symbol"),
                                 "side": side,
                                 "entry_price": entry_p,
-                                "qty": abs(qty),
+                                "size": abs(qty),
                                 "take_profit": 0,
                                 "stop_loss": 0,
                                 "tp_order_id": None,
@@ -817,15 +817,21 @@ class TradingExecutor:
         TAKER_FEE = 0.0005  # 0.05%
         MAKER_FEE = 0.0002  # 0.02%
         
-        notional = pos["size"] * pos["entry_price"]
+        size = pos.get("size") or pos.get("qty") or 0.0
+        if size <= 0:
+            logger.warning("[Executor] Active position has 0 size. Clearing stale state.")
+            self.active_position = None
+            return False, 0.0
+
+        notional = size * pos["entry_price"]
         entry_fee = notional * TAKER_FEE
 
         async def finalize_exit(exit_type: str, exit_price: float):
             nonlocal notional, entry_fee, side
-            exit_notional = pos["size"] * exit_price
+            exit_notional = size * exit_price
             exit_fee = exit_notional * (MAKER_FEE if exit_type == "TP" else TAKER_FEE)
             
-            raw_pnl = (exit_price - pos["entry_price"]) * pos["size"] if side == "buy" else (pos["entry_price"] - exit_price) * pos["size"]
+            raw_pnl = (exit_price - pos["entry_price"]) * size if side == "buy" else (pos["entry_price"] - exit_price) * size
             net_pnl = raw_pnl - (entry_fee + exit_fee)
             logger.info(f"[Executor] {exit_type} HIT{' (SHORT)' if side == 'sell' else ''}. Net PnL=${net_pnl:.2f} (Fees: ${entry_fee+exit_fee:.2f})")
             
