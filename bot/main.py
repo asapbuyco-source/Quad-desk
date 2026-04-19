@@ -113,12 +113,13 @@ if BINANCE_ED25519_PRIVKEY:
 TG_BOT_TOKEN   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID     = os.environ.get("TELEGRAM_CHAT_ID",   "")
 
-# Derive dry-run: no credentials at all
+# Derive dry-run: explicit override or no credentials at all
+ENV_DRY_RUN = str(os.environ.get("BOT_DRY_RUN", "")).lower() == "true"
 if EXCHANGE == "coinbase":
-    DRY_RUN = not (CB_KEY_NAME and CB_PRIVATE_KEY)
+    DRY_RUN = ENV_DRY_RUN or not (CB_KEY_NAME and CB_PRIVATE_KEY)
 else:
     # For Binance: either HMAC secret OR Ed25519 private key is sufficient
-    DRY_RUN = not (BINANCE_API_KEY and (BINANCE_API_SECRET or BINANCE_ED25519_PRIVKEY))
+    DRY_RUN = ENV_DRY_RUN or not (BINANCE_API_KEY and (BINANCE_API_SECRET or BINANCE_ED25519_PRIVKEY))
 
 # Data feed always uses Binance public WS; normalise symbol to BTCUSDT style
 if EXCHANGE == "coinbase":
@@ -689,7 +690,7 @@ def _apply_ulis_gate(
     ofi = metrics.get("ofi", 0.0)
     atr_pct = metrics.get("atr_pct", 0.005)
 
-    is_atr_extended = atr_pct > 0.008  # Typically >0.8% in 15m is massively extended
+    is_atr_extended = atr_pct > 0.0035  # Typically >0.35% in 15m is massively extended
 
     # ULIS Triple Alignment Gate — directionally aware RSI check.
     #
@@ -1095,7 +1096,7 @@ async def execution_loop(
             # ── Position exit check — track PnL for daily halt ─────
             if executor.active_position:
                 pos_snapshot = dict(executor.active_position)
-                exited, pnl = executor.check_position_exit(current_price)
+                exited, pnl = await executor.check_position_exit(current_price)
                 if exited:
                     if pnl < 0:
                         global LAST_CASCADE_TIME

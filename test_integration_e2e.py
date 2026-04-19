@@ -57,7 +57,7 @@ def assert_test(name: str, condition: bool, detail: str = ""):
         print(f"  {PASS} {name}")
     else:
         test_results["fail"] += 1
-        print(f"  {FAIL} {name}  ← {detail}")
+        print(f"  {FAIL} {name}  -> {detail}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -345,10 +345,10 @@ async def test_complete_buy_flow():
         )
         
         # Execute signal
-        with patch('bot.executor.ccxt.binance', return_value=mock_exchange):
+        with patch('bot.executor.ccxt.binanceusdm', return_value=mock_exchange):
             executor = TradingExecutor(
                 api_key="", api_secret="",
-                exchange_id="binance",
+                exchange_id="binanceusdm",
                 dry_run=True,
             )
             await executor.initialize()
@@ -370,7 +370,7 @@ async def test_complete_buy_flow():
                 
                 # Simulate price hitting TP
                 tp_price = executor.active_position["take_profit"]
-                exited, pnl = executor.check_position_exit(tp_price)
+                exited, pnl = await executor.check_position_exit(tp_price)
                 
                 assert_test(
                     "Position exits at TP",
@@ -413,10 +413,10 @@ async def test_complete_sell_flow():
         logger.info(f"Signal: {signal['verdict']} (conf={signal['confidence']:.2f})")
         
         # Execute signal
-        with patch('bot.executor.ccxt.binance', return_value=mock_exchange):
+        with patch('bot.executor.ccxt.binanceusdm', return_value=mock_exchange):
             executor = TradingExecutor(
                 api_key="", api_secret="",
-                exchange_id="binance",
+                exchange_id="binanceusdm",
                 dry_run=True,
             )
             await executor.initialize()
@@ -481,10 +481,10 @@ async def test_multiple_signals_sequence():
     
     from bot.executor import TradingExecutor
     
-    with patch('bot.executor.ccxt.binance', return_value=MockCCXTExchange()):
+    with patch('bot.executor.ccxt.binanceusdm', return_value=MockCCXTExchange()):
         executor = TradingExecutor(
             api_key="", api_secret="",
-            exchange_id="binance",
+            exchange_id="binanceusdm",
             dry_run=True,
         )
         await executor.initialize()
@@ -514,7 +514,7 @@ async def test_multiple_signals_sequence():
         )
         
         # Exit with profit
-        exited, pnl = executor.check_position_exit(43_000.0)
+        exited, pnl = await executor.check_position_exit(43_000.0)
         pnl_log.append(pnl)
         
         assert_test(
@@ -546,7 +546,7 @@ async def test_multiple_signals_sequence():
         )
         
         # Exit with profit
-        exited, pnl = executor.check_position_exit(42_000.0)
+        exited, pnl = await executor.check_position_exit(42_000.0)
         pnl_log.append(pnl)
         
         assert_test(
@@ -587,7 +587,7 @@ async def test_real_exchange_api_connectivity():
         executor = TradingExecutor(
             api_key=binance_key,
             api_secret=binance_secret,
-            exchange_id="binance",
+            exchange_id="binanceusdm",
             dry_run=True,
             testnet=True,
         )

@@ -130,7 +130,8 @@ class TradingExecutor:
         exchange.has['fetchCurrencies'] = False
         
         active_type = exchange.options.get("defaultType", "spot")
-        logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised as {active_type.upper()} via {exchange_class.__name__}.")
+        exchange_name = getattr(exchange_class, "__name__", type(exchange).__name__)
+        logger.info(f"[Executor] Binance ({'testnet' if testnet else 'live'}) initialised as {active_type.upper()} via {exchange_name}.")
         return exchange
 
     # ------------------------------------------------------------------
@@ -762,7 +763,7 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
     # ------------------------------------------------------------------
-    def check_position_exit(self, current_price: float) -> tuple:
+    async def check_position_exit(self, current_price: float) -> tuple:
         """
         Check SL/TP for dry-run mode.
         In live mode the exchange handles OCO orders.
@@ -776,33 +777,41 @@ class TradingExecutor:
         side = pos["side"]
         sl   = pos["stop_loss"]
         tp   = pos["take_profit"]
+        
+        # Binance fee assumptions
+        TAKER_FEE = 0.0005  # 0.05%
+        MAKER_FEE = 0.0002  # 0.02%
+        
+        notional = pos["size"] * pos["entry_price"]
+        entry_fee = notional * TAKER_FEE
+
+        async def finalize_exit(exit_type: str, exit_price: float):
+            nonlocal notional, entry_fee, side
+            exit_notional = pos["size"] * exit_price
+            exit_fee = exit_notional * (MAKER_FEE if exit_type == "TP" else TAKER_FEE)
+            
+            raw_pnl = (exit_price - pos["entry_price"]) * pos["size"] if side == "buy" else (pos["entry_price"] - exit_price) * pos["size"]
+            net_pnl = raw_pnl - (entry_fee + exit_fee)
+            logger.info(f"[Executor] {exit_type} HIT{' (SHORT)' if side == 'sell' else ''}. Net PnL=${net_pnl:.2f} (Fees: ${entry_fee+exit_fee:.2f})")
+            
+            if hasattr(self, "notifier") and self.notifier:
+                await self.notifier.send_close_alert(
+                    symbol=pos["symbol"], side=side, price=exit_price, type=exit_type, pnl=net_pnl, is_dry=self.dry_run
+                )
+            self.active_position = None
+            self.pending_order = None
+            return True, net_pnl
 
         if side == "buy":
             if current_price <= sl:
-                pnl = (current_price - pos["entry_price"]) * pos["size"]
-                logger.info(f"[Executor] STOP LOSS HIT. PnL=${pnl:.2f}")
-                self.active_position = None
-                self.pending_order = None
-                return True, pnl
+                return await finalize_exit("SL", current_price)
             if current_price >= tp:
-                pnl = (current_price - pos["entry_price"]) * pos["size"]
-                logger.info(f"[Executor] TAKE PROFIT HIT. PnL=${pnl:.2f}")
-                self.active_position = None
-                self.pending_order = None
-                return True, pnl
+                return await finalize_exit("TP", current_price)
         else:
             if current_price >= sl:
-                pnl = (pos["entry_price"] - current_price) * pos["size"]
-                logger.info(f"[Executor] STOP LOSS HIT (SHORT). PnL=${pnl:.2f}")
-                self.active_position = None
-                self.pending_order = None
-                return True, pnl
+                return await finalize_exit("SL", current_price)
             if current_price <= tp:
-                pnl = (pos["entry_price"] - current_price) * pos["size"]
-                logger.info(f"[Executor] TAKE PROFIT HIT (SHORT). PnL=${pnl:.2f}")
-                self.active_position = None
-                self.pending_order = None
-                return True, pnl
+                return await finalize_exit("TP", current_price)
 
         return False, 0.0
 

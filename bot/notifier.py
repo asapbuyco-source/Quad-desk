@@ -55,3 +55,19 @@ class TelegramNotifier:
         """Send an urgent error notification."""
         msg = f"⚠️ <b>BOT ERROR</b>\n━━━━━━━━━━━━━━━\n<code>{error_msg}</code>"
         await self.send_message(msg)
+
+    async def send_close_alert(self, symbol: str, side: str, price: float, type: str, pnl: float, is_dry: bool = False):
+        """Send a beautiful trade exit summary alert."""
+        mode_str = "🧪 [DRY-RUN]" if is_dry else "🚀 [LIVE-TRADE]"
+        emoji = "🔴" if type == "SL" else "🟢"
+        result = "PROFIT" if pnl >= 0 else "LOSS"
+        
+        msg = (
+            f"<b>{mode_str} CLOSE</b>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"{emoji} <b>{type} HIT: {side.upper()} {symbol}</b>\n"
+            f"🔚 Exit Price: <code>{price:.2f}</code>\n"
+            f"💵 {result}: <code>${pnl:.2f}</code>\n"
+            f"━━━━━━━━━━━━━━━"
+        )
+        await self.send_message(msg)

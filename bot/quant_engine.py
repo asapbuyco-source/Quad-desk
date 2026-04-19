@@ -251,7 +251,7 @@ class QuantEngine:
         bids = self.state.bids
         asks = self.state.asks
 
-        MAX_DIST   = 0.005
+        MAX_DIST   = 0.001
         valid_bids = {p: s for p, s in bids.items()
                       if (current_price - p) / current_price <= MAX_DIST}
         valid_asks = {p: s for p, s in asks.items()
