@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../store';
-import { BotSettingsState, BotTrade, BacktestResult, LogEntry } from '../types';
+import { BotSettingsState, BotTrade, BacktestResult } from '../types';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 
 const API_BASE = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000';
@@ -37,7 +37,7 @@ const ulisColor = (v?: string) => ULIS_COLOUR[v ?? ''] ?? C.muted;
 const verdictColor = (v?: string) => VERDICT_COLOUR[v ?? ''] ?? C.muted;
 
 const fmt = (n: number) => n.toFixed(2);
-const fmtPct = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+const _fmtPct = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 const fmtUSD = (n: number) => (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
 
 // ── Sub-components ───────────────────────────────────────────────────────────
