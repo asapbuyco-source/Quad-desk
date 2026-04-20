@@ -96,6 +96,9 @@ _EXCHANGE_FEE_RATE  = 0.012 if EXCHANGE == "coinbase" else (0.0004 if EXCHANGE =
 PANIC_DROP_PCT     = float(os.environ.get("BOT_PANIC_DROP_PCT",   "3.0"))
 PANIC_LOOKBACK     = int(os.environ.get("BOT_PANIC_LOOKBACK",     "5"))   # candles
 PANIC_LOCK_SECONDS = int(os.environ.get("BOT_PANIC_LOCK_SECONDS", "300")) # 5 min default
+# Max drawdown: halt ALL trading if cumulative session PnL exceeds this % of ACCOUNT_SIZE
+MAX_DRAWDOWN_PCT   = float(os.environ.get("BOT_MAX_DRAWDOWN_PCT",  "15.0"))
+
 
 # Coinbase credentials
 CB_KEY_NAME     = os.environ.get("COINBASE_API_KEY_NAME",  "")
@@ -802,6 +805,7 @@ def _compute_signal(
     candle_history: list,
     feed_state,
     daily_loss_halt: bool,
+    drawdown_halt: bool = False,
 ) -> Dict[str, Any]:
     WAIT = {
         "verdict": "WAIT", "confidence": 0.0,
@@ -812,6 +816,12 @@ def _compute_signal(
     if daily_loss_halt:
         logger.warning("[RiskEngine] Daily loss limit hit — all trading halted today.")
         return {**WAIT, "analysis": "Daily loss limit reached. Halted."}
+
+    if drawdown_halt:
+        logger.warning("[RiskEngine] Max drawdown breached — all trading halted. Restart bot to resume.")
+        return {**WAIT, "analysis": "Max drawdown breached. Restart bot to resume."}
+
+
 
     global LAST_CASCADE_TIME
     import time
@@ -1019,7 +1029,8 @@ async def execution_loop(
 ):
     await executor.initialize()
 
-    global ACCOUNT_SIZE
+    global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME
+
     if not executor.dry_run:
         try:
             fetched_bal = await executor.get_usdt_balance(ACCOUNT_SIZE)
@@ -1059,7 +1070,10 @@ async def execution_loop(
                 stats["_last_trade_day"] = today
                 stats["daily_pnl"]       = 0.0
                 stats["daily_loss_halt"] = False
-                logger.info("[RiskEngine] 🌅 Daily counters reset for new trading session.")
+                # 3.6 FIX: Reset CVD anchor daily to prevent multi-day drift
+                feed.state.cvd = 0.0
+                LAST_CVD = 0.0
+                logger.info("[RiskEngine] 🌅 Daily counters + CVD reset for new trading session.")
 
             current_price = feed.state.candles[-1]["close"]
 
@@ -1096,13 +1110,18 @@ async def execution_loop(
             # ── Position exit check — track PnL for daily halt ─────
             if executor.active_position:
                 pos_snapshot = dict(executor.active_position)
-                exited, pnl = await executor.check_position_exit(current_price)
+                # 3.1 FIX: Pass candle high/low so SL/TP sim triggers at correct price
+                candle = feed.state.candles[-1]
+                exited, pnl = await executor.check_position_exit(
+                    current_price,
+                    candle_high=candle.get("high"),
+                    candle_low=candle.get("low")
+                )
                 if exited:
                     if pnl < 0:
-                        global LAST_CASCADE_TIME
-                        import time
                         LAST_CASCADE_TIME = time.time()
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
+
                         
                         stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
                         if stats["consecutive_losses"] >= 2:
@@ -1135,11 +1154,11 @@ async def execution_loop(
 
                     new_daily_pnl = stats.get("daily_pnl", 0.0) + pnl
                     stats["daily_pnl"] = new_daily_pnl
-                    
+
                     # Update post-trade cooldown tracker
-                    global LAST_ANY_TRADE_CLOSE_TIME
                     LAST_ANY_TRADE_CLOSE_TIME = time.time()
-                    
+
+
                     max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
                     if new_daily_pnl < -max_loss_usd and not stats.get("daily_loss_halt"):
                         stats["daily_loss_halt"] = True
@@ -1148,6 +1167,26 @@ async def execution_loop(
                             f"${new_daily_pnl:.2f} (limit=-${max_loss_usd:.2f}). "
                             f"All trading halted until tomorrow."
                         )
+
+                    # 3.5 FIX: Max Drawdown check (session cumulative)
+                    # Distinct from daily loss cap — this is absolute session PnL
+                    session_pnl = stats.get("session_pnl", 0.0) + pnl
+                    stats["session_pnl"] = session_pnl
+                    max_drawdown_usd = ACCOUNT_SIZE * MAX_DRAWDOWN_PCT / 100.0
+                    if session_pnl < -max_drawdown_usd and not stats.get("drawdown_halt"):
+                        stats["drawdown_halt"] = True
+                        logger.critical(
+                            f"[RiskEngine] 🚨 MAX DRAWDOWN BREACHED: "
+                            f"${session_pnl:.2f} (limit=-${max_drawdown_usd:.2f}). "
+                            f"ALL TRADING HALTED. Restart bot to resume."
+                        )
+                        if executor.notifier:
+                            await executor.notifier.send_message(
+                                f"🚨 Quad-Desk MAX DRAWDOWN HIT\n"
+                                f"Session PnL: ${session_pnl:.2f} / Limit: -${max_drawdown_usd:.2f}\n"
+                                f"Bot has halted all trading. Restart to resume."
+                            )
+
 
             stats["active_position"] = executor.active_position
 
@@ -1159,7 +1198,6 @@ async def execution_loop(
             # LAST_CVD is 0.0 on first boot — naively computing delta would create a false spike
             # (e.g. CVD=-1500 → delta=-1500, triggering a spurious bearish signal). (Patch #5)
             if metrics is not None:
-                global LAST_CVD
                 _current_cvd = metrics.get("cvd", 0.0)
                 if LAST_CVD == 0.0:  # First cycle after bot restart — initialise without delta spike
                     LAST_CVD = _current_cvd
@@ -1167,6 +1205,7 @@ async def execution_loop(
                 else:
                     metrics["cvd_delta"] = _current_cvd - LAST_CVD
                     LAST_CVD = _current_cvd
+
 
                 # Update candle-close tracker so the candle-close gate in _compute_signal
                 # knows how old the current candle is.
@@ -1221,7 +1260,9 @@ async def execution_loop(
                     candle_history=feed.state.candles,
                     feed_state=feed.state,
                     daily_loss_halt=stats.get("daily_loss_halt", False),
+                    drawdown_halt=stats.get("drawdown_halt", False),
                 )
+
 
             action      = verdict_json.get("verdict", "WAIT")
             conf        = float(verdict_json.get("confidence", 0))

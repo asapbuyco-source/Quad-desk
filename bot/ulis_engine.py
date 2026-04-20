@@ -86,7 +86,8 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
     fragility   = _clamp(z_fragility * 0.5 + atr_reflexivity * 0.5, 0.0, 1.0)
 
     # Visible liquidity proxy from OFI depth
-    visible_liquidity = _normalize(abs(ofi), 0.0, 40.0)
+    # OFI is now in (-1, +1) after the Three-Stage Pipeline (tanh output)
+    visible_liquidity = _normalize(abs(ofi), 0.0, 0.6)
 
     # Latent liquidity: inverse of reflexivity (stable market = more resting liquidity)
     latent_liquidity = _clamp(1.0 - reflexivity_score, 0.0, 1.0)
@@ -219,9 +220,11 @@ def compute_ulis_verdict(
     fvg_count = _count_fvgs(candles)
 
     # ── Phase 1: Feature Fusion ───────────────────────────────────────────────
-    ofi_signal    = _clamp(ofi / 40.0, -1.0, 1.0)
+    # OFI is now in (-1, +1) from tanh pipeline — no need to divide by 40
+    ofi_signal    = _clamp(ofi, -1.0, 1.0)
     bayes_signal  = (bayes - 0.5) * 2.0         # -1 to +1
-    leverage_proxy = _normalize(abs(ofi), 0.0, 80.0)
+    # leverage_proxy: OFI tanh output, scaled so |1| maps to high leverage
+    leverage_proxy = _normalize(abs(ofi), 0.0, 0.8)
 
     total_bid = sum(b["size"] for b in bids)
     total_ask = sum(a["size"] for a in asks)
@@ -283,14 +286,15 @@ def compute_ulis_verdict(
     ilih_score = _normalize(total_depth, 1000.0, 80000.0)
     alde_conf0 = (
         0.25 * ilih_score +
-        0.20 * scores["glrScore"] +
-        0.25 * scores["nlfScore"] +
+        0.22 * scores["glrScore"] +
+        0.20 * scores["nlfScore"] +   # reduced from 0.25: bayes already priced via nlf_score
         0.20 * (1.0 - scores["reflexivityScore"]) +
-        0.10 * (1.0 - scores["fragility"])
+        0.13 * (1.0 - scores["fragility"])
     )
-    bayes_boost = (bayes - 0.5) * 0.12 * math.copysign(1, liquidity_vector or 1)
+    # 3.2 FIX: Removed bayes_boost — bayesianPosterior already feeds nlf_score (double-counting).
+    # Only CVD boost remains as it's an orthogonal (independent) signal.
     cvd_boost   = _clamp(cvd / 5_000_000.0, -0.06, 0.06) * math.copysign(1, liquidity_vector or 1)
-    alde_confidence = _clamp(alde_conf0 + bayes_boost + cvd_boost, 0.0, 1.0)
+    alde_confidence = _clamp(alde_conf0 + cvd_boost, 0.0, 1.0)
 
     # ── Phase 6: Verdict AND-Gates ───────────────────────────────────────────
     is_high_volatility   = scores["fragility"] > 0.55 or scores["reflexivityScore"] > 0.55

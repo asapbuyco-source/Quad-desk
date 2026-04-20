@@ -1,16 +1,17 @@
 
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-aiohttp==3.9.5
-google-generativeai==0.8.3
-protobuf>=4.21.0,<5.0.0
-numpy==1.26.3
-pandas==2.2.0
-python-dotenv==1.0.1
-websockets==12.0
-httpx==0.27.0
-pydantic==2.5.3
-newsapi-python==0.2.7
-jinja2==3.1.3
-psutil==5.9.8
-ccxt==4.4.52
+fastapi>=0.115.0,<0.116.0
+uvicorn[standard]>=0.30.0
+aiohttp>=3.9.5
+# Migrated from google-generativeai (deprecated) to google-genai v1 SDK (Apr 2026)
+google-genai>=1.0.0
+protobuf>=4.21.0,<6.0.0
+numpy>=1.26.3
+pandas>=2.2.0
+python-dotenv>=1.0.1
+websockets>=12.0
+httpx>=0.27.0
+pydantic>=2.5.3
+newsapi-python>=0.2.7
+jinja2>=3.1.3
+psutil>=5.9.8
+ccxt>=4.4.52

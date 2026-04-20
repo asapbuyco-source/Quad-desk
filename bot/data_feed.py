@@ -195,7 +195,12 @@ class BinanceDataFeed:
         import os
         api_key = os.environ.get("BINANCE_API_KEY", "")
         headers = {"X-MBX-APIKEY": api_key} if api_key else {}
-        
+
+        # 3.3 FIX: Snapshot CVD before any mutation.
+        # If REST fails (network drop, reconnect), we preserve the existing baseline
+        # rather than resetting to 0.0 which would produce a false CVD delta spike.
+        prev_cvd = self.state.cvd
+
         try:
             logger.info(f"[DataFeed] Fetching historical {self.interval} candles from {url}...")
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -203,7 +208,7 @@ class BinanceDataFeed:
                 resp.raise_for_status()
                 data = resp.json()
 
-            # Reset CVD to re-anchor perfectly based on REST history
+            # Reset CVD to re-anchor perfectly based on REST history (only on success)
             self.state.cvd = 0.0
             for k in data:
                 # Binance REST returns an array of arrays
@@ -217,15 +222,21 @@ class BinanceDataFeed:
                     'v': float(k[5]),
                 }
                 self.state.add_candle(c_data, is_final=True)
-                
+
                 # Rebuild CVD analytically
                 taker_buy_base = float(k[9])
                 vol = float(k[5])
                 self.state.cvd += (2.0 * taker_buy_base) - vol
-            
-            logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles.")
+
+            logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles. CVD rebuilt: {self.state.cvd:.0f}")
         except Exception as e:
-            logger.warning(f"[DataFeed] Failed to prefetch historical candles: {e}")
+            logger.warning(
+                f"[DataFeed] Failed to prefetch historical candles ({e}). "
+                f"Preserving existing CVD={prev_cvd:.0f} to avoid false delta spike."
+            )
+            self.state.cvd = prev_cvd  # restore — do not corrupt the signal
+
+
 
     # ------------------------------------------------------------------
     # Connection loop with exponential back-off

@@ -63,23 +63,41 @@ def _normalize_pem(raw_key: str) -> str:
         return key
 
     # Step 3: Flatten body and re-wrap strictly at 64 chars
-    # We also ensure the body has correct Base64 padding (multiple of 4)
-    # to fix 'InvalidPadding' errors caused by truncated environment variables.
     full_body = "".join(body_parts).rstrip("=")
-    
+
+    # 1.6 FIX: Validate key body length before padding.
+    # Firebase RSA-2048 private key body = ~1700 base64 chars.
+    # A body under 200 chars is almost certainly truncated by the secret manager.
+    body_len = len(full_body)
+    if body_len < 200:
+        logger.error(
+            f"[Heartbeat] Private key body is only {body_len} chars — "
+            "likely truncated by Railway/secret manager character limit. "
+            "Firebase RSA keys require ~1700 base64 chars. "
+            "Paste the FULL JSON file content as the env var value."
+        )
+        return ""  # Return empty; caller will skip Firebase init cleanly
+
     remainder = len(full_body) % 4
     if remainder == 2:
         full_body += "=="
     elif remainder == 3:
         full_body += "="
     elif remainder == 1:
-        # Invalid base64 (suggests truncation). 
-        full_body += "==="
+        # remainder=1 is structurally invalid in base64 — key is definitely truncated.
+        # Padding with '===' would produce a structurally valid but cryptographically
+        # wrong key, hiding the real error. Fail loudly instead.
+        logger.error(
+            "[Heartbeat] Base64 body has remainder=1 — key is definitely truncated. "
+            "Do NOT try to pad it. Store the COMPLETE JSON key as the env var."
+        )
+        return ""
 
     wrapped_body = [full_body[i:i+64] for i in range(0, len(full_body), 64)]
 
     final_pem = "\n".join([header] + wrapped_body + [footer])
     return final_pem
+
 
 
 def _validate_pem(key: str) -> bool:
@@ -266,9 +284,22 @@ async def run_heartbeat(stats: dict) -> None:
                 "lastSignal":      stats.get("last_signal",   "WAIT"),
                 "exchange":        stats.get("exchange",       "coinbase").lower(),
                 "lastUlis":        stats.get("last_ulis",      "—"),
+                "sessionPnl":      stats.get("session_pnl",   0.0),
+                "dailyPnl":        stats.get("daily_pnl",     0.0),
             }
             # firebase-admin is sync → run in a thread so we don't block the loop
             await asyncio.to_thread(doc_ref.set, payload)
+
+            # 5.2: Equity curve time-series point (every heartbeat cycle)
+            # Frontend can query equityCurve ordered by timestamp for a P&L chart
+            equity_doc = {
+                "equity":     stats.get("account_equity", 0.0),
+                "sessionPnl": stats.get("session_pnl",    0.0),
+                "dailyPnl":   stats.get("daily_pnl",      0.0),
+                "timestamp":  fs.SERVER_TIMESTAMP,
+            }
+            equity_ref = _db.collection("equityCurve")
+            await asyncio.to_thread(equity_ref.add, equity_doc)
 
         except asyncio.CancelledError:
             break
@@ -279,6 +310,8 @@ async def run_heartbeat(stats: dict) -> None:
             await asyncio.sleep(WRITE_INTERVAL)
         except asyncio.CancelledError:
             break
+
+
 
 
 async def write_offline(stats: dict) -> None:

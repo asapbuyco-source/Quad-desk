@@ -1,11 +1,15 @@
 import time
 import logging
 import math
+import json
+import os
 import numpy as np
 import pandas as pd
+from collections import deque
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
 
 
 class QuantEngine:
@@ -27,6 +31,23 @@ class QuantEngine:
         # Alpha = wins+1, Beta = losses+1  →  mean = α/(α+β) = 0.5 at startup (uniform prior)
         self._alpha: float = 1.0   # pseudo-successes (bull wins)
         self._beta:  float = 1.0   # pseudo-failures  (bull losses)
+
+        # ── OFI State (Three-Stage Pipeline) ──────────────────────────────
+        # Stage 1: True OFI = delta of bid/ask depth between snapshots
+        self._prev_bid_depth: float = 0.0
+        self._prev_ask_depth: float = 0.0
+        # Stage 2: MAD Persistence Filter
+        self._ofi_history: deque = deque(maxlen=100)
+        self._ofi_outlier_count: int = 0
+        # Stage 3: EWMA normalisation + tanh soft saturation
+        self._ofi_ewma_mu:  float = 0.0
+        self._ofi_ewma_var: float = 1.0
+        self._ofi_smooth:   float = 0.0
+
+        # Persistence path — survives Railway restarts if /tmp is mounted
+        self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
+        self._load_state()
+
 
     # ------------------------------------------------------------------
     # Public: update win-rate tracker after each trade
@@ -54,6 +75,45 @@ class QuantEngine:
             f"[QuantEngine] Win-rate prior updated: α={self._alpha:.0f} β={self._beta:.0f} "
             f"→ P(bull)={p_bull:.2%}  (n={n:.0f} trades)"
         )
+        self._save_state()  # Persist after every trade
+
+    # ------------------------------------------------------------------
+    # State Persistence: survives restarts (Beta prior + OFI EWMA)
+    # ------------------------------------------------------------------
+    def _save_state(self):
+        """Persist Beta prior and OFI EWMA state to disk."""
+        try:
+            data = {
+                "alpha":        self._alpha,
+                "beta":         self._beta,
+                "ofi_ewma_mu":  self._ofi_ewma_mu,
+                "ofi_ewma_var": self._ofi_ewma_var,
+                "ofi_smooth":   self._ofi_smooth,
+            }
+            with open(self._persist_path, "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.warning(f"[QuantEngine] State save failed: {e}")
+
+    def _load_state(self):
+        """Restore persisted state if available."""
+        try:
+            if os.path.exists(self._persist_path):
+                with open(self._persist_path) as f:
+                    data = json.load(f)
+                self._alpha        = float(data.get("alpha",        1.0))
+                self._beta         = float(data.get("beta",         1.0))
+                self._ofi_ewma_mu  = float(data.get("ofi_ewma_mu",  0.0))
+                self._ofi_ewma_var = float(data.get("ofi_ewma_var", 1.0))
+                self._ofi_smooth   = float(data.get("ofi_smooth",   0.0))
+                n = max(0, self._alpha + self._beta - 2)
+                logger.info(
+                    f"[QuantEngine] Restored state: α={self._alpha:.1f} β={self._beta:.1f} "
+                    f"(n={n:.0f} trades), OFI EWMA μ={self._ofi_ewma_mu:.4f}"
+                )
+        except Exception as e:
+            logger.warning(f"[QuantEngine] State load failed, using defaults: {e}")
+
 
     # ------------------------------------------------------------------
     # Public API
@@ -299,19 +359,76 @@ class QuantEngine:
                 dist = (current_price - p) / current_price * 100
                 wall_parts.append(f"BUY@{p:.1f} (-{dist:.2f}%, sz:{s:.2f})")
 
-        # ── OFI outlier clamp ─────────────────────────────────────────────
-        # Raw OFI occasionally spikes to ±400+ during exchange anomalies or
-        # brief LOB snapshots with extreme size imbalance. Values that far
-        # outside the normal ±40 range distort both the Bayesian fusion and
-        # the Triple Alignment Gate. Clamp to ±100 and log when triggered.
-        OFI_CLAMP = 100.0
-        if abs(ofi) > OFI_CLAMP:
-            logger.warning(
-                f"[QuantEngine] OFI outlier detected ({ofi:.1f}) — clamped to "
-                f"{'±' if ofi else ''}{OFI_CLAMP:.0f}. "
-                "Check LOB snapshot for data anomaly."
+        # ── THREE-STAGE OFI INTEGRITY PIPELINE ───────────────────────────
+        # Replaces the static ±100 clamp (Links Investment Corps, Apr 2026)
+
+        # STAGE 1 — True OFI via depth-snapshot delta
+        # The bot uses depth20@100ms (full snapshots, not delta stream),
+        # so we measure the CHANGE in total bid/ask depth between frames.
+        # This is true Order Flow Imbalance, not just Order Book Imbalance.
+        curr_bid_depth = sum(valid_bids.values())
+        curr_ask_depth = sum(valid_asks.values())
+
+        if self._prev_bid_depth == 0.0 and self._prev_ask_depth == 0.0:
+            ofi_raw = 0.0  # First cycle: no delta available yet, emit neutral
+        else:
+            ofi_raw = (
+                (curr_bid_depth - self._prev_bid_depth) -
+                (curr_ask_depth - self._prev_ask_depth)
             )
-            ofi = max(-OFI_CLAMP, min(OFI_CLAMP, ofi))
+        self._prev_bid_depth = curr_bid_depth
+        self._prev_ask_depth = curr_ask_depth
+
+        # STAGE 2 — MAD Persistence Filter
+        # Classifies transient spikes (1-2 cycles) vs sustained extremes (3+ cycles).
+        # Only sustained extremes pass through (genuine institutional pressure).
+        self._ofi_history.append(ofi_raw)
+        ofi_filtered = ofi_raw  # default: pass through
+
+        if len(self._ofi_history) >= 20:
+            arr = np.array(self._ofi_history)
+            median_ofi = float(np.median(arr))
+            mad = float(np.median(np.abs(arr - median_ofi)))
+            mad_threshold = 3.5 * 1.4826 * mad  # 3.5σ robust boundary
+
+            if mad_threshold > 0 and abs(ofi_raw - median_ofi) > mad_threshold:
+                self._ofi_outlier_count += 1
+                if self._ofi_outlier_count < 3:
+                    # Transient spike (1-2 cycles) — replace with neutral median
+                    logger.debug(
+                        f"[OFI-MAD] Transient outlier ({ofi_raw:.2f}) — "
+                        f"replacing with median ({median_ofi:.2f})"
+                    )
+                    ofi_filtered = median_ofi
+                else:
+                    # Sustained extreme (3+ cycles) — genuine, cap at MAD boundary
+                    sign = 1.0 if ofi_raw >= 0 else -1.0
+                    ofi_filtered = sign * (abs(median_ofi) + mad_threshold)
+                    self._ofi_outlier_count = 0
+                    logger.debug(
+                        f"[OFI-MAD] Sustained extreme ({ofi_raw:.2f}) — "
+                        f"capped at MAD boundary ({ofi_filtered:.2f})"
+                    )
+            else:
+                self._ofi_outlier_count = 0
+
+        # STAGE 3 — EWMA normalisation + tanh soft saturation
+        # Output is in (-1, +1). Replaces the static ±100 hard clamp.
+        # tanh is monotone — preserves direction, never hard-caps genuine signals.
+        LAMBDA_EWMA  = 0.97
+        ALPHA_SMOOTH = 0.30
+        self._ofi_ewma_mu  = LAMBDA_EWMA * self._ofi_ewma_mu  + (1 - LAMBDA_EWMA) * ofi_filtered
+        self._ofi_ewma_var = LAMBDA_EWMA * self._ofi_ewma_var + (1 - LAMBDA_EWMA) * (ofi_filtered - self._ofi_ewma_mu) ** 2
+        sigma = max(math.sqrt(self._ofi_ewma_var), 1e-6)
+
+        ofi_norm   = (ofi_filtered - self._ofi_ewma_mu) / sigma
+        self._ofi_smooth = ALPHA_SMOOTH * ofi_norm + (1 - ALPHA_SMOOTH) * self._ofi_smooth
+        ofi = math.tanh(self._ofi_smooth / 2.0)  # output: (-1, +1)
+
+        logger.debug(
+            f"[OFI-Pipeline] raw={ofi_raw:.2f} filtered={ofi_filtered:.2f} "
+            f"norm={ofi_norm:.3f} smooth={self._ofi_smooth:.3f} final_tanh={ofi:.4f}"
+        )
 
         return ofi, wall_context, "; ".join(wall_parts)
 
@@ -322,45 +439,42 @@ class QuantEngine:
         """
         Beta(α,β) conjugate prior — self-calibrates to historical win rate.
 
-        The Beta prior mean  P_bull_prior = α / (α + β)  replaces the implicit
-        50/50 prior of the old version.  After N trades the prior converges to
-        the actual observed win-rate, making the posterior more accurate.
-
-        Likelihood ratios (L_*) are unchanged — they modulate the prior
-        using Naïve Bayes odds update.
+        OFI is now in (-1, +1) from the Three-Stage Pipeline (tanh output).
+        Thresholds updated from the old ±100 scale to the new ±1 scale.
         """
-        # ── Step 1: Beta prior ───────────────────────────────────────────
-        p_prior = self._alpha / (self._alpha + self._beta)  # E[Beta(α,β)]
+        # ── Step 1: Beta prior ───────────────────────────────────────
+        p_prior = self._alpha / (self._alpha + self._beta)
         prior_odds = p_prior / (1.0 - p_prior)
 
-        # ── Step 2: RSI likelihood ───────────────────────────────────────
+        # ── Step 2: RSI likelihood ─────────────────────────────────────
         L_rsi = 1.8 if rsi > 60 else 0.55 if rsi < 40 else 1.0
 
-        # ── Step 3: OFI + Z-Score (correlated — apply combined gate) ─────
-        if z_score < -1.5 and ofi > 5:
-            L_flow = 2.0   # Corroborated oversold + buying flow
-        elif z_score > 1.5 and ofi < -5:
-            L_flow = 0.5   # Corroborated overbought + selling flow
+        # ── Step 3: OFI + Z-Score combined gate (OFI now in (-1,+1)) ──────
+        if z_score < -1.5 and ofi > 0.2:       # oversold + buying flow
+            L_flow = 2.0
+        elif z_score > 1.5 and ofi < -0.2:     # overbought + selling flow
+            L_flow = 0.5
         else:
-            L_z    = 1.3 if z_score < -1.5 else 0.76 if z_score > 1.5 else 1.0
-            L_o    = 1.2 if ofi > 10       else 0.83 if ofi < -10      else 1.0
+            L_z = 1.3 if z_score < -1.5 else 0.76 if z_score > 1.5 else 1.0
+            L_o = 1.2 if ofi > 0.3 else 0.83 if ofi < -0.3 else 1.0  # tanh thresholds
             L_flow = L_z * L_o
 
-        # ── Step 4: Skewness likelihood ──────────────────────────────────
+        # ── Step 4: Skewness likelihood ────────────────────────────────
         L_skew = 1.2 if skewness > 0.3 else 0.83 if skewness < -0.3 else 1.0
 
-        # ── Step 5: Update odds with likelihoods ─────────────────────────
+        # ── Step 5: Update odds ──────────────────────────────────────────
         posterior_odds = prior_odds * L_rsi * L_flow * L_skew
 
-        # ── Step 6: Convert back to probability ──────────────────────────
+        # ── Step 6: Convert back to probability ───────────────────────────
         p_bull = posterior_odds / (1.0 + posterior_odds)
 
         logger.debug(
             f"[QuantEngine] Bayesian — prior={p_prior:.2%} "
             f"L_rsi={L_rsi:.2f} L_flow={L_flow:.2f} L_skew={L_skew:.2f} "
-            f"→ posterior={p_bull:.2%}"
+            f"ofi_tanh={ofi:.4f} → posterior={p_bull:.2%}"
         )
         return float(p_bull)
+
 
     # ------------------------------------------------------------------
     # 7. ATR — Average True Range (14 periods)

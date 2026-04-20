@@ -263,8 +263,28 @@ class TradingExecutor:
                                 elif "take_profit" in o_type or "profit" in o_type:
                                     self.active_position["tp_order_id"] = o.get("id")
                                     self.active_position["take_profit"] = price
+
+                            # 1.5 FIX: If SL/TP still 0 after binding exchange orders,
+                            # estimate from ATR proxy so exit checker stays operative.
+                            if not self.active_position.get("stop_loss"):
+                                atr_proxy = entry_p * 0.008  # 0.8% ATR proxy for BTC 15m
+                                self.active_position["stop_loss"] = round(
+                                    entry_p - atr_proxy * 1.5 if side == "buy"
+                                    else entry_p + atr_proxy * 1.5, 2
+                                )
+                                self.active_position["take_profit"] = round(
+                                    entry_p + atr_proxy * 3.0 if side == "buy"
+                                    else entry_p - atr_proxy * 3.0, 2
+                                )
+                                logger.warning(
+                                    f"[Executor] Reconciled position has no exchange SL/TP orders — "
+                                    f"estimated from ATR proxy: SL={self.active_position['stop_loss']} "
+                                    f"TP={self.active_position['take_profit']}. VERIFY MANUALLY."
+                                )
                 except Exception as e:
                     logger.warning(f"[Executor] Could not reconcile historical positions: {e}")
+
+
 
                 return   # success — exit initialize
             except Exception as e:
@@ -325,25 +345,44 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     def _log_trade(self, symbol: str, side: str, verdict: str,
                    entry: float, stop_loss: float, take_profit: float,
-                   ulis_verdict: str = ""):
-        """Write a trade record to Firestore `botTrades` collection."""
+                   ulis_verdict: str = "",
+                   metrics: dict = None,
+                   signal: dict = None):
+        """Write a trade record to Firestore `botTrades` collection.
+        
+        5.6: Includes full signal attribution chain so post-trade analysis can
+        identify which signals (regime, OFI, Z-score, RSI, Bayesian confidence)
+        drove each entry decision.
+        """
         db = heartbeat.get_db()
         if db is None:
             return
         try:
             from firebase_admin import firestore as fs
+            m = metrics or {}
+            s = signal or {}
             doc = {
-                "symbol":       symbol,
-                "side":         side,
-                "verdict":      verdict,
-                "entry_price":  entry,
-                "stop_loss":    stop_loss,
-                "take_profit":  take_profit,
-                "timestamp":    fs.SERVER_TIMESTAMP,
-                "mode":         "DRY-RUN" if self.dry_run else "LIVE",
-                "exchange":     self.exchange_id,
-                "ulis_verdict": ulis_verdict,
-                "ts_ms":        int(time.time() * 1000),
+                "symbol":         symbol,
+                "side":           side,
+                "verdict":        verdict,
+                "entry_price":    entry,
+                "stop_loss":      stop_loss,
+                "take_profit":    take_profit,
+                "timestamp":      fs.SERVER_TIMESTAMP,
+                "mode":           "DRY-RUN" if self.dry_run else "LIVE",
+                "exchange":       self.exchange_id,
+                "ulis_verdict":   ulis_verdict,
+                "ts_ms":          int(time.time() * 1000),
+                # Signal attribution chain (5.6)
+                "regime":         m.get("regime",            "UNKNOWN"),
+                "strategy_type":  s.get("strategy_type",     "UNKNOWN"),
+                "z_score":        round(m.get("zScore",       0.0), 4),
+                "rsi":            round(m.get("rsi",          50.0), 2),
+                "ofi_tanh":       round(m.get("ofi",          0.0), 4),  # tanh (-1,+1)
+                "bayesian":       round(m.get("bayesianPosterior", 0.5), 4),
+                "confidence":     round(float(s.get("confidence", 0.0)), 4),
+                "atr_pct":        round(m.get("atr_pct",      0.0), 6),
+                "skewness":       round(m.get("skewness",     0.0), 4),
             }
             res = db.collection("botTrades").add(doc)
             doc_id = res[1].id
@@ -798,12 +837,17 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
     # ------------------------------------------------------------------
-    async def check_position_exit(self, current_price: float) -> tuple:
+    async def check_position_exit(self, current_price: float,
+                                   candle_high: float = None,
+                                   candle_low: float = None) -> tuple:
         """
         Check SL/TP for dry-run mode.
         In live mode the exchange handles OCO orders.
+
+        3.1 FIX: candle_high/low are used for SL/TP trigger check (accurate simulation).
+        Without them, an SL hit intra-candle would only be detected at candle close.
+        This was inflating dry-run win rates. Falls back to current_price if not supplied.
         Returns (exited: bool, pnl: float).
-        PnL is 0.0 when the position has not yet exited.
         """
         pos = self.active_position
         if pos is None:
@@ -812,11 +856,11 @@ class TradingExecutor:
         side = pos["side"]
         sl   = pos["stop_loss"]
         tp   = pos["take_profit"]
-        
+
         # Binance fee assumptions
         TAKER_FEE = 0.0005  # 0.05%
         MAKER_FEE = 0.0002  # 0.02%
-        
+
         size = pos.get("size") or pos.get("qty") or 0.0
         if size <= 0:
             logger.warning("[Executor] Active position has 0 size. Clearing stale state.")
@@ -826,15 +870,19 @@ class TradingExecutor:
         notional = size * pos["entry_price"]
         entry_fee = notional * TAKER_FEE
 
+        # Use candle high/low for realistic SL/TP simulation if available
+        check_high = candle_high if candle_high is not None else current_price
+        check_low  = candle_low  if candle_low  is not None else current_price
+
         async def finalize_exit(exit_type: str, exit_price: float):
             nonlocal notional, entry_fee, side
             exit_notional = size * exit_price
             exit_fee = exit_notional * (MAKER_FEE if exit_type == "TP" else TAKER_FEE)
-            
+
             raw_pnl = (exit_price - pos["entry_price"]) * size if side == "buy" else (pos["entry_price"] - exit_price) * size
             net_pnl = raw_pnl - (entry_fee + exit_fee)
             logger.info(f"[Executor] {exit_type} HIT{' (SHORT)' if side == 'sell' else ''}. Net PnL=${net_pnl:.2f} (Fees: ${entry_fee+exit_fee:.2f})")
-            
+
             if hasattr(self, "notifier") and self.notifier:
                 await self.notifier.send_close_alert(
                     symbol=pos["symbol"], side=side, price=exit_price, type=exit_type, pnl=net_pnl, is_dry=self.dry_run
@@ -845,17 +893,18 @@ class TradingExecutor:
             return True, net_pnl
 
         if side == "buy":
-            if current_price <= sl:
-                return await finalize_exit("SL", current_price)
-            if current_price >= tp:
-                return await finalize_exit("TP", current_price)
+            if check_low <= sl:
+                return await finalize_exit("SL", sl)   # fill at SL price, not candle close
+            if check_high >= tp:
+                return await finalize_exit("TP", tp)
         else:
-            if current_price >= sl:
-                return await finalize_exit("SL", current_price)
-            if current_price <= tp:
-                return await finalize_exit("TP", current_price)
+            if check_high >= sl:
+                return await finalize_exit("SL", sl)
+            if check_low <= tp:
+                return await finalize_exit("TP", tp)
 
         return False, 0.0
+
 
     async def cancel_opposing_orders(self, filled_side: str = "sl"):
         """
@@ -1060,9 +1109,9 @@ class TradingExecutor:
         side = pos["side"]
         size = pos["size"]
         close_side = "sell" if side == "buy" else "buy"
-        
+
         logger.warning(f"[Executor] EMERGENCY FLATTEN triggered ({reason}) for {size} {ex_symbol}")
-        
+
         try:
             if not self.dry_run:
                 # 1. Cancel all open orders for this symbol first
@@ -1070,14 +1119,27 @@ class TradingExecutor:
                     await self.exchange.cancel_all_orders(ex_symbol)
                 except:
                     pass
-                
+
                 # 2. Market close
                 await self.exchange.create_market_order(ex_symbol, close_side, size)
-            
+
             logger.info(f"[Executor] Flattened {ex_symbol} ✅")
-            self._update_trade_exit(pos.get("trade_doc_id"), 0.0, 0.0) # Emergency exit PnL not calculated here
+            self._update_trade_exit(pos.get("trade_doc_id"), 0.0, 0.0)  # Emergency exit PnL not calculated here
             self.active_position = None
         except Exception as e:
-            logger.error(f"[Executor] FAILED TO FLATTEN POSITION! {e}")
+            # 3.4 FIX: Critical failure requires immediate human action.
+            # Fire Telegram and log at CRITICAL level regardless of any other state.
+            msg = (
+                f"🚨 CRITICAL: FAILED TO FLATTEN POSITION\n"
+                f"Symbol: {ex_symbol} | Side: {side.upper()} | Size: {size}\n"
+                f"Reason: {reason}\n"
+                f"Error: {str(e)}\n"
+                f"ACTION REQUIRED: Log into exchange immediately and close this position manually."
+            )
+            logger.critical(msg)
             if self.notifier:
-                await self.notifier.send_message(f"‼️ CRITICAL: Failed to flatten position during {reason}! Error: {e}")
+                try:
+                    await self.notifier.send_message(msg)
+                except Exception as notify_err:
+                    logger.error(f"[Executor] Also failed to send Telegram alert: {notify_err}")
+
