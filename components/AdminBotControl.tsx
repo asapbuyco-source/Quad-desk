@@ -37,7 +37,6 @@ const ulisColor = (v?: string) => ULIS_COLOUR[v ?? ''] ?? C.muted;
 const verdictColor = (v?: string) => VERDICT_COLOUR[v ?? ''] ?? C.muted;
 
 const fmt = (n: number) => n.toFixed(2);
-const _fmtPct = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 const fmtUSD = (n: number) => (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
 
 // ── Sub-components ───────────────────────────────────────────────────────────
