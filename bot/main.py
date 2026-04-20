@@ -246,9 +246,10 @@ class _HMMRegimeClassifier:
         f1 = abs(z_score)  (0 – 4)
         f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
 
-    The model uses fixed emission parameters calibrated to BTC 15m futures
-    distributions, with a self-updating online step every 50 cycles.
-    Transition matrix is fixed (regime persistence on 15m is ~80-85%).
+    Upgrades (Apr 2026):
+        1. Forward algorithm → posterior probability vector P(state | obs_1...T)
+        2. 70% confidence gate — low-confidence ⇒ NEUTRAL (no action)
+        3. 3-candle hysteresis — regime change requires 3 consecutive agreements
     """
 
     # --- Emission means (μ) per state × feature -----------------------
@@ -279,6 +280,10 @@ class _HMMRegimeClassifier:
     # State labels (index → regime string)
     _LABELS = ["RANGE", "TREND", "NEUTRAL"]  # VOLATILE maps to NEUTRAL
 
+    # Confidence & hysteresis thresholds
+    MIN_CONFIDENCE       = 0.70  # Minimum posterior probability to commit
+    HYSTERESIS_CANDLES   = 3     # Consecutive candles before regime change
+
     def __init__(self, window: int = 60, update_every: int = 50):
         self._window    = window
         self._update_n  = update_every
@@ -287,6 +292,10 @@ class _HMMRegimeClassifier:
         # Mutable copies so online-update can adjust them
         self._mu    = self._MU.copy()
         self._sigma = self._SIGMA.copy()
+        # Hysteresis state
+        self._committed_regime = "RANGE"   # currently committed regime
+        self._candidate_regime = "RANGE"   # regime the HMM is suggesting
+        self._candidate_streak = 0         # consecutive candles suggesting candidate
 
     # ------------------------------------------------------------------
     def _gaussian_log_prob(self, obs: np.ndarray) -> np.ndarray:
@@ -298,6 +307,57 @@ class _HMMRegimeClassifier:
             log_p  -= np.sum(np.log(np.maximum(self._sigma[s], 1e-9)))
             log_probs[s] = log_p
         return log_probs
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _logsumexp(a: np.ndarray) -> float:
+        """Numerically stable log-sum-exp."""
+        a_max = np.max(a)
+        if not np.isfinite(a_max):
+            return a_max
+        return a_max + np.log(np.sum(np.exp(a - a_max)))
+
+    # ------------------------------------------------------------------
+    def _forward(self, obs_seq: np.ndarray) -> np.ndarray:
+        """
+        Scaled forward algorithm — returns posterior P(state_T | obs_1...T).
+
+        Unlike Viterbi (which gives the single most-likely STATE SEQUENCE),
+        the forward algorithm gives the marginal probability of each state
+        at the final timestep, integrating over all possible state paths.
+        This is mathematically correct for regime uncertainty quantification.
+        """
+        T    = len(obs_seq)
+        n_s  = 3
+        log_A  = np.log(np.maximum(self._A, 1e-300))
+        log_pi = np.log(np.maximum(self._PI, 1e-300))
+
+        # log_alpha[t, s] = log P(o_1...o_t, state_t = s)
+        log_alpha = np.full((T, n_s), -np.inf)
+        log_alpha[0] = log_pi + self._gaussian_log_prob(obs_seq[0])
+
+        for t in range(1, T):
+            log_emit = self._gaussian_log_prob(obs_seq[t])
+            for j in range(n_s):
+                # Sum over all possible previous states (marginalise)
+                log_alpha[t, j] = self._logsumexp(
+                    log_alpha[t - 1] + log_A[:, j]
+                ) + log_emit[j]
+
+        # Normalise to get posterior at time T
+        log_evidence = self._logsumexp(log_alpha[-1])
+        log_posterior = log_alpha[-1] - log_evidence
+        posterior = np.exp(log_posterior)
+
+        # Safety: ensure sums to 1.0 (numerical precision)
+        posterior = np.maximum(posterior, 0.0)
+        total = posterior.sum()
+        if total > 0:
+            posterior /= total
+        else:
+            posterior = np.array([0.50, 0.35, 0.15])  # fallback to prior
+
+        return posterior
 
     # ------------------------------------------------------------------
     def _viterbi(self, obs_seq: np.ndarray) -> np.ndarray:
@@ -344,8 +404,18 @@ class _HMMRegimeClassifier:
                 self._sigma[s] = np.maximum(obs[mask].std(axis=0), 1e-4)
 
     # ------------------------------------------------------------------
-    def classify(self, atr_pct: float, z_score: float, tape: str) -> str:
-        """Main entry: add one observation and return current regime label."""
+    def classify(self, atr_pct: float, z_score: float, tape: str) -> dict:
+        """
+        Main entry: add one observation and return regime probability vector.
+
+        Returns dict with:
+            regime:     str   — committed regime label (with hysteresis)
+            confidence: float — posterior probability of the committed regime
+            p_range:    float — P(RANGE | observations)
+            p_trend:    float — P(TREND | observations)
+            p_volatile: float — P(VOLATILE | observations)
+            raw_regime: str   — instantaneous HMM output (before hysteresis)
+        """
         obs = np.array([
             float(np.clip(atr_pct, 0.0, 0.03)),
             float(np.clip(abs(z_score), 0.0, 4.0)),
@@ -358,27 +428,69 @@ class _HMMRegimeClassifier:
         if self._cycle % self._update_n == 0:
             self._online_update()
 
-        # Need at least 3 observations for a meaningful Viterbi path
+        # Need at least 3 observations for a meaningful forward pass
         n_obs = min(len(self._obs_buf), self._window)
         seq   = np.array(self._obs_buf[-n_obs:], dtype=float)
 
         if len(seq) < 3:
             # Fall back to simple thresholds while warming up
             if atr_pct > 0.01 and tape == "SCREAMING":
-                return "TREND"
-            if abs(z_score) > 2.5:
-                return "NEUTRAL"
-            return "RANGE"
+                raw = "TREND"
+            elif abs(z_score) > 2.5:
+                raw = "NEUTRAL"
+            else:
+                raw = "RANGE"
+            return {
+                "regime": raw, "confidence": 0.50,
+                "p_range": 0.33, "p_trend": 0.33, "p_volatile": 0.33,
+                "raw_regime": raw,
+            }
 
-        states = self._viterbi(seq)
-        current_state = int(states[-1])
-        label = self._LABELS[current_state]
+        # ── Forward algorithm: posterior probability vector ────────────
+        posterior = self._forward(seq)
+        best_state = int(np.argmax(posterior))
+        raw_label  = self._LABELS[best_state]
+        raw_conf   = float(posterior[best_state])
+
+        # ── Hysteresis: 3-candle debounce on regime transitions ──────
+        # Prevents flickering at regime boundaries (e.g. TREND→RANGE→TREND
+        # on consecutive cycles when the posterior is near 50/50).
+        if raw_label == self._candidate_regime:
+            self._candidate_streak += 1
+        else:
+            self._candidate_regime = raw_label
+            self._candidate_streak = 1
+
+        # Commit the new regime only if it's been consistent for N candles
+        # AND meets the confidence threshold
+        if (self._candidate_regime != self._committed_regime
+                and self._candidate_streak >= self.HYSTERESIS_CANDLES
+                and raw_conf >= self.MIN_CONFIDENCE):
+            old = self._committed_regime
+            self._committed_regime = self._candidate_regime
+            logger.info(
+                f"[HMM] Regime TRANSITION: {old} → {self._committed_regime} "
+                f"(conf={raw_conf:.1%}, streak={self._candidate_streak})"
+            )
+
+        # The committed regime's confidence is its actual posterior probability
+        committed_idx = self._LABELS.index(self._committed_regime)
+        committed_conf = float(posterior[committed_idx])
 
         logger.debug(
-            f"[HMM] state={current_state} ({label}) | "
-            f"atr={atr_pct:.4%} z={z_score:.2f} tape={tape}"
+            f"[HMM] raw={raw_label}({raw_conf:.0%}) committed={self._committed_regime}"
+            f"({committed_conf:.0%}) streak={self._candidate_streak} | "
+            f"P=[R:{posterior[0]:.0%} T:{posterior[1]:.0%} V:{posterior[2]:.0%}]"
         )
-        return label
+
+        return {
+            "regime":      self._committed_regime,
+            "confidence":  committed_conf,
+            "p_range":     float(posterior[0]),
+            "p_trend":     float(posterior[1]),
+            "p_volatile":  float(posterior[2]),
+            "raw_regime":  raw_label,
+        }
 
 
 # Module-level singleton — persists observations across cycles
@@ -391,11 +503,19 @@ def _detect_regime(
     sell_walls: List[float],
 ) -> str:
     """
-    HMM-based regime classifier (replaces threshold chain).
+    HMM-based regime classifier with probabilistic output.
+
+    Upgrades:
+        1. Forward algorithm → P(state | all observations) instead of Viterbi hard label
+        2. 70% confidence gate  → below threshold defaults to NEUTRAL
+        3. 3-candle hysteresis  → regime change requires 3 consecutive agreements
 
     Wall proximity is checked FIRST as a hard override — being within 0.3%
     of a significant liquidity wall is always a LIQUIDITY regime regardless
     of ATR/Z/tape state (the HMM doesn't model wall proximity).
+
+    Side-effect: injects regime_confidence, regime_probs into `metrics` dict
+    so downstream consumers (Bayesian fusion, signal attribution) can use them.
     """
     price   = metrics["price"]
     z       = metrics["zScore"]
@@ -409,12 +529,46 @@ def _detect_regime(
         for w in (buy_walls[:1] + sell_walls[:1])
     )
     if near_wall:
+        metrics["regime_confidence"] = 1.0
+        metrics["regime_probs"] = {"RANGE": 0.0, "TREND": 0.0, "NEUTRAL": 0.0, "LIQUIDITY": 1.0}
         return "LIQUIDITY"
 
-    # HMM classification
-    regime = _hmm_classifier.classify(atr_pct, z, tape)
-    logger.info(f"[HMM] Regime={regime} | atr={atr_pct:.3%} z={z:.2f} tape={tape}")
+    # HMM classification → probability vector
+    hmm_result = _hmm_classifier.classify(atr_pct, z, tape)
+
+    regime     = hmm_result["regime"]
+    confidence = hmm_result["confidence"]
+
+    # Inject probabilities into metrics for downstream observability
+    metrics["regime_confidence"] = confidence
+    metrics["regime_probs"] = {
+        "RANGE":    hmm_result["p_range"],
+        "TREND":    hmm_result["p_trend"],
+        "VOLATILE": hmm_result["p_volatile"],
+    }
+
+    # ── 70% Confidence Gate ──────────────────────────────────────────
+    # If the HMM isn't confident enough, fall back to NEUTRAL.
+    # This prevents the bot from committing to TREND or MEAN_REVERSION
+    # when the regime is genuinely ambiguous (e.g. P(TREND)=0.52).
+    if confidence < _HMMRegimeClassifier.MIN_CONFIDENCE:
+        logger.info(
+            f"[HMM] Regime={hmm_result['raw_regime']}→NEUTRAL (conf={confidence:.0%} "
+            f"< {_HMMRegimeClassifier.MIN_CONFIDENCE:.0%} gate) | "
+            f"P=[R:{hmm_result['p_range']:.0%} T:{hmm_result['p_trend']:.0%} "
+            f"V:{hmm_result['p_volatile']:.0%}]"
+        )
+        return "NEUTRAL"
+
+    logger.info(
+        f"[HMM] Regime={regime} conf={confidence:.0%} | "
+        f"P=[R:{hmm_result['p_range']:.0%} T:{hmm_result['p_trend']:.0%} "
+        f"V:{hmm_result['p_volatile']:.0%}] | "
+        f"atr={atr_pct:.3%} z={z:.2f} tape={tape}"
+    )
     return regime
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1029,7 +1183,7 @@ async def execution_loop(
 ):
     await executor.initialize()
 
-    global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME
+    global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_CANDLE_TS
 
     if not executor.dry_run:
         try:
@@ -1209,7 +1363,6 @@ async def execution_loop(
 
                 # Update candle-close tracker so the candle-close gate in _compute_signal
                 # knows how old the current candle is.
-                global LAST_CANDLE_TS
                 if feed.state.candles:
                     LAST_CANDLE_TS = float(feed.state.candles[-1]["time"])
 
