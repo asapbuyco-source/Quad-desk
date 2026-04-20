@@ -684,12 +684,15 @@ class TradingExecutor:
             sl_side = "sell" if side == "buy" else "buy"
             sl_order_id = None
             tp_order_id = None
+            sl_placed = False   # track independently for recovery logic
+            tp_placed = False
 
             if self.is_futures:
                 # ── FUTURES: STOP_MARKET + TAKE_PROFIT_MARKET ────────────────
                 # closePosition=True closes the full position; workingType=MARK_PRICE
                 # avoids wick-triggered stops from momentary spread spikes.
                 sl_order = None
+                _sl_last_err = None
                 for attempt in range(3):
                     try:
                         sl_order = await self.exchange.create_order(
@@ -701,15 +704,20 @@ class TradingExecutor:
                                 "workingType":  "MARK_PRICE",
                             },
                         )
+                        sl_placed = True
                         break
                     except Exception as e:
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] Futures SL failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
+                        _sl_last_err = e
+                        logger.warning(f"[Executor] Futures SL attempt {attempt+1}/3 failed: {e}")
+                        if attempt < 2:
+                            await asyncio.sleep(1.0)
+                if not sl_placed:
+                    raise RuntimeError(f"SL placement failed after 3 attempts: {_sl_last_err}")
                 sl_order_id = sl_order.get("id")
-                logger.info(f"[Executor] Futures STOP_MARKET at {stop_loss} (id={sl_order_id})")
+                logger.info(f"[Executor] Futures STOP_MARKET at {stop_loss} (id={sl_order_id}) ✓")
 
                 tp_order = None
+                _tp_last_err = None
                 for attempt in range(3):
                     try:
                         tp_order = await self.exchange.create_order(
@@ -721,13 +729,27 @@ class TradingExecutor:
                                 "workingType":  "MARK_PRICE",
                             },
                         )
+                        tp_placed = True
                         break
                     except Exception as e:
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] Futures TP failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
-                tp_order_id = tp_order.get("id")
-                logger.info(f"[Executor] Futures TAKE_PROFIT_MARKET at {take_profit} (id={tp_order_id})")
+                        _tp_last_err = e
+                        logger.warning(f"[Executor] Futures TP attempt {attempt+1}/3 failed: {e}")
+                        if attempt < 2:
+                            await asyncio.sleep(1.0)
+                if not tp_placed:
+                    # SL IS placed — position is not naked, just has no profit target.
+                    # Alert loudly but do NOT flatten; the SL protects against loss.
+                    _tp_warn = (
+                        f"⚠️ TP PLACEMENT FAILED for {side.upper()} {ex_symbol} @ {current_price}. "
+                        f"SL={stop_loss} IS active (id={sl_order_id}). "
+                        f"Position protected but NO take-profit. MONITOR MANUALLY."
+                    )
+                    logger.error(f"[Executor] {_tp_warn}")
+                    await self.notifier.send_error_alert(_tp_warn)
+                    tp_order_id = None
+                else:
+                    tp_order_id = tp_order.get("id")
+                    logger.info(f"[Executor] Futures TAKE_PROFIT_MARKET at {take_profit} (id={tp_order_id}) ✓")
 
             else:
                 # ── SPOT: Exchange-specific limit SL/TP orders ────────────────
@@ -755,13 +777,17 @@ class TradingExecutor:
                                 price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
                                 params=stop_params,
                             )
+                        sl_placed = True
                         break
                     except Exception as e:
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] SL placement failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
+                        _sl_last_err = e
+                        logger.warning(f"[Executor] SL attempt {attempt+1}/3 failed: {e}")
+                        if attempt < 2:
+                            await asyncio.sleep(1.0)
+                if not sl_placed:
+                    raise RuntimeError(f"SL placement failed after 3 attempts: {_sl_last_err}")
                 sl_order_id = sl_order.get("id")
-                logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id})")
+                logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id}) ✓")
 
                 # Take-profit limit order
                 tp_order = None
@@ -775,13 +801,25 @@ class TradingExecutor:
                             price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
                             params={"timeInForce": "GTC"},
                         )
+                        tp_placed = True
                         break
                     except Exception as e:
-                        if attempt == 2: raise e
-                        logger.warning(f"[Executor] TP placement failed: {e}. Retrying {attempt+1}/3...")
-                        await asyncio.sleep(0.5)
-                tp_order_id = tp_order.get("id")
-                logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id})")
+                        _tp_last_err = e
+                        logger.warning(f"[Executor] TP attempt {attempt+1}/3 failed: {e}")
+                        if attempt < 2:
+                            await asyncio.sleep(1.0)
+                if not tp_placed:
+                    _tp_warn = (
+                        f"⚠️ TP PLACEMENT FAILED for {side.upper()} {ex_symbol} @ {current_price}. "
+                        f"SL={stop_loss} IS active (id={sl_order_id}). "
+                        f"Position protected but NO take-profit. MONITOR MANUALLY."
+                    )
+                    logger.error(f"[Executor] {_tp_warn}")
+                    await self.notifier.send_error_alert(_tp_warn)
+                    tp_order_id = None
+                else:
+                    tp_order_id = tp_order.get("id")
+                    logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id}) ✓")
 
             doc_id = self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
             self.active_position = {
@@ -794,16 +832,19 @@ class TradingExecutor:
                 "order_id":    order.get("id"),
                 "sl_order_id": sl_order_id,
                 "tp_order_id": tp_order_id,
+                "sl_placed":   sl_placed,
+                "tp_placed":   tp_placed,
                 "dry_run":     False,
                 "trade_doc_id": doc_id,
             }
-            
+
             # Clear pending order since we now have an active position
             self.pending_order = None
-            
-            # Telegram Notification
+
+            sl_tp_status = "SL+TP ✓" if (sl_placed and tp_placed) else ("SL ✓ | TP ✗ MONITOR" if sl_placed else "⚠️ NAKED")
+            logger.info(f"[Executor] Position open — protection status: {sl_tp_status}")
             await self.notifier.send_trade_alert(
-                symbol=ex_symbol, side=side, price=current_price, 
+                symbol=ex_symbol, side=side, price=current_price,
                 size=fmt_size, sl=stop_loss, tp=take_profit, is_dry=False
             )
             return True
@@ -814,22 +855,39 @@ class TradingExecutor:
         except ccxt.InvalidOrder as e:
             logger.error(f"[Executor] Invalid order: {e}")
         except Exception as e:
-            err_msg = f"Live order failed: {e}"
+            err_msg = f"Live order / SL placement failed: {e}"
             logger.error(f"[Executor] {err_msg}", exc_info=True)
-            await self.notifier.send_error_alert(err_msg)
-            
-            # FLAT PREVENT NAKED POSITION
+
+            # ── EMERGENCY: SL failed — position is NAKED. Flatten immediately. ──
+            # Note: TP-only failures are handled above and do NOT reach here —
+            # the position keeps its SL in that case and is therefore still protected.
             if self.active_position is None and 'order' in locals() and order and order.get('id'):
-                logger.error("[Executor] SL/TP failed after Market Fill. FLATTENING NAKED POSITION IMMEDIATELY!")
+                critical_msg = (
+                    f"🚨 CRITICAL: SL PLACEMENT FAILED after market fill! "
+                    f"FLATTENING NAKED {side.upper()} {ex_symbol} NOW. Error: {e}"
+                )
+                logger.critical(f"[Executor] {critical_msg}")
+                await self.notifier.send_error_alert(critical_msg)
+
                 close_side = "sell" if side == "buy" else "buy"
                 try:
                     await self.exchange.create_market_order(ex_symbol, close_side, fmt_size)
-                    logger.info("[Executor] Flattened naked position successfully.")
-                except Exception as ex:
-                    logger.critical(f"[Executor] CRITICAL: Failed to flatten naked position! MANUAL INTERVENTION REQUIRED! {ex}")
+                    logger.info("[Executor] ✓ Naked position flattened successfully.")
+                    await self.notifier.send_error_alert(
+                        f"✅ Naked {side.upper()} {ex_symbol} position flattened. No unintended exposure remains."
+                    )
+                except Exception as flatten_err:
+                    manual_msg = (
+                        f"🚨🚨 CRITICAL FAILURE: Could not flatten naked {side.upper()} {ex_symbol} position! "
+                        f"MANUAL INTERVENTION REQUIRED IMMEDIATELY! Flatten error: {flatten_err}"
+                    )
+                    logger.critical(f"[Executor] {manual_msg}")
+                    await self.notifier.send_error_alert(manual_msg)
+            else:
+                await self.notifier.send_error_alert(err_msg)
 
         finally:
-            # If we don't have an active position after all that, 
+            # If we don't have an active position after all that,
             # we MUST clear pending_order so the bot isn't stuck "Waiting"
             if self.active_position is None:
                 self.pending_order = None
