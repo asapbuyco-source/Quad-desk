@@ -55,6 +55,7 @@ from bot.quant_engine import QuantEngine
 from bot.executor import TradingExecutor
 from bot.ulis_engine import compute_ulis_verdict
 from bot import heartbeat
+from bot.signal_config import REGIME_PARAMS
 
 # ──────────────────────────────────────────────────────────────────────
 # Logging
@@ -253,17 +254,22 @@ class _HMMRegimeClassifier:
     """
 
     # --- Emission means (μ) per state × feature -----------------------
+    # Features: [atr_pct, |z_score|, tape_binary, atr_pct_rank]
+    #   f0 = atr_pct       (0 – 0.02)  raw ATR as fraction of price
+    #   f1 = abs(z_score)  (0 – 4)
+    #   f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
+    #   f3 = atr_pct_rank  (0 – 1)   percentile rank in 30-day window (P2)
     _MU = np.array([
-        [0.003, 0.8, 0.05],   # RANGE    — low ATR, low |Z|, quiet
-        [0.007, 1.5, 0.30],   # TREND    — moderate ATR, directional
-        [0.014, 2.5, 0.65],   # VOLATILE — high ATR, extreme Z, chaotic
+        [0.003, 0.8, 0.05, 0.20],   # RANGE    — low ATR, low |Z|, quiet, low percentile
+        [0.007, 1.5, 0.30, 0.55],   # TREND    — moderate ATR, directional, mid percentile
+        [0.014, 2.5, 0.65, 0.85],   # VOLATILE — high ATR, extreme Z, chaotic, high percentile
     ], dtype=float)
 
     # --- Emission stds (σ) per state × feature ------------------------
     _SIGMA = np.array([
-        [0.0015, 0.6, 0.15],
-        [0.003,  0.8, 0.25],
-        [0.005,  1.0, 0.30],
+        [0.0015, 0.6, 0.15, 0.15],
+        [0.003,  0.8, 0.25, 0.20],
+        [0.005,  1.0, 0.30, 0.15],
     ], dtype=float)
 
     # --- Transition matrix (rows = from-state, cols = to-state) -------
@@ -404,9 +410,16 @@ class _HMMRegimeClassifier:
                 self._sigma[s] = np.maximum(obs[mask].std(axis=0), 1e-4)
 
     # ------------------------------------------------------------------
-    def classify(self, atr_pct: float, z_score: float, tape: str) -> dict:
+    def classify(self, atr_pct: float, z_score: float, tape: str,
+                 atr_pct_rank: float = 0.5) -> dict:
         """
         Main entry: add one observation and return regime probability vector.
+
+        Args:
+            atr_pct:      ATR as fraction of price (e.g. 0.007 = 0.7%)
+            z_score:      VWAP Z-score
+            tape:         'SCREAMING' | 'NORMAL'
+            atr_pct_rank: ATR percentile rank in 30-day rolling window [0,1] (P2)
 
         Returns dict with:
             regime:     str   — committed regime label (with hysteresis)
@@ -417,9 +430,10 @@ class _HMMRegimeClassifier:
             raw_regime: str   — instantaneous HMM output (before hysteresis)
         """
         obs = np.array([
-            float(np.clip(atr_pct, 0.0, 0.03)),
-            float(np.clip(abs(z_score), 0.0, 4.0)),
+            float(np.clip(atr_pct,      0.0,  0.03)),
+            float(np.clip(abs(z_score), 0.0,  4.0)),
             1.0 if tape == "SCREAMING" else 0.0,
+            float(np.clip(atr_pct_rank, 0.0,  1.0)),  # P2: 4th feature
         ], dtype=float)
 
         self._obs_buf.append(obs)
@@ -533,8 +547,9 @@ def _detect_regime(
         metrics["regime_probs"] = {"RANGE": 0.0, "TREND": 0.0, "NEUTRAL": 0.0, "LIQUIDITY": 1.0}
         return "LIQUIDITY"
 
-    # HMM classification → probability vector
-    hmm_result = _hmm_classifier.classify(atr_pct, z, tape)
+    # HMM classification → probability vector (P2: pass 4th feature)
+    atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
+    hmm_result = _hmm_classifier.classify(atr_pct, z, tape, atr_pct_rank)
 
     regime     = hmm_result["regime"]
     confidence = hmm_result["confidence"]
@@ -647,17 +662,21 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _strategy_mean_reversion(metrics: Dict[str, Any]) -> Optional[str]:
+def _strategy_mean_reversion(metrics: Dict[str, Any],
+                              z_threshold: float = 2.2) -> Optional[str]:
+    """
+    Mean-reversion signal using regime-adaptive Z-score threshold.
+    z_threshold is supplied by REGIME_PARAMS[regime]["z_threshold"] (P0).
+    """
     z   = metrics["zScore"]
     rsi = metrics["rsi"]
 
-    # Restored to ±2.2 (from ±1.8) to prevent over-trading on normal 15m noise
-    if z >= 2.2 and rsi > 45:
-        logger.info(f"[MeanRev] SELL — Z={z:.2f} RSI={rsi:.1f}")
+    if z >= z_threshold and rsi > 45:
+        logger.info(f"[MeanRev] SELL — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f}")
         return "MEAN_REVERSAL_SHORT"
 
-    if z <= -2.2 and rsi < 55:
-        logger.info(f"[MeanRev] BUY — Z={z:.2f} RSI={rsi:.1f}")
+    if z <= -z_threshold and rsi < 55:
+        logger.info(f"[MeanRev] BUY — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f}")
         return "MEAN_REVERSAL_LONG"
 
     return None
@@ -789,8 +808,25 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
         elif not is_long and skew < 0:
             odds *= skew_boost
 
-    # 8. Convert back to probability (Confidence in Signal)
-    p_final = odds / (1.0 + odds)
+    # 8. [P1] Regime-Weighted Posterior Blending (HMM Spec Apr 2026)
+    # P_adjusted = hmm_conf * regime_prior + (1 - hmm_conf) * base_posterior
+    # High HMM confidence → trust per-regime historical win rate more.
+    # Low HMM confidence  → trust raw Bayesian signal posterior more.
+    # This ensures the bot becomes more selective in regimes where it historically loses.
+    regime_priors = metrics.get("_regime_priors", {})
+    if regime_priors and regime in regime_priors:
+        hmm_conf      = metrics.get("regime_confidence", 0.5)
+        regime_prior  = regime_priors[regime]
+        p_final_raw   = p_final
+        p_final       = float(np.clip(
+            hmm_conf * regime_prior + (1.0 - hmm_conf) * p_final_raw,
+            0.0, 1.0
+        ))
+        logger.debug(
+            f"[BayesBlend] base={p_final_raw:.2%} regime_prior={regime_prior:.2%} "
+            f"hmm_conf={hmm_conf:.0%} → adjusted={p_final:.2%}"
+        )
+
     return float(p_final)
 
 
@@ -901,27 +937,25 @@ def _risk_engine(
     buy_walls: List[float],
     sell_walls: List[float],
     sweep: Optional[str],
+    sl_mult: float = 1.5,        # P0: regime-adaptive (default = NEUTRAL)
+    tp_mult_ratio: float = 2.0,  # P0: regime-adaptive RR target
 ) -> Tuple[float, float]:
     """
-    ATR-based SL/TP calculator.
+    ATR-based SL/TP calculator with regime-adaptive multipliers (P0).
 
-    TP multiplier is set to 3.0× to ensure the expected gain can cover
-    Coinbase's ~1.2% taker fee per leg (2.4% round-trip). At 1.5× ATR the
-    TP distance was smaller than the fee cost — every trade lost money even
-    when TP was reached. 3.0× gives meaningful profit room above fees.
-
-    SL is widened from 1.0× → 1.5× ATR so the trade isn't shaken out by
-    normal noise before the larger TP move has time to develop.
+    sl_mult and tp_mult_ratio are supplied from REGIME_PARAMS[regime]:
+        RANGE:     SL=1.2×ATR, RR=1.8:1  → tight stops in quiet markets
+        NEUTRAL:   SL=1.5×ATR, RR=2.0:1  → balanced default
+        TREND:     SL=2.2×ATR, RR=2.5:1  → wide stops for trend volatility
+        LIQUIDITY: SL=1.5×ATR, RR=2.0:1  → same as NEUTRAL
     """
     is_long = direction in ("BUY", "MEAN_REVERSAL_LONG")
 
     tp_from_wall = (sell_walls[0] * 0.9995 if sell_walls else None) if is_long \
                else (buy_walls[0] * 1.0005 if buy_walls else None)
 
-    TP_MULT = 2.0   # 2:1 R:R — Binance futures fees (0.08% round-trip) are negligible,
-                    # so we no longer need the Coinbase-era 3.0× to overcome fees.
-                    # 2.0× = TP at 3.0×ATR from entry (SL=1.5×ATR × 2.0 = 3.0×ATR).
-    SL_MULT = 1.5   # 1.5×ATR stop — wide enough for BTC noise on 15m candles.
+    TP_MULT = tp_mult_ratio  # P0: regime-adaptive (RR target from REGIME_PARAMS)
+    SL_MULT = sl_mult        # P0: regime-adaptive
 
     def sl_tp(sl_dist: float) -> Tuple[float, float]:
         if is_long:
@@ -1009,26 +1043,38 @@ def _compute_signal(
     if htf != "NEUTRAL":
         logger.info(f"[HTF] 4H trend = {htf}")
 
+    # ── P0: Load regime-conditional parameter matrix ────────────────────────
+    # All downstream stages read thresholds from regime_p instead of hard-coded constants.
+    regime_p = REGIME_PARAMS.get(regime, REGIME_PARAMS["NEUTRAL"])
+    logger.info(
+        f"[RegimeParams] z_thr={regime_p['z_threshold']} "
+        f"sl_mult={regime_p['atr_multiplier_sl']} "
+        f"min_conf={regime_p['min_confidence']:.0%} "
+        f"rr={regime_p['rr_target']} "
+        f"gate={regime_p['candle_gate_sec']}s "
+        f"htf_block={regime_p['htf_block']}"
+    )
+
     # Stage 3: Sweep detection
     sweep = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
 
     # Stage 3b: Candle-Close Confirmation Gate (LIQUIDITY_SWEEP only)
-    # Allow sweep entries in the first 300s (5 minutes) of a new 15m candle.
-    # Sweeps detected after 300s are mid-candle noise — wait for the next open.
+    # Window is now regime-aware: RANGE=45s, NEUTRAL=60s, TREND=90s (P0)
     if sweep:
         current_candle_ts = float(candle_history[-1]["time"]) if candle_history else 0.0
         age_s = _time.time() - current_candle_ts   # seconds since this candle opened
-        if age_s > 300:   # First 5 minutes of candle only
+        gate_sec = regime_p["candle_gate_sec"]      # P0: regime-adaptive window
+        if age_s > gate_sec:
             remaining_s = max(0, 900 - int(age_s))  # 15m candle = 900s
             if age_s > 600:
                 # In the last 5 minutes of the candle — entry window approaching
                 logger.info(
-                    f"[CandleGate] 🔔 Sweep blocked mid-candle (age={age_s:.0f}s) "
+                    f"[CandleGate] Sweep blocked mid-candle (age={age_s:.0f}s>{gate_sec}s) "
                     f"— next candle open in ~{remaining_s}s. Entry window approaching."
                 )
             else:
                 logger.info(
-                    f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s). "
+                    f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s>{gate_sec}s). "
                     f"Waiting for next candle open (~{remaining_s}s remaining)."
                 )
             sweep = None  # suppress the sweep signal
@@ -1047,8 +1093,9 @@ def _compute_signal(
         logger.info("[MetaModel] → TREND strategy")
     elif regime == "RANGE":
         strategy_type = "MEAN_REVERSION"
-        raw_direction = _strategy_mean_reversion(metrics)
-        logger.info("[MetaModel] → MEAN_REVERSION strategy")
+        # P0: pass regime-adaptive z_threshold (RANGE=1.5, NEUTRAL=1.8, TREND=2.5)
+        raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
+        logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']})")
     else:
         strategy_type = "NEUTRAL"
         raw_direction = None
@@ -1057,33 +1104,33 @@ def _compute_signal(
     if raw_direction is None:
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
 
-    # Stage 4b: HTF Counter-Trend Block (TREND strategy only)
-    # Mean-reversion trades are DESIGNED to fade the trend — blocking them defeats the strategy.
-    # Only block TREND-following entries, allow mean-reversion against the HTF trend (Patch #1)
+    # Stage 4b: HTF Counter-Trend Block
+    # P0: htf_block is regime-conditional. In RANGE, mean-reversion against HTF is the strategy.
     is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
     is_trend_strat = strategy_type == "TREND"
 
-    if is_trend_strat:
-        if htf == "BEAR" and is_long_dir:
+    if regime_p["htf_block"]:   # P0: Only apply HTF block when regime says to
+        if htf == "BEAR" and is_long_dir and is_trend_strat:
             logger.warning(f"[HTF] Blocking LONG trend trade — 4H trend is BEAR.")
             return {**WAIT, "analysis": f"HTF=BEAR blocks {raw_direction} trend entry."}
-        if htf == "BULL" and not is_long_dir:
+        if htf == "BULL" and not is_long_dir and is_trend_strat:
             logger.warning(f"[HTF] Blocking SHORT trend trade — 4H trend is BULL.")
             return {**WAIT, "analysis": f"HTF=BULL blocks {raw_direction} trend entry."}
 
-        # Funding Rate Anti-Squeeze Protection
-        try:
-            fr = float(metrics.get("funding_rate", 0.0))
-            if is_long_dir and fr > 0.00015:
-                logger.warning(f"[Anti-Squeeze] Blocking LONG trend trade; crowded funding rate: {fr:.4%}")
-                return {**WAIT, "analysis": f"Funding Rate {fr:.4%} > 0.015%. Blocked long."}
-            if not is_long_dir and fr < -0.00015:
-                logger.warning(f"[Anti-Squeeze] Blocking SHORT trend trade; crowded funding rate: {fr:.4%}")
-                return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < -0.015%. Blocked short."}
-        except (ValueError, TypeError):
-            pass
+        # Funding Rate Anti-Squeeze Protection (TREND only, since htf_block is now regime-gated)
+        if is_trend_strat:
+            try:
+                fr = float(metrics.get("funding_rate", 0.0))
+                if is_long_dir and fr > 0.00015:
+                    logger.warning(f"[Anti-Squeeze] Blocking LONG trend trade; crowded funding rate: {fr:.4%}")
+                    return {**WAIT, "analysis": f"Funding Rate {fr:.4%} > 0.015%. Blocked long."}
+                if not is_long_dir and fr < -0.00015:
+                    logger.warning(f"[Anti-Squeeze] Blocking SHORT trend trade; crowded funding rate: {fr:.4%}")
+                    return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < -0.015%. Blocked short."}
+            except (ValueError, TypeError):
+                pass
 
-    # Stage 5: Bayesian fusion
+    # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
 
     # Stage 5b: VPOC Proximity Confidence Boost
@@ -1094,10 +1141,12 @@ def _compute_signal(
 
     logger.info(f"[BayesFusion] direction={raw_direction} | P={confidence:.2%}")
 
-    if confidence < MIN_CONFIDENCE:
+    # P0: Use regime-adaptive min_confidence instead of global MIN_CONFIDENCE
+    regime_min_conf = regime_p["min_confidence"]
+    if confidence < regime_min_conf:
         return {**WAIT, "analysis": (
             f"Regime={regime} strategy={strategy_type} signal={raw_direction} "
-            f"but P={confidence:.2%} < threshold={MIN_CONFIDENCE:.0%}"
+            f"but P={confidence:.2%} < regime threshold={regime_min_conf:.0%}"
         )}
 
     # Stage 6 ★ ULIS/ALDE gate
@@ -1108,14 +1157,16 @@ def _compute_signal(
     if not should_trade:
         return {**WAIT, "analysis": f"ULIS veto: {ulis_verdict_str}", "ulis_verdict": ulis_verdict_str}
 
-    if confidence < MIN_CONFIDENCE:
+    if confidence < regime_min_conf:
         return {**WAIT, "analysis": (
-            f"ULIS adjusted confidence {confidence:.2%} below threshold {MIN_CONFIDENCE:.0%}"
+            f"ULIS adjusted confidence {confidence:.2%} below regime threshold {regime_min_conf:.0%}"
         ), "ulis_verdict": ulis_verdict_str}
 
-    # Stage 7: Risk engine
+    # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
     stop_loss, take_profit = _risk_engine(
-        raw_direction, strategy_type, price, atr, buy_walls, sell_walls, sweep
+        raw_direction, strategy_type, price, atr, buy_walls, sell_walls, sweep,
+        sl_mult=regime_p["atr_multiplier_sl"],
+        tp_mult_ratio=regime_p["rr_target"],
     )
 
     # Sanity check — geometry must be valid
@@ -1168,6 +1219,7 @@ def _compute_signal(
         "take_profit":  take_profit,
         "analysis":     analysis,
         "ulis_verdict": ulis_verdict_str,
+        "regime":       regime,   # P1: stored in position for per-regime Beta update on exit
     }
 
 
@@ -1286,7 +1338,12 @@ async def execution_loop(
                         stats["consecutive_losses"] = 0
                     
                     # Update the Bayesian win-rate prior for self-calibration
-                    quant.update_win_rate(side=pos_snapshot.get("side", "buy"), won=(pnl >= 0))
+                    # P1: pass current regime so per-regime beta prior is updated
+                    quant.update_win_rate(
+                        side=pos_snapshot.get("side", "buy"),
+                        won=(pnl >= 0),
+                        regime=pos_snapshot.get("regime", "NEUTRAL"),
+                    )
 
                     # In live mode, simulate the exchange fill through crossover and clean up
                     if not executor.dry_run:
@@ -1360,6 +1417,9 @@ async def execution_loop(
                     metrics["cvd_delta"] = _current_cvd - LAST_CVD
                     LAST_CVD = _current_cvd
 
+                # P1: Inject per-regime win-rate priors so _bayesian_fusion
+                # can blend them with the base posterior after regime is known.
+                metrics["_regime_priors"] = quant.get_all_regime_priors()
 
                 # Update candle-close tracker so the candle-close gate in _compute_signal
                 # knows how old the current candle is.
@@ -1449,6 +1509,10 @@ async def execution_loop(
                 # Only count the trade if execution actually opened a position
                 if executor.active_position is not None:
                     stats["total_trades"] += 1
+                    # P1: Tag position with the current regime so update_win_rate()
+                    # can update the correct per-regime Beta prior on exit.
+                    if executor.active_position:
+                        executor.active_position["regime"] = verdict_json.get("regime", "NEUTRAL")
             else:
                 logger.info(f"[Main] WAIT — {analysis[:120]}")
 

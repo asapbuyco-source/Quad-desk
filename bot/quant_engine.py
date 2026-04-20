@@ -27,10 +27,17 @@ class QuantEngine:
 
     def __init__(self, state):
         self.state = state
-        # Beta prior parameters — updated via update_win_rate() after each trade exit.
-        # Alpha = wins+1, Beta = losses+1  →  mean = α/(α+β) = 0.5 at startup (uniform prior)
-        self._alpha: float = 1.0   # pseudo-successes (bull wins)
-        self._beta:  float = 1.0   # pseudo-failures  (bull losses)
+
+        # ── Per-Regime Beta Priors (P1 — HMM Spec Apr 2026) ──────────────────
+        # Separate Beta(α,β) conjugate prior per HMM regime.
+        # Tracks win rate independently for RANGE (mean-reversion),
+        # TREND (momentum), and NEUTRAL/LIQUIDITY (mixed) regimes.
+        # Mean = α/(α+β) = 0.5 at startup (uniform prior, no assumptions).
+        self._regime_alpha: dict = {"RANGE": 1.0, "NEUTRAL": 1.0, "TREND": 1.0, "LIQUIDITY": 1.0}
+        self._regime_beta:  dict = {"RANGE": 1.0, "NEUTRAL": 1.0, "TREND": 1.0, "LIQUIDITY": 1.0}
+        # Keep global fallback for backwards compatibility with _bayesian()
+        self._alpha: float = 1.0
+        self._beta:  float = 1.0
 
         # ── OFI State (Three-Stage Pipeline) ──────────────────────────────
         # Stage 1: True OFI = delta of bid/ask depth between snapshots
@@ -44,6 +51,13 @@ class QuantEngine:
         self._ofi_ewma_var: float = 1.0
         self._ofi_smooth:   float = 0.0
 
+        # ── ATR Percentile Rank (P2 — HMM Spec Apr 2026) ─────────────────
+        # Rolling 30-day window (4 candles/hr × 24hr × 30d = 2880 candles)
+        # Rank of current ATR within this window gives a normalised [0,1]
+        # measure of how extreme current volatility is vs recent history.
+        # Much more robust than raw ATR% which varies by price level.
+        self._atr_history: deque = deque(maxlen=2880)
+
         # Persistence path — survives Railway restarts if /tmp is mounted
         self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
         self._load_state()
@@ -52,30 +66,57 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # Public: update win-rate tracker after each trade
     # ------------------------------------------------------------------
-    def update_win_rate(self, side: str, won: bool):
+    def update_win_rate(self, side: str, won: bool, regime: str = "NEUTRAL"):
         """
         Call after each trade exit.
-        side  = 'buy' | 'sell'
-        won   = True if trade closed at TP, False if closed at SL
+        side   = 'buy' | 'sell'
+        won    = True if trade closed at TP, False if closed at SL
+        regime = HMM regime active at time of entry (RANGE|NEUTRAL|TREND|LIQUIDITY)
         """
         bull_win  = (side == "buy"  and won)
         bull_loss = (side == "buy"  and not won)
         bear_win  = (side == "sell" and won)
         bear_loss = (side == "sell" and not won)
 
-        # For bull prior: track bull_wins vs bear_wins (direction-agnostic accuracy)
+        # Update global prior (backwards compatibility)
         if bull_win or bear_win:
             self._alpha += 1.0
         else:
             self._beta  += 1.0
 
-        p_bull = self._alpha / (self._alpha + self._beta)
-        n = self._alpha + self._beta - 2          # subtract the two pseudo-counts
-        logger.info(
-            f"[QuantEngine] Win-rate prior updated: α={self._alpha:.0f} β={self._beta:.0f} "
-            f"→ P(bull)={p_bull:.2%}  (n={n:.0f} trades)"
+        # Update per-regime prior (P1)
+        regime_key = regime if regime in self._regime_alpha else "NEUTRAL"
+        if bull_win or bear_win:
+            self._regime_alpha[regime_key] += 1.0
+        else:
+            self._regime_beta[regime_key]  += 1.0
+
+        p_bull  = self._alpha / (self._alpha + self._beta)
+        p_r_win = self._regime_alpha[regime_key] / (
+            self._regime_alpha[regime_key] + self._regime_beta[regime_key]
         )
-        self._save_state()  # Persist after every trade
+        n = self._alpha + self._beta - 2
+        logger.info(
+            f"[QuantEngine] Win-rate updated: α={self._alpha:.0f} β={self._beta:.0f} "
+            f"→ P(bull)={p_bull:.2%} | regime={regime_key} P(win)={p_r_win:.2%}  (n={n:.0f} trades)"
+        )
+        self._save_state()
+
+    # ------------------------------------------------------------------
+    # P1: Per-regime win rate accessor
+    # ------------------------------------------------------------------
+    def get_all_regime_priors(self) -> dict:
+        """
+        Returns dict of regime → win_rate_prior for all 4 regimes.
+        Injected into metrics before _compute_signal() so _bayesian_fusion
+        can blend per-regime prior with the base Bayesian posterior.
+        """
+        result = {}
+        for regime in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+            a = self._regime_alpha.get(regime, 1.0)
+            b = self._regime_beta.get(regime, 1.0)
+            result[regime] = a / (a + b)   # Beta distribution mean
+        return result
 
     # ------------------------------------------------------------------
     # State Persistence: survives restarts (Beta prior + OFI EWMA)
@@ -84,11 +125,14 @@ class QuantEngine:
         """Persist Beta prior and OFI EWMA state to disk."""
         try:
             data = {
-                "alpha":        self._alpha,
-                "beta":         self._beta,
-                "ofi_ewma_mu":  self._ofi_ewma_mu,
-                "ofi_ewma_var": self._ofi_ewma_var,
-                "ofi_smooth":   self._ofi_smooth,
+                "alpha":          self._alpha,
+                "beta":           self._beta,
+                # Per-regime Betas (P1)
+                "regime_alpha":   self._regime_alpha,
+                "regime_beta":    self._regime_beta,
+                "ofi_ewma_mu":    self._ofi_ewma_mu,
+                "ofi_ewma_var":   self._ofi_ewma_var,
+                "ofi_smooth":     self._ofi_smooth,
             }
             with open(self._persist_path, "w") as f:
                 json.dump(data, f)
@@ -106,6 +150,12 @@ class QuantEngine:
                 self._ofi_ewma_mu  = float(data.get("ofi_ewma_mu",  0.0))
                 self._ofi_ewma_var = float(data.get("ofi_ewma_var", 1.0))
                 self._ofi_smooth   = float(data.get("ofi_smooth",   0.0))
+                # Per-regime Betas (P1) — backwards compatible with old saves
+                saved_ra = data.get("regime_alpha", {})
+                saved_rb = data.get("regime_beta",  {})
+                for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+                    self._regime_alpha[r] = float(saved_ra.get(r, 1.0))
+                    self._regime_beta[r]  = float(saved_rb.get(r, 1.0))
                 n = max(0, self._alpha + self._beta - 2)
                 logger.info(
                     f"[QuantEngine] Restored state: α={self._alpha:.1f} β={self._beta:.1f} "
@@ -141,6 +191,21 @@ class QuantEngine:
         bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi)
         cvd = self.state.cvd
         atr = self._atr(highs, lows, closes)
+
+        # ── P2: ATR Percentile Rank (30-day rolling window) ──────────────
+        # Rank current ATR within a rolling 2880-candle (30-day) window.
+        # Output: atr_pct_rank in [0.0, 1.0].
+        #   0.05 = ATR is in bottom 5% — very quiet
+        #   0.95 = ATR is in top 5% — very volatile
+        # More robust than raw ATR% which varies with BTC price level.
+        self._atr_history.append(atr)
+        if len(self._atr_history) >= 2:
+            arr = np.array(self._atr_history)
+            # Fraction of historical ATRs that are <= current ATR
+            atr_pct_rank = float(np.mean(arr <= atr))
+        else:
+            atr_pct_rank = 0.5  # Neutral fallback during warmup
+
         vpoc = self._volume_poc(c_list)
         funding_rate = getattr(self.state, 'funding_rate', 0.0)
 
@@ -159,6 +224,7 @@ class QuantEngine:
             "allWalls":          all_walls_str,
             "atr":               atr,
             "atr_pct":           atr / current_price if current_price > 0 else 0.0,
+            "atr_pct_rank":      atr_pct_rank,   # P2: percentile rank in 30-day window
             "vpoc":              vpoc,
             "funding_rate":      funding_rate,
         }
