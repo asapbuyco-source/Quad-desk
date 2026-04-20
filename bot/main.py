@@ -537,7 +537,9 @@ def _detect_regime(
     atr_pct = metrics["atr_pct"]
 
     # Hard override: proximity to a significant liquidity wall
-    WALL_PROXIMITY = 0.003
+    # Reduced from 0.3% → 0.15% (Fix #3: 0.3% was firing on normal BTC order-book spread,
+    # locking the bot in LIQUIDITY mode for the majority of all cycles).
+    WALL_PROXIMITY = 0.0015
     near_wall = any(
         abs(price - w) / price <= WALL_PROXIMITY
         for w in (buy_walls[:1] + sell_walls[:1])
@@ -808,11 +810,13 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
         elif not is_long and skew < 0:
             odds *= skew_boost
 
-    # 8. [P1] Regime-Weighted Posterior Blending (HMM Spec Apr 2026)
+    # 8. Convert back to probability — MUST happen before regime blending (Fix #1: UnboundLocalError)
+    p_final = odds / (1.0 + odds)
+
+    # 9. [P1] Regime-Weighted Posterior Blending (HMM Spec Apr 2026)
     # P_adjusted = hmm_conf * regime_prior + (1 - hmm_conf) * base_posterior
     # High HMM confidence → trust per-regime historical win rate more.
     # Low HMM confidence  → trust raw Bayesian signal posterior more.
-    # This ensures the bot becomes more selective in regimes where it historically loses.
     regime_priors = metrics.get("_regime_priors", {})
     if regime_priors and regime in regime_priors:
         hmm_conf      = metrics.get("regime_confidence", 0.5)
@@ -1096,6 +1100,16 @@ def _compute_signal(
         # P0: pass regime-adaptive z_threshold (RANGE=1.5, NEUTRAL=1.8, TREND=2.5)
         raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
         logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']})")
+    elif regime == "NEUTRAL":
+        # Fix #2: NEUTRAL regime now attempts mean-reversion at conservative z_threshold
+        # rather than unconditionally returning WAIT. This unlocks 30-40% of blocked cycles.
+        # Only trade in NEUTRAL if Z-score is sufficiently extreme (z_threshold=1.8).
+        strategy_type = "MEAN_REVERSION"
+        raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
+        if raw_direction:
+            logger.info(f"[MetaModel] → NEUTRAL→MEAN_REVERSION fallback (z_thr={regime_p['z_threshold']})")
+        else:
+            logger.info(f"[MetaModel] → WAIT (regime=NEUTRAL, insufficient Z-score)")
     else:
         strategy_type = "NEUTRAL"
         raw_direction = None

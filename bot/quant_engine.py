@@ -314,22 +314,35 @@ class QuantEngine:
         return float(np.clip(z_t, -4.0, 4.0))
 
     # ------------------------------------------------------------------
-    # 3. RSI (14 period)
+    # 3. RSI (14 period) — Wilder EMA smoothing (Fix #7 from audit)
     # ------------------------------------------------------------------
     def _rsi(self, closes: np.ndarray) -> float:
-        if len(closes) < 15:
+        """
+        Wilder's RSI: uses exponential smoothing with α = 1/period.
+        This matches TradingView, TA-Lib, and the frontend dashboard.
+        SMA-based RSI under-estimates extremes — Wilder's EMA gives
+        accurate 70/30 signals for overbought/oversold gate logic.
+        """
+        period = 14
+        if len(closes) < period + 1:
             return 50.0
         delta  = np.diff(closes)
         gains  = np.where(delta > 0, delta, 0.0)
         losses = np.where(delta < 0, -delta, 0.0)
 
-        g_sma = np.mean(gains[-14:])
-        l_sma = np.mean(losses[-14:])
+        # Seed with simple average over first `period` bars
+        avg_gain = float(np.mean(gains[:period]))
+        avg_loss = float(np.mean(losses[:period]))
 
-        if l_sma == 0 and g_sma > 0:  return 100.0
-        if l_sma == 0 and g_sma == 0: return 50.0
+        # Wilder EMA over remaining bars
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
 
-        rs = g_sma / l_sma
+        if avg_loss < 1e-10:
+            return 100.0 if avg_gain > 0 else 50.0
+
+        rs = avg_gain / avg_loss
         return float(100.0 - (100.0 / (1.0 + rs)))
 
     # ------------------------------------------------------------------
