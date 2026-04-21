@@ -15,7 +15,9 @@ except ImportError:
     class Style: RESET_ALL = BRIGHT = ""
 
 # ==============================================================================
-# CONFIGURATION
+# CONFIGURATION and new changes for ATR Threshold for the Live Bot
+# ATR threshold is the Minimum ATR required to enter the market. 
+# It ensures that there is enough volatility to trade and make a profit.
 # ==============================================================================
 CONFIG = {
     "symbols": ["BTCUSDT"],
