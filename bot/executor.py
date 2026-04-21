@@ -755,6 +755,7 @@ class TradingExecutor:
                 # ── SPOT: Exchange-specific limit SL/TP orders ────────────────
                 sl_limit = stop_loss * 0.999 if side == "buy" else stop_loss * 1.001
                 sl_order = None
+                _sl_last_err = None
                 for attempt in range(3):
                     try:
                         if self.exchange_id == "binance":
@@ -791,6 +792,7 @@ class TradingExecutor:
 
                 # Take-profit limit order
                 tp_order = None
+                _tp_last_err = None
                 for attempt in range(3):
                     try:
                         tp_order = await self.exchange.create_order(

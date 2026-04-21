@@ -962,7 +962,6 @@ def _risk_engine(
     tp_from_wall = (sell_walls[0] * 0.9995 if sell_walls else None) if is_long \
                else (buy_walls[0] * 1.0005 if buy_walls else None)
 
-    import numpy as np
     if candle_history and len(candle_history) > 0:
         recent_atr = np.mean([c.get("atr", atr) for c in candle_history[-5:]])
         baseline_atr = np.mean([c.get("atr", atr) for c in candle_history[-20:]])
