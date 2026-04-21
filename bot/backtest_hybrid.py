@@ -15,7 +15,7 @@ except ImportError:
     class Style: RESET_ALL = BRIGHT = ""
 
 # ==============================================================================
-# CONFIGURATION and new changes for ATR Threshold for the Live Bot
+# CONFIGURATION and new  for ATR Threshold for the Live Bot
 # ATR threshold is the Minimum ATR required to enter the market. 
 # It ensures that there is enough  to trade and make a profit.
 # ==============================================================================
