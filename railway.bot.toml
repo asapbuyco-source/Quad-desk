@@ -11,7 +11,7 @@ builder      = "nixpacks"
 watchPatterns = ["bot/**"]
 
 [deploy]
-# Set region to Amsterdam (Europe) to avoid Binance USA restrictions
+# to Amsterdam (Europe) to avoid Binance USA restrictions
 # NOTE: If this doesn't automatically switch the region, you MUST still update 
 # it manually in your Railway Dashboard -> Service Settings -> Region
 region = "eu-west-1"
