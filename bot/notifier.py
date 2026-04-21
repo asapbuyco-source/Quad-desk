@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 class TelegramNotifier:
     """
-    Handles sending trade alerts and error notifications to Telegram.
+    Handle sending trade alerts and error notifications to Telegram.
     """
     def __init__(self, token: Optional[str], chat_id: Optional[str]):
         self.token = token
