@@ -1,0 +1,12 @@
+# railway.toml — Railway-native config (always respected over nixpacks)
+# This is the authoritative start command for the bot service.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+# Use the virtualenv Python built during nixpacks install phase.
+# This avoids Nix's PEP 668 "externally-managed-environment" restriction.
+startCommand = "/app/.venv/bin/python -m bot.main"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

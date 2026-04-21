@@ -1,8 +1,19 @@
-[phases.setup]
-# Add Python 3 explicitly so it is available in the runtime environment.
-# nixpacks auto-detects Node.js but uses the bare 'python' alias which
-# does not exist on Ubuntu; 'python3' is the correct binary.
-nixPkgs = ["...", "python312", "python312Packages.pip"]
+# nixpacks.toml — controls BUILD only
+# The start command is set in railway.toml (Railway-native, always respected).
 
-[start]
-cmd = "python3 -m pip install --no-cache-dir -r bot/requirements.txt && python3 -m bot.main"
+[phases.setup]
+# "..." keeps all auto-detected packages (nodejs_18, npm-9_x, caddy) and
+# appends python312 so it is available in the build image.
+nixPkgs = ["...", "python312"]
+
+[phases.install]
+# Create a virtualenv first (bypasses Nix's immutable store / PEP 668),
+# then install bot deps into it alongside the Node install.
+cmds = [
+    "npm ci",
+    "python3 -m venv /app/.venv",
+    "/app/.venv/bin/pip install --no-cache-dir -r bot/requirements.txt"
+]
+
+[phases.build]
+cmds = ["npm run build"]
