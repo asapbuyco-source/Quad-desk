@@ -1,19 +1,22 @@
-# nixpacks.toml — controls BUILD only
-# The start command is set in railway.toml (Railway-native, always respected).
+# nixpacks.toml — Bot service ONLY (frontend is on Netlify, backend on Render)
+#
+# Override nixpacks auto-detection completely:
+# - Skip Node.js / npm / caddy (not needed here)
+# - Only set up Python and install bot dependencies into a virtualenv
+# - The start command is set in railway.toml
 
 [phases.setup]
-# "..." keeps all auto-detected packages (nodejs_18, npm-9_x, caddy) and
-# appends python312 so it is available in the build image.
-nixPkgs = ["...", "python312"]
+# Only install Python 3.12 — do NOT use "..." (which would pull in Node.js too)
+nixPkgs = ["python312"]
 
 [phases.install]
-# Create a virtualenv first (bypasses Nix's immutable store / PEP 668),
-# then install bot deps into it alongside the Node install.
+# Create a virtualenv (bypasses Nix PEP 668 immutable-store restriction)
+# then install all bot requirements
 cmds = [
-    "npm ci",
     "python3 -m venv /app/.venv",
     "/app/.venv/bin/pip install --no-cache-dir -r bot/requirements.txt"
 ]
 
 [phases.build]
-cmds = ["npm run build"]
+# No build step needed for the Python bot
+cmds = []
