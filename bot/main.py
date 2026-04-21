@@ -740,14 +740,15 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
 
     # [IMPROVED] SWEEP NEUTRALIZER: context-aware confidence floor.
     # Strong OFI+CVD alignment → floor 0.60 | mild alignment → 0.55 | bare sweep → 0.52
+    # FIX: OFI is now in (-1, +1) range from tanh pipeline
     if is_sweep:
         strong_confirm = (
-            (is_long  and ofi >  5 and cvd_delta > 0) or
-            (not is_long and ofi < -5 and cvd_delta < 0)
+            (is_long  and ofi >  0.3 and cvd_delta > 0) or
+            (not is_long and ofi < -0.3 and cvd_delta < 0)
         )
         mild_confirm = (
-            (is_long  and (ofi > 0 or cvd_delta > 0)) or
-            (not is_long and (ofi < 0 or cvd_delta < 0))
+            (is_long  and (ofi > 0.15 or cvd_delta > 0)) or
+            (not is_long and (ofi < -0.15 or cvd_delta < 0))
         )
         if strong_confirm:
             p_signal_prior = max(0.60, p_signal_prior)
@@ -762,21 +763,21 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     odds = p_signal_prior / (1.0 - p_signal_prior)
 
     # 4. Flow Multipliers (OFI/CVD/CVD-delta) — direction-support check
-    # Tiered OFI: >10 = strong, 5-10 = moderate. CVD delta captures recovering buy pressure
-    # even when absolute CVD is still negative (key for post-selloff BUY entries).
+    # FIX: OFI is now in (-1, +1) range from tanh pipeline
+    # Tiered OFI: >0.3 = strong, >0.15 = moderate. CVD delta captures recovering buy pressure
     flow_factor = 1.0
     if is_long:
-        if ofi > 10:           flow_factor *= 1.25
-        elif ofi > 5:          flow_factor *= 1.10   # Mid-range OFI: partial boost
-        if cvd > 0:            flow_factor *= 1.15
-        elif cvd_delta > 100:  flow_factor *= 1.08   # CVD recovering → mild bullish tailwind
-        elif cvd_delta < -100: flow_factor *= 0.90   # CVD accelerating down → headwind
+        if ofi > 0.3:           flow_factor *= 1.25
+        elif ofi > 0.15:         flow_factor *= 1.10   # Mid-range OFI: partial boost
+        if cvd > 0:              flow_factor *= 1.15
+        elif cvd_delta > 100:    flow_factor *= 1.08   # CVD recovering → mild bullish tailwind
+        elif cvd_delta < -100:   flow_factor *= 0.90   # CVD accelerating down → headwind
     else:  # SHORT signal
-        if ofi < -10:          flow_factor *= 1.25
-        elif ofi < -5:         flow_factor *= 1.10   # Mid-range OFI: partial boost
-        if cvd < 0:            flow_factor *= 1.15
-        elif cvd_delta < -100: flow_factor *= 1.08   # CVD dropping → mild bearish tailwind
-        elif cvd_delta > 100:  flow_factor *= 0.90   # CVD recovering → headwind for shorts
+        if ofi < -0.3:           flow_factor *= 1.25
+        elif ofi < -0.15:         flow_factor *= 1.10   # Mid-range OFI: partial boost
+        if cvd < 0:               flow_factor *= 1.15
+        elif cvd_delta < -100:   flow_factor *= 1.08   # CVD dropping → mild bearish tailwind
+        elif cvd_delta > 100:    flow_factor *= 0.90   # CVD recovering → headwind for shorts
 
     odds *= flow_factor
 
@@ -894,20 +895,17 @@ def _apply_ulis_gate(
 
     # ULIS Triple Alignment Gate — directionally aware RSI check.
     #
-    # OLD (buggy): RSI < 40 was a red light for BUY — but deeply oversold RSI
-    # is SUPPORTIVE of a BUY, not a risk factor. This was blocking the exact
-    # high-quality mean-reversion entries the bot is designed to take.
-    #
     # FIX: Red light fires only when RSI contradicts the signal direction:
     #   BUY  → red light if RSI > 75  (overbought — don't chase)
     #   SELL → red light if RSI < 25  (oversold  — don't chase)
     # RSI in the middle zone or confirming direction = no red light.
+    # FIX: OFI is now in (-1, +1) range from tanh pipeline
     if is_long:
         rsi_valid = rsi <= 75      # Block overbought BUY-chasing only
-        ofi_valid = ofi > -15.0   # Widened from -8 to -15 for futures variance
+        ofi_valid = ofi > -0.15   # Block only if OFI strongly bearish
     else:
         rsi_valid = rsi >= 25     # Block oversold SELL-chasing only
-        ofi_valid = ofi < 15.0    # Widened from 8 to 15 for futures variance
+        ofi_valid = ofi < 0.15     # Block only if OFI strongly bullish
 
     red_lights = 0
     if not rsi_valid: red_lights += 1
@@ -1203,6 +1201,15 @@ def _compute_signal(
 
     logger.info(f"[BayesFusion] direction={raw_direction} | P={confidence:.2%}")
 
+    # Stage 6 ★ ULIS/ALDE gate FIRST (applies confidence boost)
+    should_trade, confidence, ulis_verdict_str = _apply_ulis_gate(
+        metrics, candle_history, feed_state, raw_direction, confidence
+    )
+
+    if not should_trade:
+        return {**WAIT, "analysis": f"ULIS veto: {ulis_verdict_str}", "ulis_verdict": ulis_verdict_str}
+
+    # FIX: Check threshold AFTER ULIS gate using boosted confidence
     # P0: Use regime-adaptive min_confidence instead of global MIN_CONFIDENCE
     regime_min_conf = regime_p["min_confidence"]
     if confidence < regime_min_conf:
@@ -1210,14 +1217,6 @@ def _compute_signal(
             f"Regime={regime} strategy={strategy_type} signal={raw_direction} "
             f"but P={confidence:.2%} < regime threshold={regime_min_conf:.0%}"
         )}
-
-    # Stage 6 ★ ULIS/ALDE gate
-    should_trade, confidence, ulis_verdict_str = _apply_ulis_gate(
-        metrics, candle_history, feed_state, raw_direction, confidence
-    )
-
-    if not should_trade:
-        return {**WAIT, "analysis": f"ULIS veto: {ulis_verdict_str}", "ulis_verdict": ulis_verdict_str}
 
     # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
     stop_loss, take_profit = _risk_engine(
