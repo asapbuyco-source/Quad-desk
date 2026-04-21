@@ -3,7 +3,7 @@ import { CandleData, MarketRegimeType } from '../types';
 export const generateMockCandles = (count: number, startPrice: number = 65000, intervalSeconds: number = 60): CandleData[] => {
     let currentPrice = startPrice;
     const now = Math.floor(Date.now() / 1000);
-    let currentTime = now - (count * intervalSeconds);
+    const currentTime = now - (count * intervalSeconds);
     const candles: CandleData[] = [];
     const trend = (Math.random() - 0.5) * 0.0001; 
 
@@ -37,6 +37,46 @@ export const generateMockCandles = (count: number, startPrice: number = 65000, i
     return candles.map(c => {
         cvd += c.delta || 0;
         return { ...c, cvd };
+    });
+};
+
+export const calculateBollingerBands = (candles: CandleData[], period = 20): CandleData[] => {
+    if (candles.length < period) return candles;
+
+    const sma = new Float64Array(candles.length);
+    const stdDev = new Float64Array(candles.length);
+
+    // Calculate SMA
+    let sum = 0;
+    for (let i = 0; i < period; i++) sum += candles[i].close;
+    sma[period - 1] = sum / period;
+
+    for (let i = period; i < candles.length; i++) {
+        sum += candles[i].close - candles[i - period].close;
+        sma[i] = sum / period;
+    }
+
+    // Calculate StdDev
+    for (let i = period - 1; i < candles.length; i++) {
+        let varianceSum = 0;
+        const mean = sma[i];
+        for (let j = 0; j < period; j++) {
+            varianceSum += Math.pow(candles[i - j].close - mean, 2);
+        }
+        stdDev[i] = Math.sqrt(varianceSum / period);
+    }
+
+    return candles.map((c, i) => {
+        if (i < period - 1) return c;
+        const mean = sma[i];
+        const std = stdDev[i];
+        return {
+            ...c,
+            zScoreUpper1: mean + std,
+            zScoreLower1: mean - std,
+            zScoreUpper2: mean + (std * 2),
+            zScoreLower2: mean - (std * 2)
+        };
     });
 };
 

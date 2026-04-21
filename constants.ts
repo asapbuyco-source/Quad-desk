@@ -1,6 +1,7 @@
 import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem, TradeSignal, PriceLevel } from './types';
 
 export const APP_NAME = "QUANT DESK";
+export const SCAN_COOLDOWN = 60;
 
 const getApiUrl = () => {
     let url = 'https://quant-desk-backend-production.up.railway.app'; 
