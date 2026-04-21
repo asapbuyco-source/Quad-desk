@@ -537,9 +537,8 @@ def _detect_regime(
     atr_pct = metrics["atr_pct"]
 
     # Hard override: proximity to a significant liquidity wall
-    # Reduced from 0.3% → 0.15% (Fix #3: 0.3% was firing on normal BTC order-book spread,
-    # locking the bot in LIQUIDITY mode for the majority of all cycles).
-    WALL_PROXIMITY = 0.0015
+    atr_val = metrics.get("atr", price * 0.001)
+    WALL_PROXIMITY = max(0.5 * atr_val / price, 0.001)
     near_wall = any(
         abs(price - w) / price <= WALL_PROXIMITY
         for w in (buy_walls[:1] + sell_walls[:1])
@@ -553,8 +552,12 @@ def _detect_regime(
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
     hmm_result = _hmm_classifier.classify(atr_pct, z, tape, atr_pct_rank)
 
-    regime     = hmm_result["regime"]
+    REGIME_REMAP = {"VOLATILE": "TREND"}
+    regime = REGIME_REMAP.get(hmm_result["regime"], hmm_result["regime"])
     confidence = hmm_result["confidence"]
+
+    if hmm_result["regime"] != regime:
+        logger.info(f"[HMM] Remapped {hmm_result['regime']} -> {regime} (conf={confidence:.0%})")
 
     # Inject probabilities into metrics for downstream observability
     metrics["regime_confidence"] = confidence
@@ -943,6 +946,7 @@ def _risk_engine(
     sweep: Optional[str],
     sl_mult: float = 1.5,        # P0: regime-adaptive (default = NEUTRAL)
     tp_mult_ratio: float = 2.0,  # P0: regime-adaptive RR target
+    candle_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[float, float]:
     """
     ATR-based SL/TP calculator with regime-adaptive multipliers (P0).
@@ -958,8 +962,25 @@ def _risk_engine(
     tp_from_wall = (sell_walls[0] * 0.9995 if sell_walls else None) if is_long \
                else (buy_walls[0] * 1.0005 if buy_walls else None)
 
+    import numpy as np
+    if candle_history and len(candle_history) > 0:
+        recent_atr = np.mean([c.get("atr", atr) for c in candle_history[-5:]])
+        baseline_atr = np.mean([c.get("atr", atr) for c in candle_history[-20:]])
+        vol_ratio = recent_atr / max(baseline_atr, 1e-8)
+    else:
+        vol_ratio = 1.0
+
+    base_mult = sl_mult
+    adaptive_mult = base_mult * float(np.clip(vol_ratio, 0.8, 2.0))
+    
+    logger.info(
+        f"[RiskEngine] base_mult={base_mult:.1f} vol_ratio={vol_ratio:.2f} "
+        f"adaptive_mult={adaptive_mult:.2f}"
+    )
+
     TP_MULT = tp_mult_ratio  # P0: regime-adaptive (RR target from REGIME_PARAMS)
-    SL_MULT = sl_mult        # P0: regime-adaptive
+    SL_MULT = adaptive_mult
+
 
     def sl_tp(sl_dist: float) -> Tuple[float, float]:
         if is_long:
@@ -1101,15 +1122,43 @@ def _compute_signal(
         raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
         logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']})")
     elif regime == "NEUTRAL":
-        # Fix #2: NEUTRAL regime now attempts mean-reversion at conservative z_threshold
-        # rather than unconditionally returning WAIT. This unlocks 30-40% of blocked cycles.
-        # Only trade in NEUTRAL if Z-score is sufficiently extreme (z_threshold=1.8).
+        # NEUTRAL — HMM uncertain, use conservative NEUTRAL parameters
         strategy_type = "MEAN_REVERSION"
-        raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
-        if raw_direction:
-            logger.info(f"[MetaModel] → NEUTRAL→MEAN_REVERSION fallback (z_thr={regime_p['z_threshold']})")
+        # Z-slope guard: only enter if Z-score is reversing toward mean
+        # Prevents premature entries during continuing pullbacks
+        z_current = metrics.get("zScore", 0.0)
+        z_prev = metrics.get("zScore_prev", z_current)
+        z_slope = z_current - z_prev
+        
+        # RSI trough/peak guard: momentum must be confirming reversal
+        rsi = metrics.get("rsi", 50.0)
+        rsi_prev = metrics.get("rsi_prev", rsi)
+        rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)
+        rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
+        rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
+        
+        z_thr = regime_p["z_threshold"]
+        
+        # Long: Z at extreme low AND reversing AND RSI turning up
+        if z_current <= -z_thr and z_slope > 0 and rsi_trough:
+            raw_direction = "MEAN_REVERSAL_LONG"
+        # Short: Z at extreme high AND reversing AND RSI turning down
+        elif z_current >= z_thr and z_slope < 0 and rsi_peak:
+            raw_direction = "MEAN_REVERSAL_SHORT"
         else:
-            logger.info(f"[MetaModel] → WAIT (regime=NEUTRAL, insufficient Z-score)")
+            raw_direction = None
+            
+        if raw_direction:
+            logger.info(
+                f"[MetaModel] NEUTRAL fallback -> {strategy_type} "
+                f"({raw_direction}) z={z_current:.2f} slope={z_slope:+.3f}"
+            )
+        else:
+            logger.info(
+                f"[MetaModel] NEUTRAL: no valid setup "
+                f"(z={z_current:.2f}, slope={z_slope:+.3f}, "
+                f"rsi_turn={rsi_trough or rsi_peak})"
+            )
     else:
         strategy_type = "NEUTRAL"
         raw_direction = None
@@ -1171,16 +1220,12 @@ def _compute_signal(
     if not should_trade:
         return {**WAIT, "analysis": f"ULIS veto: {ulis_verdict_str}", "ulis_verdict": ulis_verdict_str}
 
-    if confidence < regime_min_conf:
-        return {**WAIT, "analysis": (
-            f"ULIS adjusted confidence {confidence:.2%} below regime threshold {regime_min_conf:.0%}"
-        ), "ulis_verdict": ulis_verdict_str}
-
     # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
     stop_loss, take_profit = _risk_engine(
         raw_direction, strategy_type, price, atr, buy_walls, sell_walls, sweep,
         sl_mult=regime_p["atr_multiplier_sl"],
         tp_mult_ratio=regime_p["rr_target"],
+        candle_history=candle_history,
     )
 
     # Sanity check — geometry must be valid

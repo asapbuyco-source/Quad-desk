@@ -185,7 +185,13 @@ class QuantEngine:
 
         skewness       = self._skewness(closes)
         z_score        = self._vwap_z_score_t(highs, lows, closes, vols, current_price)
+        zScore_prev    = getattr(self, "_last_z_score", z_score)
+        self._last_z_score = z_score
+
         rsi            = self._rsi(closes)
+        rsi_prev       = self._rsi(closes[:-1]) if len(closes) > 1 else rsi
+        rsi_prev2      = self._rsi(closes[:-2]) if len(closes) > 2 else rsi_prev
+
         tape_speed, dominant_side = self._tape_metrics()
         ofi, wall_context, all_walls_str = self._lob_metrics(current_price)
         bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi)
@@ -215,7 +221,10 @@ class QuantEngine:
             "skewness":          skewness,
             "bayesianPosterior": bayesian_posterior,
             "zScore":            z_score,
+            "zScore_prev":       zScore_prev,
             "rsi":               rsi,
+            "rsi_prev":          rsi_prev,
+            "rsi_prev2":         rsi_prev2,
             "ofi":               ofi,
             "cvd":               cvd,
             "tapeSpeed":         tape_speed,
