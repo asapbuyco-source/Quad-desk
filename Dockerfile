@@ -1,0 +1,25 @@
+# Use the official Python 3.12 slim image (Debian-based).
+# This image already includes libstdc++, pip, and all C runtime libs
+# that numpy/pandas manylinux wheels require — no Nix complications.
+
+FROM python:3.12-slim
+
+# Install build tools needed by some pip packages (e.g. cffi, coincurve)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy only requirements first to leverage Docker layer caching
+COPY bot/requirements.txt ./bot/requirements.txt
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r bot/requirements.txt
+
+# Copy the full application
+COPY . .
+
+# Run the bot
+CMD ["python", "-m", "bot.main"]
