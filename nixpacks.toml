@@ -1,22 +1,19 @@
 # nixpacks.toml — Bot service ONLY (frontend is on Netlify, backend on Render)
 #
-# Override nixpacks auto-detection completely:
-# - Skip Node.js / npm / caddy (not needed here)
-# - Only set up Python and install bot dependencies into a virtualenv
-# - The start command is set in railway.toml
+# - python312: Nix Python runtime
+# - libstdc++6: Ubuntu apt package that provides libstdc++.so.6, required by
+#   numpy/pandas manylinux pip wheels (Nix garbage-collects gcc-lib after build,
+#   so we pin it via apt to ensure it survives into the runtime container)
 
 [phases.setup]
-# Only install Python 3.12 — do NOT use "..." (which would pull in Node.js too)
 nixPkgs = ["python312"]
+aptPkgs = ["libstdc++6"]
 
 [phases.install]
-# Create a virtualenv (bypasses Nix PEP 668 immutable-store restriction)
-# then install all bot requirements
 cmds = [
     "python3 -m venv /app/.venv",
     "/app/.venv/bin/pip install --no-cache-dir -r bot/requirements.txt"
 ]
 
 [phases.build]
-# No build step needed for the Python bot
 cmds = []
