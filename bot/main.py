@@ -810,9 +810,12 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
         if not is_long and rsi > 60:   osc_factor *= 1.60  # Overbought strongly helps SELL
         elif is_long and rsi < 40:     osc_factor *= 1.60  # Oversold strongly helps BUY
 
-        # Momentum Chase Penalty: avoid entry if RSI already buried too deep
-        if not is_long and rsi < 32:   osc_factor *= 0.75
-        if is_long and rsi > 68:       osc_factor *= 0.75
+        # Momentum Chase Penalty: avoid entry if RSI already buried too deep.
+        # SWEEP EXCEPTION: a BELOW_LOWS BUY sweep on overbought RSI is a REVERSAL,
+        # not a momentum chase. The RSI overextension actually CONFIRMS the sweeping
+        # condition. Skip this penalty entirely for sweep strategies.
+        if not is_long and rsi < 32 and not is_sweep:   osc_factor *= 0.75
+        if is_long and rsi > 68 and not is_sweep:       osc_factor *= 0.75
 
     odds *= osc_factor
 
@@ -938,7 +941,17 @@ def _apply_ulis_gate(
         logger.info(f"[Alignment] 1 Red Light. Penalising confidence to {confidence:.2%}.")
         
     # Confidence adjustment
-    adjusted = min(1.0, confidence + ulis["confidence_boost"])
+    # BREAKOUT_WATCH FIX: This verdict means momentum is building. If the
+    # liquidity_vector aligns with the trade direction, it is corroborating
+    # evidence → apply a small boost. Only penalise when it conflicts.
+    boost = ulis["confidence_boost"]
+    if verdict_str == "BREAKOUT_WATCH":
+        vector_bullish = ulis["liquidity_vector"] > 0
+        if (is_long and vector_bullish) or (not is_long and not vector_bullish):
+            boost = +0.01   # Aligned: momentum building in our direction
+        else:
+            boost = -0.02   # Conflicting: momentum building against us
+    adjusted = min(1.0, confidence + boost)
     logger.info(
         f"[ULIS] PASS — {verdict_str} | "
         f"vector={ulis['liquidity_vector']:.3f} | "
@@ -1109,9 +1122,12 @@ def _compute_signal(
         prev_candle_ts = float(candle_history[-2]["time"]) if len(candle_history) >= 2 else 0.0
         # Age of the candle that produced the sweep signal
         sweep_candle_age_s = _time.time() - prev_candle_ts
-        # A 15m candle = 900s. Allow up to gate_sec grace after it closes.
+        # A 15m candle = 900s. We allow entry at ANY POINT within the CURRENT candle
+        # after the previous candle produced the sweep — i.e. up to 2 full candle lengths.
+        # Old value (900+gate_sec=945s) gave only a 45s reaction window which was far
+        # too tight: mid-session starts and any latency caused instant staleness.
         gate_sec = regime_p["candle_gate_sec"]
-        max_sweep_age = 900 + gate_sec
+        max_sweep_age = 1800 + gate_sec
         if sweep_candle_age_s > max_sweep_age:
             logger.info(
                 f"[CandleGate] Sweep signal stale — sweep candle closed "
