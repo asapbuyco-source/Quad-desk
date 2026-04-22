@@ -67,54 +67,54 @@ CONSECUTIVE_LOSS_HALT  = 2      # consecutive SL exits triggers 2-hour hard time
 REGIME_PARAMS = {
     "RANGE": {
         # Low-volatility: small deviations are statistically meaningful
-        "z_threshold":        1.5,   # Lower than default — z=1.5 is a big move in quiet markets
-        "atr_multiplier_sl":  1.2,   # Tight SL — low vol absorbs less noise
-        "atr_multiplier_tp":  2.2,   # TP = SL × TP_MULT (spec RR target 1.8:1)
-        "ofi_bound":          0.10,  # tanh scale — moderate OFI sufficient in RANGE
-        "min_confidence":     0.58,  # More liberal — RANGE mean-reversion edges are cleaner
-        "rr_target":          1.8,   # 1.8:1 minimum R:R (lower fees in futures allow this)
+        "z_threshold":        1.3,   # Was 1.5. Triggers mean-reversion earlier
+        "atr_multiplier_sl":  1.2,   # Tight SL
+        "atr_multiplier_tp":  2.2,   # TP = SL × TP_MULT
+        "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
+        "min_confidence":     0.55,  # Was 0.58. 55% win-probability required
+        "rr_target":          1.8,   # 1.8:1 minimum R:R
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
-        "panic_threshold":    2.5,   # Flash-crash trigger: 2.5% drop in 5 candles
-        "candle_gate_sec":    45,    # Tight sweep window — RANGE reversals are fast
-        "htf_block":          False, # Counter-HTF mean-reversion IS the strategy in RANGE
+        "panic_threshold":    2.5,   # Flash-crash trigger
+        "candle_gate_sec":    30,    # Was 45s. Faster entry
+        "htf_block":          False, # Counter-HTF is the strategy in RANGE
     },
     "NEUTRAL": {
-        # Normal-volatility: balanced thresholds, all strategies valid
-        "z_threshold":        1.8,
+        # Normal-volatility: balanced thresholds
+        "z_threshold":        1.5,   # Was 1.8
         "atr_multiplier_sl":  1.5,
-        "atr_multiplier_tp":  3.0,   # 2.0:1 R:R
-        "ofi_bound":          0.15,
-        "min_confidence":     0.62,
+        "atr_multiplier_tp":  3.0,   
+        "ofi_bound":          0.12,  # Was 0.15
+        "min_confidence":     0.58,  # Was 0.62. More trades allowed
         "rr_target":          2.0,
         "be_lock_trigger":    1.0,
         "panic_threshold":    5.0,
-        "candle_gate_sec":    60,
+        "candle_gate_sec":    45,    # Was 60s
         "htf_block":          True,
     },
     "TREND": {
-        # High-volatility: only high-conviction signals, wide stops
-        "z_threshold":        2.5,   # High bar — z=1.5 is just noise in a trending market
-        "atr_multiplier_sl":  2.2,   # Wide SL — trending moves are volatile
-        "atr_multiplier_tp":  5.5,   # 2.5:1 R:R at 2.2×ATR SL
-        "ofi_bound":          0.25,  # Strong OFI required in noisy TREND market
-        "min_confidence":     0.72,  # Higher bar — more false signals in volatile regime
+        # High-volatility: trend-following
+        "z_threshold":        2.0,   # Was 2.5. Triggers on shallower pullbacks
+        "atr_multiplier_sl":  2.2,   # Wide SL 
+        "atr_multiplier_tp":  5.5,   
+        "ofi_bound":          0.20,  # Was 0.25
+        "min_confidence":     0.65,  # Was 0.72. Massive increase in trend trades
         "rr_target":          2.5,
         "be_lock_trigger":    1.2,
-        "panic_threshold":    8.0,   # Only halt on extreme crash in TREND (crashes part of it)
-        "candle_gate_sec":    90,    # Wider sweep window — TREND moves persist longer
-        "htf_block":          True,  # Always require HTF alignment in TREND
+        "panic_threshold":    8.0,   
+        "candle_gate_sec":    60,    # Was 90s
+        "htf_block":          True,  
     },
     "LIQUIDITY": {
-        # Wall-proximity: sweep-focused, NEUTRAL defaults with no HTF block
-        "z_threshold":        1.8,
+        # Wall-proximity sweeps
+        "z_threshold":        1.5,   # Was 1.8
         "atr_multiplier_sl":  1.5,
         "atr_multiplier_tp":  3.0,
-        "ofi_bound":          0.15,
-        "min_confidence":     0.60,  # Slightly more liberal — wall sweeps are high-probability
+        "ofi_bound":          0.12,  # Was 0.15
+        "min_confidence":     0.55,  # Was 0.60. Catch more sweeps
         "rr_target":          2.0,
         "be_lock_trigger":    1.0,
         "panic_threshold":    5.0,
-        "candle_gate_sec":    60,
-        "htf_block":          False, # Don't block counter-trend sweeps — they're the strategy
+        "candle_gate_sec":    45,    # Was 60s
+        "htf_block":          False, 
     },
 }
