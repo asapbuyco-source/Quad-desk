@@ -77,6 +77,7 @@ REGIME_PARAMS = {
         "panic_threshold":    2.5,   # Flash-crash trigger
         "candle_gate_sec":    30,    # Was 45s. Faster entry
         "htf_block":          False, # Counter-HTF is the strategy in RANGE
+        "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (quiet market recovers fast)
     },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
@@ -90,6 +91,7 @@ REGIME_PARAMS = {
         "panic_threshold":    5.0,
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          True,
+        "cascade_cooldown_s": 300,   # STRATEGY-B: 5min (default)
     },
     "TREND": {
         # High-volatility: trend-following
@@ -103,6 +105,7 @@ REGIME_PARAMS = {
         "panic_threshold":    8.0,   
         "candle_gate_sec":    60,    # Was 90s
         "htf_block":          True,  
+        "cascade_cooldown_s": 240,   # STRATEGY-B: 4min (trend may still be valid)
     },
     "LIQUIDITY": {
         # Wall-proximity sweeps
@@ -116,5 +119,6 @@ REGIME_PARAMS = {
         "panic_threshold":    5.0,
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          False, 
+        "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (sweep may repeat next candle)
     },
 }

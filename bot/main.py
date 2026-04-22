@@ -604,19 +604,23 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
     if len(candle_history) < 2 or not sell_walls or not buy_walls:
         return None
 
-    prev  = candle_history[-2]
     price = metrics["price"]
-
     nearest_sell = sell_walls[0]
     nearest_buy  = buy_walls[0]
 
-    if prev["high"] > nearest_sell and price < nearest_sell:
-        logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f}")
-        return "ABOVE_HIGHS"
+    # STRATEGY-C: Check BOTH previous (-2) AND current (-1) candle for sweeps.
+    # Old code only checked [-2] — if the current candle sweeps a wall and reverses,
+    # we wouldn't detect it until candle close, by which time CandleGate may stale it.
+    for idx, label in [(-2, "prev"), (-1, "live")]:
+        candle = candle_history[idx]
 
-    if prev["low"] < nearest_buy and price > nearest_buy:
-        logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f}")
-        return "BELOW_LOWS"
+        if candle["high"] > nearest_sell and price < nearest_sell:
+            logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (src={label} candle)")
+            return "ABOVE_HIGHS"
+
+        if candle["low"] < nearest_buy and price > nearest_buy:
+            logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (src={label} candle)")
+            return "BELOW_LOWS"
 
     return None
 
@@ -757,8 +761,10 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     rsi       = metrics.get("rsi", 50.0)
 
     # [IMPROVED] SWEEP NEUTRALIZER: context-aware confidence floor.
-    # Strong OFI+CVD alignment → floor 0.60 | mild alignment → 0.55 | bare sweep → 0.52
-    # FIX: OFI is now in (-1, +1) range from tanh pipeline
+    # STRATEGY-A: Raised floors from 0.52/0.55/0.60 → 0.55/0.58/0.65.
+    # A confirmed sweep with 2/3 micro-confirms is the highest-conviction setup —
+    # the old floors were too conservative and caused sweeps to fail the
+    # min_confidence gate even when all evidence aligned.
     if is_sweep:
         strong_confirm = (
             (is_long  and ofi >  0.3 and cvd_delta > 0) or
@@ -769,11 +775,11 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
             (not is_long and (ofi < -0.15 or cvd_delta < 0))
         )
         if strong_confirm:
-            p_signal_prior = max(0.60, p_signal_prior)
+            p_signal_prior = max(0.65, p_signal_prior)   # was 0.60
         elif mild_confirm:
-            p_signal_prior = max(0.55, p_signal_prior)
+            p_signal_prior = max(0.58, p_signal_prior)   # was 0.55
         else:
-            p_signal_prior = max(0.52, p_signal_prior)
+            p_signal_prior = max(0.55, p_signal_prior)   # was 0.52
 
     # 3. Transform to Odds
     # Clip to avoid division by zero/infinity during transformation
@@ -1066,9 +1072,8 @@ def _compute_signal(
 
     global LAST_CASCADE_TIME
     import time
-    time_since_cascade = time.time() - LAST_CASCADE_TIME
-    if time_since_cascade < 300:  # 5 minutes
-        return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {300 - int(time_since_cascade)}s remain)"}
+    # NOTE: Cascade cooldown moved AFTER regime detection (Strategy-B)
+    # so it can use regime-adaptive duration from REGIME_PARAMS.
 
     # Universal post-trade cooldown: POST_TRADE_COOLDOWN_S after any exit (SL or TP)
     global LAST_ANY_TRADE_CLOSE_TIME
@@ -1099,6 +1104,16 @@ def _compute_signal(
     # ── P0: Load regime-conditional parameter matrix ────────────────────────
     # All downstream stages read thresholds from regime_p instead of hard-coded constants.
     regime_p = REGIME_PARAMS.get(regime, REGIME_PARAMS["NEUTRAL"])
+
+    # STRATEGY-B: Regime-adaptive cascade cooldown.
+    # RANGE/LIQUIDITY = 180s (quiet markets recover fast, sweeps repeat).
+    # TREND = 240s (trend may still be valid). NEUTRAL = 300s (default).
+    cascade_cd = regime_p.get("cascade_cooldown_s", 300)
+    time_since_cascade = time.time() - LAST_CASCADE_TIME
+    if time_since_cascade < cascade_cd:
+        remaining = cascade_cd - int(time_since_cascade)
+        return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {remaining}s remain, regime={regime})"}
+
     logger.info(
         f"[RegimeParams] z_thr={regime_p['z_threshold']} "
         f"sl_mult={regime_p['atr_multiplier_sl']} "
