@@ -1395,25 +1395,33 @@ async def execution_loop(
                 continue
 
             # ── Panic trigger: Flash-crash detection ────────────────────────
-            # If price has dropped >= PANIC_DROP_PCT% in the last PANIC_LOOKBACK
-            # candles, engage panic mode regardless of current position.
+            # AUDIT FIX #2: Only trigger on DROPS, not pumps.
+            # Old code used abs() — a 3% BTC pump triggered panic and
+            # force-exited profitable longs. That's normal price action.
             n_hist = len(feed.state.candles)
             if n_hist >= PANIC_LOOKBACK:
                 lookback_price = feed.state.candles[-PANIC_LOOKBACK]["close"]
                 if lookback_price > 0:
-                    abs_divergence_pct = abs(current_price - lookback_price) / lookback_price * 100
-                    if abs_divergence_pct >= PANIC_DROP_PCT:
-                        direction = "crash" if current_price < lookback_price else "squeeze"
-                        sign = "-" if current_price < lookback_price else "+"
+                    price_change_pct = (current_price - lookback_price) / lookback_price * 100
+                    if price_change_pct <= -PANIC_DROP_PCT:
                         panic_reason = (
-                            f"Flash {direction} detected: "
-                            f"{sign}{abs_divergence_pct:.2f}% in {PANIC_LOOKBACK} candles "
+                            f"Flash crash detected: "
+                            f"{price_change_pct:.2f}% in {PANIC_LOOKBACK} candles "
                             f"(from ${lookback_price:.2f} → ${current_price:.2f})"
                         )
                         await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)
                         stats["active_position"] = None
                         continue
 
+            # ── AUDIT FIX #13: Halt if emergency flatten failed ──────────
+            if executor.active_position and executor.active_position.get("__failed_flatten"):
+                logger.critical(
+                    f"[Main] HALTED — previous emergency_flatten FAILED. "
+                    f"Position {executor.active_position.get('symbol')} may still be open on exchange. "
+                    f"Manual intervention required."
+                )
+                await asyncio.sleep(60)  # Don't spam logs, check once per minute
+                continue
 
             # ── Position exit check — track PnL for daily halt ─────
             if executor.active_position:

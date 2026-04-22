@@ -528,11 +528,16 @@ class TradingExecutor:
             return
 
         side = "buy" if ("BUY" in verdict or "LONG" in verdict) else "sell"
-        if side == "buy" and stop_loss >= current_price:
-            logger.warning(f"[Executor] SL {stop_loss} ≥ price {current_price} for BUY. Aborting.")
+        # AUDIT FIX #6: Use estimated fill price (bid + spread proxy) for SL check.
+        # current_price is the bid. BUY orders fill at the ask (~bid + 2bp).
+        # Without this, a SL set between bid and ask passes the check but
+        # gets immediately hit at fill.
+        fill_price_est = current_price * 1.0002 if side == "buy" else current_price * 0.9998
+        if side == "buy" and stop_loss >= fill_price_est:
+            logger.warning(f"[Executor] SL {stop_loss} ≥ est. fill {fill_price_est:.2f} for BUY. Aborting.")
             return
-        if side == "sell" and stop_loss <= current_price:
-            logger.warning(f"[Executor] SL {stop_loss} ≤ price {current_price} for SELL. Aborting.")
+        if side == "sell" and stop_loss <= fill_price_est:
+            logger.warning(f"[Executor] SL {stop_loss} ≤ est. fill {fill_price_est:.2f} for SELL. Aborting.")
             return
 
         # 1. Calculate Available Equity for accurate risk sizing.
@@ -1294,4 +1299,15 @@ class TradingExecutor:
                     await self.notifier.send_message(msg)
                 except Exception as notify_err:
                     logger.error(f"[Executor] Also failed to send Telegram alert: {notify_err}")
+            # AUDIT FIX #13: Mark position as failed-flatten so execution loop
+            # knows to HALT instead of continuing to "HOLD" a ghost position.
+            # Without this, the bot logs "HOLDING" forever while the naked
+            # position bleeds on the exchange.
+            self.active_position = {
+                "__failed_flatten": True,
+                "symbol": ex_symbol,
+                "side": side,
+                "size": size,
+                "error": str(e),
+            }
 

@@ -284,6 +284,27 @@ async def security_middleware(request: Request, call_next):
     if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json"]:
         return await call_next(request)
 
+    # ── AUDIT FIX #4: API Key authentication for all endpoints ─────────
+    # BACKEND_API_KEY was loaded and required at startup but NEVER checked
+    # in this middleware. All endpoints were completely open — anyone could
+    # hit /market-intelligence (burning Gemini quota), /backtest (heavy CPU),
+    # and /analyze/strategy without any authentication.
+    if not path.startswith("/admin/"):
+        api_key = (
+            request.headers.get("X-API-Key")
+            or request.headers.get("Authorization", "").replace("Bearer ", "")
+        )
+        if api_key != BACKEND_API_KEY:
+            origin = request.headers.get("origin", "")
+            response = JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized — valid X-API-Key header required."},
+            )
+            if origin in ALLOWED_ORIGINS:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+            return response
+
     # ── Admin endpoints require the admin key ─────────────────────────────────
     if path.startswith("/admin/"):
         admin_key = request.headers.get("X-Admin-Key")
