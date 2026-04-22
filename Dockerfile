@@ -12,6 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Force Python to flush logs immediately (critical for Railway log streaming)
+# Without this, Python buffers stdout and Railway sees NOTHING until buffer fills
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
 # Copy only requirements first to leverage Docker layer caching
 COPY bot/requirements.txt ./bot/requirements.txt
 
