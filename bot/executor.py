@@ -59,6 +59,21 @@ class TradingExecutor:
         self.last_panic_reason: str = ""
         self.failed_order_ts: float = 0.0  # Cooldown after live order failure (prevents -2015 spam)
 
+        # PHASE-0.3: Exchange-specific fee table.
+        # Fees were hardcoded as Binance USDM rates in 3 separate places.
+        # Coinbase charges up to 1.2% taker — 24× higher than the old assumption.
+        _EXCHANGE_FEES = {
+            "coinbase":    {"taker": 0.012,  "maker": 0.006},
+            "binance":     {"taker": 0.001,  "maker": 0.0002},
+            "binanceusdm": {"taker": 0.0005, "maker": 0.0002},
+            "kraken":      {"taker": 0.0026, "maker": 0.0016},
+            "okx":         {"taker": 0.001,  "maker": 0.0008},
+        }
+        _fees = _EXCHANGE_FEES.get(self.exchange_id, {"taker": 0.001, "maker": 0.0002})
+        self.TAKER_FEE = _fees["taker"]
+        self.MAKER_FEE = _fees["maker"]
+        logger.info(f"[Executor] Fee rates for {self.exchange_id}: taker={self.TAKER_FEE:.4%} maker={self.MAKER_FEE:.4%}")
+
     # ------------------------------------------------------------------
     # Static helpers
     # ------------------------------------------------------------------
@@ -950,9 +965,9 @@ class TradingExecutor:
         sl   = pos["stop_loss"]
         tp   = pos["take_profit"]
 
-        # Binance fee assumptions
-        TAKER_FEE = 0.0005  # 0.05%
-        MAKER_FEE = 0.0002  # 0.02%
+        # PHASE-0.3: Use exchange-specific fees set in __init__
+        TAKER_FEE = self.TAKER_FEE
+        MAKER_FEE = self.MAKER_FEE
 
         size = pos.get("size") or pos.get("qty") or 0.0
         if size <= 0:
@@ -1001,7 +1016,8 @@ class TradingExecutor:
     async def _check_live_position_exit(self, current_price: float) -> tuple:
         """
         LIVE MODE: Poll exchange to detect if position was closed by SL/TP orders.
-        Called by check_position_exit when not in dry_run mode.
+        PHASE-0.1 FIX: Now fetches actual fill price from trade history instead of
+        using current_price (the bid), which corrupted all PnL tracking.
         """
         pos = self.active_position
         if pos is None:
@@ -1013,25 +1029,54 @@ class TradingExecutor:
                 qty = float(p.get("contracts", 0) or p.get("positionAmt", 0))
                 if p.get("symbol") == symbol and abs(qty) < 0.0001:
                     # Position is flat on the exchange — it was closed by SL or TP
-                    entry  = pos["entry_price"]
-                    size   = pos["size"]
-                    side   = pos["side"]
-                    TAKER_FEE = 0.0005
-                    raw_pnl = ((current_price - entry) * size if side == "buy"
-                               else (entry - current_price) * size)
-                    fees    = size * entry * TAKER_FEE * 2  # entry + exit estimate
-                    net_pnl = raw_pnl - fees
+                    entry = pos["entry_price"]
+                    size  = pos["size"]
+                    side  = pos["side"]
+
+                    # Try to get actual fill price and exchange-reported PnL
+                    fill_price = current_price  # fallback
+                    actual_pnl = None
+                    try:
+                        recent_trades = await self.exchange.fetch_my_trades(
+                            symbol, limit=10
+                        )
+                        # Find the most recent closing trade with realized PnL
+                        closing = [
+                            t for t in recent_trades
+                            if float(t.get("info", {}).get("realizedPnl", 0)) != 0
+                        ]
+                        if closing:
+                            fill_price = float(closing[-1]["price"])
+                            actual_pnl = float(
+                                closing[-1].get("info", {}).get("realizedPnl", 0)
+                            )
+                            logger.info(
+                                f"[LiveExit] Exchange-reported PnL: ${actual_pnl:.2f} "
+                                f"fill={fill_price:.2f}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[LiveExit] Could not fetch fill price: {e}")
+
+                    # Use exchange PnL if available, otherwise estimate
+                    if actual_pnl is not None and actual_pnl != 0:
+                        net_pnl = actual_pnl
+                    else:
+                        raw_pnl = ((fill_price - entry) * size if side == "buy"
+                                   else (entry - fill_price) * size)
+                        fees = (entry + fill_price) * size * self.TAKER_FEE
+                        net_pnl = raw_pnl - fees
+
                     exit_type = "TP" if net_pnl > 0 else "SL"
                     logger.info(
                         f"[Executor] Live position closed (exchange fill detected). "
-                        f"Type={exit_type} Est.PnL=${net_pnl:.2f}"
+                        f"Type={exit_type} PnL=${net_pnl:.2f} fill={fill_price:.2f}"
                     )
                     if self.notifier:
                         await self.notifier.send_close_alert(
-                            symbol=symbol, side=side, price=current_price,
+                            symbol=symbol, side=side, price=fill_price,
                             type=exit_type, pnl=net_pnl, is_dry=False
                         )
-                    self._update_trade_exit(pos.get("trade_doc_id"), current_price, net_pnl)
+                    self._update_trade_exit(pos.get("trade_doc_id"), fill_price, net_pnl)
                     self.active_position = None
                     self.pending_order = None
                     return True, net_pnl

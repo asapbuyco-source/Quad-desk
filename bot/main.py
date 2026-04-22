@@ -1068,7 +1068,10 @@ def _compute_signal(
         logger.warning("[RiskEngine] Max drawdown breached — all trading halted. Restart bot to resume.")
         return {**WAIT, "analysis": "Max drawdown breached. Restart bot to resume."}
 
-
+    # PHASE-0.4: Z-Score session guard
+    # Z-score is statistically meaningless with fewer than 10 bars — it fits noise.
+    if not metrics.get("z_score_valid", True):
+        return {**WAIT, "analysis": "Session warmup: Z-Score not yet valid (<10 bars)."}
 
     global LAST_CASCADE_TIME
     import time

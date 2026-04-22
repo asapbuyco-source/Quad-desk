@@ -248,6 +248,10 @@ class QuantEngine:
             "atr_pct_rank":      atr_pct_rank,   # P2: percentile rank in 30-day window
             "vpoc":              vpoc,
             "funding_rate":      funding_rate,
+            # PHASE-0.4: Z-score validity guard.
+            # Z-score is meaningless with fewer than 10 bars of data in the
+            # current session — it's fitting noise from too-small a sample.
+            "z_score_valid":     len(closes) >= 10,
         }
 
     # ------------------------------------------------------------------
