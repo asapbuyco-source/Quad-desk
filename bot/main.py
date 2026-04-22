@@ -1660,4 +1660,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    print("🤖 [Quad-Desk] Python process started — launching bot...", flush=True)
     asyncio.run(main())
