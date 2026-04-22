@@ -55,7 +55,7 @@ from bot.quant_engine import QuantEngine
 from bot.executor import TradingExecutor
 from bot.ulis_engine import compute_ulis_verdict
 from bot import heartbeat
-from bot.signal_config import REGIME_PARAMS
+from bot.signal_config import REGIME_PARAMS, POST_TRADE_COOLDOWN_S
 
 # ──────────────────────────────────────────────────────────────────────
 # Logging
@@ -1070,11 +1070,11 @@ def _compute_signal(
     if time_since_cascade < 300:  # 5 minutes
         return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {300 - int(time_since_cascade)}s remain)"}
 
-    # Universal post-trade cooldown: 180s after any exit (SL or TP)
+    # Universal post-trade cooldown: POST_TRADE_COOLDOWN_S after any exit (SL or TP)
     global LAST_ANY_TRADE_CLOSE_TIME
     time_since_last_trade = time.time() - LAST_ANY_TRADE_CLOSE_TIME
-    if time_since_last_trade < 180:
-        return {**WAIT, "analysis": f"Post-trade cooldown ({180 - int(time_since_last_trade)}s remain)"}
+    if time_since_last_trade < POST_TRADE_COOLDOWN_S:
+        return {**WAIT, "analysis": f"Post-trade cooldown ({POST_TRADE_COOLDOWN_S - int(time_since_last_trade)}s remain)"}
 
     global LAST_CANDLE_TS
     import time as _time
