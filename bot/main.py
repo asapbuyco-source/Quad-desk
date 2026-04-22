@@ -1635,6 +1635,15 @@ async def main():
         asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS),               name="heartbeat"),
     ]
 
+    # ── Startup notification ──────────────────────────────────────────
+    await executor.notifier.send_startup_alert(
+        symbol=SYMBOL,
+        exchange=EXCHANGE,
+        mode="DRY-RUN" if DRY_RUN else "LIVE",
+        leverage=LEVERAGE,
+        interval=CANDLE_INTERVAL,
+    )
+
     try:
         await shutdown_event.wait()
     except asyncio.CancelledError:

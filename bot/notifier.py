@@ -51,6 +51,31 @@ class TelegramNotifier:
         )
         await self.send_message(msg)
 
+    async def send_startup_alert(
+        self,
+        symbol: str,
+        exchange: str,
+        mode: str,
+        leverage: int,
+        interval: str,
+        version: str = "v7",
+    ):
+        """Send a startup notification when the bot comes online."""
+        mode_emoji = "🧪" if mode == "DRY-RUN" else "🚀"
+        msg = (
+            f"<b>{mode_emoji} QUAD-DESK BOT ONLINE</b>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📡 <b>Exchange:</b> <code>{exchange.upper()}</code>\n"
+            f"💹 <b>Symbol:</b>   <code>{symbol}</code>\n"
+            f"⚡ <b>Leverage:</b> <code>{leverage}×</code>\n"
+            f"⏱ <b>Interval:</b> <code>{interval}</code>\n"
+            f"🤖 <b>Mode:</b>     <code>{mode}</code>\n"
+            f"🔧 <b>Engine:</b>   <code>7-Stage Hybrid {version}</code>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"<i>Bot is live and scanning markets.</i>"
+        )
+        await self.send_message(msg)
+
     async def send_error_alert(self, error_msg: str):
         """Send an urgent error notification."""
         msg = f"⚠️ <b>BOT ERROR</b>\n━━━━━━━━━━━━━━━\n<code>{error_msg}</code>"
