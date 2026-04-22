@@ -863,12 +863,18 @@ class TradingExecutor:
                     tp_order_id = tp_order.get("id")
                     logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id}) ✓")
 
-            doc_id = self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
+            # BUG-1 FIX: Use actual exchange fill price, not signal price.
+            # Market orders fill at the ask (for buys) — using current_price
+            # corrupts every downstream calculation (PnL, BE stop, daily limit).
+            fill_price = float(order.get("average") or order.get("price") or current_price)
+            logger.info(f"[Executor] Fill price: {fill_price:.2f} (signal was {current_price:.2f}, diff={fill_price-current_price:+.2f})")
+
+            doc_id = self._log_trade(ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict)
             self.active_position = {
                 "symbol":      ex_symbol,
                 "side":        side,
                 "size":        fmt_size,
-                "entry_price": current_price,
+                "entry_price": fill_price,
                 "stop_loss":   stop_loss,
                 "take_profit": take_profit,
                 "order_id":    order.get("id"),
@@ -1306,27 +1312,34 @@ class TradingExecutor:
 
             logger.info(f"[Executor] Flattened {ex_symbol} ✅")
 
-            # OBS-2 FIX: Estimate PnL from current price and update Firestore.
-            # Old code used 0.0 for all panic exits, corrupting PnL tracking and
-            # bypassing the daily loss limit for panic exits.
-            entry   = pos.get("entry_price", 0.0)
-            size    = pos.get("size", 0.0)
-            side    = pos.get("side", "buy")
-            # Use last-known price as best estimate for flatten fill
-            est_pnl = ((0.0 - entry) * size if side == "buy" else (entry - 0.0) * size)
-            try:
-                # Try to get a real fill price from the order
-                import asyncio as _aio
-                fill_price = 0.0
-                if not self.dry_run:
-                    # Use the most recent candle close as best estimate since we
-                    # can't await order status here reliably
-                    fill_price = price if (price := pos.get("_last_price", 0.0)) > 0 else entry
-                est_pnl = ((fill_price - entry) * size if side == "buy"
-                           else (entry - fill_price) * size) if fill_price > 0 else 0.0
-            except Exception:
-                est_pnl = 0.0
-            self._update_trade_exit(pos.get("trade_doc_id"), 0.0, est_pnl)
+            # BUG-2 + HIGH-1 FIX: Fetch actual fill price from trade history.
+            # Old code: _last_price never set → fill_price always = entry → PnL always $0.
+            # Every panic exit was recorded as flat, bypassing the daily loss limit.
+            entry = pos.get("entry_price", 0.0)
+            size  = pos.get("size", 0.0)
+            side  = pos.get("side", "buy")
+            fill_price = entry  # fallback
+            est_pnl    = 0.0
+            if not self.dry_run:
+                try:
+                    recent = await self.exchange.fetch_my_trades(ex_symbol, limit=5)
+                    closing = [
+                        t for t in recent
+                        if float(t.get("info", {}).get("realizedPnl", 0)) != 0
+                    ]
+                    if closing:
+                        fill_price = float(closing[-1]["price"])
+                        est_pnl    = float(closing[-1].get("info", {}).get("realizedPnl", 0))
+                        logger.info(f"[Flatten] Exchange PnL: ${est_pnl:.2f} fill={fill_price:.2f}")
+                    else:
+                        # Estimate from entry vs current candle close
+                        raw = (fill_price - entry) * size if side == "buy" else (entry - fill_price) * size
+                        est_pnl = raw - (entry + fill_price) * size * self.TAKER_FEE
+                except Exception as fe:
+                    logger.warning(f"[Flatten] Could not fetch fill: {fe}")
+            # HIGH-1 FIX: pass real fill_price (not 0.0) to Firestore
+            self._last_panic_pnl = est_pnl  # BUG-3: expose for main.py daily_pnl update
+            self._update_trade_exit(pos.get("trade_doc_id"), fill_price, est_pnl)
             self.active_position = None
         except Exception as e:
             # 3.4 FIX: Critical failure requires immediate human action.

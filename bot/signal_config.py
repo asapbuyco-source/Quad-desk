@@ -69,7 +69,7 @@ REGIME_PARAMS = {
         # Low-volatility: small deviations are statistically meaningful
         "z_threshold":        1.3,   # Was 1.5. Triggers mean-reversion earlier
         "atr_multiplier_sl":  1.2,   # Tight SL
-        "atr_multiplier_tp":  2.2,   # TP = SL × TP_MULT
+        # HIGH-3: TP = atr_multiplier_sl × rr_target × ATR (no separate TP mult)
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
         "min_confidence":     0.55,  # Was 0.58. 55% win-probability required
         "rr_target":          1.8,   # 1.8:1 minimum R:R
@@ -83,7 +83,6 @@ REGIME_PARAMS = {
         # Normal-volatility: balanced thresholds
         "z_threshold":        1.5,   # Was 1.8
         "atr_multiplier_sl":  1.5,
-        "atr_multiplier_tp":  3.0,   
         "ofi_bound":          0.12,  # Was 0.15
         "min_confidence":     0.58,  # Was 0.62. More trades allowed
         "rr_target":          2.0,
@@ -97,7 +96,6 @@ REGIME_PARAMS = {
         # High-volatility: trend-following
         "z_threshold":        2.0,   # Was 2.5. Triggers on shallower pullbacks
         "atr_multiplier_sl":  2.2,   # Wide SL 
-        "atr_multiplier_tp":  5.5,   
         "ofi_bound":          0.20,  # Was 0.25
         "min_confidence":     0.65,  # Was 0.72. Massive increase in trend trades
         "rr_target":          2.5,
@@ -111,7 +109,6 @@ REGIME_PARAMS = {
         # Wall-proximity sweeps
         "z_threshold":        1.5,   # Was 1.8
         "atr_multiplier_sl":  1.5,
-        "atr_multiplier_tp":  3.0,
         "ofi_bound":          0.12,  # Was 0.15
         "min_confidence":     0.55,  # Was 0.60. Catch more sweeps
         "rr_target":          2.0,

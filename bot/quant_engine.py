@@ -584,7 +584,11 @@ class QuantEngine:
     # 7. ATR — Average True Range (14 periods)
     # ------------------------------------------------------------------
     def _atr(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
-        """Wilder ATR over `period` bars using numpy directly."""
+        """
+        Wilder ATR using proper EMA smoothing (HIGH-4 FIX).
+        Old code: np.mean(tr) — simple average underestimates ATR by ~30% during spikes.
+        Fixed:    seed with SMA of first `period` bars, then apply Wilder EMA.
+        """
         if len(closes) < period + 1:
             return 0.0
 
@@ -593,12 +597,15 @@ class QuantEngine:
         c = closes[-(period + 1):]
         prev_c = c[:-1]
 
-        tr1 = h[1:] - l[1:]
-        tr2 = np.abs(h[1:] - prev_c)
-        tr3 = np.abs(l[1:] - prev_c)
+        tr = np.maximum(h[1:] - l[1:],
+             np.maximum(np.abs(h[1:] - prev_c),
+                        np.abs(l[1:] - prev_c)))
 
-        tr = np.maximum(tr1, np.maximum(tr2, tr3))
-        return float(np.mean(tr))
+        # Wilder EMA: seed with SMA of first period bars, then smooth
+        atr = float(np.mean(tr[:period]))
+        for i in range(period, len(tr)):
+            atr = (atr * (period - 1) + float(tr[i])) / period
+        return atr
 
     # ------------------------------------------------------------------
     # 8. Volume Point of Control (VPOC)

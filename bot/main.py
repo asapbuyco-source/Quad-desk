@@ -554,12 +554,11 @@ def _detect_regime(
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
     hmm_result = _hmm_classifier.classify(atr_pct, z, tape, atr_pct_rank)
 
-    REGIME_REMAP = {"VOLATILE": "TREND"}
-    regime = REGIME_REMAP.get(hmm_result["regime"], hmm_result["regime"])
+    # HIGH-2 FIX: REGIME_REMAP removed — it was dead code (HMM state 2 is "NEUTRAL"
+    # in _LABELS, never "VOLATILE"). Keeping it was a hazard: renaming the label
+    # would silently reroute all high-vol periods to TREND strategy.
+    regime = hmm_result["regime"]
     confidence = hmm_result["confidence"]
-
-    if hmm_result["regime"] != regime:
-        logger.info(f"[HMM] Remapped {hmm_result['regime']} -> {regime} (conf={confidence:.0%})")
 
     # Inject probabilities into metrics for downstream observability
     metrics["regime_confidence"] = confidence
@@ -982,6 +981,7 @@ def _risk_engine(
     sl_mult: float = 1.5,        # P0: regime-adaptive (default = NEUTRAL)
     tp_mult_ratio: float = 2.0,  # P0: regime-adaptive RR target
     candle_history: Optional[List[Dict[str, Any]]] = None,
+    metrics: Optional[Dict[str, Any]] = None,  # BUG-4: needed for atr_pct_rank
 ) -> Tuple[float, float]:
     """
     ATR-based SL/TP calculator with regime-adaptive multipliers (P0).
@@ -997,10 +997,14 @@ def _risk_engine(
     tp_from_wall = (sell_walls[0] * 0.9995 if sell_walls else None) if is_long \
                else (buy_walls[0] * 1.0005 if buy_walls else None)
 
+    # BUG-4 FIX: candle_history candles have no 'atr' key — c.get('atr', atr) always
+    # returned the fallback, making vol_ratio always 1.0 (adaptive mult = base mult).
+    # Fix: use atr_pct_rank from metrics (already computed by QuantEngine, always valid).
+    # atr_pct_rank in [0,1]: 0.5 = median volatility, 0.9 = 90th percentile spike.
+    # Map rank to multiplier: rank 0.5 → 1.0×, rank 0.9 → 1.4×, rank 0.2 → 0.8×.
     if candle_history and len(candle_history) > 0:
-        recent_atr = np.mean([c.get("atr", atr) for c in candle_history[-5:]])
-        baseline_atr = np.mean([c.get("atr", atr) for c in candle_history[-20:]])
-        vol_ratio = recent_atr / max(baseline_atr, 1e-8)
+        atr_rank = metrics.get("atr_pct_rank", 0.5) if metrics else 0.5
+        vol_ratio = 0.6 + atr_rank * 0.8   # maps [0,1] → [0.6, 1.4]
     else:
         vol_ratio = 1.0
 
@@ -1081,8 +1085,11 @@ def _compute_signal(
     # Universal post-trade cooldown: POST_TRADE_COOLDOWN_S after any exit (SL or TP)
     global LAST_ANY_TRADE_CLOSE_TIME
     time_since_last_trade = time.time() - LAST_ANY_TRADE_CLOSE_TIME
-    if time_since_last_trade < POST_TRADE_COOLDOWN_S:
-        return {**WAIT, "analysis": f"Post-trade cooldown ({POST_TRADE_COOLDOWN_S - int(time_since_last_trade)}s remain)"}
+    # FREQ-1: wire split cooldown — 45s after TP, 90s after SL
+    _last_was_sl = globals().get("LAST_TRADE_WAS_SL", True)
+    _cooldown = POST_TRADE_COOLDOWN_S if _last_was_sl else 45
+    if time_since_last_trade < _cooldown:
+        return {**WAIT, "analysis": f"Post-trade cooldown ({_cooldown - int(time_since_last_trade)}s remain, {'SL' if _last_was_sl else 'TP'} exit)"}
 
     global LAST_CANDLE_TS
     import time as _time
@@ -1276,6 +1283,7 @@ def _compute_signal(
         sl_mult=regime_p["atr_multiplier_sl"],
         tp_mult_ratio=regime_p["rr_target"],
         candle_history=candle_history,
+        metrics=metrics,  # BUG-4: pass for atr_pct_rank vol scaling
     )
 
     # Sanity check — geometry must be valid
@@ -1400,6 +1408,16 @@ async def execution_loop(
                 feed.state.cvd = 0.0
                 LAST_CVD = 0.0
                 logger.info("[RiskEngine] 🌅 Daily counters + CVD reset for new trading session.")
+                # HIGH-5 FIX: Refresh ACCOUNT_SIZE daily so daily loss cap stays accurate.
+                # A stale startup balance misprices the loss limit after gains/losses.
+                if not executor.dry_run:
+                    try:
+                        fresh_bal = await executor.get_usdt_balance(ACCOUNT_SIZE)
+                        if fresh_bal > 0 and fresh_bal != ACCOUNT_SIZE:
+                            logger.info(f"[RiskEngine] ACCOUNT_SIZE refreshed: ${ACCOUNT_SIZE:.2f} → ${fresh_bal:.2f}")
+                            ACCOUNT_SIZE = fresh_bal
+                    except Exception as _bal_err:
+                        logger.warning(f"[RiskEngine] Could not refresh ACCOUNT_SIZE: {_bal_err}")
 
             current_price = feed.state.candles[-1]["close"]
 
@@ -1428,6 +1446,14 @@ async def execution_loop(
                             f"(from ${lookback_price:.2f} → ${current_price:.2f})"
                         )
                         await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)
+                        # BUG-3 FIX: Update daily_pnl from panic exit PnL
+                        _panic_pnl = getattr(executor, "_last_panic_pnl", 0.0)
+                        if _panic_pnl != 0.0:
+                            stats["daily_pnl"] = stats.get("daily_pnl", 0.0) + _panic_pnl
+                            max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
+                            if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
+                                stats["daily_loss_halt"] = True
+                                logger.warning("[RiskEngine] Daily loss limit hit via flash-crash panic exit. Halted.")
                         stats["active_position"] = None
                         continue
 
@@ -1442,6 +1468,11 @@ async def execution_loop(
                 continue
 
             # ── Position exit check — track PnL for daily halt ─────
+            # MED-5 FIX: Cache position state BEFORE exit check.
+            # AVOID/UNWIND check runs after this block — if SL fires AND
+            # ULIS returns AVOID in the same cycle, active_position is already
+            # None here, so the panic trigger was silently skipped.
+            had_position_before_exit = executor.active_position is not None
             if executor.active_position:
                 pos_snapshot = dict(executor.active_position)
                 # 3.1 FIX: Pass candle high/low so SL/TP sim triggers at correct price
@@ -1502,9 +1533,11 @@ async def execution_loop(
                     new_daily_pnl = stats.get("daily_pnl", 0.0) + pnl
                     stats["daily_pnl"] = new_daily_pnl
 
-                    # Update post-trade cooldown tracker
+                    # FREQ-1 FIX: Split TP/SL cooldown — 45s after wins, 90s after losses.
+                    # A TP means the thesis was right. Re-entering faster is correct.
+                    # The 90s blanket cooldown on wins was unnecessarily conservative.
                     LAST_ANY_TRADE_CLOSE_TIME = time.time()
-
+                    globals()["LAST_TRADE_WAS_SL"] = (pnl < 0)
 
                     max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
                     if new_daily_pnl < -max_loss_usd and not stats.get("daily_loss_halt"):
@@ -1633,11 +1666,20 @@ async def execution_loop(
             stats["last_ulis"]   = ulis_str
 
             # ── Panic trigger: ULIS AVOID/UNWIND while holding a position ──
-            # If we are IN a trade and the market suddenly turns AVOID/UNWIND,
-            # get out immediately rather than waiting for SL to be hit.
-            if executor.active_position and ulis_str in ("AVOID", "UNWIND"):
+            # MED-5 FIX: Use `had_position_before_exit` (cached before exit check),
+            # not executor.active_position (may be None if SL fired this same cycle).
+            # Without this, a simultaneous SL+ULIS-AVOID silently skips the panic lock.
+            if had_position_before_exit and ulis_str in ("AVOID", "UNWIND"):
                 panic_reason = f"ULIS verdict={ulis_str} while holding position — pre-cascade danger"
+                _panic_pnl = getattr(executor, "_last_panic_pnl", 0.0)
                 await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)
+                # BUG-3 FIX: Update daily_pnl with panic PnL so circuit breaker sees it.
+                if _panic_pnl != 0.0:
+                    stats["daily_pnl"] = stats.get("daily_pnl", 0.0) + _panic_pnl
+                    max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
+                    if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
+                        stats["daily_loss_halt"] = True
+                        logger.warning(f"[RiskEngine] Daily loss limit hit via panic exit. Halted.")
                 stats["active_position"] = None
                 continue
 
