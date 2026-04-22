@@ -512,8 +512,16 @@ class TradingExecutor:
 
         # Check if previous order is still pending (unfilled)
         if self.pending_order is not None:
-            logger.info(f"[Executor] Pending order {self.pending_order['id']} still unfilled. Rejecting new signal.")
-            return
+            # MED-5 FIX: Auto-expire stale pending_order to prevent permanent lock.
+            if time.time() > self.pending_order.get("expires_at", 0):
+                logger.warning(
+                    f"[Executor] Pending order {self.pending_order['id']} TTL expired — "
+                    "clearing stale state. Verify on exchange if order was filled."
+                )
+                self.pending_order = None
+            else:
+                logger.info(f"[Executor] Pending order {self.pending_order['id']} still unfilled. Rejecting new signal.")
+                return
 
         if stop_loss <= 0 or take_profit <= 0:
             logger.warning("[Executor] Invalid SL/TP. Aborting.")
@@ -600,31 +608,41 @@ class TradingExecutor:
 
         if self.dry_run:
             # ── DRY RUN ──────────────────────────────────────────────────
-            cost = raw_size * current_price
+            # CRIT-4 FIX: Apply slippage model so PnL accounting is realistic.
+            # Market orders fill at mid-price + slippage. Without this, dry-run
+            # win rates and daily loss caps are consistently optimistic.
+            SLIPPAGE_PCT = 0.0002  # 0.02% == typical BTC/USDT USDM market order
+            fill_price = (
+                current_price * (1.0 + SLIPPAGE_PCT) if side == "buy"
+                else current_price * (1.0 - SLIPPAGE_PCT)
+            )
+            cost = raw_size * fill_price
             logger.info(
                 f"[DRY-RUN] {verdict} {ex_symbol} "
                 f"| qty={raw_size:.6f} (${cost:.2f}) "
+                f"| fill~{fill_price:.2f} (slip={SLIPPAGE_PCT:.2%}) "
                 f"| SL={stop_loss} TP={take_profit} "
                 f"| equity=${equity:.2f} risk={max_risk_pct}% "
                 f"| ULIS={ulis_verdict}"
             )
-            doc_id = self._log_trade(ex_symbol, side, verdict, current_price, stop_loss, take_profit, ulis_verdict)
+            doc_id = self._log_trade(ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict)
             self.active_position = {
                 "symbol":      ex_symbol,
                 "side":        side,
                 "size":        raw_size,
-                "entry_price": current_price,
+                "entry_price": fill_price,
                 "stop_loss":   stop_loss,
                 "take_profit": take_profit,
                 "dry_run":     True,
                 "trade_doc_id": doc_id,
             }
-            
+
             # Telegram Notification
             await self.notifier.send_trade_alert(
-                symbol=ex_symbol, side=side, price=current_price, 
+                symbol=ex_symbol, side=side, price=current_price,
                 size=raw_size, sl=stop_loss, tp=take_profit, is_dry=True
             )
+
             return
 
         # ── LIVE EXECUTION ────────────────────────────────────────────────
@@ -666,13 +684,15 @@ class TradingExecutor:
             logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
             
             # Track this order as pending until it fills or is cancelled
+            # MED-5 FIX: Add TTL so a stale pending_order can't lock the bot forever.
             self.pending_order = {
                 "id": order.get('id'),
                 "symbol": ex_symbol,
                 "side": side,
                 "size": fmt_size,
                 "entry_price": current_price,
-                "status": order.get('status', 'open')
+                "status": order.get('status', 'open'),
+                "expires_at": time.time() + 60,  # auto-expire after 60s if never confirmed
             }
             
             # Telegram Notification (Success)
@@ -901,18 +921,26 @@ class TradingExecutor:
                                    candle_high: float = None,
                                    candle_low: float = None) -> tuple:
         """
-        Check SL/TP for dry-run mode.
-        In live mode the exchange handles OCO orders.
+        Check SL/TP for position exit.
 
-        3.1 FIX: candle_high/low are used for SL/TP trigger check (accurate simulation).
-        Without them, an SL hit intra-candle would only be detected at candle close.
-        This was inflating dry-run win rates. Falls back to current_price if not supplied.
+        DRY-RUN: Simulates SL/TP hits from candle high/low for realistic backtesting.
+        LIVE MODE: Polls exchange fetch_positions() to detect real fills by the
+                   exchange's STOP_MARKET / TAKE_PROFIT_MARKET orders.
+
+        CRIT-1 FIX: Previously both modes ran the same simulation logic. In live mode
+        this caused race conditions where internal state was cleared while the exchange
+        still had open protective orders, leading to orphaned cancel calls and missed PnL.
+
         Returns (exited: bool, pnl: float).
         """
         pos = self.active_position
         if pos is None:
             return False, 0.0
 
+        if not self.dry_run:
+            return await self._check_live_position_exit(current_price)
+
+        # ── DRY-RUN simulation ────────────────────────────────────────────
         side = pos["side"]
         sl   = pos["stop_loss"]
         tp   = pos["take_profit"]
@@ -954,7 +982,7 @@ class TradingExecutor:
 
         if side == "buy":
             if check_low <= sl:
-                return await finalize_exit("SL", sl)   # fill at SL price, not candle close
+                return await finalize_exit("SL", sl)
             if check_high >= tp:
                 return await finalize_exit("TP", tp)
         else:
@@ -964,6 +992,49 @@ class TradingExecutor:
                 return await finalize_exit("TP", tp)
 
         return False, 0.0
+
+    async def _check_live_position_exit(self, current_price: float) -> tuple:
+        """
+        LIVE MODE: Poll exchange to detect if position was closed by SL/TP orders.
+        Called by check_position_exit when not in dry_run mode.
+        """
+        pos = self.active_position
+        if pos is None:
+            return False, 0.0
+        try:
+            symbol = pos.get("symbol", "")
+            positions = await self.exchange.fetch_positions([symbol] if symbol else [])
+            for p in positions:
+                qty = float(p.get("contracts", 0) or p.get("positionAmt", 0))
+                if p.get("symbol") == symbol and abs(qty) < 0.0001:
+                    # Position is flat on the exchange — it was closed by SL or TP
+                    entry  = pos["entry_price"]
+                    size   = pos["size"]
+                    side   = pos["side"]
+                    TAKER_FEE = 0.0005
+                    raw_pnl = ((current_price - entry) * size if side == "buy"
+                               else (entry - current_price) * size)
+                    fees    = size * entry * TAKER_FEE * 2  # entry + exit estimate
+                    net_pnl = raw_pnl - fees
+                    exit_type = "TP" if net_pnl > 0 else "SL"
+                    logger.info(
+                        f"[Executor] Live position closed (exchange fill detected). "
+                        f"Type={exit_type} Est.PnL=${net_pnl:.2f}"
+                    )
+                    if self.notifier:
+                        await self.notifier.send_close_alert(
+                            symbol=symbol, side=side, price=current_price,
+                            type=exit_type, pnl=net_pnl, is_dry=False
+                        )
+                    self._update_trade_exit(pos.get("trade_doc_id"), current_price, net_pnl)
+                    self.active_position = None
+                    self.pending_order = None
+                    return True, net_pnl
+            return False, 0.0
+        except Exception as e:
+            logger.warning(f"[Executor] Could not poll live position status: {e}")
+            return False, 0.0
+
 
 
     async def cancel_opposing_orders(self, filled_side: str = "sl"):
@@ -1184,7 +1255,28 @@ class TradingExecutor:
                 await self.exchange.create_market_order(ex_symbol, close_side, size)
 
             logger.info(f"[Executor] Flattened {ex_symbol} ✅")
-            self._update_trade_exit(pos.get("trade_doc_id"), 0.0, 0.0)  # Emergency exit PnL not calculated here
+
+            # OBS-2 FIX: Estimate PnL from current price and update Firestore.
+            # Old code used 0.0 for all panic exits, corrupting PnL tracking and
+            # bypassing the daily loss limit for panic exits.
+            entry   = pos.get("entry_price", 0.0)
+            size    = pos.get("size", 0.0)
+            side    = pos.get("side", "buy")
+            # Use last-known price as best estimate for flatten fill
+            est_pnl = ((0.0 - entry) * size if side == "buy" else (entry - 0.0) * size)
+            try:
+                # Try to get a real fill price from the order
+                import asyncio as _aio
+                fill_price = 0.0
+                if not self.dry_run:
+                    # Use the most recent candle close as best estimate since we
+                    # can't await order status here reliably
+                    fill_price = price if (price := pos.get("_last_price", 0.0)) > 0 else entry
+                est_pnl = ((fill_price - entry) * size if side == "buy"
+                           else (entry - fill_price) * size) if fill_price > 0 else 0.0
+            except Exception:
+                est_pnl = 0.0
+            self._update_trade_exit(pos.get("trade_doc_id"), 0.0, est_pnl)
             self.active_position = None
         except Exception as e:
             # 3.4 FIX: Critical failure requires immediate human action.

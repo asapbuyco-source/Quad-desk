@@ -46,7 +46,7 @@ ULIS_CONFIDENCE_STRONG = 0.68   # ALDE confidence threshold for STRONG_LONG/SHOR
 ULIS_CASCADE_ABORT     = 0.65   # cascade_risk above this → AVOID verdict
 
 # ── Cooldowns ─────────────────────────────────────────────────────────────────
-POST_TRADE_COOLDOWN_S  = 180    # seconds after any exit before new entry allowed
+POST_TRADE_COOLDOWN_S  = 90     # seconds after any exit before new entry allowed
 CASCADE_COOLDOWN_S     = 300    # seconds after SL exit (cascade prevention)
 CONSECUTIVE_LOSS_HALT  = 2      # consecutive SL exits triggers 2-hour hard timeout
 

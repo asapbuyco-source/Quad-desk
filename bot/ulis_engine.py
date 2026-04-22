@@ -357,8 +357,10 @@ def compute_ulis_verdict(
         confidence_boost = 0.08
     elif verdict == "AVOID" or verdict == "UNWIND":
         confidence_boost = -1.0   # This ensures confidence drops below threshold
-    elif verdict == "NEUTRAL" or verdict == "BREAKOUT_WATCH":
-        confidence_boost = -0.08  # Increased from -0.03 to ensure stronger veto during neutral regimes
+    elif verdict == "NEUTRAL":
+        confidence_boost = 0.0    # No ULIS edge but no veto — let regime/Bayesian decide
+    elif verdict == "BREAKOUT_WATCH":
+        confidence_boost = -0.02  # Mild caution: breakout vacuum, not a directional veto
 
     logger.info(
         f"[ULIS] verdict={verdict} | vector={liquidity_vector:.3f} | "

@@ -196,9 +196,11 @@ def _htf_trend(candle_history: list) -> str:
     if htf_open <= 0:
         return "NEUTRAL"
     change_pct = (htf_close - htf_open) / htf_open
-    if change_pct >  0.002:   # +0.2% over 4H = clear uptrend
+    # HIGH-3 FIX: 0.2% was too tight (BTC moves that in minutes).
+    # 0.5% over 4H is a meaningful, non-noise directional move.
+    if change_pct >  0.005:   # +0.5% over 4H = clear uptrend
         return "BULL"
-    if change_pct < -0.002:   # -0.2% over 4H = clear downtrend
+    if change_pct < -0.005:   # -0.5% over 4H = clear downtrend
         return "BEAR"
     return "NEUTRAL"
 
@@ -636,10 +638,12 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     elif bayes < 0.35:  score -= 2.0
     elif bayes < 0.45:  score -= 1.0
 
-    if ofi > 20:         score += 1.5
-    elif ofi > 8:        score += 0.75
-    elif ofi < -20:      score -= 1.5
-    elif ofi < -8:       score -= 0.75
+    # SIG-2 FIX: OFI thresholds updated from old ±100 scale to new tanh ±1 scale.
+    # Old: ofi > 20 / ofi > 8 were unreachable (max OFI after pipeline = 1.0).
+    if ofi > 0.3:        score += 1.5
+    elif ofi > 0.15:     score += 0.75
+    elif ofi < -0.3:     score -= 1.5
+    elif ofi < -0.15:    score -= 0.75
 
     if cvd > 0:          score += 1.0
     elif cvd < 0:        score -= 1.0
@@ -652,10 +656,11 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
         score -= 1.0 if tape_speed == "SCREAMING" else 0.5
 
     # Multi-factor micro-structure confirmation gate
-    ofi_bull = ofi > 8
+    # SIG-2 FIX: ofi_bull was using old scale (ofi > 8 never True after tanh pipeline).
+    ofi_bull = ofi > 0.15   # New normalised scale
     cvd_bull = cvd > 0
     tape_bull = "BUY" in dominant
-    
+
     micro_confirms = sum([ofi_bull, cvd_bull, tape_bull])
     if micro_confirms < 2 and score < 3.0:
         logger.info(f"[TrendStrategy] score={score:+.2f} rejected (micro_confirms={micro_confirms}/3)")
@@ -692,14 +697,27 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
     cvd      = metrics["cvd"]
     dominant = metrics["tapeDominant"]
 
+    # HIGH-5 FIX: Old logic used OR — dominant=="BALANCED" alone triggered a signal.
+    # BALANCED is the DEFAULT state; using it as a trigger makes the sweep itself
+    # the entire signal. Now require at least 2/3 micro-confirms for a real reversal.
     if sweep == "ABOVE_HIGHS":
-        if ofi < -5 or cvd < 0 or "SELL" in dominant or dominant == "BALANCED":
-            logger.info(f"[SweepStrat] SELL after ABOVE_HIGHS")
+        confirms = sum([
+            ofi < -0.15,
+            cvd < 0,
+            "SELL" in dominant,
+        ])
+        if confirms >= 2:
+            logger.info(f"[SweepStrat] SELL after ABOVE_HIGHS (confirms={confirms}/3)")
             return "SELL"
 
     if sweep == "BELOW_LOWS":
-        if ofi > 5 or cvd > 0 or "BUY" in dominant or dominant == "BALANCED":
-            logger.info(f"[SweepStrat] BUY after BELOW_LOWS")
+        confirms = sum([
+            ofi > 0.15,
+            cvd > 0,
+            "BUY" in dominant,
+        ])
+        if confirms >= 2:
+            logger.info(f"[SweepStrat] BUY after BELOW_LOWS (confirms={confirms}/3)")
             return "BUY"
 
     return None
@@ -1080,26 +1098,26 @@ def _compute_signal(
     # Stage 3: Sweep detection
     sweep = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
 
-    # Stage 3b: Candle-Close Confirmation Gate (LIQUIDITY_SWEEP only)
-    # Window is now regime-aware: RANGE=45s, NEUTRAL=60s, TREND=90s (P0)
+    # Stage 3b: Candle-Close Freshness Gate (LIQUIDITY_SWEEP only)
+    # HIGH-2 FIX: Old logic blocked sweeps if current candle was older than gate_sec
+    # (e.g. >45s into a 900s candle = 95% of candle life blocked). Inverted.
+    # New logic: a sweep signal from the PREVIOUS closed candle is considered stale
+    # if the current candle has been open longer than gate_sec WITHOUT us acting.
+    # This allows entries at any point in the candle AS LONG AS the sweep is from the
+    # immediately preceding candle (not from multiple candles ago).
     if sweep:
-        current_candle_ts = float(candle_history[-1]["time"]) if candle_history else 0.0
-        age_s = _time.time() - current_candle_ts   # seconds since this candle opened
-        gate_sec = regime_p["candle_gate_sec"]      # P0: regime-adaptive window
-        if age_s > gate_sec:
-            remaining_s = max(0, 900 - int(age_s))  # 15m candle = 900s
-            if age_s > 600:
-                # In the last 5 minutes of the candle — entry window approaching
-                logger.info(
-                    f"[CandleGate] Sweep blocked mid-candle (age={age_s:.0f}s>{gate_sec}s) "
-                    f"— next candle open in ~{remaining_s}s. Entry window approaching."
-                )
-            else:
-                logger.info(
-                    f"[CandleGate] Sweep detected mid-candle (age={age_s:.0f}s>{gate_sec}s). "
-                    f"Waiting for next candle open (~{remaining_s}s remaining)."
-                )
-            sweep = None  # suppress the sweep signal
+        prev_candle_ts = float(candle_history[-2]["time"]) if len(candle_history) >= 2 else 0.0
+        # Age of the candle that produced the sweep signal
+        sweep_candle_age_s = _time.time() - prev_candle_ts
+        # A 15m candle = 900s. Allow up to gate_sec grace after it closes.
+        gate_sec = regime_p["candle_gate_sec"]
+        max_sweep_age = 900 + gate_sec
+        if sweep_candle_age_s > max_sweep_age:
+            logger.info(
+                f"[CandleGate] Sweep signal stale — sweep candle closed "
+                f"{sweep_candle_age_s:.0f}s ago (>{max_sweep_age}s). Blocking."
+            )
+            sweep = None
 
     # Stage 4: Strategy
     raw_direction: Optional[str] = None
@@ -1292,6 +1310,17 @@ async def execution_loop(
 ):
     await executor.initialize()
 
+    # CRIT-2 FIX: Set leverage AFTER markets are loaded (initialize() calls load_markets).
+    # Pre-initialize leverage set could hit Binance with an unvalidated symbol and
+    # silently fail, leaving the account at whatever leverage was last manually set.
+    if executor.is_futures and not executor.dry_run:
+        try:
+            ccxt_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
+            await executor.exchange.set_leverage(LEVERAGE, ccxt_symbol)
+            logger.info(f"[Main] Futures leverage confirmed: {LEVERAGE}× on {ccxt_symbol} ✓")
+        except Exception as e:
+            logger.warning(f"[Main] Could not set leverage (will continue with account default): {e}")
+
     global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_CANDLE_TS
 
     if not executor.dry_run:
@@ -1390,7 +1419,15 @@ async def execution_loop(
                         if stats["consecutive_losses"] >= 2:
                             stats["cooldown_until"] = time.time() + 7200
                             stats["consecutive_losses"] = 0
+                            halt_msg = (
+                                f"🛑 Quad-Desk CONSECUTIVE LOSS HALT\n"
+                                f"2 SL exits in a row. All trading paused for 2 hours.\n"
+                                f"Resumes at {time.strftime('%H:%M:%S', time.localtime(time.time() + 7200))}"
+                            )
                             logger.error("[RiskManager] 2 consecutive SL exits! Activating 2-Hour hard timeout.")
+                            # OBS-1 FIX: Alert operator via Telegram
+                            if executor.notifier:
+                                await executor.notifier.send_message(halt_msg)
                     else:
                         stats["consecutive_losses"] = 0
                     
@@ -1515,7 +1552,16 @@ async def execution_loop(
 
             # Stages 2–7: Full signal engine
             import time
+            # HIGH-4 FIX: Reset consecutive_losses when a cooldown expires so the
+            # bot gets a clean slate after its penalty period. Without this reset,
+            # two losses immediately after the cooldown trigger another 2-hour pause.
+            if time.time() >= stats.get("cooldown_until", 0.0) and stats.get("_was_in_cooldown", False):
+                stats["consecutive_losses"] = 0
+                stats["_was_in_cooldown"] = False
+                logger.info("[RiskManager] Consecutive-loss cooldown expired. Counter reset.")
+
             if time.time() < stats.get("cooldown_until", 0.0):
+                stats["_was_in_cooldown"] = True
                 verdict_json = {
                     "verdict": "WAIT",
                     "confidence": 0.0,
@@ -1603,18 +1649,9 @@ async def main():
         tg_chat_id=TG_CHAT_ID
     )
 
-    # Wire leverage back to executor
-    # _get_ccxt_symbol already returns the canonical ccxt format including :USDT settle
-    # for futures (e.g. BTCUSDT → BTC/USDT:USDT), so no extra reformatting is needed.
-    try:
-        if executor.is_futures:
-            ccxt_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
-            await executor.exchange.set_leverage(LEVERAGE, ccxt_symbol)
-            logger.info(f"[Main] Futures leverage set to {LEVERAGE}× on {ccxt_symbol}")
-        else:
-            logger.info(f"[Main] Skipping leverage set — not a futures exchange.")
-    except Exception as e:
-        logger.warning(f"[Main] Could not set leverage: {e}")
+    # NOTE (CRIT-2 FIX): set_leverage was moved to execution_loop() so it runs
+    # AFTER executor.initialize() has loaded markets. Setting leverage before
+    # load_markets() means CCXT has no symbol info and Binance may silently reject it.
 
     loop           = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()

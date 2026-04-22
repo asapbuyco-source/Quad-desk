@@ -58,6 +58,12 @@ class QuantEngine:
         # Much more robust than raw ATR% which varies by price level.
         self._atr_history: deque = deque(maxlen=2880)
 
+        # ── RSI History Cache (MED-1 fix) ─────────────────────────────────────
+        # Caches the last 3 computed RSI values so rsi_prev/rsi_prev2 reflect
+        # true historically-observed values rather than recomputed ones with
+        # different EMA seeds.
+        self._rsi_history: deque = deque(maxlen=3)
+
         # Persistence path — survives Railway restarts if /tmp is mounted
         self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
         self._load_state()
@@ -73,20 +79,22 @@ class QuantEngine:
         won    = True if trade closed at TP, False if closed at SL
         regime = HMM regime active at time of entry (RANGE|NEUTRAL|TREND|LIQUIDITY)
         """
-        bull_win  = (side == "buy"  and won)
-        bull_loss = (side == "buy"  and not won)
-        bear_win  = (side == "sell" and won)
-        bear_loss = (side == "sell" and not won)
+        # CRIT-5 FIX: Correct directional semantics for P(bull) prior.
+        # A BUY win OR a SELL loss means price went UP → bullish evidence (alpha).
+        # A SELL win OR a BUY loss means price went DOWN → bearish evidence (beta).
+        # Old code: incremented alpha for ANY win (bull or bear), corrupting the prior
+        # after a sequence of successful short trades.
+        market_went_up = (side == "buy" and won) or (side == "sell" and not won)
 
-        # Update global prior (backwards compatibility)
-        if bull_win or bear_win:
+        # Update global prior
+        if market_went_up:
             self._alpha += 1.0
         else:
             self._beta  += 1.0
 
         # Update per-regime prior (P1)
         regime_key = regime if regime in self._regime_alpha else "NEUTRAL"
-        if bull_win or bear_win:
+        if market_went_up:
             self._regime_alpha[regime_key] += 1.0
         else:
             self._regime_beta[regime_key]  += 1.0
@@ -188,9 +196,13 @@ class QuantEngine:
         zScore_prev    = getattr(self, "_last_z_score", z_score)
         self._last_z_score = z_score
 
-        rsi            = self._rsi(closes)
-        rsi_prev       = self._rsi(closes[:-1]) if len(closes) > 1 else rsi
-        rsi_prev2      = self._rsi(closes[:-2]) if len(closes) > 2 else rsi_prev
+        # MED-1 FIX: Use cached RSI history for rsi_prev/rsi_prev2.
+        # Re-slicing closes[] and recomputing _rsi() produces a different Wilder EMA
+        # seed each time — not the value that was observed last cycle. Cache instead.
+        rsi = self._rsi(closes)
+        self._rsi_history.append(rsi)
+        rsi_prev  = self._rsi_history[-2] if len(self._rsi_history) >= 2 else rsi
+        rsi_prev2 = self._rsi_history[-3] if len(self._rsi_history) >= 3 else rsi_prev
 
         tape_speed, dominant_side = self._tape_metrics()
         ofi, wall_context, all_walls_str = self._lob_metrics(current_price)
