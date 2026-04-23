@@ -243,63 +243,45 @@ class TradingExecutor:
                 await self.exchange.load_markets()
                 logger.info(f"[Executor] Connected to {exch} {env} ✓ (attempt {attempt + 1})")
                 
-                # --- Position Reconciliation ---
+                # --- Boot Position Check (no reconciliation) ---
+                # If an open position exists on the exchange, alert via Telegram
+                # and continue trading normally. We do NOT reconcile because the
+                # SL/TP would be guessed from an ATR proxy and could be dangerously wrong.
+                # User commits to closing all trades before starting the bot.
                 try:
                     positions = await self.exchange.fetch_positions()
+                    open_found = False
                     for pos in positions:
                         qty = float(pos.get("contracts", 0) or pos.get("positionAmt", 0))
-                        if abs(qty) > 0:
+                        if abs(qty) > 0.0001:
+                            open_found = True
                             side = "buy" if qty > 0 else "sell"
                             entry_p = float(pos.get("entryPrice", 0))
-                            logger.info(f"[Executor] Reconciled open position on boot: {side.upper()} {abs(qty)} @ {entry_p}")
-                            
-                            import time
-                            self.active_position = {
-                                "id": f"reconciled-{int(time.time())}",
-                                "symbol": pos.get("symbol"),
-                                "side": side,
-                                "entry_price": entry_p,
-                                "size": abs(qty),
-                                "take_profit": 0,
-                                "stop_loss": 0,
-                                "tp_order_id": None,
-                                "sl_order_id": None,
-                                "ts": int(time.time() * 1000)
-                            }
-                            
-                            # Try binding existing SL/TP orders
-                            open_orders = await self.exchange.fetch_open_orders(pos.get("symbol"))
-                            for o in open_orders:
-                                o_type = str(o.get("type", "")).lower()
-                                price = o.get("stopPrice") or o.get("price")
-                                if "stop" in o_type:
-                                    self.active_position["sl_order_id"] = o.get("id")
-                                    self.active_position["stop_loss"] = price
-                                elif "take_profit" in o_type or "profit" in o_type:
-                                    self.active_position["tp_order_id"] = o.get("id")
-                                    self.active_position["take_profit"] = price
+                            warn_msg = (
+                                f"⚠️ Quad-Desk BOOT WARNING\n"
+                                f"Open position found: {side.upper()} {abs(qty)} {pos.get('symbol')} @ {entry_p:.2f}\n"
+                                f"Bot is starting normally but has NO internal SL/TP for this position.\n"
+                                f"Please verify on Binance — this position is NOT tracked by the bot."
+                            )
+                            logger.warning(f"[Executor] {warn_msg}")
+                            if self.notifier:
+                                await self.notifier.send_message(warn_msg)
+                    if not open_found:
+                        logger.info("[Executor] Boot clean — no open positions found on exchange.")
 
-                            # 1.5 FIX: If SL/TP still 0 after binding exchange orders,
-                            # estimate from ATR proxy so exit checker stays operative.
-                            if not self.active_position.get("stop_loss"):
-                                atr_proxy = entry_p * 0.008  # 0.8% ATR proxy for BTC 15m
-                                self.active_position["stop_loss"] = round(
-                                    entry_p - atr_proxy * 1.5 if side == "buy"
-                                    else entry_p + atr_proxy * 1.5, 2
-                                )
-                                self.active_position["take_profit"] = round(
-                                    entry_p + atr_proxy * 3.0 if side == "buy"
-                                    else entry_p - atr_proxy * 3.0, 2
-                                )
-                                logger.warning(
-                                    f"[Executor] Reconciled position has no exchange SL/TP orders — "
-                                    f"estimated from ATR proxy: SL={self.active_position['stop_loss']} "
-                                    f"TP={self.active_position['take_profit']}. VERIFY MANUALLY."
-                                )
                 except Exception as e:
-                    logger.warning(f"[Executor] Could not reconcile historical positions: {e}")
+                    logger.warning(f"[Executor] Could not check positions on boot: {e}")
 
-
+                # Send startup status notification
+                try:
+                    mode = "DRY-RUN 🔵" if self.dry_run else "LIVE 🟢"
+                    await self.notifier.send_message(
+                        f"🤖 Quad-Desk {mode} STARTED\n"
+                        f"Exchange: {self.exchange_id.upper()} | "
+                        f"Taker fee: {self.TAKER_FEE:.3%}"
+                    )
+                except Exception:
+                    pass
 
                 return   # success — exit initialize
             except Exception as e:

@@ -1349,9 +1349,7 @@ def _compute_signal(
         "analysis":     analysis,
         "ulis_verdict": ulis_verdict_str,
         "regime":       regime,   # P1: stored in position for per-regime Beta update on exit
-        # FINDING-5: Pass break-even params so executor can use regime-aware trigger
-        "be_lock_trigger": regime_p["be_lock_trigger"],
-        "atr_at_entry":    atr,
+        "atr_at_entry": atr,      # stored in position for any future trailing logic
     }
 
 
@@ -1618,8 +1616,6 @@ async def execution_loop(
                     LAST_CANDLE_TS = float(feed.state.candles[-1]["time"])
 
             if executor.active_position:
-                if metrics is not None:
-                    await executor.update_breakeven_stop(current_price)
 
                 pos = executor.active_position
                 if pos:  # Might have been exited by the monitor
