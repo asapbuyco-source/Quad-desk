@@ -655,6 +655,9 @@ class TradingExecutor:
                 "take_profit": take_profit,
                 "dry_run":     True,
                 "trade_doc_id": doc_id,
+                # FINDING-5: Regime-aware break-even params
+                "be_lock_trigger": signal.get("be_lock_trigger", 1.0),
+                "atr_at_entry":    signal.get("atr_at_entry", fill_price * 0.005),
             }
 
             # Telegram Notification
@@ -884,6 +887,9 @@ class TradingExecutor:
                 "tp_placed":   tp_placed,
                 "dry_run":     False,
                 "trade_doc_id": doc_id,
+                # FINDING-5: Regime-aware break-even params
+                "be_lock_trigger": signal.get("be_lock_trigger", 1.0),
+                "atr_at_entry":    signal.get("atr_at_entry", fill_price * 0.005),
             }
 
             # Clear pending order since we now have an active position
@@ -1129,8 +1135,10 @@ class TradingExecutor:
 
     async def update_breakeven_stop(self, current_price: float):
         """
-        If the current price reaches 50% of the Take-Profit distance,
-        move the Stop-Loss up to the Entry Price (Break-Even).
+        FINDING-5 FIX: Regime-aware break-even trigger.
+        Old: hardcoded 50% of TP distance (too early in TREND, too late in RANGE).
+        New: uses entry ATR × be_lock_trigger from REGIME_PARAMS:
+             RANGE: 0.8×ATR, NEUTRAL: 1.0×ATR, TREND: 1.2×ATR
         For Live: cancels old SL and creates new SL order.
         """
         pos = self.active_position
@@ -1139,16 +1147,16 @@ class TradingExecutor:
 
         side  = pos["side"]
         entry = pos["entry_price"]
-        tp    = pos["take_profit"]
+        atr_at_entry  = pos.get("atr_at_entry", entry * 0.005)  # fallback ~0.5%
+        be_lock_mult  = pos.get("be_lock_trigger", 1.0)
 
-        # Calculate 50% trigger line
-        be_target = entry + ((tp - entry) * 0.5)
-
-        triggered = False
-        if side == "buy" and current_price >= be_target:
-            triggered = True
-        elif side == "sell" and current_price <= be_target:
-            triggered = True
+        # Break-even target: entry ± (be_lock_mult × ATR_at_entry)
+        if side == "buy":
+            be_target = entry + (be_lock_mult * atr_at_entry)
+            triggered = current_price >= be_target
+        else:
+            be_target = entry - (be_lock_mult * atr_at_entry)
+            triggered = current_price <= be_target
 
         if not triggered:
             return

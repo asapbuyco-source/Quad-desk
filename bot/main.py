@@ -849,17 +849,29 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     # Low HMM confidence  → trust raw Bayesian signal posterior more.
     regime_priors = metrics.get("_regime_priors", {})
     if regime_priors and regime in regime_priors:
-        hmm_conf      = metrics.get("regime_confidence", 0.5)
-        regime_prior  = regime_priors[regime]
-        p_final_raw   = p_final
-        p_final       = float(np.clip(
-            hmm_conf * regime_prior + (1.0 - hmm_conf) * p_final_raw,
-            0.0, 1.0
-        ))
-        logger.debug(
-            f"[BayesBlend] base={p_final_raw:.2%} regime_prior={regime_prior:.2%} "
-            f"hmm_conf={hmm_conf:.0%} → adjusted={p_final:.2%}"
+        # FINDING-2 FIX: Don't blend until we have >= 5 trades of history.
+        # Beta(1,1) starts at 0.50. With hmm_conf=0.70 and p_final_raw=0.65:
+        #   p_final = 0.70*0.50 + 0.30*0.65 = 0.545 < 0.58 threshold → BLOCKED.
+        # The cold-start prior kills every valid signal after restart.
+        _total_regime_trades = sum(
+            metrics.get("_regime_alpha", {}).get(r, 1.0) +
+            metrics.get("_regime_beta", {}).get(r, 1.0) - 2
+            for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY")
         )
+        if _total_regime_trades >= 5:
+            hmm_conf      = metrics.get("regime_confidence", 0.5)
+            regime_prior  = regime_priors[regime]
+            p_final_raw   = p_final
+            p_final       = float(np.clip(
+                hmm_conf * regime_prior + (1.0 - hmm_conf) * p_final_raw,
+                0.0, 1.0
+            ))
+            logger.debug(
+                f"[BayesBlend] base={p_final_raw:.2%} regime_prior={regime_prior:.2%} "
+                f"hmm_conf={hmm_conf:.0%} → adjusted={p_final:.2%}"
+            )
+        else:
+            logger.debug(f"[BayesBlend] Skipped: only {_total_regime_trades:.0f} trades (need 5+)")
 
     return float(p_final)
 
@@ -1337,6 +1349,9 @@ def _compute_signal(
         "analysis":     analysis,
         "ulis_verdict": ulis_verdict_str,
         "regime":       regime,   # P1: stored in position for per-regime Beta update on exit
+        # FINDING-5: Pass break-even params so executor can use regime-aware trigger
+        "be_lock_trigger": regime_p["be_lock_trigger"],
+        "atr_at_entry":    atr,
     }
 
 
@@ -1489,15 +1504,18 @@ async def execution_loop(
 
                         
                         stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
-                        if stats["consecutive_losses"] >= 2:
-                            stats["cooldown_until"] = time.time() + 7200
+                        # FINDING-3 FIX: 3 losses / 30min (was 2 / 2hr).
+                        # At 40% loss rate, P(2 consecutive) = 16% → 3.2hr lockout/day.
+                        # P(3 consecutive) = 6.4% → 23min lockout/day. 87% less downtime.
+                        if stats["consecutive_losses"] >= 3:
+                            stats["cooldown_until"] = time.time() + 1800
                             stats["consecutive_losses"] = 0
                             halt_msg = (
                                 f"🛑 Quad-Desk CONSECUTIVE LOSS HALT\n"
-                                f"2 SL exits in a row. All trading paused for 2 hours.\n"
-                                f"Resumes at {time.strftime('%H:%M:%S', time.localtime(time.time() + 7200))}"
+                                f"3 SL exits in a row. All trading paused for 30 minutes.\n"
+                                f"Resumes at {time.strftime('%H:%M:%S', time.localtime(time.time() + 1800))}"
                             )
-                            logger.error("[RiskManager] 2 consecutive SL exits! Activating 2-Hour hard timeout.")
+                            logger.error("[RiskManager] 3 consecutive SL exits! Activating 30-minute cooldown.")
                             # OBS-1 FIX: Alert operator via Telegram
                             if executor.notifier:
                                 await executor.notifier.send_message(halt_msg)
@@ -1589,6 +1607,10 @@ async def execution_loop(
                 # P1: Inject per-regime win-rate priors so _bayesian_fusion
                 # can blend them with the base posterior after regime is known.
                 metrics["_regime_priors"] = quant.get_all_regime_priors()
+                # FINDING-2: Also inject alpha/beta counts so cold-start guard
+                # can count total trades before enabling regime blending.
+                metrics["_regime_alpha"] = dict(quant._regime_alpha)
+                metrics["_regime_beta"]  = dict(quant._regime_beta)
 
                 # Update candle-close tracker so the candle-close gate in _compute_signal
                 # knows how old the current candle is.
