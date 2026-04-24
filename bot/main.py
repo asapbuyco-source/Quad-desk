@@ -1477,6 +1477,16 @@ async def execution_loop(
         f"╚══════════════════════════════════════╝"
     )
 
+    # Startup lockout: prevent any entry for the first 90s after boot.
+    # The REST prefetch loads 100 historical candles, but live CVD, OFI and
+    # order-book readings need a few cycles to stabilise before we act on them.
+    _STARTUP_LOCKOUT_SECS = 90
+    _boot_time = time.time()
+    logger.info(
+        f"[Main] ⏳ Startup lockout active — no new entries for {_STARTUP_LOCKOUT_SECS}s "
+        f"while live feed settles."
+    )
+
     while True:
         try:
             await asyncio.sleep(ANALYSIS_INTERVAL)
@@ -1485,6 +1495,12 @@ async def execution_loop(
             if n_candles < QuantEngine.MIN_CANDLES:
                 logger.info(f"[Main] Warming up… {n_candles}/{QuantEngine.MIN_CANDLES} candles")
                 continue
+
+            # ── Startup lockout guard ──────────────────────────────────────
+            # Allow exit monitoring immediately, but block new entries until
+            # the live feed has had time to build real CVD/OFI/order-book data.
+            _startup_elapsed = time.time() - _boot_time
+            _in_startup_lockout = _startup_elapsed < _STARTUP_LOCKOUT_SECS
 
             # ── Daily loss reset at midnight ─────────────────────────────────
             today = date.today()
@@ -1760,7 +1776,6 @@ async def execution_loop(
             )
 
             # Stages 2–7: Full signal engine
-            import time
             # HIGH-4 FIX: Reset consecutive_losses when a cooldown expires so the
             # bot gets a clean slate after its penalty period. Without this reset,
             # two losses immediately after the cooldown trigger another 2-hour pause.
@@ -1823,10 +1838,19 @@ async def execution_loop(
 
             is_actionable = action in ("BUY", "SELL", "MEAN_REVERSAL_LONG", "MEAN_REVERSAL_SHORT")
             if is_actionable:
-                await executor.execute_signal(
-                    SYMBOL, metrics["price"], verdict_json, MAX_RISK_PCT,
-                    account_size=ACCOUNT_SIZE, ulis_verdict=ulis_str
-                )
+                # Startup lockout: log the signal but don't trade yet
+                if _in_startup_lockout:
+                    remaining_lockout = int(_STARTUP_LOCKOUT_SECS - _startup_elapsed)
+                    logger.info(
+                        f"[Main] \u23f3 Startup lockout — would fire {action} but waiting "
+                        f"{remaining_lockout}s for live feed to settle. "
+                        f"(conf={conf:.0%} SL={stop_loss} TP={take_profit})"
+                    )
+                else:
+                    await executor.execute_signal(
+                        SYMBOL, metrics["price"], verdict_json, MAX_RISK_PCT,
+                        account_size=ACCOUNT_SIZE, ulis_verdict=ulis_str
+                    )
                 # Only count the trade if execution actually opened a position
                 if executor.active_position is not None:
                     stats["total_trades"] += 1
