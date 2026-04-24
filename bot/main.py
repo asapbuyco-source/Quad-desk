@@ -699,17 +699,35 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
     ofi      = metrics["ofi"]
     cvd      = metrics["cvd"]
     dominant = metrics["tapeDominant"]
+    z        = metrics.get("zScore", 0.0)
+    rsi      = metrics.get("rsi", 50.0)
 
-    # HIGH-5 FIX: Old logic used OR — dominant=="BALANCED" alone triggered a signal.
-    # BALANCED is the DEFAULT state; using it as a trigger makes the sweep itself
-    # the entire signal. Now require at least 2/3 micro-confirms for a real reversal.
+    # P1-1 FIX: Z+RSI overbought/oversold gate on sweep entries.
+    # The Apr-23 audit caught Z=+2.67, RSI=70 entering a BELOW_LOWS BUY sweep —
+    # price was already statistically overbought; the sweep was a continuation,
+    # not a reversal. Block these momentum-chase entries at the strategy level.
+    if sweep == "BELOW_LOWS" and z > 2.0 and rsi > 65:
+        logger.info(
+            f"[SweepGate] BUY sweep BLOCKED — Z={z:.2f} RSI={rsi:.1f} "
+            f"(price already overbought, sweep likely continuation not reversal)"
+        )
+        return None
+    if sweep == "ABOVE_HIGHS" and z < -2.0 and rsi < 35:
+        logger.info(
+            f"[SweepGate] SELL sweep BLOCKED — Z={z:.2f} RSI={rsi:.1f} "
+            f"(price already oversold, sweep likely continuation not reversal)"
+        )
+        return None
+
+    # Phase 2 FIX: Raise confirms threshold 2/3 → 3/3 for tighter sweep quality.
+    # 2/3 allowed too many low-conviction entries; 3/3 requires all OFI+CVD+tape aligned.
     if sweep == "ABOVE_HIGHS":
         confirms = sum([
             ofi < -0.15,
             cvd < 0,
             "SELL" in dominant,
         ])
-        if confirms >= 2:
+        if confirms >= 3:
             logger.info(f"[SweepStrat] SELL after ABOVE_HIGHS (confirms={confirms}/3)")
             return "SELL"
 
@@ -719,7 +737,7 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
             cvd > 0,
             "BUY" in dominant,
         ])
-        if confirms >= 2:
+        if confirms >= 3:
             logger.info(f"[SweepStrat] BUY after BELOW_LOWS (confirms={confirms}/3)")
             return "BUY"
 
@@ -1313,7 +1331,7 @@ def _compute_signal(
     # consistently lose money even on winning trades.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
     round_trip_fee = _EXCHANGE_FEE_RATE * 2                  # entry + exit fee
-    min_viable_tp_pct = round_trip_fee * 1.2                 # 1.2× fee buffer (reduced from 1.5×) — Patch #6
+    min_viable_tp_pct = round_trip_fee * 2.0                 # P3 FIX: 2.0× fee buffer (raised from 1.2×). TP must be 2× round-trip fee to be viable after slippage.
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
@@ -1433,6 +1451,47 @@ async def execution_loop(
                         logger.warning(f"[RiskEngine] Could not refresh ACCOUNT_SIZE: {_bal_err}")
 
             current_price = feed.state.candles[-1]["close"]
+
+            # ── P0-2 FIX: Candle staleness guard ────────────────────────────
+            # If the most recent candle is older than 2.5× the kline interval,
+            # the WebSocket feed is frozen. Skip this cycle and trigger a REST
+            # prefetch to re-anchor the candle buffer from Binance directly.
+            _interval_secs = {
+                "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
+            }.get(CANDLE_INTERVAL, 900)
+            _last_candle_age = time.time() - float(feed.state.candles[-1]["time"])
+            if _last_candle_age > _interval_secs * 2.5:
+                logger.warning(
+                    f"[Main] ⚠️ Candle feed STALE ({_last_candle_age:.0f}s old, "
+                    f">{_interval_secs * 2.5:.0f}s threshold). "
+                    f"Triggering REST prefetch and skipping cycle."
+                )
+                asyncio.create_task(feed._fetch_historical_candles_rest())
+                continue  # skip — data is stale
+
+            # ── Live-position heartbeat poll (every 30s, independent of main loop) ──
+            # Detects positions that were closed by exchange SL/TP orders even if
+            # the main loop is running slowly or a candle cycle is long.
+            _now = time.time()
+            if (
+                not executor.dry_run
+                and executor.active_position
+                and _now - getattr(executor, "_last_pos_poll", 0) > 30
+            ):
+                executor._last_pos_poll = _now
+                _hb_exited, _hb_pnl = await executor._check_live_position_exit(current_price)
+                if _hb_exited:
+                    logger.info(f"[Heartbeat] Position closed detected via 30s poll. PnL=${_hb_pnl:.2f}")
+                    new_daily = stats.get("daily_pnl", 0.0) + _hb_pnl
+                    stats["daily_pnl"] = new_daily
+                    LAST_ANY_TRADE_CLOSE_TIME = time.time()
+                    globals()["LAST_TRADE_WAS_SL"] = (_hb_pnl < 0)
+                    if _hb_pnl < 0:
+                        LAST_CASCADE_TIME = time.time()
+                        stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
+                    else:
+                        stats["consecutive_losses"] = 0
+                    stats["active_position"] = None
 
             # ── System lock check (Panic Mode cooldown) ─────────────────────
             if executor.is_system_locked():
@@ -1769,9 +1828,14 @@ async def main():
             pass
 
     tasks = [
-        asyncio.create_task(feed.run(),                                       name="data_feed"),
-        asyncio.create_task(execution_loop(feed, quant, executor, BOT_STATS), name="exec_loop"),
-        asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS),               name="heartbeat"),
+        asyncio.create_task(feed.run(),                                            name="data_feed"),
+        asyncio.create_task(execution_loop(feed, quant, executor, BOT_STATS),     name="exec_loop"),
+        asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS),                   name="heartbeat"),
+        # P0-2 FIX: Feed health monitor — detects frozen WebSocket and forces reconnect
+        asyncio.create_task(
+            feed.feed_health_monitor(notifier=executor.notifier),
+            name="feed_health_monitor"
+        ),
     ]
 
     # ── Startup notification ──────────────────────────────────────────

@@ -110,7 +110,7 @@ REGIME_PARAMS = {
         "z_threshold":        1.5,   # Was 1.8
         "atr_multiplier_sl":  1.5,
         "ofi_bound":          0.12,  # Was 0.15
-        "min_confidence":     0.55,  # Was 0.60. Catch more sweeps
+        "min_confidence":     0.62,  # Phase 2 FIX: was 0.55. Now matches global MIN_BAYESIAN — tighter entry quality on sweeps.
         "rr_target":          2.0,
         "be_lock_trigger":    1.0,
         "panic_threshold":    5.0,

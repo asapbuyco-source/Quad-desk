@@ -125,6 +125,7 @@ class BinanceDataFeed:
         self.ws_url = f"{base_url}/stream?streams={streams}"
         self.is_running = False
         self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
+        self._last_kline_frame_ts: float = 0.0  # epoch-seconds of last kline WS frame received
 
     # ------------------------------------------------------------------
     # Message routing
@@ -145,6 +146,7 @@ class BinanceDataFeed:
         try:
             if '@kline_' in stream:
                 self.state.add_candle(data['k'], data['k']['x'])
+                self._last_kline_frame_ts = time.time()  # P0-2: track freshness for health monitor
             elif '@aggTrade' in stream:
                 # Futures aggTrade uses same fields as Spot trade (p, q, m, T)
                 self.state.add_trade(data)
@@ -280,6 +282,48 @@ class BinanceDataFeed:
             if self.is_running:
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, 60)
+
+    async def feed_health_monitor(self, notifier=None):
+        """
+        P0-2 FIX: Feed health monitor — runs as an independent async task.
+        Checks every 60s whether a kline WebSocket frame was received within
+        3× the candle interval. If not (i.e. feed is frozen), sends a
+        Telegram alert and forces a reconnect by briefly stopping the feed loop.
+        """
+        interval_secs = {
+            "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
+        }.get(self.interval, 900)
+        stale_threshold = interval_secs * 3.0
+
+        # Give the feed 60s to warm up before monitoring
+        await asyncio.sleep(60)
+
+        while self.is_running:
+            await asyncio.sleep(60)
+            if not self.is_running:
+                break
+
+            # Skip check if feed just started (no frames yet)
+            if self._last_kline_frame_ts == 0.0:
+                continue
+
+            age = time.time() - self._last_kline_frame_ts
+            if age > stale_threshold:
+                alert_msg = (
+                    f"⚠️ [DataFeed] FEED STALE: no kline frame received for {age:.0f}s "
+                    f"(threshold={stale_threshold:.0f}s). Forcing reconnect."
+                )
+                logger.error(alert_msg)
+                if notifier:
+                    try:
+                        await notifier.send_message(alert_msg)
+                    except Exception:
+                        pass
+                # Force reconnect: stop the current WS loop; run() will retry
+                self.is_running = False
+                await asyncio.sleep(2)
+                self.is_running = True
+                logger.info("[DataFeed] Feed health monitor triggered reconnect.")
 
     def stop(self):
         logger.info("[DataFeed] Stop requested.")

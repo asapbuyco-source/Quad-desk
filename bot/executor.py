@@ -576,6 +576,24 @@ class TradingExecutor:
             logger.warning("[Executor] Calculated position size is 0. Aborting.")
             return
 
+        # P1-2 FIX: Minimum notional floor — skip any trade where position value
+        # is below $50. At this size, round-trip fees (entry+exit taker) consume
+        # most potential profit, making profitable trading statistically impossible.
+        MIN_NOTIONAL_USD = 50.0
+        notional = raw_size * current_price
+        if notional < MIN_NOTIONAL_USD:
+            warn_msg = (
+                f"Trade skipped — notional ${notional:.2f} < ${MIN_NOTIONAL_USD} minimum. "
+                f"Increase BOT_ACCOUNT_SIZE or BOT_MAX_RISK_PCT to trade this setup."
+            )
+            logger.warning(f"[Executor] {warn_msg}")
+            if self.notifier:
+                await self.notifier.send_error_alert(
+                    f"⚠️ Setup rejected: notional ${notional:.2f} too small. "
+                    f"Need ${MIN_NOTIONAL_USD}+ to cover fees."
+                )
+            return
+
         # Translate symbol to exchange format (unified CCXT symbol)
         if self.exchange_id == "coinbase":
             ex_symbol = self._to_exchange_symbol(symbol)
@@ -997,11 +1015,56 @@ class TradingExecutor:
         if side == "buy":
             if check_low <= sl:
                 return await finalize_exit("SL", sl)
+
+            # Phase 3 — Partial TP: close 50% at midpoint, move SL to break-even
+            if not pos.get("partial_tp_done"):
+                mid_target = (pos["entry_price"] + tp) / 2.0
+                if check_high >= mid_target:
+                    pos["partial_tp_done"] = True
+                    half_size = size / 2.0
+                    half_raw  = (mid_target - pos["entry_price"]) * half_size
+                    half_fee  = (pos["entry_price"] + mid_target) * half_size * MAKER_FEE
+                    half_pnl  = half_raw - (entry_fee / 2.0 + half_fee)
+                    pos["size"]      = half_size        # ride the remaining half
+                    pos["stop_loss"] = pos["entry_price"]  # move SL to break-even
+                    logger.info(
+                        f"[PartialTP] Closed 50% @ {mid_target:.2f}, "
+                        f"PnL=${half_pnl:.2f}. SL moved to entry. Riding remainder."
+                    )
+                    if hasattr(self, "notifier") and self.notifier:
+                        await self.notifier.send_message(
+                            f"📊 Partial TP: closed 50% @ {mid_target:.2f} "
+                            f"(+${half_pnl:.2f}). SL → BE. Riding half."
+                        )
+                    # Don't return — let the main TP check run for the remainder
+
             if check_high >= tp:
                 return await finalize_exit("TP", tp)
         else:
             if check_high >= sl:
                 return await finalize_exit("SL", sl)
+
+            # Phase 3 — Partial TP for short positions
+            if not pos.get("partial_tp_done"):
+                mid_target = (pos["entry_price"] + tp) / 2.0
+                if check_low <= mid_target:
+                    pos["partial_tp_done"] = True
+                    half_size = size / 2.0
+                    half_raw  = (pos["entry_price"] - mid_target) * half_size
+                    half_fee  = (pos["entry_price"] + mid_target) * half_size * MAKER_FEE
+                    half_pnl  = half_raw - (entry_fee / 2.0 + half_fee)
+                    pos["size"]      = half_size
+                    pos["stop_loss"] = pos["entry_price"]  # move SL to break-even
+                    logger.info(
+                        f"[PartialTP] SHORT: closed 50% @ {mid_target:.2f}, "
+                        f"PnL=${half_pnl:.2f}. SL moved to entry. Riding remainder."
+                    )
+                    if hasattr(self, "notifier") and self.notifier:
+                        await self.notifier.send_message(
+                            f"📊 Partial TP (SHORT): closed 50% @ {mid_target:.2f} "
+                            f"(+${half_pnl:.2f}). SL → BE. Riding half."
+                        )
+
             if check_low <= tp:
                 return await finalize_exit("TP", tp)
 
@@ -1010,73 +1073,92 @@ class TradingExecutor:
     async def _check_live_position_exit(self, current_price: float) -> tuple:
         """
         LIVE MODE: Poll exchange to detect if position was closed by SL/TP orders.
-        PHASE-0.1 FIX: Now fetches actual fill price from trade history instead of
-        using current_price (the bid), which corrupted all PnL tracking.
+
+        P0-1 GHOST-POSITION FIX:
+        Binance USDM Futures OMITS zero-quantity positions from fetch_positions entirely.
+        The old code searched for a matching symbol with qty < 0.0001 — since Binance
+        never returns that entry at all when flat, the position was never detected as closed.
+
+        Correct approach: build a set of symbols that have NON-ZERO qty (open_syms).
+        If our symbol is ABSENT from open_syms, the position is flat on the exchange.
+        Then fetch the actual fill price + realized PnL from trade history.
         """
         pos = self.active_position
         if pos is None:
             return False, 0.0
+
+        symbol = pos.get("symbol", "")
+        logger.debug(f"[LiveExit] Polling exchange for {symbol}…")
+
         try:
-            symbol = pos.get("symbol", "")
-            positions = await self.exchange.fetch_positions([symbol] if symbol else [])
-            for p in positions:
-                qty = float(p.get("contracts", 0) or p.get("positionAmt", 0))
-                if p.get("symbol") == symbol and abs(qty) < 0.0001:
-                    # Position is flat on the exchange — it was closed by SL or TP
-                    entry = pos["entry_price"]
-                    size  = pos["size"]
-                    side  = pos["side"]
+            # Fetch ALL positions — Binance only returns non-flat ones
+            all_positions = await self.exchange.fetch_positions()
 
-                    # Try to get actual fill price and exchange-reported PnL
-                    fill_price = current_price  # fallback
-                    actual_pnl = None
-                    try:
-                        recent_trades = await self.exchange.fetch_my_trades(
-                            symbol, limit=10
+            # Build the set of symbols that are genuinely open (qty > noise floor)
+            open_syms = {
+                p.get("symbol")
+                for p in all_positions
+                if abs(float(p.get("contracts", 0) or 0)) > 0.0001
+            }
+
+            if symbol not in open_syms:
+                # ── Position is FLAT on the exchange ────────────────────────
+                # The SL or TP order was filled by Binance; bot state is stale.
+                entry = pos["entry_price"]
+                size  = pos["size"]
+                side  = pos["side"]
+
+                # Fetch actual fill price + exchange-reported realized PnL
+                fill_price = current_price  # fallback
+                actual_pnl = None
+                try:
+                    recent_trades = await self.exchange.fetch_my_trades(symbol, limit=10)
+                    # Closing trades carry a non-zero realizedPnl in the info dict
+                    closing = [
+                        t for t in recent_trades
+                        if float(t.get("info", {}).get("realizedPnl", 0)) != 0
+                    ]
+                    if closing:
+                        fill_price = float(closing[-1]["price"])
+                        actual_pnl = float(
+                            closing[-1].get("info", {}).get("realizedPnl", 0)
                         )
-                        # Find the most recent closing trade with realized PnL
-                        closing = [
-                            t for t in recent_trades
-                            if float(t.get("info", {}).get("realizedPnl", 0)) != 0
-                        ]
-                        if closing:
-                            fill_price = float(closing[-1]["price"])
-                            actual_pnl = float(
-                                closing[-1].get("info", {}).get("realizedPnl", 0)
-                            )
-                            logger.info(
-                                f"[LiveExit] Exchange-reported PnL: ${actual_pnl:.2f} "
-                                f"fill={fill_price:.2f}"
-                            )
-                    except Exception as e:
-                        logger.warning(f"[LiveExit] Could not fetch fill price: {e}")
+                        logger.info(
+                            f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
+                            f"realizedPnl=${actual_pnl:.2f}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[LiveExit] fill-price fetch failed: {e}")
 
-                    # Use exchange PnL if available, otherwise estimate
-                    if actual_pnl is not None and actual_pnl != 0:
-                        net_pnl = actual_pnl
-                    else:
-                        raw_pnl = ((fill_price - entry) * size if side == "buy"
-                                   else (entry - fill_price) * size)
-                        fees = (entry + fill_price) * size * self.TAKER_FEE
-                        net_pnl = raw_pnl - fees
+                # Use exchange PnL if available, otherwise estimate from geometry
+                if actual_pnl is not None and actual_pnl != 0:
+                    net_pnl = actual_pnl
+                else:
+                    raw_pnl = ((fill_price - entry) * size if side == "buy"
+                               else (entry - fill_price) * size)
+                    fees = (entry + fill_price) * size * self.TAKER_FEE
+                    net_pnl = raw_pnl - fees
 
-                    exit_type = "TP" if net_pnl > 0 else "SL"
-                    logger.info(
-                        f"[Executor] Live position closed (exchange fill detected). "
-                        f"Type={exit_type} PnL=${net_pnl:.2f} fill={fill_price:.2f}"
+                exit_type = "TP" if net_pnl > 0 else "SL"
+                logger.info(
+                    f"[LiveExit] Position flat on exchange — type={exit_type} "
+                    f"pnl=${net_pnl:.2f} fill={fill_price:.2f}"
+                )
+                if self.notifier:
+                    await self.notifier.send_close_alert(
+                        symbol=symbol, side=side, price=fill_price,
+                        type=exit_type, pnl=net_pnl, is_dry=False
                     )
-                    if self.notifier:
-                        await self.notifier.send_close_alert(
-                            symbol=symbol, side=side, price=fill_price,
-                            type=exit_type, pnl=net_pnl, is_dry=False
-                        )
-                    self._update_trade_exit(pos.get("trade_doc_id"), fill_price, net_pnl)
-                    self.active_position = None
-                    self.pending_order = None
-                    return True, net_pnl
+                self._update_trade_exit(pos.get("trade_doc_id"), fill_price, net_pnl)
+                self.active_position = None
+                self.pending_order = None
+                return True, net_pnl
+
+            # Symbol still present in open_syms → position still live
             return False, 0.0
+
         except Exception as e:
-            logger.warning(f"[Executor] Could not poll live position status: {e}")
+            logger.warning(f"[LiveExit] poll error: {e}")
             return False, 0.0
 
 
