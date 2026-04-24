@@ -675,21 +675,68 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _strategy_mean_reversion(metrics: Dict[str, Any],
-                              z_threshold: float = 2.2) -> Optional[str]:
+def _strategy_mean_reversion(
+    metrics: Dict[str, Any],
+    z_threshold: float = 2.2,
+    require_momentum_confirm: bool = False,
+) -> Optional[str]:
     """
     Mean-reversion signal using regime-adaptive Z-score threshold.
     z_threshold is supplied by REGIME_PARAMS[regime]["z_threshold"] (P0).
+
+    require_momentum_confirm (Early-SL FIX):
+      When True (RANGE regime), also requires:
+        - Z-slope reversing toward mean (not still extending)
+        - RSI showing a confirmed trough or peak (momentum turning)
+      This prevents entries at Z-extremes that are still trending away,
+      which produce premature SL hits before price reverses.
     """
-    z   = metrics["zScore"]
-    rsi = metrics["rsi"]
+    z        = metrics["zScore"]
+    rsi      = metrics["rsi"]
+    z_prev   = metrics.get("zScore_prev", z)
+    rsi_prev = metrics.get("rsi_prev", rsi)
+    rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)
+
+    z_slope   = z - z_prev
+    rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)  # RSI turned up from a low
+    rsi_peak   = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)  # RSI turned down from a high
 
     if z >= z_threshold and rsi > 45:
-        logger.info(f"[MeanRev] SELL — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f}")
+        if require_momentum_confirm:
+            # Z must already be falling back toward mean (slope < 0)
+            if z_slope >= 0:
+                logger.info(
+                    f"[MeanRev] SELL blocked — Z={z:.2f} still RISING (slope={z_slope:+.3f}). "
+                    f"Waiting for Z-peak before entry."
+                )
+                return None
+            # RSI must be peaking (turning down), confirming momentum reversal
+            if not rsi_peak:
+                logger.info(
+                    f"[MeanRev] SELL blocked — RSI not yet peaked (RSI={rsi:.1f}). "
+                    f"Waiting for momentum confirmation."
+                )
+                return None
+        logger.info(f"[MeanRev] SELL — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f} slope={z_slope:+.3f}")
         return "MEAN_REVERSAL_SHORT"
 
     if z <= -z_threshold and rsi < 55:
-        logger.info(f"[MeanRev] BUY — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f}")
+        if require_momentum_confirm:
+            # Z must already be rising back toward mean (slope > 0)
+            if z_slope <= 0:
+                logger.info(
+                    f"[MeanRev] BUY blocked — Z={z:.2f} still FALLING (slope={z_slope:+.3f}). "
+                    f"Waiting for Z-trough before entry."
+                )
+                return None
+            # RSI must be troughing (turning up), confirming momentum reversal
+            if not rsi_trough:
+                logger.info(
+                    f"[MeanRev] BUY blocked — RSI not yet troughed (RSI={rsi:.1f}). "
+                    f"Waiting for momentum confirmation."
+                )
+                return None
+        logger.info(f"[MeanRev] BUY — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f} slope={z_slope:+.3f}")
         return "MEAN_REVERSAL_LONG"
 
     return None
@@ -1039,7 +1086,10 @@ def _risk_engine(
         vol_ratio = 1.0
 
     base_mult = sl_mult
-    adaptive_mult = base_mult * float(np.clip(vol_ratio, 0.8, 2.0))
+    # Early-SL FIX: Floor vol_ratio at 1.0 so the SL is NEVER compressed below
+    # base_mult × ATR. The old floor was 0.8, which let RANGE (base=1.2×) shrink
+    # to 0.96×ATR — noise alone can clip a sub-1×ATR stop.
+    adaptive_mult = base_mult * float(np.clip(vol_ratio, 1.0, 2.0))
     
     logger.info(
         f"[RiskEngine] base_mult={base_mult:.1f} vol_ratio={vol_ratio:.2f} "
@@ -1204,9 +1254,16 @@ def _compute_signal(
         logger.info("[MetaModel] → TREND strategy")
     elif regime == "RANGE":
         strategy_type = "MEAN_REVERSION"
-        # P0: pass regime-adaptive z_threshold (RANGE=1.5, NEUTRAL=1.8, TREND=2.5)
-        raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
-        logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']})")
+        # Early-SL FIX: Enable momentum confirmation for RANGE entries.
+        # require_momentum_confirm=True requires Z-slope already reversing toward mean
+        # AND RSI confirmed trough/peak before firing — prevents entering while price
+        # is still trending away from mean (the #1 cause of premature SL hits in RANGE).
+        raw_direction = _strategy_mean_reversion(
+            metrics,
+            z_threshold=regime_p["z_threshold"],
+            require_momentum_confirm=True,
+        )
+        logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']}, momentum_confirm=True)")
     elif regime == "NEUTRAL":
         # NEUTRAL — HMM uncertain, use conservative NEUTRAL parameters
         strategy_type = "MEAN_REVERSION"
