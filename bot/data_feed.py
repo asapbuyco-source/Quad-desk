@@ -24,6 +24,7 @@ class MarketState:
         # Positive = longs pay shorts (crowded long → bearish pressure).
         # Negative = shorts pay longs (crowded short → bullish squeeze).
         self.funding_rate: float = 0.0
+        self._reconnect_event: asyncio.Event = asyncio.Event()
 
     # ------------------------------------------------------------------
     # Candle management
@@ -261,14 +262,25 @@ class BinanceDataFeed:
                 ) as ws:
                     retry_delay = 1  # Reset back-off on successful connect
                     logger.info("[DataFeed] Connected ✓")
+                    import asyncio as _asyncio
                     while self.is_running:
-                        msg = await ws.recv()
-                        await self._handle_message(msg)
-                        # Funding rate: fetch every 60 s without blocking the WS loop
-                        now = time.time()
-                        if now - self._last_funding_fetch >= 60.0:
-                            self._last_funding_fetch = now
-                            asyncio.create_task(self._fetch_funding_rate())
+                        try:
+                            msg = await _asyncio.wait_for(ws.recv(), timeout=120)
+                            await self._handle_message(msg)
+                        except _asyncio.TimeoutError:
+                            logger.warning("[DataFeed] recv() timeout (120s) — connection may be frozen. Reconnecting...")
+                            break
+                        except websockets.exceptions.ConnectionClosedOK:
+                            break
+                    # Funding rate: fetch every 60 s without blocking the WS loop
+                    now = time.time()
+                    if now - self._last_funding_fetch >= 60.0:
+                        self._last_funding_fetch = now
+                        asyncio.create_task(self._fetch_funding_rate())
+                    # Wait for reconnect signal if triggered by health monitor
+                    if self.is_running:
+                        await _asyncio.wait_for(self._reconnect_event.wait(), timeout=retry_delay + 5)
+                        self._reconnect_event.clear()
 
             except websockets.exceptions.ConnectionClosedOK:
                 logger.info("[DataFeed] Connection closed cleanly.")
@@ -319,10 +331,8 @@ class BinanceDataFeed:
                         await notifier.send_message(alert_msg)
                     except Exception:
                         pass
-                # Force reconnect: stop the current WS loop; run() will retry
+                self._reconnect_event.set()
                 self.is_running = False
-                await asyncio.sleep(2)
-                self.is_running = True
                 logger.info("[DataFeed] Feed health monitor triggered reconnect.")
 
     def stop(self):

@@ -155,6 +155,7 @@ LAST_CASCADE_TIME = 0.0
 LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can compute delta
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
 LAST_ANY_TRADE_CLOSE_TIME = 0.0  # Track any trade exit for post-trade cooldown
+LAST_TRADE_WAS_SL: bool = False  # Track if last exit was SL for split cooldown logic
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -262,16 +263,14 @@ class _HMMRegimeClassifier:
     #   f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
     #   f3 = atr_pct_rank  (0 – 1)   percentile rank in 30-day window (P2)
     _MU = np.array([
-        [0.003, 0.8, 0.05, 0.20],   # RANGE    — low ATR, low |Z|, quiet, low percentile
-        [0.007, 1.5, 0.30, 0.55],   # TREND    — moderate ATR, directional, mid percentile
-        [0.014, 2.5, 0.65, 0.85],   # VOLATILE — high ATR, extreme Z, chaotic, high percentile
+        [0.003, 0.8, 0.05, 0.20],  # RANGE
+        [0.007, 1.5, 0.30, 0.55],  # TREND — retained at 0.007 per CPO
+        [0.014, 2.5, 0.65, 0.85],  # VOLATILE
     ], dtype=float)
-
-    # --- Emission stds (σ) per state × feature ------------------------
     _SIGMA = np.array([
-        [0.0015, 0.6, 0.15, 0.15],
-        [0.003,  0.8, 0.25, 0.20],
-        [0.005,  1.0, 0.30, 0.15],
+        [0.0010, 0.40, 0.10, 0.10],  # RANGE — COMPRESSED (was 0.0015,0.6,0.15,0.15)
+        [0.0030, 0.80, 0.25, 0.20],  # TREND
+        [0.0050, 1.00, 0.30, 0.15],  # VOLATILE
     ], dtype=float)
 
     # --- Transition matrix (rows = from-state, cols = to-state) -------
@@ -675,70 +674,21 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _strategy_mean_reversion(
-    metrics: Dict[str, Any],
-    z_threshold: float = 2.2,
-    require_momentum_confirm: bool = False,
-) -> Optional[str]:
-    """
-    Mean-reversion signal using regime-adaptive Z-score threshold.
-    z_threshold is supplied by REGIME_PARAMS[regime]["z_threshold"] (P0).
-
-    require_momentum_confirm (Early-SL FIX):
-      When True (RANGE regime), also requires:
-        - Z-slope reversing toward mean (not still extending)
-        - RSI showing a confirmed trough or peak (momentum turning)
-      This prevents entries at Z-extremes that are still trending away,
-      which produce premature SL hits before price reverses.
-    """
-    z        = metrics["zScore"]
-    rsi      = metrics["rsi"]
-    z_prev   = metrics.get("zScore_prev", z)
-    rsi_prev = metrics.get("rsi_prev", rsi)
-    rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)
-
-    z_slope   = z - z_prev
-    rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)  # RSI turned up from a low
-    rsi_peak   = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)  # RSI turned down from a high
-
-    if z >= z_threshold and rsi > 45:
-        if require_momentum_confirm:
-            # Z must already be falling back toward mean (slope < 0)
-            if z_slope >= 0:
-                logger.info(
-                    f"[MeanRev] SELL blocked — Z={z:.2f} still RISING (slope={z_slope:+.3f}). "
-                    f"Waiting for Z-peak before entry."
-                )
-                return None
-            # RSI must be peaking (turning down), confirming momentum reversal
-            if not rsi_peak:
-                logger.info(
-                    f"[MeanRev] SELL blocked — RSI not yet peaked (RSI={rsi:.1f}). "
-                    f"Waiting for momentum confirmation."
-                )
-                return None
-        logger.info(f"[MeanRev] SELL — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f} slope={z_slope:+.3f}")
+def _strategy_mean_reversion(metrics: Dict[str, Any], z_threshold: float = 1.5) -> Optional[str]:
+    """FIX NEW-C3: Dynamic RSI gates — adaptive to ATR rank."""
+    z = metrics.get("zScore", 0.0)
+    rsi = metrics.get("rsi", 50.0)
+    atr_rank = metrics.get("atr_pct_rank", 0.5)
+    if atr_rank < 0.5:
+        rsi_long_gate = 55.0
+        rsi_short_gate = 45.0
+    else:
+        rsi_long_gate = 42.0
+        rsi_short_gate = 58.0
+    if z >= z_threshold and rsi > rsi_short_gate:
         return "MEAN_REVERSAL_SHORT"
-
-    if z <= -z_threshold and rsi < 55:
-        if require_momentum_confirm:
-            # Z must already be rising back toward mean (slope > 0)
-            if z_slope <= 0:
-                logger.info(
-                    f"[MeanRev] BUY blocked — Z={z:.2f} still FALLING (slope={z_slope:+.3f}). "
-                    f"Waiting for Z-trough before entry."
-                )
-                return None
-            # RSI must be troughing (turning up), confirming momentum reversal
-            if not rsi_trough:
-                logger.info(
-                    f"[MeanRev] BUY blocked — RSI not yet troughed (RSI={rsi:.1f}). "
-                    f"Waiting for momentum confirmation."
-                )
-                return None
-        logger.info(f"[MeanRev] BUY — Z={z:.2f} (thresh={z_threshold}) RSI={rsi:.1f} slope={z_slope:+.3f}")
+    if z <= -z_threshold and rsi < rsi_long_gate:
         return "MEAN_REVERSAL_LONG"
-
     return None
 
 
@@ -913,30 +863,17 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     # High HMM confidence → trust per-regime historical win rate more.
     # Low HMM confidence  → trust raw Bayesian signal posterior more.
     regime_priors = metrics.get("_regime_priors", {})
+    regime_samples = metrics.get("_regime_samples", {})
     if regime_priors and regime in regime_priors:
-        # FINDING-2 FIX: Don't blend until we have >= 5 trades of history.
-        # Beta(1,1) starts at 0.50. With hmm_conf=0.70 and p_final_raw=0.65:
-        #   p_final = 0.70*0.50 + 0.30*0.65 = 0.545 < 0.58 threshold → BLOCKED.
-        # The cold-start prior kills every valid signal after restart.
-        _total_regime_trades = sum(
-            metrics.get("_regime_alpha", {}).get(r, 1.0) +
-            metrics.get("_regime_beta", {}).get(r, 1.0) - 2
-            for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY")
-        )
-        if _total_regime_trades >= 5:
-            hmm_conf      = metrics.get("regime_confidence", 0.5)
-            regime_prior  = regime_priors[regime]
-            p_final_raw   = p_final
-            p_final       = float(np.clip(
-                hmm_conf * regime_prior + (1.0 - hmm_conf) * p_final_raw,
+        n_regime_trades = int(regime_samples.get(regime, 0))
+        MIN_REGIME_HISTORY = 10
+        if n_regime_trades >= MIN_REGIME_HISTORY:
+            hmm_conf = metrics.get("regime_confidence", 0.5)
+            regime_prior = regime_priors[regime]
+            p_final = float(np.clip(
+                hmm_conf * regime_prior + (1.0 - hmm_conf) * p_final,
                 0.0, 1.0
             ))
-            logger.debug(
-                f"[BayesBlend] base={p_final_raw:.2%} regime_prior={regime_prior:.2%} "
-                f"hmm_conf={hmm_conf:.0%} → adjusted={p_final:.2%}"
-            )
-        else:
-            logger.debug(f"[BayesBlend] Skipped: only {_total_regime_trades:.0f} trades (need 5+)")
 
     return float(p_final)
 
@@ -1074,26 +1011,52 @@ def _risk_engine(
     tp_from_wall = (sell_walls[0] * 0.9995 if sell_walls else None) if is_long \
                else (buy_walls[0] * 1.0005 if buy_walls else None)
 
-    # BUG-4 FIX: candle_history candles have no 'atr' key — c.get('atr', atr) always
-    # returned the fallback, making vol_ratio always 1.0 (adaptive mult = base mult).
-    # Fix: use atr_pct_rank from metrics (already computed by QuantEngine, always valid).
-    # atr_pct_rank in [0,1]: 0.5 = median volatility, 0.9 = 90th percentile spike.
-    # Map rank to multiplier: rank 0.5 → 1.0×, rank 0.9 → 1.4×, rank 0.2 → 0.8×.
-    if candle_history and len(candle_history) > 0:
-        atr_rank = metrics.get("atr_pct_rank", 0.5) if metrics else 0.5
-        vol_ratio = 0.6 + atr_rank * 0.8   # maps [0,1] → [0.6, 1.4]
+    def _calc_atr_from_candles(candles: list, period: int = 14) -> float:
+        if len(candles) < period + 1:
+            return 0.0
+        trs = []
+        for i in range(1, len(candles)):
+            h = candles[i].get("high", 0)
+            l = candles[i].get("low", 0)
+            pc = candles[i - 1].get("close", 0)
+            tr = max(h - l, abs(h - pc), abs(l - pc))
+            trs.append(tr)
+        if len(trs) < period:
+            return float(np.mean(trs)) if trs else 0.0
+        atr = float(np.mean(trs[:period]))
+        for j in range(period, len(trs)):
+            atr = (atr * (period - 1) + trs[j]) / period
+        return atr
+
+    if candle_history and len(candle_history) >= 20:
+        recent_candles = list(candle_history)[-5:]
+        baseline_candles = list(candle_history)[-20:]
+        recent_atr = _calc_atr_from_candles(recent_candles)
+        baseline_atr = _calc_atr_from_candles(baseline_candles)
+        vol_ratio = recent_atr / max(baseline_atr, 1e-8)
     else:
         vol_ratio = 1.0
-
-    base_mult = sl_mult
-    # Early-SL FIX: Floor vol_ratio at 1.0 so the SL is NEVER compressed below
-    # base_mult × ATR. The old floor was 0.8, which let RANGE (base=1.2×) shrink
-    # to 0.96×ATR — noise alone can clip a sub-1×ATR stop.
-    adaptive_mult = base_mult * float(np.clip(vol_ratio, 1.0, 2.0))
+    adaptive_mult = sl_mult * float(np.clip(vol_ratio, 0.85, 1.50))
+    if strategy_type == "TREND":
+        adaptive_mult = min(adaptive_mult, 2.50)
+    SL_MULT = adaptive_mult
+    
+    # Phase 5: Funding Rate Risk Scalar
+    # If funding strongly favors our direction, scale up risk by 1.2x
+    funding_rate = metrics.get("funding_rate", 0.0) if metrics else 0.0
+    funding_mult = 1.0
+    if funding_rate < -0.0005 and is_long:
+        funding_mult = 1.2  # shorts paying longs — bullish pressure
+    elif funding_rate > 0.0005 and not is_long:
+        funding_mult = 1.2  # longs paying shorts — bearish pressure
+    
+    if funding_mult > 1.0:
+        SL_MULT *= funding_mult
+        logger.info(f"[RiskEngine] Funding rate multiplier: {funding_mult}x (funding={funding_rate:.4f})")
     
     logger.info(
-        f"[RiskEngine] base_mult={base_mult:.1f} vol_ratio={vol_ratio:.2f} "
-        f"adaptive_mult={adaptive_mult:.2f}"
+        f"[RiskEngine] sl_mult={sl_mult:.2f} vol_ratio={vol_ratio:.3f} "
+        f"adaptive_mult={SL_MULT:.3f} strategy={strategy_type}"
     )
 
     TP_MULT = tp_mult_ratio  # P0: regime-adaptive (RR target from REGIME_PARAMS)
@@ -1166,7 +1129,7 @@ def _compute_signal(
     global LAST_ANY_TRADE_CLOSE_TIME
     time_since_last_trade = time.time() - LAST_ANY_TRADE_CLOSE_TIME
     # FREQ-1: wire split cooldown — 45s after TP, 90s after SL
-    _last_was_sl = globals().get("LAST_TRADE_WAS_SL", True)
+    _last_was_sl = LAST_TRADE_WAS_SL
     _cooldown = POST_TRADE_COOLDOWN_S if _last_was_sl else 45
     if time_since_last_trade < _cooldown:
         return {**WAIT, "analysis": f"Post-trade cooldown ({_cooldown - int(time_since_last_trade)}s remain, {'SL' if _last_was_sl else 'TP'} exit)"}
@@ -1254,54 +1217,34 @@ def _compute_signal(
         logger.info("[MetaModel] → TREND strategy")
     elif regime == "RANGE":
         strategy_type = "MEAN_REVERSION"
-        # Early-SL FIX: Enable momentum confirmation for RANGE entries.
-        # require_momentum_confirm=True requires Z-slope already reversing toward mean
-        # AND RSI confirmed trough/peak before firing — prevents entering while price
-        # is still trending away from mean (the #1 cause of premature SL hits in RANGE).
         raw_direction = _strategy_mean_reversion(
             metrics,
             z_threshold=regime_p["z_threshold"],
-            require_momentum_confirm=True,
         )
-        logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']}, momentum_confirm=True)")
+        logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']})")
     elif regime == "NEUTRAL":
-        # NEUTRAL — HMM uncertain, use conservative NEUTRAL parameters
         strategy_type = "MEAN_REVERSION"
-        # Z-slope guard: only enter if Z-score is reversing toward mean
-        # Prevents premature entries during continuing pullbacks
         z_current = metrics.get("zScore", 0.0)
         z_prev = metrics.get("zScore_prev", z_current)
         z_slope = z_current - z_prev
-        
-        # RSI trough/peak guard: momentum must be confirming reversal
         rsi = metrics.get("rsi", 50.0)
         rsi_prev = metrics.get("rsi_prev", rsi)
         rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)
         rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
         rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
-        
         z_thr = regime_p["z_threshold"]
-        
-        # Long: Z at extreme low AND reversing AND RSI turning up
-        if z_current <= -z_thr and z_slope > 0 and rsi_trough:
-            raw_direction = "MEAN_REVERSAL_LONG"
-        # Short: Z at extreme high AND reversing AND RSI turning down
-        elif z_current >= z_thr and z_slope < 0 and rsi_peak:
-            raw_direction = "MEAN_REVERSAL_SHORT"
-        else:
-            raw_direction = None
-            
+        candidate = _strategy_mean_reversion(metrics, z_threshold=z_thr)
+        if candidate == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
+            candidate = None
+        if candidate == "MEAN_REVERSAL_SHORT" and (z_slope >= 0 or not rsi_peak):
+            candidate = None
+        raw_direction = candidate
         if raw_direction:
-            logger.info(
-                f"[MetaModel] NEUTRAL fallback -> {strategy_type} "
-                f"({raw_direction}) z={z_current:.2f} slope={z_slope:+.3f}"
-            )
+            logger.info(f"[MetaModel] NEUTRAL -> {strategy_type} ({raw_direction}) "
+                         f"z={z_current:.2f} slope={z_slope:+.3f}")
         else:
-            logger.info(
-                f"[MetaModel] NEUTRAL: no valid setup "
-                f"(z={z_current:.2f}, slope={z_slope:+.3f}, "
-                f"rsi_turn={rsi_trough or rsi_peak})"
-            )
+            logger.debug(f"[MetaModel] NEUTRAL: no setup (z={z_current:.2f}, "
+                          f"slope={z_slope:+.3f}")
     else:
         strategy_type = "NEUTRAL"
         raw_direction = None
@@ -1424,6 +1367,7 @@ def _compute_signal(
         "analysis":     analysis,
         "ulis_verdict": ulis_verdict_str,
         "regime":       regime,   # P1: stored in position for per-regime Beta update on exit
+        "be_lock_trigger": regime_p.get("be_lock_trigger", 1.0),
         "atr_at_entry": atr,      # stored in position for any future trailing logic
     }
 
@@ -1451,7 +1395,7 @@ async def execution_loop(
         except Exception as e:
             logger.warning(f"[Main] Could not set leverage (will continue with account default): {e}")
 
-    global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_CANDLE_TS
+    global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_CANDLE_TS, LAST_TRADE_WAS_SL
 
     if not executor.dry_run:
         try:
@@ -1558,7 +1502,7 @@ async def execution_loop(
                     new_daily = stats.get("daily_pnl", 0.0) + _hb_pnl
                     stats["daily_pnl"] = new_daily
                     LAST_ANY_TRADE_CLOSE_TIME = time.time()
-                    globals()["LAST_TRADE_WAS_SL"] = (_hb_pnl < 0)
+                    LAST_TRADE_WAS_SL = (_hb_pnl < 0)
                     if _hb_pnl < 0:
                         LAST_CASCADE_TIME = time.time()
                         stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
@@ -1655,7 +1599,6 @@ async def execution_loop(
                     # Update the Bayesian win-rate prior for self-calibration
                     # P1: pass current regime so per-regime beta prior is updated
                     quant.update_win_rate(
-                        side=pos_snapshot.get("side", "buy"),
                         won=(pnl >= 0),
                         regime=pos_snapshot.get("regime", "NEUTRAL"),
                     )
@@ -1685,7 +1628,7 @@ async def execution_loop(
                     # A TP means the thesis was right. Re-entering faster is correct.
                     # The 90s blanket cooldown on wins was unnecessarily conservative.
                     LAST_ANY_TRADE_CLOSE_TIME = time.time()
-                    globals()["LAST_TRADE_WAS_SL"] = (pnl < 0)
+                    LAST_TRADE_WAS_SL = (pnl < 0)
 
                     max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
                     if new_daily_pnl < -max_loss_usd and not stats.get("daily_loss_halt"):
@@ -1737,6 +1680,7 @@ async def execution_loop(
                 # P1: Inject per-regime win-rate priors so _bayesian_fusion
                 # can blend them with the base posterior after regime is known.
                 metrics["_regime_priors"] = quant.get_all_regime_priors()
+                metrics["_regime_samples"] = quant.get_regime_trade_counts()
                 # FINDING-2: Also inject alpha/beta counts so cold-start guard
                 # can count total trades before enabling regime blending.
                 metrics["_regime_alpha"] = dict(quant._regime_alpha)

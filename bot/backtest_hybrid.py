@@ -31,7 +31,7 @@ CONFIG = {
     "atr_period": 14,
     "rsi_period": 14,
     "vwap_period": 20,
-    "skew_period": 50,
+    "skew_period": 20,  # was 50 — matches live bot Fix 2
     
     # Thresholds
     "trend_atr_threshold": 0.006,  # 0.6% — aligned with live bot (was 0.005)
@@ -213,6 +213,7 @@ def backtest_hybrid(df, config, symbol):
     
     # OFI proxy based on volume delta momentum
     ofi_proxy = pd.Series(np.where(close >= open_, vol, -vol)).rolling(5).sum().values
+    ofi_normalised = np.tanh(ofi_proxy / 2.0)  # array, index with [i] in loop
 
     # Volume-surge proxy for the live bot’s SCREAMING tape requirement (Stage 2 TREND gate)
     # Live:  10-second taker notional > 3× per-10s rolling baseline → SCREAMING
@@ -228,6 +229,12 @@ def backtest_hybrid(df, config, symbol):
     daily_losses = 0
     last_day = None
     daily_halt = False
+    
+    backtest_alpha = 7.0
+    backtest_beta = 5.0
+    backtest_regime_alpha = {"RANGE": 7.0, "NEUTRAL": 7.0, "TREND": 7.0, "LIQUIDITY": 7.0}
+    backtest_regime_beta = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
+    backtest_regime_count = {"RANGE": 0, "NEUTRAL": 0, "TREND": 0, "LIQUIDITY": 0}
     
     for i in range(50, len(close)):
         cur_day = ts[i].date()
@@ -302,6 +309,15 @@ def backtest_hybrid(df, config, symbol):
                     "balance": balance,
                     "regime": t['regime']
                 })
+                won = (pnl > 0)
+                trade_regime = t['regime']
+                if won:
+                    backtest_alpha += 1.0
+                    backtest_regime_alpha[trade_regime] = backtest_regime_alpha.get(trade_regime, 1.0) + 1.0
+                else:
+                    backtest_beta += 1.0
+                    backtest_regime_beta[trade_regime] = backtest_regime_beta.get(trade_regime, 1.0) + 1.0
+                backtest_regime_count[trade_regime] = backtest_regime_count.get(trade_regime, 0) + 1
             else:
                 still_open.append(t)
         open_trades = still_open
@@ -345,16 +361,16 @@ def backtest_hybrid(df, config, symbol):
         curr_rsi = rsi[i]
         curr_z = zscore[i]
         curr_skew = skew[i]
-        curr_ofi = ofi_proxy[i] * 10.0 # Proxy dynamic scaling
+        curr_ofi = ofi_normalised[i]  # tanh scale (-1, +1), replaces raw proxy * 10.0
 
         L_rsi  = 1.8 if curr_rsi > 60 else 0.55 if curr_rsi < 40 else 1.0
-        if curr_z < -1.5 and curr_ofi > 5:
+        if curr_z < -1.5 and curr_ofi > 0.15:
             L_flow = 2.0
-        elif curr_z > 1.5 and curr_ofi < -5:
+        elif curr_z > 1.5 and curr_ofi < -0.15:
             L_flow = 0.5
         else:
             L_z = 1.3 if curr_z < -1.5 else 0.76 if curr_z > 1.5 else 1.0
-            L_o = 1.2 if curr_ofi > 10 else 0.83 if curr_ofi < -10 else 1.0
+            L_o = 1.2 if curr_ofi > 0.30 else 0.83 if curr_ofi < -0.30 else 1.0
             L_flow = L_z * L_o
 
         L_skew = 1.2 if curr_skew > 0.3 else 0.83 if curr_skew < -0.3 else 1.0
@@ -367,9 +383,9 @@ def backtest_hybrid(df, config, symbol):
         
         if sweep:
             strategy = "SWEEP"
-            if sweep == "ABOVE_HIGHS" and (curr_ofi < -5 or cvd[i] < 0):
+            if sweep == "ABOVE_HIGHS" and (curr_ofi < -0.15 or cvd[i] < 0):
                 raw_direction = "SELL"
-            elif sweep == "BELOW_LOWS" and (curr_ofi > 5 or cvd[i] > 0):
+            elif sweep == "BELOW_LOWS" and (curr_ofi > 0.15 or cvd[i] > 0):
                 raw_direction = "BUY"
                 
         elif regime == "TREND":
@@ -381,10 +397,10 @@ def backtest_hybrid(df, config, symbol):
             elif bayes < 0.35:  score -= 2.0
             elif bayes < 0.45:  score -= 1.0
 
-            if curr_ofi > 20:         score += 1.5
-            elif curr_ofi > 8:        score += 0.75
-            elif curr_ofi < -20:      score -= 1.5
-            elif curr_ofi < -8:       score -= 0.75
+            if curr_ofi > 0.30:         score += 1.5
+            elif curr_ofi > 0.15:        score += 0.75
+            elif curr_ofi < -0.30:      score -= 1.5
+            elif curr_ofi < -0.15:       score -= 0.75
 
             if cvd[i] > 0: score += 1.0
             elif cvd[i] < 0: score -= 1.0
@@ -397,17 +413,24 @@ def backtest_hybrid(df, config, symbol):
             
         elif regime == "RANGE":
             strategy = "MEAN_REVERSION"
-            if curr_z >= 2.2 and curr_rsi > 45: raw_direction = "SELL"
-            elif curr_z <= -2.2 and curr_rsi < 55: raw_direction = "BUY"
+            atr_rank = 0.5  # proxy for ATR rank (midpoint)
+            if atr_rank < 0.5:
+                rsi_long_gate = 55.0
+                rsi_short_gate = 45.0
+            else:
+                rsi_long_gate = 42.0
+                rsi_short_gate = 58.0
+            if curr_z >= 1.3 and curr_rsi > rsi_short_gate: raw_direction = "SELL"
+            elif curr_z <= -1.3 and curr_rsi < rsi_long_gate: raw_direction = "BUY"
             
         if not raw_direction: continue
         
         # 6. Bayesian Fusion + ULIS proxy
         odds = 1.0
-        if curr_ofi > 20:    odds *= 2.0
-        elif curr_ofi > 8:   odds *= 1.4
-        elif curr_ofi < -20: odds *= 0.5
-        elif curr_ofi < -8:  odds *= 0.7
+        if curr_ofi > 0.30:    odds *= 2.0
+        elif curr_ofi > 0.15:   odds *= 1.4
+        elif curr_ofi < -0.30: odds *= 0.5
+        elif curr_ofi < -0.15:  odds *= 0.7
 
         if cvd[i] > 0: odds *= 1.25
         elif cvd[i] < 0: odds *= 0.8
@@ -439,16 +462,19 @@ def backtest_hybrid(df, config, symbol):
         
         if strategy == "SWEEP" and sweep:
             sl_dist = abs(px - nav_h if sweep == "ABOVE_HIGHS" else nav_l) + cur_atr * 0.5
-            sl_dist = max(sl_dist, cur_atr * 0.5)
+            sl_dist = max(sl_dist, cur_atr * 1.43)
         elif strategy == "TREND":
-            sl_dist = cur_atr * 1.5
+            sl_dist = cur_atr * 2.09  # matches REGIME_PARAMS TREND
         elif strategy == "MEAN_REVERSION":
-            sl_dist = cur_atr * 1.0
+            sl_dist = cur_atr * 1.43  # matches REGIME_PARAMS RANGE/NEUTRAL
         else:
             sl_dist = px * 0.008
-            
+
+        rr_map = {"SWEEP": 2.0, "TREND": 2.5, "MEAN_REVERSION": 1.8}
+        rr_target = rr_map.get(strategy, 2.0)
+
         sl = px - sl_dist if is_long else px + sl_dist
-        tp = px + (sl_dist * 2.0) if is_long else px - (sl_dist * 2.0)
+        tp = px + (sl_dist * rr_target) if is_long else px - (sl_dist * rr_target)
         
         open_trades.append({
             "entry": px,

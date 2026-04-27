@@ -183,6 +183,28 @@ def _book_to_levels(book_dict: Dict[float, float]) -> List[Dict[str, float]]:
 # Main ULIS Verdict Function
 # ──────────────────────────────────────────────────────────────────────────────
 
+MIN_SWEEP_CONFIRMS = 2
+
+def _sweep_micro_confirms(metrics: dict, sweep_direction: str) -> int:
+    """FIX NEW-H1: 3rd signal now orthogonal funding rate."""
+    confirms = 0
+    rsi = metrics.get("rsi", 50.0)
+    if sweep_direction == "bull" and rsi < 38:
+        confirms += 1
+    elif sweep_direction == "bear" and rsi > 62:
+        confirms += 1
+    ofi = metrics.get("ofi", 0.0)
+    if sweep_direction == "bull" and ofi > 0.15:
+        confirms += 1
+    elif sweep_direction == "bear" and ofi < -0.15:
+        confirms += 1
+    funding = metrics.get("funding_rate", 0.0)
+    if sweep_direction == "bull" and funding < -0.0005:
+        confirms += 1
+    elif sweep_direction == "bear" and funding > 0.0008:
+        confirms += 1
+    return confirms
+
 def compute_ulis_verdict(
     metrics: Dict[str, Any],
     candles: list,

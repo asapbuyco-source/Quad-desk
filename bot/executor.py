@@ -576,29 +576,35 @@ class TradingExecutor:
             logger.warning("[Executor] Calculated position size is 0. Aborting.")
             return
 
-        # P1-2 FIX: Minimum notional floor — skip any trade where position value
-        # is below $50. At this size, round-trip fees (entry+exit taker) consume
-        # most potential profit, making profitable trading statistically impossible.
-        MIN_NOTIONAL_USD = 50.0
-        notional = raw_size * current_price
-        if notional < MIN_NOTIONAL_USD:
-            warn_msg = (
-                f"Trade skipped — notional ${notional:.2f} < ${MIN_NOTIONAL_USD} minimum. "
-                f"Increase BOT_ACCOUNT_SIZE or BOT_MAX_RISK_PCT to trade this setup."
+        # FIX 16: Minimum notional validation with operator alert
+        MIN_NOTIONAL_USDT = 105.0  # Binance BTCUSDT min $100 + 5% buffer
+        MIN_QTY_BTC = 0.001        # Binance BTCUSDT minimum lot size
+
+        if raw_size * current_price < MIN_NOTIONAL_USDT:
+            needed_acct = (MIN_NOTIONAL_USDT * abs(current_price - stop_loss)) / (max_risk_pct / 100.0)
+            logger.error(
+                f"[Executor] Account ${equity:.0f} too small. "
+                f"Risk-correct notional=${raw_size*current_price:.2f} < Binance min ${MIN_NOTIONAL_USDT}. "
+                f"Needs ~${needed_acct:.0f} account. ABORTING order. "
+                "Set BOT_ACCOUNT_SIZE=1500 in Railway to resolve."
             )
-            logger.warning(f"[Executor] {warn_msg}")
             if self.notifier:
-                await self.notifier.send_error_alert(
-                    f"⚠️ Setup rejected: notional ${notional:.2f} too small. "
-                    f"Need ${MIN_NOTIONAL_USD}+ to cover fees."
+                await self.notifier.send_message(
+                    f"⚠️ Account too small for execution. "
+                    f"Current: ${equity:.0f}. Required: ~${needed_acct:.0f}."
                 )
-            return
+            return  # Abort — do not scale up
 
         # Translate symbol to exchange format (unified CCXT symbol)
         if self.exchange_id == "coinbase":
             ex_symbol = self._to_exchange_symbol(symbol)
         else:
             ex_symbol = self._get_ccxt_symbol(symbol)
+
+        fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
+        if fmt_size < MIN_QTY_BTC:
+            logger.warning(f"[Executor] fmt_size {fmt_size} < min qty {MIN_QTY_BTC}. Aborting.")
+            return
 
         # For Coinbase, ensure the symbol is in the markets cache
         if self.exchange_id == "coinbase":
@@ -764,13 +770,10 @@ class TradingExecutor:
                 for attempt in range(3):
                     try:
                         tp_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="TAKE_PROFIT_MARKET", side=sl_side,
+                            symbol=ex_symbol, type="limit", side=sl_side,
                             amount=fmt_size,
-                            params={
-                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                                "closePosition": True,
-                                "workingType":  "MARK_PRICE",
-                            },
+                            price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                            params={"timeInForce": "GTC"},
                         )
                         tp_placed = True
                         break
@@ -792,7 +795,7 @@ class TradingExecutor:
                     tp_order_id = None
                 else:
                     tp_order_id = tp_order.get("id")
-                    logger.info(f"[Executor] Futures TAKE_PROFIT_MARKET at {take_profit} (id={tp_order_id}) ✓")
+                    logger.info(f"[Executor] Futures TAKE_PROFIT_LIMIT at {take_profit} (id={tp_order_id}) ✓")
 
             else:
                 # ── SPOT: Exchange-specific limit SL/TP orders ────────────────
@@ -1198,146 +1201,22 @@ class TradingExecutor:
                     logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
 
     async def update_breakeven_stop(self, current_price: float):
-        """
-        FINDING-5 FIX: Regime-aware break-even trigger.
-        Old: hardcoded 50% of TP distance (too early in TREND, too late in RANGE).
-        New: uses entry ATR × be_lock_trigger from REGIME_PARAMS:
-             RANGE: 0.8×ATR, NEUTRAL: 1.0×ATR, TREND: 1.2×ATR
-        For Live: cancels old SL and creates new SL order.
-        """
         pos = self.active_position
         if not pos or pos.get("be_triggered", False):
             return
-
-        side  = pos["side"]
+        side = pos["side"]
         entry = pos["entry_price"]
-        atr_at_entry  = pos.get("atr_at_entry", entry * 0.005)  # fallback ~0.5%
-        be_lock_mult  = pos.get("be_lock_trigger", 1.0)
-
-        # Break-even target: entry ± (be_lock_mult × ATR_at_entry)
-        if side == "buy":
-            be_target = entry + (be_lock_mult * atr_at_entry)
-            triggered = current_price >= be_target
-        else:
-            be_target = entry - (be_lock_mult * atr_at_entry)
-            triggered = current_price <= be_target
-
+        atr_entry = pos.get("atr_at_entry", entry * 0.005)
+        be_mult = pos.get("be_lock_trigger", 1.0)
+        be_trigger = entry + (be_mult * atr_entry) if side == "buy" else entry - (be_mult * atr_entry)
+        triggered = (current_price >= be_trigger if side == "buy" else current_price <= be_trigger)
         if not triggered:
             return
-
-        # Trigger Break-Even log
-        logger.info("[Executor] RUNNER SECURED: Target halfway reached. Attempting Break-Even SL.")
-
-        if self.dry_run:
-            pos["be_triggered"] = True
-            # ── PATCH #4: Apply fee buffer to break-even lock ──
-            fee_buffer_pct = 0.0015  # 0.15% buffer covers round-trip fees (~0.08%) + margin
-            new_sl = entry * (1.0 + fee_buffer_pct) if side == "buy" else entry * (1.0 - fee_buffer_pct)
-            pos["stop_loss"] = round(new_sl, 2)
-            return
-
-        # LIVE MODE: Cancel old SL and place new one at Entry
-        import asyncio
-        try:
-            ex_symbol = pos["symbol"]
-            old_sl_id = pos.get("sl_order_id")
-            fmt_size  = pos["size"]
-
-            # Fix Race Condition: Set state BEFORE yielding via await
-            pos["be_triggered"] = True
-            # ── PATCH #4: Apply fee buffer to break-even lock ──
-            fee_buffer_pct = 0.0015  # 0.15% buffer covers round-trip fees (~0.08%) + margin
-            be_stop_loss = entry * (1.0 + fee_buffer_pct) if side == "buy" else entry * (1.0 - fee_buffer_pct)
-            pos["stop_loss"] = round(be_stop_loss, 2)
-
-            cancel_success = True
-            if old_sl_id:
-                for attempt in range(3):
-                    try:
-                        await self.exchange.cancel_order(old_sl_id, ex_symbol)
-                        cancel_success = True
-                        pos["sl_order_id"] = None
-                        logger.info(f"[Executor] Cancelled old SL {old_sl_id} for Break-Even ✓")
-                        break
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        # -2011 / "Unknown order sent" → Binance already removed it
-                        # (e.g. closePosition=True orders are auto-cleaned, or it was
-                        #  already triggered). Treat as success — the SL is gone.
-                        already_gone = (
-                            "-2011" in err_str
-                            or "unknown order" in err_str
-                            or "not found" in err_str
-                            or "not_found" in err_str
-                        )
-                        if already_gone:
-                            cancel_success = True
-                            pos["sl_order_id"] = None
-                            logger.info(f"[Executor] Old SL {old_sl_id} already gone on Binance — proceeding with BE placement ✓")
-                            break
-                        if attempt == 2:
-                            # Genuinely failed — log but do NOT revert be_triggered.
-                            # The in-memory stop_loss was already updated; reverting
-                            # be_triggered would cause an infinite retry storm.
-                            logger.warning(f"[Executor] Could not cancel old SL for Break-Even (will proceed anyway): {e}")
-                            cancel_success = True  # attempt BE placement regardless
-                            break
-                        await asyncio.sleep(0.5)
-
-            if not cancel_success:
-                return
-
-            sl_side = "sell" if side == "buy" else "buy"
-            sl_limit = be_stop_loss * 0.999 if side == "buy" else be_stop_loss * 1.001
-
-            new_sl_order = None
-            for attempt in range(3):
-                try:
-                    if self.is_futures:
-                        new_sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
-                            amount=fmt_size,
-                            params={
-                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, be_stop_loss)),
-                                "closePosition": True,
-                                "workingType":  "MARK_PRICE",
-                            },
-                        )
-                    elif self.exchange_id == "binance":
-                        new_sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_LOSS_LIMIT", side=sl_side,
-                            amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                            params={"stopPrice": float(self.exchange.price_to_precision(ex_symbol, be_stop_loss))},
-                        )
-                    else:
-                        new_sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="limit", side=sl_side,
-                            amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, sl_limit)),
-                            params={"stop_price": float(self.exchange.price_to_precision(ex_symbol, be_stop_loss))},
-                        )
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        logger.error(f"[Executor] Failed to create Break-Even SL: {e}")
-                        break
-                    await asyncio.sleep(0.5)
-
-            if new_sl_order and new_sl_order.get("id"):
-                pos["sl_order_id"] = new_sl_order.get("id")
-                logger.info(f"[Executor] New Break-Even SL attached at {be_stop_loss:.2f} (fee-buffered, id={pos['sl_order_id']})")
-            else:
-                logger.critical("[Executor] SL placement failed during Break-Even update! FLATTENING NAKED POSITION!")
-                try:
-                    await self.exchange.create_market_order(ex_symbol, sl_side, fmt_size)
-                    self.active_position = None
-                    logger.info("[Executor] Flattened naked position successfully.")
-                except Exception as ex:
-                    logger.critical(f"[Executor] CRITICAL: Failed to flatten naked position! {ex}")
-
-        except Exception as e:
-            logger.error(f"[Executor] Break-Even API update failed: {e}", exc_info=True)
+        fee_buf = entry * 0.0002
+        new_sl = entry + fee_buf if side == "buy" else entry - fee_buf
+        pos["stop_loss"] = new_sl
+        pos["be_triggered"] = True
+        logger.info(f"[BE] Break-even locked {new_sl:.2f} (trigger={be_trigger:.2f} mult={be_mult}x)")
 
     def is_system_locked(self) -> bool:
         """Check if the system is currently under a panic-mode lock."""
@@ -1345,14 +1224,15 @@ class TradingExecutor:
 
     async def engage_panic_mode(self, reason: str, lock_seconds: int = 300):
         """
-        Engages the killswitch: closes any active position and locks the system.
+        Engages the killswitch: blocks new trades and locks the system.
+        Does NOT flatten existing positions — let hard SLs handle exits.
         """
         logger.warning(f"[PanicMode] ENGAGED! Reason: {reason}. Locking system for {lock_seconds}s.")
         self.lock_expiry = time.time() + lock_seconds
         self.last_panic_reason = reason
         
-        if self.active_position:
-            await self.emergency_flatten(f"PANIC: {reason}")
+        # Do NOT flatten positions — market orders into a hollowed order book
+        # cause massive slippage. Let the hard Stop-Loss handle exits.
         
         # Notify user via Telegram
         if self.notifier:

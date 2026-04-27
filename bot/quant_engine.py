@@ -33,11 +33,12 @@ class QuantEngine:
         # Tracks win rate independently for RANGE (mean-reversion),
         # TREND (momentum), and NEUTRAL/LIQUIDITY (mixed) regimes.
         # Mean = α/(α+β) = 0.5 at startup (uniform prior, no assumptions).
-        self._regime_alpha: dict = {"RANGE": 1.0, "NEUTRAL": 1.0, "TREND": 1.0, "LIQUIDITY": 1.0}
-        self._regime_beta:  dict = {"RANGE": 1.0, "NEUTRAL": 1.0, "TREND": 1.0, "LIQUIDITY": 1.0}
+        self._regime_alpha: dict = {"RANGE": 7.0, "NEUTRAL": 7.0, "TREND": 7.0, "LIQUIDITY": 7.0}
+        self._regime_beta:  dict = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
+        self._regime_trade_count: dict = {"RANGE": 0, "NEUTRAL": 0, "TREND": 0, "LIQUIDITY": 0}
         # Keep global fallback for backwards compatibility with _bayesian()
-        self._alpha: float = 1.0
-        self._beta:  float = 1.0
+        self._alpha: float = 7.0
+        self._beta:  float = 5.0
 
         # ── OFI State (Three-Stage Pipeline) ──────────────────────────────
         # Stage 1: True OFI = delta of bid/ask depth between snapshots
@@ -72,43 +73,24 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # Public: update win-rate tracker after each trade
     # ------------------------------------------------------------------
-    def update_win_rate(self, side: str, won: bool, regime: str = "NEUTRAL"):
-        """
-        Call after each trade exit.
-        side   = 'buy' | 'sell'
-        won    = True if trade closed at TP, False if closed at SL
-        regime = HMM regime active at time of entry (RANGE|NEUTRAL|TREND|LIQUIDITY)
-        """
-        # CRIT-5 FIX: Correct directional semantics for P(bull) prior.
-        # A BUY win OR a SELL loss means price went UP → bullish evidence (alpha).
-        # A SELL win OR a BUY loss means price went DOWN → bearish evidence (beta).
-        # Old code: incremented alpha for ANY win (bull or bear), corrupting the prior
-        # after a sequence of successful short trades.
-        market_went_up = (side == "buy" and won) or (side == "sell" and not won)
-
-        # Update global prior
-        if market_went_up:
+    def update_win_rate(self, won: bool, regime: str = "NEUTRAL"):
+        if won:
             self._alpha += 1.0
+            self._regime_alpha[regime] = self._regime_alpha.get(regime, 1.0) + 1.0
         else:
-            self._beta  += 1.0
-
-        # Update per-regime prior (P1)
-        regime_key = regime if regime in self._regime_alpha else "NEUTRAL"
-        if market_went_up:
-            self._regime_alpha[regime_key] += 1.0
-        else:
-            self._regime_beta[regime_key]  += 1.0
-
-        p_bull  = self._alpha / (self._alpha + self._beta)
-        p_r_win = self._regime_alpha[regime_key] / (
-            self._regime_alpha[regime_key] + self._regime_beta[regime_key]
-        )
+            self._beta += 1.0
+            self._regime_beta[regime] = self._regime_beta.get(regime, 1.0) + 1.0
+        self._regime_trade_count[regime] = self._regime_trade_count.get(regime, 0) + 1
+        p_bull = self._alpha / (self._alpha + self._beta)
         n = self._alpha + self._beta - 2
         logger.info(
             f"[QuantEngine] Win-rate updated: α={self._alpha:.0f} β={self._beta:.0f} "
-            f"→ P(bull)={p_bull:.2%} | regime={regime_key} P(win)={p_r_win:.2%}  (n={n:.0f} trades)"
+            f"→ P(bull)={p_bull:.2%} | regime={regime}  (n={n:.0f} trades)"
         )
         self._save_state()
+
+    def get_regime_trade_counts(self) -> dict:
+        return dict(self._regime_trade_count)
 
     # ------------------------------------------------------------------
     # P1: Per-regime win rate accessor
@@ -135,9 +117,9 @@ class QuantEngine:
             data = {
                 "alpha":          self._alpha,
                 "beta":           self._beta,
-                # Per-regime Betas (P1)
                 "regime_alpha":   self._regime_alpha,
                 "regime_beta":    self._regime_beta,
+                "regime_count":   self._regime_trade_count,
                 "ofi_ewma_mu":    self._ofi_ewma_mu,
                 "ofi_ewma_var":   self._ofi_ewma_var,
                 "ofi_smooth":     self._ofi_smooth,
@@ -148,29 +130,29 @@ class QuantEngine:
             logger.warning(f"[QuantEngine] State save failed: {e}")
 
     def _load_state(self):
-        """Restore persisted state if available."""
         try:
             if os.path.exists(self._persist_path):
                 with open(self._persist_path) as f:
                     data = json.load(f)
-                self._alpha        = float(data.get("alpha",        1.0))
-                self._beta         = float(data.get("beta",         1.0))
-                self._ofi_ewma_mu  = float(data.get("ofi_ewma_mu",  0.0))
-                self._ofi_ewma_var = float(data.get("ofi_ewma_var", 1.0))
-                self._ofi_smooth   = float(data.get("ofi_smooth",   0.0))
-                # Per-regime Betas (P1) — backwards compatible with old saves
+                self._alpha = float(data.get("alpha", 7.0))
+                self._beta = float(data.get("beta", 5.0))
                 saved_ra = data.get("regime_alpha", {})
-                saved_rb = data.get("regime_beta",  {})
+                saved_rb = data.get("regime_beta", {})
+                saved_rc = data.get("regime_count", {})
                 for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
-                    self._regime_alpha[r] = float(saved_ra.get(r, 1.0))
-                    self._regime_beta[r]  = float(saved_rb.get(r, 1.0))
-                n = max(0, self._alpha + self._beta - 2)
-                logger.info(
-                    f"[QuantEngine] Restored state: α={self._alpha:.1f} β={self._beta:.1f} "
-                    f"(n={n:.0f} trades), OFI EWMA μ={self._ofi_ewma_mu:.4f}"
-                )
+                    self._regime_alpha[r] = float(saved_ra.get(r, 7.0))
+                    self._regime_beta[r] = float(saved_rb.get(r, 5.0))
+                    self._regime_trade_count[r] = int(saved_rc.get(r, 0))
+                logger.info("[QuantEngine] State loaded from disk.")
+            else:
+                for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+                    self._regime_alpha[r] = 7.0
+                    self._regime_beta[r] = 5.0
+                    self._regime_trade_count[r] = 0
+                self._alpha = 7.0; self._beta = 5.0
+                logger.info("[QuantEngine] Fresh deploy: Beta(7,5) informed prior.")
         except Exception as e:
-            logger.warning(f"[QuantEngine] State load failed, using defaults: {e}")
+            logger.warning(f"[QuantEngine] State load error: {e}")
 
 
     # ------------------------------------------------------------------
@@ -258,20 +240,18 @@ class QuantEngine:
     # 1. Log-Return Skewness (50 periods)
     # ------------------------------------------------------------------
     def _skewness(self, closes: np.ndarray) -> float:
-        closes_51 = closes[-51:]
-        if len(closes_51) < 51:
+        """FIX DIV-M1: 20-bar window matches Z-score temporal alignment."""
+        closes_21 = closes[-21:]  # was -51 (50 bars) — now 20 bars
+        if len(closes_21) < 21:
             return 0.0
-        safe = np.where(closes_51[:-1] > 0, closes_51[:-1], np.nan)
-        returns_50 = np.log(closes_51[1:] / safe)
-        valid = returns_50[~np.isnan(returns_50)]
+        safe = np.where(closes_21[:-1] > 0, closes_21[:-1], np.nan)
+        returns_20 = np.log(closes_21[1:] / safe)
+        valid = returns_20[~np.isnan(returns_20)]
         if len(valid) < 3:
             return 0.0
-        mean = np.mean(valid)
-        var  = np.var(valid)
-        if var == 0:
-            return 0.0
-        skew = np.mean(((valid - mean) / np.sqrt(var)) ** 3)
-        return float(skew)
+        mean = np.mean(valid); var = np.var(valid)
+        if var == 0: return 0.0
+        return float(np.mean(((valid - mean) / np.sqrt(var)) ** 3))
 
     # ------------------------------------------------------------------
     # 2. VWAP-Anchored Z-Score — Student's t robust (20 periods)
@@ -315,27 +295,9 @@ class QuantEngine:
 
         z_gaussian = (current_price - vwap) / std
 
-        # --- t-distribution degrees-of-freedom estimation ---
-        if len(typical) >= 4:
-            mean_t  = np.mean(typical)
-            std_t   = np.std(typical, ddof=1)
-            if std_t > 0:
-                # Excess kurtosis (sample, subtract 3)
-                kurt = float(np.mean(((typical - mean_t) / std_t) ** 4)) - 3.0
-                # Cornish-Fisher: ν ≈ 4 + 6/excess_kurtosis for excess_kurtosis > 0
-                if kurt > 0.5:
-                    nu = max(4.0, 4.0 + 6.0 / kurt)
-                else:
-                    nu = 30.0   # Near-Gaussian; negligible correction
-            else:
-                nu = 30.0
-        else:
-            nu = 30.0
-
-        # Scale factor: sqrt((ν-2)/ν) — shrinks Z for heavy tails
-        t_scale = math.sqrt((nu - 2.0) / nu)
+        NU_FIXED = 6.0  # Fixed BTC 15m degrees-of-freedom
+        t_scale = math.sqrt((NU_FIXED - 2.0) / NU_FIXED)  # = sqrt(4/6) = 0.8165
         z_t = z_gaussian * t_scale
-
         return float(np.clip(z_t, -4.0, 4.0))
 
     # ------------------------------------------------------------------
@@ -583,29 +545,27 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # 7. ATR — Average True Range (14 periods)
     # ------------------------------------------------------------------
-    def _atr(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+    def _atr(self, highs: np.ndarray, lows: np.ndarray,
+             closes: np.ndarray, period: int = 14) -> float:
+        """Wilder ATR — 3x period warmup ensures EMA loop always executes.
+        FIX NEW-C2: Previous period+1 lookback produced empty loop.
         """
-        Wilder ATR using proper EMA smoothing (HIGH-4 FIX).
-        Old code: np.mean(tr) — simple average underestimates ATR by ~30% during spikes.
-        Fixed:    seed with SMA of first `period` bars, then apply Wilder EMA.
-        """
+        WARMUP = period * 3  # 42 bars for period=14
+        lookback = WARMUP + 1  # 43 bars total
         if len(closes) < period + 1:
             return 0.0
-
-        h = highs[-(period + 1):]
-        l = lows[-(period + 1):]
-        c = closes[-(period + 1):]
+        if len(closes) >= lookback:
+            h = highs[-lookback:]; l = lows[-lookback:]; c = closes[-lookback:]
+        else:
+            h = highs; l = lows; c = closes
         prev_c = c[:-1]
-
-        tr = np.maximum(h[1:] - l[1:],
-             np.maximum(np.abs(h[1:] - prev_c),
-                        np.abs(l[1:] - prev_c)))
-
-        # Wilder EMA: seed with SMA of first period bars, then smooth
-        atr = float(np.mean(tr[:period]))
+        tr = np.maximum(h[1:]-l[1:], np.maximum(np.abs(h[1:]-prev_c), np.abs(l[1:]-prev_c)))
+        if len(tr) < period:
+            return float(np.mean(tr)) if len(tr) > 0 else 0.0
+        atr_val = float(np.mean(tr[:period]))
         for i in range(period, len(tr)):
-            atr = (atr * (period - 1) + float(tr[i])) / period
-        return atr
+            atr_val = (atr_val * (period - 1) + float(tr[i])) / period
+        return float(atr_val)
 
     # ------------------------------------------------------------------
     # 8. Volume Point of Control (VPOC)

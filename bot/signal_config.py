@@ -20,7 +20,7 @@ MIN_BAYESIAN_STRONG    = 0.72   # Strong-signal threshold (STRONG_LONG / STRONG_
 # ── Z-Score (Student's t-distribution VWAP Z) ────────────────────────────────
 Z_OVERSOLD             = -1.5   # Z below this = statistically depressed price
 Z_OVERBOUGHT           =  1.5   # Z above this = statistically stretched price
-MEAN_REV_Z_THRESHOLD   =  2.2   # |Z| required for a mean-reversion signal
+MEAN_REV_Z_THRESHOLD   =  1.5   # matches NEUTRAL z_threshold in REGIME_PARAMS
 
 # ── OFI (tanh output, range -1 to +1) ────────────────────────────────────────
 OFI_STRONG_THRESHOLD   =  0.6   # Strong directional flow (equivalent to old |OFI| > 40)
@@ -48,7 +48,7 @@ ULIS_CASCADE_ABORT     = 0.65   # cascade_risk above this → AVOID verdict
 # ── Cooldowns ─────────────────────────────────────────────────────────────────
 POST_TRADE_COOLDOWN_S  = 90     # seconds after any exit before new entry allowed
 CASCADE_COOLDOWN_S     = 300    # seconds after SL exit (cascade prevention)
-CONSECUTIVE_LOSS_HALT  = 2      # consecutive SL exits triggers 2-hour hard timeout
+CONSECUTIVE_LOSS_HALT  = 3      # was 2 — reduces false lockouts
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ── REGIME-CONDITIONAL PARAMETER MATRIX (HMM Spec, Apr 2026) ─────────────────
@@ -68,8 +68,7 @@ REGIME_PARAMS = {
     "RANGE": {
         # Low-volatility: small deviations are statistically meaningful
         "z_threshold":        1.3,   # Was 1.5. Triggers mean-reversion earlier
-        "atr_multiplier_sl":  1.2,   # Tight SL
-        # HIGH-3: TP = atr_multiplier_sl × rr_target × ATR (no separate TP mult)
+        "atr_multiplier_sl":  1.14,   # Was 1.2 — 5% reduction post-Wilder compensation
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
         "min_confidence":     0.55,  # Was 0.58. 55% win-probability required
         "rr_target":          1.8,   # 1.8:1 minimum R:R
@@ -81,12 +80,12 @@ REGIME_PARAMS = {
     },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
-        "z_threshold":        1.5,   # Was 1.8
-        "atr_multiplier_sl":  1.5,
-        "ofi_bound":          0.12,  # Was 0.15
-        "min_confidence":     0.58,  # Was 0.62. More trades allowed
+        "z_threshold":        1.5,
+        "atr_multiplier_sl":  1.43,
+        "ofi_bound":          0.12,
+        "min_confidence":     0.58,
         "rr_target":          2.0,
-        "be_lock_trigger":    1.0,
+        "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "panic_threshold":    5.0,
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          True,
@@ -95,24 +94,24 @@ REGIME_PARAMS = {
     "TREND": {
         # High-volatility: trend-following
         "z_threshold":        2.0,   # Was 2.5. Triggers on shallower pullbacks
-        "atr_multiplier_sl":  2.2,   # Wide SL 
+        "atr_multiplier_sl":  2.09,  # Was 2.2 — 5% reduction post-Wilder compensation 
         "ofi_bound":          0.20,  # Was 0.25
         "min_confidence":     0.65,  # Was 0.72. Massive increase in trend trades
         "rr_target":          2.5,
-        "be_lock_trigger":    1.2,
+        "be_lock_trigger":    2.0,  # widened: let trend breathe — do not lock BE until 2×ATR profit
         "panic_threshold":    8.0,   
         "candle_gate_sec":    60,    # Was 90s
         "htf_block":          True,  
         "cascade_cooldown_s": 240,   # STRATEGY-B: 4min (trend may still be valid)
     },
-    "LIQUIDITY": {
+"LIQUIDITY": {
         # Wall-proximity sweeps
-        "z_threshold":        1.5,   # Was 1.8
-        "atr_multiplier_sl":  1.5,
-        "ofi_bound":          0.12,  # Was 0.15
-        "min_confidence":     0.62,  # Phase 2 FIX: was 0.55. Now matches global MIN_BAYESIAN — tighter entry quality on sweeps.
+        "z_threshold":        1.5,
+        "atr_multiplier_sl":  1.43,
+        "ofi_bound":          0.12,
+        "min_confidence":     0.62,
         "rr_target":          2.0,
-        "be_lock_trigger":    1.0,
+        "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "panic_threshold":    5.0,
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          False, 
