@@ -230,7 +230,7 @@ def _gate_stats_summary(reason: str, confidence: float = 0.0) -> None:
             f"  ───────────────────────\n"
             f"  total rejections    : {total}\n"
             f"  total passed       : {passed}\n"
-            f"  pass rate           : {passed/(passed+total+1):.1%}\n"
+            f"  pass rate           : {passed/max(1, passed+total):.1%}\n"
             f"  last_confidence     : {confidence:.2%}"
         )
         GATE_STATS_LAST_LOG = now
@@ -373,7 +373,7 @@ class _HMMRegimeClassifier:
     def __init__(self, window: int = 60, update_every: int = 50):
         self._window    = window
         self._update_n  = update_every
-        self._obs_buf   = []          # circular feature history
+        self._obs_buf   = deque(maxlen=200)  # circular feature history
         self._cycle     = 0           # count calls since last param update
         # Mutable copies so online-update can adjust them
         self._mu    = self._MU.copy()
@@ -717,7 +717,7 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
                              sell_walls: List[float],
                              candle_history: list) -> Optional[str]:
     if len(candle_history) < 2 or not sell_walls or not buy_walls:
-        return None
+        return None, None
 
     price = metrics["price"]
     nearest_sell = sell_walls[0]
@@ -1198,19 +1198,6 @@ def _risk_engine(
 
     SL_MULT = adaptive_mult
 
-    # Phase 5: Funding Rate Risk Scalar
-    # If funding strongly favors our direction, scale up risk by 1.2x
-    funding_rate = metrics.get("funding_rate", 0.0) if metrics else 0.0
-    funding_mult = 1.0
-    if funding_rate < -0.0005 and is_long:
-        funding_mult = 1.2  # shorts paying longs — bullish pressure
-    elif funding_rate > 0.0005 and not is_long:
-        funding_mult = 1.2  # longs paying shorts — bearish pressure
-
-    if funding_mult > 1.0:
-        SL_MULT *= funding_mult
-        logger.info(f"[RiskEngine] Funding rate multiplier: {funding_mult}x (funding={funding_rate:.4f})")
-
     logger.info(
         f"[RiskEngine] sl_mult={sl_mult:.2f} vol_ratio={vol_ratio:.3f} "
         f"atr_rank={atr_pct_rank:.0%} rank_scale={rank_scale:.3f} "
@@ -1576,6 +1563,7 @@ async def execution_loop(
             logger.warning(f"[Main] Could not set leverage (will continue with account default): {e}")
 
     global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_CANDLE_TS, LAST_TRADE_WAS_SL
+    global _CYCLE_ERROR_COUNT, _LAST_CYCLE_ERROR
 
     if not executor.dry_run:
         try:
@@ -1910,6 +1898,12 @@ async def execution_loop(
                             "[Reconciliation] BOT thinks position open but EXCHANGE does not. "
                             "Clearing stale state."
                         )
+                        try:
+                            ccxt_sym = executor.active_position.get("symbol", "")
+                            await executor.exchange.cancel_all_orders(ccxt_sym)
+                            logger.info(f"[Reconciliation] Cancelled orphaned orders for {ccxt_sym}")
+                        except Exception as cancel_err:
+                            logger.warning(f"[Reconciliation] Could not cancel orphaned orders: {cancel_err}")
                         executor.active_position = None
                         executor.pending_order = None
                 except Exception as e:
@@ -2024,15 +2018,7 @@ async def execution_loop(
             # Without this, a simultaneous SL+ULIS-AVOID silently skips the panic lock.
             if had_position_before_exit and ulis_str in ("AVOID", "UNWIND"):
                 panic_reason = f"ULIS verdict={ulis_str} while holding position — pre-cascade danger"
-                _panic_pnl = getattr(executor, "_last_panic_pnl", 0.0)
                 await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)
-                # BUG-3 FIX: Update daily_pnl with panic PnL so circuit breaker sees it.
-                if _panic_pnl != 0.0:
-                    stats["daily_pnl"] = stats.get("daily_pnl", 0.0) + _panic_pnl
-                    max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
-                    if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
-                        stats["daily_loss_halt"] = True
-                        logger.warning(f"[RiskEngine] Daily loss limit hit via panic exit. Halted.")
                 stats["active_position"] = None
                 continue
 
@@ -2068,7 +2054,6 @@ async def execution_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            global _CYCLE_ERROR_COUNT, _LAST_CYCLE_ERROR
             _CYCLE_ERROR_COUNT += 1
             _LAST_CYCLE_ERROR = str(e)
             if _CYCLE_ERROR_COUNT % 5 == 0:

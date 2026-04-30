@@ -210,6 +210,7 @@ class FirestoreLogHandler(logging.Handler):
                 if _db is None:
                     import time
                     time.sleep(1)
+                    self.log_queue.task_done()
                     continue
 
                 from firebase_admin import firestore as fs
@@ -375,7 +376,7 @@ def _flush_local_buffer():
         with open(_LOCAL_STATS_PATH, "a") as f:
             for entry in _write_buffer:
                 f.write(json.dumps(entry) + "\n")
-        _write_buffer = []
+        _write_buffer.clear()
         logger.info(f"[Heartbeat] Flushed {count} entries to {_LOCAL_STATS_PATH}")
     except Exception as e:
         logger.warning(f"[Heartbeat] Local JSON write failed: {e}")

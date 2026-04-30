@@ -125,14 +125,33 @@ def _count_sweeps(candles: list, bids_dict: Dict, asks_dict: Dict) -> Tuple[int,
     if len(candles) < 3 or not bids_dict or not asks_dict:
         return sweep_count, bos_list
 
-    # Nearest walls
+    # P1-4 FIX: Filter to significant walls only (size > median * 5x) before computing sweeps.
+    # Using top-of-book (best bid/ask) instead of actual walls massively inflates sweep count.
     bid_prices = sorted(bids_dict.keys(), reverse=True)
     ask_prices = sorted(asks_dict.keys())
     if not bid_prices or not ask_prices:
         return sweep_count, bos_list
 
-    nearest_bid = bid_prices[0]
-    nearest_ask = ask_prices[0]
+    # Compute median sizes to identify significant walls
+    bid_sizes = [bids_dict[p] for p in bid_prices]
+    ask_sizes = [asks_dict[p] for p in ask_prices]
+    import statistics
+    median_bid = statistics.median(bid_sizes) if bid_sizes else 0
+    median_ask = statistics.median(ask_sizes) if ask_sizes else 0
+    wall_threshold_bid = median_bid * 5 if median_bid > 0 else 0
+    wall_threshold_ask = median_ask * 5 if median_ask > 0 else 0
+
+    # Filter to significant walls only
+    significant_bids = {p: q for p, q in bids_dict.items() if q >= wall_threshold_bid}
+    significant_asks = {p: q for p, q in asks_dict.items() if q >= wall_threshold_ask}
+
+    sig_bid_prices = sorted(significant_bids.keys(), reverse=True)
+    sig_ask_prices = sorted(significant_asks.keys())
+    if not sig_bid_prices or not sig_ask_prices:
+        return sweep_count, bos_list
+
+    nearest_bid = sig_bid_prices[0]
+    nearest_ask = sig_ask_prices[0]
 
     recent = list(candles)[-10:]
     for i in range(1, len(recent)):

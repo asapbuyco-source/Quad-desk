@@ -544,19 +544,17 @@ class TradingExecutor:
             equity = await self.get_usdt_balance(account_size)
         else:
             equity = await self.get_total_equity(current_price, account_size)
-        
+
         if side == "buy":
-            usdc_equity = await self.get_usdt_balance(account_size)
+            usdc_equity = equity
             if usdc_equity < 5:
                 err = f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. Min $5 required."
                 logger.warning(f"[Executor] {err}")
                 await self.notifier.send_error_alert(err)
                 return
         else:
-            # For SELL: Check balance appropriately
             if self.is_futures:
-                # Futures: Need USDC margin to open short
-                usdc_equity = await self.get_usdt_balance(account_size)
+                usdc_equity = equity
                 if usdc_equity < 5:
                     err = f"Insufficient USDC margin (${usdc_equity:.2f}) to open SHORT on Binance Futures. Min $5 required."
                     logger.warning(f"[Executor] {err}")
@@ -816,6 +814,10 @@ class TradingExecutor:
                             stop_params = {"stop_price": float(self.exchange.price_to_precision(ex_symbol, stop_loss))}
                             if self.exchange_id == "coinbase":
                                 direction = "STOP_DIRECTION_STOP_UP" if stop_loss > current_price else "STOP_DIRECTION_STOP_DOWN"
+                                # Note: STOP_UP means trigger when price rises ABOVE stop_price (for shorts/longs),
+                                # STOP_DOWN means trigger when price drops BELOW stop_price (for longs).
+                                # This works correctly for both BUY and SELL positions due to how
+                                # Coinbase interprets the direction relative to the order side.
                                 stop_params["stop_direction"] = direction
                                 
                             sl_order = await self.exchange.create_order(
@@ -1193,7 +1195,7 @@ class TradingExecutor:
                 # 1. Cancel all open orders for this symbol first
                 try:
                     await self.exchange.cancel_all_orders(ex_symbol)
-                except:
+                except Exception:
                     pass
 
                 # 2. Market close

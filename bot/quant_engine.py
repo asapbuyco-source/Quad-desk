@@ -546,6 +546,7 @@ class QuantEngine:
         """
         # ── Step 1: Beta prior ───────────────────────────────────────
         p_prior = self._alpha / (self._alpha + self._beta)
+        p_prior = max(0.01, min(0.99, p_prior))
         prior_odds = p_prior / (1.0 - p_prior)
 
         # ── Step 2: RSI likelihood ─────────────────────────────────────
