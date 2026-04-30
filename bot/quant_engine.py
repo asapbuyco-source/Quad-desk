@@ -33,12 +33,13 @@ class QuantEngine:
         # Tracks win rate independently for RANGE (mean-reversion),
         # TREND (momentum), and NEUTRAL/LIQUIDITY (mixed) regimes.
         # Mean = α/(α+β) = 0.5 at startup (uniform prior, no assumptions).
-        self._regime_alpha: dict = {"RANGE": 7.0, "NEUTRAL": 7.0, "TREND": 7.0, "LIQUIDITY": 7.0}
+        self._regime_alpha: dict = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
         self._regime_beta:  dict = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
         self._regime_trade_count: dict = {"RANGE": 0, "NEUTRAL": 0, "TREND": 0, "LIQUIDITY": 0}
         # Keep global fallback for backwards compatibility with _bayesian()
-        self._alpha: float = 7.0
+        self._alpha: float = 5.0
         self._beta:  float = 5.0
+
 
         # ── OFI State (Three-Stage Pipeline) ──────────────────────────────
         # Stage 1: True OFI = delta of bid/ask depth between snapshots
@@ -58,6 +59,9 @@ class QuantEngine:
         # measure of how extreme current volatility is vs recent history.
         # Much more robust than raw ATR% which varies by price level.
         self._atr_history: deque = deque(maxlen=2880)
+
+        # ── State variables extracted from main.py ──────────────────────────
+        self._liquidity_consecutive: int = 0
 
         # ── RSI History Cache (MED-1 fix) ─────────────────────────────────────
         # Caches the last 3 computed RSI values so rsi_prev/rsi_prev2 reflect
@@ -134,23 +138,23 @@ class QuantEngine:
             if os.path.exists(self._persist_path):
                 with open(self._persist_path) as f:
                     data = json.load(f)
-                self._alpha = float(data.get("alpha", 7.0))
+                self._alpha = float(data.get("alpha", 5.0))
                 self._beta = float(data.get("beta", 5.0))
                 saved_ra = data.get("regime_alpha", {})
                 saved_rb = data.get("regime_beta", {})
                 saved_rc = data.get("regime_count", {})
                 for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
-                    self._regime_alpha[r] = float(saved_ra.get(r, 7.0))
+                    self._regime_alpha[r] = float(saved_ra.get(r, 5.0))
                     self._regime_beta[r] = float(saved_rb.get(r, 5.0))
                     self._regime_trade_count[r] = int(saved_rc.get(r, 0))
                 logger.info("[QuantEngine] State loaded from disk.")
             else:
                 for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
-                    self._regime_alpha[r] = 7.0
+                    self._regime_alpha[r] = 5.0
                     self._regime_beta[r] = 5.0
                     self._regime_trade_count[r] = 0
-                self._alpha = 7.0; self._beta = 5.0
-                logger.info("[QuantEngine] Fresh deploy: Beta(7,5) informed prior.")
+                self._alpha = 5.0; self._beta = 5.0
+                logger.info("[QuantEngine] Fresh deploy: Beta(5,5) informed prior.")
         except Exception as e:
             logger.warning(f"[QuantEngine] State load error: {e}")
 
@@ -187,7 +191,7 @@ class QuantEngine:
         rsi_prev2 = self._rsi_history[-3] if len(self._rsi_history) >= 3 else rsi_prev
 
         tape_speed, dominant_side = self._tape_metrics()
-        ofi, wall_context, all_walls_str = self._lob_metrics(current_price)
+        ofi, wall_context, all_walls_str, execution_price, valid_bids, valid_asks, nearest_bid, nearest_ask, top_bids, top_asks = self._lob_metrics(current_price)
         bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi)
         cvd = self.state.cvd
         atr = self._atr(highs, lows, closes)
@@ -208,6 +212,13 @@ class QuantEngine:
 
         vpoc = self._volume_poc(c_list)
         funding_rate = getattr(self.state, 'funding_rate', 0.0)
+
+        last_trade_ts = getattr(self.state, '_last_trade_ts', 0.0)
+        trade_buffer_healthy = (
+            last_trade_ts > 0 and
+            (time.time() - last_trade_ts) < 30.0 and
+            len(self.state.recent_trades) >= 5
+        )
 
         return {
             "symbol":            self.state.symbol,
@@ -234,6 +245,17 @@ class QuantEngine:
             # Z-score is meaningless with fewer than 10 bars of data in the
             # current session — it's fitting noise from too-small a sample.
             "z_score_valid":     len(closes) >= 10,
+            # PHASE-0.2: aggTrade stream health flag.
+            "trade_buffer_healthy": trade_buffer_healthy,
+            # PHASE-0.4: Order book mid-price for execution (not candle close).
+            "execution_price":   execution_price,
+            # PHASE-0.3: Structured wall data for _detect_regime significance filter
+            "bid_depths":        valid_bids,
+            "ask_depths":        valid_asks,
+            "nearest_buy_wall":  nearest_bid,
+            "nearest_sell_wall": nearest_ask,
+            "top_buy_walls":     top_bids,
+            "top_sell_walls":    top_asks,
         }
 
     # ------------------------------------------------------------------
@@ -389,13 +411,21 @@ class QuantEngine:
         median_size    = float(np.median(all_sizes)) if all_sizes else 1.0
         wall_threshold = median_size * 5.0
 
+        # PHASE-1.1: Sort by DISTANCE to price (ascending = nearest first).
+        # Previously sorted by SIZE (largest first) — wrong for sweep detection.
+        # Sweep = price crossing a nearby wall, not a large distant wall.
+        def bid_distance(p, s):
+            return (current_price - p) / current_price  # fraction of price
+        def ask_distance(p, s):
+            return (p - current_price) / current_price
+
         top_bids = sorted(
             [(p, s) for p, s in valid_bids.items() if s > wall_threshold],
-            key=lambda x: x[1], reverse=True,
+            key=lambda x: bid_distance(*x),
         )[:5]
         top_asks = sorted(
             [(p, s) for p, s in valid_asks.items() if s > wall_threshold],
-            key=lambda x: x[1], reverse=True,
+            key=lambda x: ask_distance(*x),
         )[:5]
 
         nearest_bid = top_bids[0][0] if top_bids else None
@@ -409,6 +439,12 @@ class QuantEngine:
             f"{((nearest_ask - current_price) / current_price * 100):.2f}"
             if nearest_ask else "N/A"
         )
+
+        # PHASE-1.1: Top-of-book bid/ask for execution price (not wall-filtered mid).
+        # Wall prices can be $50+ off actual spread on BTC; use actual best bid/ask.
+        best_bid = max(self.state.bids.keys()) if self.state.bids else current_price
+        best_ask = min(self.state.asks.keys()) if self.state.asks else current_price
+        execution_price = (best_bid + best_ask) / 2.0 if (self.state.bids and self.state.asks) else current_price
 
         wall_context = (
             f"Nearest Buy Wall: {nearest_bid} (-{bid_dist}%), "
@@ -455,7 +491,7 @@ class QuantEngine:
             arr = np.array(self._ofi_history)
             median_ofi = float(np.median(arr))
             mad = float(np.median(np.abs(arr - median_ofi)))
-            mad_threshold = 3.5 * 1.4826 * mad  # 3.5σ robust boundary
+            mad_threshold = 3.5 * 1.4826 * mad  # 3.5σ robust boundary — NOT changed per plan
 
             if mad_threshold > 0 and abs(ofi_raw - median_ofi) > mad_threshold:
                 self._ofi_outlier_count += 1
@@ -481,8 +517,8 @@ class QuantEngine:
         # STAGE 3 — EWMA normalisation + tanh soft saturation
         # Output is in (-1, +1). Replaces the static ±100 hard clamp.
         # tanh is monotone — preserves direction, never hard-caps genuine signals.
-        LAMBDA_EWMA  = 0.97
-        ALPHA_SMOOTH = 0.30
+        LAMBDA_EWMA  = 0.94   # PHASE-4.1: Was 0.97. Half-life: ~11 obs (~2.8 min) instead of ~23 obs (~5.7 min)
+        ALPHA_SMOOTH = 0.35   # PHASE-4.1: Was 0.30. Slightly faster signal response
         self._ofi_ewma_mu  = LAMBDA_EWMA * self._ofi_ewma_mu  + (1 - LAMBDA_EWMA) * ofi_filtered
         self._ofi_ewma_var = LAMBDA_EWMA * self._ofi_ewma_var + (1 - LAMBDA_EWMA) * (ofi_filtered - self._ofi_ewma_mu) ** 2
         sigma = max(math.sqrt(self._ofi_ewma_var), 1e-6)
@@ -496,7 +532,7 @@ class QuantEngine:
             f"norm={ofi_norm:.3f} smooth={self._ofi_smooth:.3f} final_tanh={ofi:.4f}"
         )
 
-        return ofi, wall_context, "; ".join(wall_parts)
+        return ofi, wall_context, "; ".join(wall_parts), execution_price, valid_bids, valid_asks, nearest_bid, nearest_ask, top_bids, top_asks
 
     # ------------------------------------------------------------------
     # 6. Bayesian Posterior P(Bull | Evidence) — Beta conjugate prior

@@ -434,7 +434,7 @@ class TradingExecutor:
         try:
             bal = await self.exchange.fetch_balance()
             return float(bal.get("free", {}).get("BTC", 0.0))
-        except: return 0.0
+        except Exception: return 0.0
 
     async def get_total_equity(self, current_price: float, account_size: float = 100.0) -> float:
         """
@@ -661,9 +661,6 @@ class TradingExecutor:
                 "take_profit": take_profit,
                 "dry_run":     True,
                 "trade_doc_id": doc_id,
-                # FINDING-5: Regime-aware break-even params
-                "be_lock_trigger": signal.get("be_lock_trigger", 1.0),
-                "atr_at_entry":    signal.get("atr_at_entry", fill_price * 0.005),
             }
 
             # Telegram Notification
@@ -770,10 +767,13 @@ class TradingExecutor:
                 for attempt in range(3):
                     try:
                         tp_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="limit", side=sl_side,
+                            symbol=ex_symbol, type="TAKE_PROFIT_MARKET", side=sl_side,
                             amount=fmt_size,
-                            price=float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                            params={"timeInForce": "GTC"},
+                            params={
+                                "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                                "closePosition": True,
+                                "workingType": "MARK_PRICE",
+                            },
                         )
                         tp_placed = True
                         break
@@ -890,9 +890,6 @@ class TradingExecutor:
                 "tp_placed":   tp_placed,
                 "dry_run":     False,
                 "trade_doc_id": doc_id,
-                # FINDING-5: Regime-aware break-even params
-                "be_lock_trigger": signal.get("be_lock_trigger", 1.0),
-                "atr_at_entry":    signal.get("atr_at_entry", fill_price * 0.005),
             }
 
             # Clear pending order since we now have an active position
@@ -1018,56 +1015,11 @@ class TradingExecutor:
         if side == "buy":
             if check_low <= sl:
                 return await finalize_exit("SL", sl)
-
-            # Phase 3 — Partial TP: close 50% at midpoint, move SL to break-even
-            if not pos.get("partial_tp_done"):
-                mid_target = (pos["entry_price"] + tp) / 2.0
-                if check_high >= mid_target:
-                    pos["partial_tp_done"] = True
-                    half_size = size / 2.0
-                    half_raw  = (mid_target - pos["entry_price"]) * half_size
-                    half_fee  = (pos["entry_price"] + mid_target) * half_size * MAKER_FEE
-                    half_pnl  = half_raw - (entry_fee / 2.0 + half_fee)
-                    pos["size"]      = half_size        # ride the remaining half
-                    pos["stop_loss"] = pos["entry_price"]  # move SL to break-even
-                    logger.info(
-                        f"[PartialTP] Closed 50% @ {mid_target:.2f}, "
-                        f"PnL=${half_pnl:.2f}. SL moved to entry. Riding remainder."
-                    )
-                    if hasattr(self, "notifier") and self.notifier:
-                        await self.notifier.send_message(
-                            f"📊 Partial TP: closed 50% @ {mid_target:.2f} "
-                            f"(+${half_pnl:.2f}). SL → BE. Riding half."
-                        )
-                    # Don't return — let the main TP check run for the remainder
-
             if check_high >= tp:
                 return await finalize_exit("TP", tp)
         else:
             if check_high >= sl:
                 return await finalize_exit("SL", sl)
-
-            # Phase 3 — Partial TP for short positions
-            if not pos.get("partial_tp_done"):
-                mid_target = (pos["entry_price"] + tp) / 2.0
-                if check_low <= mid_target:
-                    pos["partial_tp_done"] = True
-                    half_size = size / 2.0
-                    half_raw  = (pos["entry_price"] - mid_target) * half_size
-                    half_fee  = (pos["entry_price"] + mid_target) * half_size * MAKER_FEE
-                    half_pnl  = half_raw - (entry_fee / 2.0 + half_fee)
-                    pos["size"]      = half_size
-                    pos["stop_loss"] = pos["entry_price"]  # move SL to break-even
-                    logger.info(
-                        f"[PartialTP] SHORT: closed 50% @ {mid_target:.2f}, "
-                        f"PnL=${half_pnl:.2f}. SL moved to entry. Riding remainder."
-                    )
-                    if hasattr(self, "notifier") and self.notifier:
-                        await self.notifier.send_message(
-                            f"📊 Partial TP (SHORT): closed 50% @ {mid_target:.2f} "
-                            f"(+${half_pnl:.2f}). SL → BE. Riding half."
-                        )
-
             if check_low <= tp:
                 return await finalize_exit("TP", tp)
 
@@ -1116,20 +1068,23 @@ class TradingExecutor:
                 actual_pnl = None
                 try:
                     recent_trades = await self.exchange.fetch_my_trades(symbol, limit=10)
-                    # Closing trades carry a non-zero realizedPnl in the info dict
+                    # Closing trades have side opposite to our entry side
                     closing = [
                         t for t in recent_trades
-                        if float(t.get("info", {}).get("realizedPnl", 0)) != 0
+                        if t.get("side", "").lower() != side.lower()
                     ]
                     if closing:
                         fill_price = float(closing[-1]["price"])
                         actual_pnl = float(
                             closing[-1].get("info", {}).get("realizedPnl", 0)
                         )
-                        logger.info(
-                            f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
-                            f"realizedPnl=${actual_pnl:.2f}"
-                        )
+                        if actual_pnl != 0:
+                            logger.info(
+                                f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
+                                f"realizedPnl=${actual_pnl:.2f}"
+                            )
+                        else:
+                            logger.info(f"[LiveExit] Exchange-reported fill={fill_price:.2f}")
                 except Exception as e:
                     logger.warning(f"[LiveExit] fill-price fetch failed: {e}")
 
@@ -1199,24 +1154,6 @@ class TradingExecutor:
                     logger.info(f"[Executor] Opposing {label} order {cancel_id} already gone (Binance cleaned it) ✓")
                 else:
                     logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
-
-    async def update_breakeven_stop(self, current_price: float):
-        pos = self.active_position
-        if not pos or pos.get("be_triggered", False):
-            return
-        side = pos["side"]
-        entry = pos["entry_price"]
-        atr_entry = pos.get("atr_at_entry", entry * 0.005)
-        be_mult = pos.get("be_lock_trigger", 1.0)
-        be_trigger = entry + (be_mult * atr_entry) if side == "buy" else entry - (be_mult * atr_entry)
-        triggered = (current_price >= be_trigger if side == "buy" else current_price <= be_trigger)
-        if not triggered:
-            return
-        fee_buf = entry * 0.0002
-        new_sl = entry + fee_buf if side == "buy" else entry - fee_buf
-        pos["stop_loss"] = new_sl
-        pos["be_triggered"] = True
-        logger.info(f"[BE] Break-even locked {new_sl:.2f} (trigger={be_trigger:.2f} mult={be_mult}x)")
 
     def is_system_locked(self) -> bool:
         """Check if the system is currently under a panic-mode lock."""

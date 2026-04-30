@@ -18,12 +18,19 @@ import os
 import json
 import logging
 import asyncio
+import time as _time
 from typing import Optional, Any
 
 logger = logging.getLogger(__name__)
 
 # Module-level Firestore client (initialised once)
 _db: Optional[Any] = None
+
+_LOCAL_STATS_PATH = "/tmp/quad_bot_stats.json"
+_LOCAL_TRADES_PATH = "/tmp/quad_bot_trades.jsonl"
+_write_buffer: list = []
+_consecutive_failures: int = 0
+_use_local_fallback: bool = False
 
 
 def _normalize_pem(raw_key: str) -> str:
@@ -213,10 +220,11 @@ class FirestoreLogHandler(logging.Handler):
                     "ts_ms": int(record.created * 1000)
                 }
                 _db.collection("botLogs").add(payload)
-                self.log_queue.task_done()
             except Exception:
                 # Silently catch errors so logs do not crash the worker thread
                 pass
+            finally:
+                self.log_queue.task_done()
                 
     def emit(self, record):
         # We only care about root logger outputs from the bot strategies
@@ -252,12 +260,21 @@ async def run_heartbeat(stats: dict) -> None:
     If Firebase was not available at startup (e.g. bad credentials), this
     function will retry initialisation every 5 minutes so a credential fix
     at runtime is picked up automatically without restarting the bot.
+
+    PHASE-6.1: Batches writes to reduce Firestore usage. On 429 (quota exceeded),
+    uses exponential backoff and falls back to local JSON when Firebase is
+    consistently unavailable.
     """
+    global _db, _write_buffer, _consecutive_failures, _use_local_fallback
+
     from firebase_admin import firestore as fs
 
     RETRY_INTERVAL   = 300   # seconds between init retries when _db is None
     WRITE_INTERVAL   = 60    # seconds between heartbeat writes
+    BATCH_FLUSH_SECS = 300   # flush buffer to local JSON every 5 minutes
     retry_countdown  = 0
+    last_batch_flush = 0.0
+    backoff = 0
 
     while True:
         try:
@@ -286,20 +303,56 @@ async def run_heartbeat(stats: dict) -> None:
                 "lastUlis":        stats.get("last_ulis",      "—"),
                 "sessionPnl":      stats.get("session_pnl",   0.0),
                 "dailyPnl":        stats.get("daily_pnl",     0.0),
+                "gateStats":       stats.get("gate_stats",    {}),
             }
-            # firebase-admin is sync → run in a thread so we don't block the loop
-            await asyncio.to_thread(doc_ref.set, payload)
+
+            if _use_local_fallback:
+                # BUG-6 FIX: Replace fs.SERVER_TIMESTAMP with numeric timestamp for JSON serialization
+                status_doc = dict(payload)
+                status_doc["lastHeartbeat"] = _time.time()
+                status_doc["timestamp"] = _time.time()
+                _write_buffer.append({"type": "status", **status_doc, "ts": _time.time()})
+            else:
+                try:
+                    await asyncio.to_thread(doc_ref.set, payload)
+                    _consecutive_failures = 0
+                    if backoff > 0:
+                        logger.info(f"[Heartbeat] Firebase recovered — backoff reset.")
+                        backoff = 0
+                except Exception as e:
+                    _consecutive_failures += 1
+                    logger.warning(f"[Heartbeat] Firebase write error: {e}")
+                    if _consecutive_failures >= 3:
+                        _use_local_fallback = True
+                        logger.warning("[Heartbeat] 3 consecutive failures — switching to local JSON fallback.")
+                    else:
+                        backoff = min(backoff * 2 + 30, 300)
+                        logger.info(f"[Heartbeat] Exponential backoff: {backoff}s")
 
             # 5.2: Equity curve time-series point (every heartbeat cycle)
-            # Frontend can query equityCurve ordered by timestamp for a P&L chart
             equity_doc = {
                 "equity":     stats.get("account_equity", 0.0),
                 "sessionPnl": stats.get("session_pnl",    0.0),
                 "dailyPnl":   stats.get("daily_pnl",      0.0),
                 "timestamp":  fs.SERVER_TIMESTAMP,
             }
-            equity_ref = _db.collection("equityCurve")
-            await asyncio.to_thread(equity_ref.add, equity_doc)
+            if _use_local_fallback:
+                # BUG-6 FIX: Use numeric timestamp for JSON serialization
+                equity_doc["timestamp"] = _time.time()
+                _write_buffer.append({"type": "equity", **equity_doc, "ts": _time.time()})
+            else:
+                equity_ref = _db.collection("equityCurve")
+                try:
+                    await asyncio.to_thread(equity_ref.add, equity_doc)
+                except Exception as e:
+                    _consecutive_failures += 1
+                    logger.warning(f"[Heartbeat] Equity write error: {e}")
+
+            # Flush buffer to local JSON every BATCH_FLUSH_SECS
+            now = _time.time()
+            if _use_local_fallback and _write_buffer and (now - last_batch_flush) >= BATCH_FLUSH_SECS:
+                _flush_local_buffer()
+                last_batch_flush = now
 
         except asyncio.CancelledError:
             break
@@ -312,6 +365,22 @@ async def run_heartbeat(stats: dict) -> None:
             break
 
 
+def _flush_local_buffer():
+    """Write buffered entries to local JSON files."""
+    global _write_buffer
+    if not _write_buffer:
+        return
+    count = len(_write_buffer)
+    try:
+        with open(_LOCAL_STATS_PATH, "a") as f:
+            for entry in _write_buffer:
+                f.write(json.dumps(entry) + "\n")
+        _write_buffer = []
+        logger.info(f"[Heartbeat] Flushed {count} entries to {_LOCAL_STATS_PATH}")
+    except Exception as e:
+        logger.warning(f"[Heartbeat] Local JSON write failed: {e}")
+
+
 
 
 async def write_offline(stats: dict) -> None:
@@ -319,6 +388,10 @@ async def write_offline(stats: dict) -> None:
     Writes a final 'bot stopped' document to Firestore on clean shutdown.
     Call this from the main finally block.
     """
+    global _write_buffer
+    if _use_local_fallback and _write_buffer:
+        _flush_local_buffer()
+
     if _db is None:
         return
 

@@ -21,7 +21,7 @@ except ImportError:
 # ==============================================================================
 CONFIG = {
     "symbols": ["BTCUSDT"],
-    "timeframe_mins": 5,
+    "timeframe_mins": 15,
     "initial_balance": 10000.0,
     "base_risk_pct": 1.0,
     "max_daily_loss_pct": 3.0,

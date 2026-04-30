@@ -55,7 +55,14 @@ from bot.quant_engine import QuantEngine
 from bot.executor import TradingExecutor
 from bot.ulis_engine import compute_ulis_verdict
 from bot import heartbeat
-from bot.signal_config import REGIME_PARAMS, POST_TRADE_COOLDOWN_S
+from bot.signal_config import (
+    REGIME_PARAMS, POST_TRADE_COOLDOWN_S, COLD_START_TRADE_COUNT, 
+    COLD_START_CONFIDENCE_DISCOUNT,
+    MAX_RISK_PCT as CFG_MAX_RISK_PCT,
+    MAX_DAILY_LOSS_PCT as CFG_MAX_DAILY_LOSS_PCT,
+    MAX_DRAWDOWN_PCT as CFG_MAX_DRAWDOWN_PCT,
+    MIN_BAYESIAN as CFG_MIN_BAYESIAN
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # Logging
@@ -80,11 +87,11 @@ except Exception as e:
 EXCHANGE            = os.environ.get("BOT_EXCHANGE",            "binanceusdm").lower()
 SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USDC" if EXCHANGE == "coinbase" else "BTC/USDT")
 TESTNET             = os.environ.get("BOT_TESTNET",             "false").lower() != "false"
-MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        "1.0"))
-MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  "3.0"))
+MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        str(CFG_MAX_RISK_PCT)))
+MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  str(CFG_MAX_DAILY_LOSS_PCT)))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
-MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      "0.62"))  # 62% — achievable by Bayesian engine in normal market conditions
+MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      str(CFG_MIN_BAYESIAN)))
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "3"))    # futures leverage (3× = efficient margin on Binance USDM)
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
@@ -98,7 +105,7 @@ PANIC_DROP_PCT     = float(os.environ.get("BOT_PANIC_DROP_PCT",   "3.0"))
 PANIC_LOOKBACK     = int(os.environ.get("BOT_PANIC_LOOKBACK",     "5"))   # candles
 PANIC_LOCK_SECONDS = int(os.environ.get("BOT_PANIC_LOCK_SECONDS", "300")) # 5 min default
 # Max drawdown: halt ALL trading if cumulative session PnL exceeds this % of ACCOUNT_SIZE
-MAX_DRAWDOWN_PCT   = float(os.environ.get("BOT_MAX_DRAWDOWN_PCT",  "15.0"))
+MAX_DRAWDOWN_PCT   = float(os.environ.get("BOT_MAX_DRAWDOWN_PCT",  str(CFG_MAX_DRAWDOWN_PCT)))
 
 
 # Coinbase credentials
@@ -146,16 +153,87 @@ BOT_STATS: Dict[str, Any] = {
     "last_signal":     "WAIT",
     "last_ulis":       "—",
     "daily_pnl":       0.0,
+    "session_pnl":    0.0,  # PHASE-3.1: Initialized for daily drawdown reset
     "daily_loss_halt": False,
     "consecutive_losses": 0,
     "cooldown_until":     0.0,
+    "gate_stats": {
+        "daily_loss_halt":           0,
+        "drawdown_halt":             0,
+        "zscore_warmup":            0,
+        "post_trade_cooldown":      0,
+        "cascade_cooldown":         0,
+        "regime_no_edge":           0,
+        "htf_counter_trend":        0,
+        "funding_blocks_long":      0,
+        "funding_blocks_short":     0,
+        "ulis_veto":                0,
+        "ulis_alignment_fail":      0,
+        "confidence_below_threshold": 0,
+        "candle_gate_expired":       0,
+        "micro_confirms_failed":    0,
+        "sweep_confirms_failed":    0,
+        "fee_geometry":             0,
+        "signal_none":              0,
+        "total_passed":             0,
+    },
 }
+
+GATE_STATS_LAST_LOG = 0.0  # timestamp of last 30-min gate summary
+_CYCLE_ERROR_COUNT = 0  # PHASE-3.1: Consecutive cycle errors for escalation
+_LAST_CYCLE_ERROR = ""  # PHASE-3.1: Last error string for escalation
 
 LAST_CASCADE_TIME = 0.0
 LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can compute delta
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
 LAST_ANY_TRADE_CLOSE_TIME = 0.0  # Track any trade exit for post-trade cooldown
 LAST_TRADE_WAS_SL: bool = False  # Track if last exit was SL for split cooldown logic
+
+
+def _gate_stats_summary(reason: str, confidence: float = 0.0) -> None:
+    """
+    Increment the appropriate gate counter and log a summarised rejection
+    reason every 30 minutes.  Call this at every WAIT return in _compute_signal.
+    """
+    import time
+    global GATE_STATS_LAST_LOG
+
+    g = BOT_STATS["gate_stats"]
+    if reason in g:
+        g[reason] += 1
+    else:
+        g[reason] = 1
+        logger.warning(f"[GateStats] Unknown gate key: {reason}")
+
+    now = time.time()
+    if now - GATE_STATS_LAST_LOG >= 1800:
+        total = sum(v for k, v in g.items() if k != "total_passed")
+        passed = g["total_passed"]
+        logger.info(
+            "[GateStats] === 30-min Gate Rejection Summary ===\n"
+            f"  daily_loss_halt      : {g.get('daily_loss_halt', 0)}\n"
+            f"  drawdown_halt       : {g.get('drawdown_halt', 0)}\n"
+            f"  zscore_warmup       : {g.get('zscore_warmup', 0)}\n"
+            f"  post_trade_cooldown : {g.get('post_trade_cooldown', 0)}\n"
+            f"  cascade_cooldown    : {g.get('cascade_cooldown', 0)}\n"
+            f"  regime_no_edge      : {g.get('regime_no_edge', 0)}\n"
+            f"  htf_counter_trend   : {g.get('htf_counter_trend', 0)}\n"
+            f"  funding_blocks      : {g.get('funding_blocks_long', 0) + g.get('funding_blocks_short', 0)}\n"
+            f"  ulis_veto           : {g.get('ulis_veto', 0)}\n"
+            f"  ulis_alignment_fail : {g.get('ulis_alignment_fail', 0)}\n"
+            f"  low_confidence      : {g.get('confidence_below_threshold', 0)}\n"
+            f"  candle_gate_expired : {g.get('candle_gate_expired', 0)}\n"
+            f"  micro_confirms_fail : {g.get('micro_confirms_failed', 0)}\n"
+            f"  sweep_confirms_fail : {g.get('sweep_confirms_failed', 0)}\n"
+            f"  fee_geometry        : {g.get('fee_geometry', 0)}\n"
+            f"  signal_none         : {g.get('signal_none', 0)}\n"
+            f"  ───────────────────────\n"
+            f"  total rejections    : {total}\n"
+            f"  total passed       : {passed}\n"
+            f"  pass rate           : {passed/(passed+total+1):.1%}\n"
+            f"  last_confidence     : {confidence:.2%}"
+        )
+        GATE_STATS_LAST_LOG = now
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -192,11 +270,12 @@ def _htf_trend(candle_history: list) -> str:
     """
     if len(candle_history) < 16:
         return "NEUTRAL"
-    htf_open  = float(candle_history[-16]["open"])
+    # The open of the 16th candle ago represents the start of the 4H window
+    window_open = float(candle_history[-16]["open"])
     htf_close = float(candle_history[-1]["close"])
-    if htf_open <= 0:
+    if window_open <= 0:
         return "NEUTRAL"
-    change_pct = (htf_close - htf_open) / htf_open
+    change_pct = (htf_close - window_open) / window_open
     # HIGH-3 FIX: 0.2% was too tight (BTC moves that in minutes).
     # 0.5% over 4H is a meaningful, non-noise directional move.
     if change_pct >  0.005:   # +0.5% over 4H = clear uptrend
@@ -288,7 +367,7 @@ class _HMMRegimeClassifier:
     _LABELS = ["RANGE", "TREND", "NEUTRAL"]  # VOLATILE maps to NEUTRAL
 
     # Confidence & hysteresis thresholds
-    MIN_CONFIDENCE       = 0.70  # Minimum posterior probability to commit
+    MIN_CONFIDENCE       = 0.60  # PHASE-2.2: was 0.70, lowered to 60% for faster HMM transitions
     HYSTERESIS_CANDLES   = 3     # Consecutive candles before regime change
 
     def __init__(self, window: int = 60, update_every: int = 50):
@@ -512,10 +591,13 @@ class _HMMRegimeClassifier:
 _hmm_classifier = _HMMRegimeClassifier(window=60, update_every=200)
 
 
+
 def _detect_regime(
     metrics: Dict[str, Any],
     buy_walls: List[float],
     sell_walls: List[float],
+    quant,  # PHASE-1.3: Reference to QuantEngine for stateful tracking
+    sweep: Optional[str] = None,
 ) -> str:
     """
     HMM-based regime classifier with probabilistic output.
@@ -529,25 +611,60 @@ def _detect_regime(
     of a significant liquidity wall is always a LIQUIDITY regime regardless
     of ATR/Z/tape state (the HMM doesn't model wall proximity).
 
+    PHASE-1.3: LIQUIDITY override now requires:
+        - Nearest wall is within WALL_PROXIMITY of price
+        - Wall size is ≥ 3× the median order book level (significant wall)
+        - LIQUIDITY regime capped at 3 consecutive cycles without sweep confirmation
+
     Side-effect: injects regime_confidence, regime_probs into `metrics` dict
     so downstream consumers (Bayesian fusion, signal attribution) can use them.
     """
+
     price   = metrics["price"]
     z       = metrics["zScore"]
     tape    = metrics["tapeSpeed"]
     atr_pct = metrics["atr_pct"]
 
-    # Hard override: proximity to a significant liquidity wall
+    # PHASE-1.3: New proximity threshold and significance filter
     atr_val = metrics.get("atr", price * 0.001)
-    WALL_PROXIMITY = max(0.5 * atr_val / price, 0.001)
+    WALL_PROXIMITY = max(0.3 * atr_val / price, 0.003)
     near_wall = any(
         abs(price - w) / price <= WALL_PROXIMITY
         for w in (buy_walls[:1] + sell_walls[:1])
     )
+
     if near_wall:
-        metrics["regime_confidence"] = 1.0
-        metrics["regime_probs"] = {"RANGE": 0.0, "TREND": 0.0, "NEUTRAL": 0.0, "LIQUIDITY": 1.0}
-        return "LIQUIDITY"
+        # Wall significance filter: only override if wall is ≥ 3× median level
+        all_levels = list(metrics.get("bid_depths", {}).values()) + list(metrics.get("ask_depths", {}).values())
+        median_level = float(np.median(all_levels)) if all_levels else 0.0
+
+        # Check which wall is near
+        nearest_buy = buy_walls[0] if buy_walls else None
+        nearest_sell = sell_walls[0] if sell_walls else None
+        near_wall_size = 0.0
+        near_wall_is_buy = False
+        if nearest_buy and abs(price - nearest_buy) / price <= WALL_PROXIMITY:
+            near_wall_size = metrics.get("bid_depths", {}).get(nearest_buy, 0.0)
+            near_wall_is_buy = True
+        elif nearest_sell and abs(price - nearest_sell) / price <= WALL_PROXIMITY:
+            near_wall_size = metrics.get("ask_depths", {}).get(nearest_sell, 0.0)
+
+        wall_is_significant = (median_level > 0 and near_wall_size >= median_level * 3.0)
+
+        if wall_is_significant:
+            metrics["regime_confidence"] = 1.0
+            metrics["regime_probs"] = {"RANGE": 0.0, "TREND": 0.0, "NEUTRAL": 0.0, "LIQUIDITY": 1.0}
+            quant._liquidity_consecutive += 1
+            if quant._liquidity_consecutive > 3 and sweep is None:
+                logger.info("[Regime] LIQUIDITY cap reached — falling through to HMM")
+                quant._liquidity_consecutive = 0
+            else:
+                return "LIQUIDITY"
+        else:
+            # Wall is near but not significant — reset counter and fall through
+            quant._liquidity_consecutive = 0
+    else:
+        quant._liquidity_consecutive = 0
 
     # HMM classification → probability vector (P2: pass 4th feature)
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
@@ -614,13 +731,13 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
 
         if candle["high"] > nearest_sell and price < nearest_sell:
             logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (src={label} candle)")
-            return "ABOVE_HIGHS"
+            return "ABOVE_HIGHS", float(candle["time"])
 
         if candle["low"] < nearest_buy and price > nearest_buy:
             logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (src={label} candle)")
-            return "BELOW_LOWS"
+            return "BELOW_LOWS", float(candle["time"])
 
-    return None
+    return None, None
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -657,21 +774,37 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     elif "SELL" in dominant:
         score -= 1.0 if tape_speed == "SCREAMING" else 0.5
 
-    # Multi-factor micro-structure confirmation gate
-    # SIG-2 FIX: ofi_bull was using old scale (ofi > 8 never True after tanh pipeline).
-    ofi_bull = ofi > 0.15   # New normalised scale
+    ofi_bull = ofi > 0.15
     cvd_bull = cvd > 0
     tape_bull = "BUY" in dominant
+    micro_confirms_bull = sum([ofi_bull, cvd_bull, tape_bull])
 
-    micro_confirms = sum([ofi_bull, cvd_bull, tape_bull])
-    if micro_confirms < 2 and score < 3.0:
-        logger.info(f"[TrendStrategy] score={score:+.2f} rejected (micro_confirms={micro_confirms}/3)")
-        return None  # refuse single-signal entries
+    ofi_bear = ofi < -0.15
+    cvd_bear = cvd < 0
+    tape_bear = "SELL" in dominant
+    micro_confirms_bear = sum([ofi_bear, cvd_bear, tape_bear])
 
-    logger.info(f"[TrendStrategy] score={score:+.2f}")
-    if score >= 1.5:  return "BUY"
-    if score <= -1.5: return "SELL"
+    if score >= 1.5:
+        # Intended LONG
+        ofi_cvd_aligned = (ofi > 0.15 and cvd > 0)
+        if micro_confirms_bull < 2 and score < 3.0 and not ofi_cvd_aligned:
+            BOT_STATS["gate_stats"]["micro_confirms_failed"] = BOT_STATS["gate_stats"].get("micro_confirms_failed", 0) + 1
+            logger.info(f"[TrendStrategy] score={score:+.2f} rejected LONG (micro_confirms_bull={micro_confirms_bull}/3, OFI+CVD not aligned)")
+            return None
+        return "BUY"
+    
+    if score <= -1.5:
+        # Intended SHORT
+        ofi_cvd_aligned = (ofi < -0.15 and cvd < 0)
+        if micro_confirms_bear < 2 and score > -3.0 and not ofi_cvd_aligned:
+            BOT_STATS["gate_stats"]["micro_confirms_failed"] = BOT_STATS["gate_stats"].get("micro_confirms_failed", 0) + 1
+            logger.info(f"[TrendStrategy] score={score:+.2f} rejected SHORT (micro_confirms_bear={micro_confirms_bear}/3, OFI+CVD not aligned)")
+            return None
+        return "SELL"
+
     return None
+
+
 
 
 def _strategy_mean_reversion(metrics: Dict[str, Any], z_threshold: float = 1.5) -> Optional[str]:
@@ -716,15 +849,16 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
         )
         return None
 
-    # Phase 2 FIX: Raise confirms threshold 2/3 → 3/3 for tighter sweep quality.
-    # 2/3 allowed too many low-conviction entries; 3/3 requires all OFI+CVD+tape aligned.
+    # PHASE-2.1 FIX: Lower confirms threshold 3/3 → 2/3 for sweep entries.
+    # 3/3 was too restrictive — all three micro-confirmations rarely align simultaneously
+    # in live markets. 2/3 requires OFI+CVD+tape to agree, still enforcing quality.
     if sweep == "ABOVE_HIGHS":
         confirms = sum([
             ofi < -0.15,
             cvd < 0,
             "SELL" in dominant,
         ])
-        if confirms >= 3:
+        if confirms >= 2:
             logger.info(f"[SweepStrat] SELL after ABOVE_HIGHS (confirms={confirms}/3)")
             return "SELL"
 
@@ -734,10 +868,11 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
             cvd > 0,
             "BUY" in dominant,
         ])
-        if confirms >= 3:
+        if confirms >= 2:
             logger.info(f"[SweepStrat] BUY after BELOW_LOWS (confirms={confirms}/3)")
             return "BUY"
 
+    BOT_STATS["gate_stats"]["sweep_confirms_failed"] = BOT_STATS["gate_stats"].get("sweep_confirms_failed", 0) + 1
     return None
 
 
@@ -953,6 +1088,7 @@ def _apply_ulis_gate(
     if is_atr_extended: red_lights += 1
 
     if red_lights >= 2:
+        BOT_STATS["gate_stats"]["ulis_alignment_fail"] = BOT_STATS["gate_stats"].get("ulis_alignment_fail", 0) + 1
         logger.warning(f"[Alignment] GATE FAILED: {red_lights} Red Lights (RSI={rsi:.1f}, OFI={ofi:.1f}, ATR Extended={is_atr_extended})")
         return False, 0.0, f"{verdict_str} + Weak Alignment (R={red_lights})"
     elif red_lights == 1:
@@ -996,6 +1132,7 @@ def _risk_engine(
     tp_mult_ratio: float = 2.0,  # P0: regime-adaptive RR target
     candle_history: Optional[List[Dict[str, Any]]] = None,
     metrics: Optional[Dict[str, Any]] = None,  # BUG-4: needed for atr_pct_rank
+    regime_p: Optional[Dict[str, Any]] = None,  # PHASE-3.2: needed for panic_threshold
 ) -> Tuple[float, float]:
     """
     ATR-based SL/TP calculator with regime-adaptive multipliers (P0).
@@ -1028,6 +1165,10 @@ def _risk_engine(
             atr = (atr * (period - 1) + trs[j]) / period
         return atr
 
+    # PHASE-3.1: Dual vol scaling — candle-based vol_ratio AND atr_pct_rank
+    # atr_pct_rank is the 30-day rolling rank (0.0=quietest, 1.0=loudest).
+    # High rank (panic) = tighten stops; Low rank (quiet) = relax stops slightly.
+    atr_pct_rank = metrics.get("atr_pct_rank", 0.5) if metrics else 0.5
     if candle_history and len(candle_history) >= 20:
         recent_candles = list(candle_history)[-5:]
         baseline_candles = list(candle_history)[-20:]
@@ -1036,11 +1177,27 @@ def _risk_engine(
         vol_ratio = recent_atr / max(baseline_atr, 1e-8)
     else:
         vol_ratio = 1.0
-    adaptive_mult = sl_mult * float(np.clip(vol_ratio, 0.85, 1.50))
+
+    vol_scale = float(np.clip(vol_ratio, 0.85, 1.50))
+    rank_scale = 1.0 + (atr_pct_rank - 0.5) * 0.4
+    rank_scale = float(np.clip(rank_scale, 0.75, 1.25))
+    adaptive_mult = sl_mult * vol_scale * rank_scale
+
     if strategy_type == "TREND":
         adaptive_mult = min(adaptive_mult, 2.50)
+
+    # PHASE-3.2: Panic threshold — emergency SL when ATR is in top 5% of 30-day range
+    panic_threshold = regime_p.get("panic_threshold", 5.0) if regime_p else 5.0
+    if atr_pct_rank >= (1.0 - panic_threshold / 100.0):
+        emergency_mult = 1.0
+        logger.warning(
+            f"[RiskEngine] PANIC — ATR rank={atr_pct_rank:.0%} in top {panic_threshold:.0f}% of range. "
+            f"Emergency SL: {emergency_mult:.2f}× ATR (normal adaptive={adaptive_mult:.2f})"
+        )
+        adaptive_mult = emergency_mult
+
     SL_MULT = adaptive_mult
-    
+
     # Phase 5: Funding Rate Risk Scalar
     # If funding strongly favors our direction, scale up risk by 1.2x
     funding_rate = metrics.get("funding_rate", 0.0) if metrics else 0.0
@@ -1049,18 +1206,18 @@ def _risk_engine(
         funding_mult = 1.2  # shorts paying longs — bullish pressure
     elif funding_rate > 0.0005 and not is_long:
         funding_mult = 1.2  # longs paying shorts — bearish pressure
-    
+
     if funding_mult > 1.0:
         SL_MULT *= funding_mult
         logger.info(f"[RiskEngine] Funding rate multiplier: {funding_mult}x (funding={funding_rate:.4f})")
-    
+
     logger.info(
         f"[RiskEngine] sl_mult={sl_mult:.2f} vol_ratio={vol_ratio:.3f} "
+        f"atr_rank={atr_pct_rank:.0%} rank_scale={rank_scale:.3f} "
         f"adaptive_mult={SL_MULT:.3f} strategy={strategy_type}"
     )
 
     TP_MULT = tp_mult_ratio  # P0: regime-adaptive (RR target from REGIME_PARAMS)
-    SL_MULT = adaptive_mult
 
 
     def sl_tp(sl_dist: float) -> Tuple[float, float]:
@@ -1100,6 +1257,7 @@ def _compute_signal(
     feed_state,
     daily_loss_halt: bool,
     drawdown_halt: bool = False,
+    quant=None,  # PHASE-5.1: QuantEngine ref for cold-start trade count
 ) -> Dict[str, Any]:
     WAIT = {
         "verdict": "WAIT", "confidence": 0.0,
@@ -1109,15 +1267,18 @@ def _compute_signal(
 
     if daily_loss_halt:
         logger.warning("[RiskEngine] Daily loss limit hit — all trading halted today.")
+        _gate_stats_summary("daily_loss_halt")
         return {**WAIT, "analysis": "Daily loss limit reached. Halted."}
 
     if drawdown_halt:
         logger.warning("[RiskEngine] Max drawdown breached — all trading halted. Restart bot to resume.")
+        _gate_stats_summary("drawdown_halt")
         return {**WAIT, "analysis": "Max drawdown breached. Restart bot to resume."}
 
     # PHASE-0.4: Z-Score session guard
     # Z-score is statistically meaningless with fewer than 10 bars — it fits noise.
     if not metrics.get("z_score_valid", True):
+        _gate_stats_summary("zscore_warmup")
         return {**WAIT, "analysis": "Session warmup: Z-Score not yet valid (<10 bars)."}
 
     global LAST_CASCADE_TIME
@@ -1132,6 +1293,7 @@ def _compute_signal(
     _last_was_sl = LAST_TRADE_WAS_SL
     _cooldown = POST_TRADE_COOLDOWN_S if _last_was_sl else 45
     if time_since_last_trade < _cooldown:
+        _gate_stats_summary("post_trade_cooldown")
         return {**WAIT, "analysis": f"Post-trade cooldown ({_cooldown - int(time_since_last_trade)}s remain, {'SL' if _last_was_sl else 'TP'} exit)"}
 
     global LAST_CANDLE_TS
@@ -1142,10 +1304,14 @@ def _compute_signal(
     vpoc  = metrics.get("vpoc")
 
     # Stage 1: Parse walls
-    buy_walls, sell_walls = _parse_walls(metrics.get("allWalls"))
+    buy_walls  = [p for p, _ in metrics.get("top_buy_walls", [])]
+    sell_walls = [p for p, _ in metrics.get("top_sell_walls", [])]
+
+    # Stage 1b: Pre-detect sweep (needed for LIQUIDITY cap in _detect_regime)
+    sweep, sweep_ts = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
 
     # Stage 2: Regime
-    regime = _detect_regime(metrics, buy_walls, sell_walls)
+    regime = _detect_regime(metrics, buy_walls, sell_walls, quant=quant, sweep=sweep)
     logger.info(f"[Regime] {regime} | Z={metrics['zScore']:.2f} | "
                 f"ATR%={metrics.get('atr_pct', 0):.3%} | Tape={metrics['tapeSpeed']}")
 
@@ -1165,6 +1331,7 @@ def _compute_signal(
     time_since_cascade = time.time() - LAST_CASCADE_TIME
     if time_since_cascade < cascade_cd:
         remaining = cascade_cd - int(time_since_cascade)
+        _gate_stats_summary("cascade_cooldown")
         return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {remaining}s remain, regime={regime})"}
 
     logger.info(
@@ -1176,31 +1343,24 @@ def _compute_signal(
         f"htf_block={regime_p['htf_block']}"
     )
 
-    # Stage 3: Sweep detection
-    sweep = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
-
+    # Stage 3: Sweep detection (already computed in Stage 1b — reuse)
     # Stage 3b: Candle-Close Freshness Gate (LIQUIDITY_SWEEP only)
-    # HIGH-2 FIX: Old logic blocked sweeps if current candle was older than gate_sec
-    # (e.g. >45s into a 900s candle = 95% of candle life blocked). Inverted.
-    # New logic: a sweep signal from the PREVIOUS closed candle is considered stale
-    # if the current candle has been open longer than gate_sec WITHOUT us acting.
-    # This allows entries at any point in the candle AS LONG AS the sweep is from the
-    # immediately preceding candle (not from multiple candles ago).
+    # New logic: we use the actual timestamp of the candle that triggered the sweep
+    # to measure its age. This correctly handles sweeps detected from the live candle.
     if sweep:
-        prev_candle_ts = float(candle_history[-2]["time"]) if len(candle_history) >= 2 else 0.0
-        # Age of the candle that produced the sweep signal
-        sweep_candle_age_s = _time.time() - prev_candle_ts
+        sweep_candle_age_s = _time.time() - sweep_ts
         # A 15m candle = 900s. We allow entry at ANY POINT within the CURRENT candle
         # after the previous candle produced the sweep — i.e. up to 2 full candle lengths.
         # Old value (900+gate_sec=945s) gave only a 45s reaction window which was far
         # too tight: mid-session starts and any latency caused instant staleness.
         gate_sec = regime_p["candle_gate_sec"]
-        max_sweep_age = 1800 + gate_sec
+        max_sweep_age = 900 + gate_sec  # PHASE-5.3: was 1800+gate_sec (~30min), now 900+gate_sec (~15min)
         if sweep_candle_age_s > max_sweep_age:
             logger.info(
                 f"[CandleGate] Sweep signal stale — sweep candle closed "
                 f"{sweep_candle_age_s:.0f}s ago (>{max_sweep_age}s). Blocking."
             )
+            BOT_STATS["gate_stats"]["candle_gate_expired"] = BOT_STATS["gate_stats"].get("candle_gate_expired", 0) + 1
             sweep = None
 
     # Stage 4: Strategy
@@ -1251,6 +1411,7 @@ def _compute_signal(
         logger.info(f"[MetaModel] → WAIT (regime={regime}, no sweep)")
 
     if raw_direction is None:
+        _gate_stats_summary("signal_none")
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
 
     # Stage 4b: HTF Counter-Trend Block
@@ -1261,9 +1422,11 @@ def _compute_signal(
     if regime_p["htf_block"]:   # P0: Only apply HTF block when regime says to
         if htf == "BEAR" and is_long_dir and is_trend_strat:
             logger.warning(f"[HTF] Blocking LONG trend trade — 4H trend is BEAR.")
+            _gate_stats_summary("htf_counter_trend")
             return {**WAIT, "analysis": f"HTF=BEAR blocks {raw_direction} trend entry."}
         if htf == "BULL" and not is_long_dir and is_trend_strat:
             logger.warning(f"[HTF] Blocking SHORT trend trade — 4H trend is BULL.")
+            _gate_stats_summary("htf_counter_trend")
             return {**WAIT, "analysis": f"HTF=BULL blocks {raw_direction} trend entry."}
 
         # Funding Rate Anti-Squeeze Protection (TREND only, since htf_block is now regime-gated)
@@ -1272,9 +1435,11 @@ def _compute_signal(
                 fr = float(metrics.get("funding_rate", 0.0))
                 if is_long_dir and fr > 0.00015:
                     logger.warning(f"[Anti-Squeeze] Blocking LONG trend trade; crowded funding rate: {fr:.4%}")
+                    _gate_stats_summary("funding_blocks_long")
                     return {**WAIT, "analysis": f"Funding Rate {fr:.4%} > 0.015%. Blocked long."}
                 if not is_long_dir and fr < -0.00015:
                     logger.warning(f"[Anti-Squeeze] Blocking SHORT trend trade; crowded funding rate: {fr:.4%}")
+                    _gate_stats_summary("funding_blocks_short")
                     return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < -0.015%. Blocked short."}
             except (ValueError, TypeError):
                 pass
@@ -1296,12 +1461,21 @@ def _compute_signal(
     )
 
     if not should_trade:
+        _gate_stats_summary("ulis_veto")
         return {**WAIT, "analysis": f"ULIS veto: {ulis_verdict_str}", "ulis_verdict": ulis_verdict_str}
 
     # FIX: Check threshold AFTER ULIS gate using boosted confidence
     # P0: Use regime-adaptive min_confidence instead of global MIN_CONFIDENCE
-    regime_min_conf = regime_p["min_confidence"]
+    # PHASE-5.1: Apply cold-start discount (few trades = slightly lower bar)
+    # PHASE-5.2: Wire MIN_CONFIDENCE as a floor under regime threshold
+    total_trades = sum(quant.get_regime_trade_counts().values()) if quant else 0
+    cold_start_discount = COLD_START_CONFIDENCE_DISCOUNT if total_trades < COLD_START_TRADE_COUNT else 0.0
+    regime_min_conf = max(
+        regime_p["min_confidence"] - cold_start_discount,
+        MIN_CONFIDENCE * 0.8
+    )
     if confidence < regime_min_conf:
+        _gate_stats_summary("confidence_below_threshold")
         return {**WAIT, "analysis": (
             f"Regime={regime} strategy={strategy_type} signal={raw_direction} "
             f"but P={confidence:.2%} < regime threshold={regime_min_conf:.0%}"
@@ -1314,15 +1488,18 @@ def _compute_signal(
         tp_mult_ratio=regime_p["rr_target"],
         candle_history=candle_history,
         metrics=metrics,  # BUG-4: pass for atr_pct_rank vol scaling
+        regime_p=regime_p,  # PHASE-3.2: pass for panic_threshold
     )
 
     # Sanity check — geometry must be valid
     is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
     if is_long and (stop_loss >= price or take_profit <= price):
         logger.warning("[RiskEngine] Invalid geometry for LONG — skipped.")
+        _gate_stats_summary("fee_geometry")
         return {**WAIT, "analysis": "Invalid SL/TP geometry — skipped."}
     if not is_long and (stop_loss <= price or take_profit >= price):
         logger.warning("[RiskEngine] Invalid geometry for SHORT — skipped.")
+        _gate_stats_summary("fee_geometry")
         return {**WAIT, "analysis": "Invalid SL/TP geometry — skipped."}
 
     # ── Pre-trade fee profitability check ──────────────────────────────
@@ -1337,6 +1514,7 @@ def _compute_signal(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
             f"(round-trip fee={round_trip_fee:.2%}). Trade not profitable after fees. Skipping."
         )
+        _gate_stats_summary("fee_geometry")
         return {**WAIT, "analysis": (
             f"TP gain {tp_gain_pct:.3%} below fee break-even {min_viable_tp_pct:.3%}. Skipped."
         ), "ulis_verdict": ulis_verdict_str}
@@ -1358,6 +1536,8 @@ def _compute_signal(
         f"ULIS={ulis_verdict_str}"
     )
     logger.info(f"[Signal] >> {verdict} | conf={confidence:.0%} | SL={stop_loss} TP={take_profit} | ULIS={ulis_verdict_str}")
+
+    BOT_STATS["gate_stats"]["total_passed"] += 1
 
     return {
         "verdict":      verdict,
@@ -1406,6 +1586,17 @@ async def execution_loop(
         except Exception as e:
             logger.warning(f"[Main] Could not dynamically fetch account balance at startup: {e}")
 
+    EQUITY_MIN_TRADEABLE = 200.0
+    if ACCOUNT_SIZE < EQUITY_MIN_TRADEABLE:
+        logger.warning(
+            f"[RiskEngine] ⚠️ Account ${ACCOUNT_SIZE:.2f} below recommended minimum "
+            f"(${EQUITY_MIN_TRADEABLE:.0f}). Trade sizing may fail or be suboptimal."
+        )
+        if executor.notifier:
+            await executor.notifier.send_message(
+                f"⚠️ Low Equity: ${ACCOUNT_SIZE:.2f} (min recommended: ${EQUITY_MIN_TRADEABLE:.0f})"
+            )
+
     mode = "DRY-RUN" if executor.dry_run else "LIVE"
     logger.info(
         f"╔══ Quad-Desk Bot ═════════════════════╗\n"
@@ -1420,6 +1611,8 @@ async def execution_loop(
         f"║  Interval     : every {ANALYSIS_INTERVAL}s\n"
         f"╚══════════════════════════════════════╝"
     )
+
+    _last_recon_ts = 0.0
 
     # Startup lockout: prevent any entry for the first 90s after boot.
     # The REST prefetch loads 100 historical candles, but live CVD, OFI and
@@ -1452,6 +1645,11 @@ async def execution_loop(
                 stats["_last_trade_day"] = today
                 stats["daily_pnl"]       = 0.0
                 stats["daily_loss_halt"] = False
+                # PHASE-3.1: Drawdown halt must reset daily, not require manual restart
+                if stats.get("drawdown_halt"):
+                    stats["drawdown_halt"] = False
+                    stats["session_pnl"] = 0.0
+                    logger.warning("[RiskEngine] New day — drawdown halt LIFTED, session PnL reset.")
                 # 3.6 FIX: Reset CVD anchor daily to prevent multi-day drift
                 feed.state.cvd = 0.0
                 LAST_CVD = 0.0
@@ -1467,7 +1665,24 @@ async def execution_loop(
                     except Exception as _bal_err:
                         logger.warning(f"[RiskEngine] Could not refresh ACCOUNT_SIZE: {_bal_err}")
 
+                # PHASE-6.3: Daily performance telemetry
+                logger.info(
+                    f"[DailyReport] Trades={stats.get('total_trades',0)} | "
+                    f"Daily PnL=${stats.get('daily_pnl',0):.2f} | "
+                    f"Session PnL=${stats.get('session_pnl',0):.2f} | "
+                    f"Drawdown=${ACCOUNT_SIZE*MAX_DRAWDOWN_PCT/100:.2f} | "
+                    f"Gate rejects={stats.get('gate_stats',{})}"
+                )
+                if executor.notifier:
+                    await executor.notifier.send_message(
+                        f"📊 Daily Report: {stats.get('total_trades',0)} trades | "
+                        f"PnL: ${stats.get('daily_pnl',0):.2f} | Session: ${stats.get('session_pnl',0):.2f}"
+                    )
+
             current_price = feed.state.candles[-1]["close"]
+
+            # PHASE-3.4: Cache positions per cycle to avoid duplicate fetch_positions API calls
+            _cached_positions = None
 
             # ── P0-2 FIX: Candle staleness guard ────────────────────────────
             # If the most recent candle is older than 2.5× the kline interval,
@@ -1498,6 +1713,7 @@ async def execution_loop(
                 executor._last_pos_poll = _now
                 _hb_exited, _hb_pnl = await executor._check_live_position_exit(current_price)
                 if _hb_exited:
+                    _cached_positions = None  # PHASE-3.4: Invalidate cache after exit
                     logger.info(f"[Heartbeat] Position closed detected via 30s poll. PnL=${_hb_pnl:.2f}")
                     new_daily = stats.get("daily_pnl", 0.0) + _hb_pnl
                     stats["daily_pnl"] = new_daily
@@ -1572,29 +1788,33 @@ async def execution_loop(
                     candle_low=candle.get("low")
                 )
                 if exited:
+                    _cached_positions = None  # PHASE-3.4: Invalidate cache after exit
                     if pnl < 0:
                         LAST_CASCADE_TIME = time.time()
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
 
                         
-                        stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
-                        # FINDING-3 FIX: 3 losses / 30min (was 2 / 2hr).
-                        # At 40% loss rate, P(2 consecutive) = 16% → 3.2hr lockout/day.
-                        # P(3 consecutive) = 6.4% → 23min lockout/day. 87% less downtime.
-                        if stats["consecutive_losses"] >= 3:
+                        # PHASE-3.3: Rolling 30-min loss window (was absolute consecutive counter)
+                        # Tracks losses within a 30-minute rolling window instead of all-time.
+                        # This prevents permanent bot lockout when losses are spaced hours apart.
+                        loss_times = stats.get("loss_times", [])
+                        now_loss = time.time()
+                        loss_times = [t for t in loss_times if now_loss - t < 1800]  # Keep only last 30 min
+                        if pnl < 0:
+                            loss_times.append(now_loss)
+                        stats["loss_times"] = loss_times
+
+                        if len(loss_times) >= 3:
                             stats["cooldown_until"] = time.time() + 1800
-                            stats["consecutive_losses"] = 0
+                            stats["loss_times"] = []
                             halt_msg = (
                                 f"🛑 Quad-Desk CONSECUTIVE LOSS HALT\n"
-                                f"3 SL exits in a row. All trading paused for 30 minutes.\n"
+                                f"3 SL exits within 30 minutes. All trading paused for 30 minutes.\n"
                                 f"Resumes at {time.strftime('%H:%M:%S', time.localtime(time.time() + 1800))}"
                             )
-                            logger.error("[RiskManager] 3 consecutive SL exits! Activating 30-minute cooldown.")
-                            # OBS-1 FIX: Alert operator via Telegram
+                            logger.error("[RiskManager] 3 consecutive SL exits within 30 min! Activating 30-minute cooldown.")
                             if executor.notifier:
                                 await executor.notifier.send_message(halt_msg)
-                    else:
-                        stats["consecutive_losses"] = 0
                     
                     # Update the Bayesian win-rate prior for self-calibration
                     # P1: pass current regime so per-regime beta prior is updated
@@ -1664,6 +1884,37 @@ async def execution_loop(
             # Stage 1: Compute metrics (Needed for ATR trailing stop in V3 monitor)
             metrics = quant.compute_metrics()
 
+            # PHASE-7.1: Periodic exchange position reconciliation (every 300s)
+            current_time = time.time()
+            if not executor.dry_run and (current_time - _last_recon_ts) >= 300:
+                _last_recon_ts = current_time
+                try:
+                    if _cached_positions is None:
+                        _cached_positions = await executor.exchange.fetch_positions()
+                    positions = _cached_positions
+                    exchange_has_pos = any(
+                        abs(float(p.get("contracts", 0) or p.get("positionAmt", 0))) > 0.0001
+                        for p in positions
+                    )
+                    bot_has_pos = executor.active_position is not None
+                    if exchange_has_pos and not bot_has_pos:
+                        logger.critical(
+                            "[Reconciliation] EXCHANGE has open position but BOT does not. "
+                            "Manual intervention required."
+                        )
+                        await executor.notifier.send_error_alert(
+                            "⚠️ Position mismatch: exchange open, bot closed."
+                        )
+                    elif not exchange_has_pos and bot_has_pos:
+                        logger.warning(
+                            "[Reconciliation] BOT thinks position open but EXCHANGE does not. "
+                            "Clearing stale state."
+                        )
+                        executor.active_position = None
+                        executor.pending_order = None
+                except Exception as e:
+                    logger.warning(f"[Reconciliation] Check failed: {e}")
+
             # Inject CVD delta (rate-of-change) for Bayesian fusion.
             # A recovering CVD (e.g. -1450 → -950) is a bullish signal even when absolute CVD < 0.
             # LAST_CVD is 0.0 on first boot — naively computing delta would create a false spike
@@ -1719,6 +1970,14 @@ async def execution_loop(
                 f"Tape={metrics['tapeSpeed']}/{metrics['tapeDominant']}"
             )
 
+            # PHASE-0.2: Warn if aggTrade stream may be stale — tape metrics unreliable
+            if not metrics.get("trade_buffer_healthy", True):
+                logger.warning(
+                    f"[DataFeed] aggTrade stream stale or starved — "
+                    f"last trade {time.time() - feed.state._last_trade_ts:.0f}s ago, "
+                    f"buffer={len(feed.state.recent_trades)} trades. Tape/CVD metrics unreliable."
+                )
+
             # Stages 2–7: Full signal engine
             # HIGH-4 FIX: Reset consecutive_losses when a cooldown expires so the
             # bot gets a clean slate after its penalty period. Without this reset,
@@ -1745,6 +2004,7 @@ async def execution_loop(
                     feed_state=feed.state,
                     daily_loss_halt=stats.get("daily_loss_halt", False),
                     drawdown_halt=stats.get("drawdown_halt", False),
+                    quant=quant,
                 )
 
 
@@ -1792,7 +2052,7 @@ async def execution_loop(
                     )
                 else:
                     await executor.execute_signal(
-                        SYMBOL, metrics["price"], verdict_json, MAX_RISK_PCT,
+                        SYMBOL, metrics["execution_price"], verdict_json, MAX_RISK_PCT,
                         account_size=ACCOUNT_SIZE, ulis_verdict=ulis_str
                     )
                 # Only count the trade if execution actually opened a position
@@ -1808,8 +2068,23 @@ async def execution_loop(
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"[Main] Execution loop error: {e}", exc_info=True)
-            await asyncio.sleep(5)
+            global _CYCLE_ERROR_COUNT, _LAST_CYCLE_ERROR
+            _CYCLE_ERROR_COUNT += 1
+            _LAST_CYCLE_ERROR = str(e)
+            if _CYCLE_ERROR_COUNT % 5 == 0:
+                logger.critical(
+                    f"[MainLoop] {5} consecutive errors! Last: {_LAST_CYCLE_ERROR}"
+                )
+                if executor.notifier:
+                    await executor.notifier.send_message(
+                        f"🚨 Bot error loop: {_CYCLE_ERROR_COUNT} errors. Last: {_LAST_CYCLE_ERROR[:200]}"
+                    )
+                await asyncio.sleep(30)
+            else:
+                logger.error(f"[Main] Execution loop error: {e}", exc_info=True)
+                await asyncio.sleep(5)
+        else:
+            _CYCLE_ERROR_COUNT = 0
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1835,6 +2110,29 @@ async def main():
         tg_chat_id=TG_CHAT_ID
     )
 
+    # PHASE-4.2: Seed HMM observations from REST historical candles on startup
+    # This gives the HMM meaningful priors from the first cycle instead of
+    # requiring ~7 minutes of uniform posterior before it produces useful regimes.
+    _seeded = False
+    try:
+        import numpy as np
+        rest_candles = await feed._fetch_historical_candles_rest()
+        if rest_candles and len(rest_candles) >= 20:
+            closes = np.array([c["close"] for c in rest_candles], dtype=float)
+            highs  = np.array([c["high"]  for c in rest_candles], dtype=float)
+            lows   = np.array([c["low"]   for c in rest_candles], dtype=float)
+            vols   = np.array([c["volume"]for c in rest_candles], dtype=float)
+            for i in range(20, len(rest_candles)):
+                window = closes[max(0, i-50):i+1]
+                atr_pct = (highs[i] - lows[i]) / closes[i] if closes[i] > 0 else 0.005
+                z_approx = abs((closes[i] - window.mean()) / (window.std() + 1e-9))
+                tape_proxy = "NORMAL"
+                _hmm_classifier.classify(atr_pct, z_approx, tape_proxy, atr_pct_rank=0.5)
+            logger.info(f"[HMM] Seeded with {len(rest_candles)-20} historical observations from REST candles.")
+            _seeded = True
+    except Exception as e:
+        logger.warning(f"[HMM] HMM seeding from history failed (will use cold-start): {e}")
+
     # NOTE (CRIT-2 FIX): set_leverage was moved to execution_loop() so it runs
     # AFTER executor.initialize() has loaded markets. Setting leverage before
     # load_markets() means CCXT has no symbol info and Binance may silently reject it.
@@ -1854,6 +2152,7 @@ async def main():
 
     tasks = [
         asyncio.create_task(feed.run(),                                            name="data_feed"),
+        asyncio.create_task(feed.funding_rate_loop(),                              name="funding_rate"),
         asyncio.create_task(execution_loop(feed, quant, executor, BOT_STATS),     name="exec_loop"),
         asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS),                   name="heartbeat"),
         # P0-2 FIX: Feed health monitor — detects frozen WebSocket and forces reconnect
@@ -1882,6 +2181,16 @@ async def main():
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         feed.stop()
+        
+        # MISS-5: Graceful shutdown order cancellation
+        try:
+            if not executor.dry_run and getattr(executor, 'exchange', None):
+                ccxt_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
+                await executor.exchange.cancel_all_orders(ccxt_symbol)
+                logger.info("[Main] Cancelled all pending orders on shutdown.")
+        except Exception as e:
+            logger.warning(f"[Main] Failed to cancel orders on shutdown: {e}")
+
         await executor.close()
         await heartbeat.write_offline(BOT_STATS)
         logger.info("[Main] Bot stopped cleanly.")

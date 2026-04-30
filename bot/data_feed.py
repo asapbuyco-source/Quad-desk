@@ -14,7 +14,7 @@ class MarketState:
         self.symbol = symbol.upper()
         self.candles: deque = deque(maxlen=200)
         # Keep all trades received; prune old ones in add_trade
-        self.recent_trades: deque = deque(maxlen=5000)
+        self.recent_trades: deque = deque(maxlen=50000)
         # Order Book snapshot { price_float: size_float }
         self.bids: dict = {}
         self.asks: dict = {}
@@ -25,6 +25,7 @@ class MarketState:
         # Negative = shorts pay longs (crowded short → bullish squeeze).
         self.funding_rate: float = 0.0
         self._reconnect_event: asyncio.Event = asyncio.Event()
+        self._last_trade_ts: float = 0.0   # epoch-seconds of last aggTrade received
 
     # ------------------------------------------------------------------
     # Candle management
@@ -66,15 +67,16 @@ class MarketState:
             'side': side,
             'time': t_data['T']  # Binance millisecond timestamp
         }
+        self._last_trade_ts = t_data['T'] / 1000.0
         self.recent_trades.append(trade)
 
         # Update CVD
         delta = size if side == 'BUY' else -size
         self.cvd += delta
 
-        # Prune trades older than 60 seconds using wall-clock time
+        # Prune trades older than 5 minutes using wall-clock time
         now_ms = time.time() * 1000
-        while self.recent_trades and (now_ms - self.recent_trades[0]['time']) > 60_000:
+        while self.recent_trades and (now_ms - self.recent_trades[0]['time']) > 300_000:
             self.recent_trades.popleft()
 
     # ------------------------------------------------------------------
@@ -183,6 +185,21 @@ class BinanceDataFeed:
         except Exception as e:
             logger.warning(f"[DataFeed] Failed to fetch funding rate: {e}")
 
+    async def funding_rate_loop(self):
+        """
+        PHASE-0.3: Standalone funding rate fetch loop.
+        Runs independently of the WebSocket connection, polling every 60 s.
+        Removes the funding fetch from inside the WS handler (which was
+        silently dropped on reconnect without retry).
+        """
+        await asyncio.sleep(5)
+        while self.is_running:
+            await self._fetch_funding_rate()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                break
+
     # ------------------------------------------------------------------
     # REST API Prefetch
     # ------------------------------------------------------------------
@@ -213,6 +230,7 @@ class BinanceDataFeed:
 
             # Reset CVD to re-anchor perfectly based on REST history (only on success)
             self.state.cvd = 0.0
+            parsed_candles = []
             for k in data:
                 # Binance REST returns an array of arrays
                 # [openTime, open, high, low, close, volume, closeTime, qav, trades, taker_buy_base, taker_buy_quote, ...]
@@ -224,6 +242,7 @@ class BinanceDataFeed:
                     'c': float(k[4]),
                     'v': float(k[5]),
                 }
+                parsed_candles.append({"close": float(k[4]), "high": float(k[2]), "low": float(k[3]), "volume": float(k[5])})
                 self.state.add_candle(c_data, is_final=True)
 
                 # Rebuild CVD analytically
@@ -232,6 +251,8 @@ class BinanceDataFeed:
                 self.state.cvd += (2.0 * taker_buy_base) - vol
 
             logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles. CVD rebuilt: {self.state.cvd:.0f}")
+            self.candles_seeded = True
+            return parsed_candles
         except Exception as e:
             logger.warning(
                 f"[DataFeed] Failed to prefetch historical candles ({e}). "
@@ -249,7 +270,8 @@ class BinanceDataFeed:
         retry_delay = 1
 
         # ALWAYS fill history before opening streaming connections to prevent the 51-interval delay
-        await self._fetch_historical_candles_rest()
+        if not getattr(self, "candles_seeded", False):
+            await self._fetch_historical_candles_rest()
 
         while self.is_running:
             try:
@@ -262,6 +284,8 @@ class BinanceDataFeed:
                 ) as ws:
                     retry_delay = 1  # Reset back-off on successful connect
                     logger.info("[DataFeed] Connected ✓")
+                    # PHASE-0.3: Fetch funding rate immediately on connection (before WS loop)
+                    asyncio.create_task(self._fetch_funding_rate())
                     import asyncio as _asyncio
                     while self.is_running:
                         try:
@@ -272,11 +296,6 @@ class BinanceDataFeed:
                             break
                         except websockets.exceptions.ConnectionClosedOK:
                             break
-                    # Funding rate: fetch every 60 s without blocking the WS loop
-                    now = time.time()
-                    if now - self._last_funding_fetch >= 60.0:
-                        self._last_funding_fetch = now
-                        asyncio.create_task(self._fetch_funding_rate())
                     # Wait for reconnect signal if triggered by health monitor
                     if self.is_running:
                         await _asyncio.wait_for(self._reconnect_event.wait(), timeout=retry_delay + 5)
@@ -334,6 +353,25 @@ class BinanceDataFeed:
                 self._reconnect_event.set()
                 self.is_running = False
                 logger.info("[DataFeed] Feed health monitor triggered reconnect.")
+
+            # PHASE-2.2: Check aggTrade stream health
+            if hasattr(self.state, '_last_trade_ts') and self.state._last_trade_ts > 0:
+                trade_age = time.time() - self.state._last_trade_ts
+                if trade_age > 90:
+                    trade_alert = (
+                        f"⚠️ [DataFeed] AGGTRADE STALE: no trade data for {trade_age:.0f}s. "
+                        f"Buffer={len(self.state.recent_trades)} trades. CVD/tape unreliable."
+                    )
+                    logger.error(trade_alert)
+                    if notifier:
+                        try:
+                            await notifier.send_message(trade_alert)
+                        except Exception:
+                            pass
+                    if trade_age > 180:
+                        self._reconnect_event.set()
+                        self.is_running = False
+                        logger.info("[DataFeed] AggTrade stale >180s — triggering reconnect.")
 
     def stop(self):
         logger.info("[DataFeed] Stop requested.")

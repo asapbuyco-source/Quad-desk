@@ -315,7 +315,7 @@ def compute_ulis_verdict(
     )
     # 3.2 FIX: Removed bayes_boost — bayesianPosterior already feeds nlf_score (double-counting).
     # Only CVD boost remains as it's an orthogonal (independent) signal.
-    cvd_boost   = _clamp(cvd / 5_000_000.0, -0.06, 0.06) * math.copysign(1, liquidity_vector or 1)
+    cvd_boost = math.tanh(cvd / 5_000_000.0) * 0.06 * math.copysign(1, liquidity_vector or 1)
     alde_confidence = _clamp(alde_conf0 + cvd_boost, 0.0, 1.0)
 
     # ── Phase 6: Verdict AND-Gates ───────────────────────────────────────────
@@ -380,7 +380,7 @@ def compute_ulis_verdict(
     elif verdict == "AVOID" or verdict == "UNWIND":
         confidence_boost = -1.0   # This ensures confidence drops below threshold
     elif verdict == "NEUTRAL":
-        confidence_boost = 0.0    # No ULIS edge but no veto — let regime/Bayesian decide
+        confidence_boost = 0.03  # PHASE-2.5: Was 0.0 — mild "no objection" nudge for NEUTRAL
     elif verdict == "BREAKOUT_WATCH":
         confidence_boost = -0.02  # Mild caution: breakout vacuum, not a directional veto
 

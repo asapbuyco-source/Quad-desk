@@ -50,6 +50,10 @@ POST_TRADE_COOLDOWN_S  = 90     # seconds after any exit before new entry allowe
 CASCADE_COOLDOWN_S     = 300    # seconds after SL exit (cascade prevention)
 CONSECUTIVE_LOSS_HALT  = 3      # was 2 — reduces false lockouts
 
+# ── Bayesian Cold-Start ─────────────────────────────────────────────────────────
+COLD_START_TRADE_COUNT = 30
+COLD_START_CONFIDENCE_DISCOUNT = 0.05
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ── REGIME-CONDITIONAL PARAMETER MATRIX (HMM Spec, Apr 2026) ─────────────────
 # ══════════════════════════════════════════════════════════════════════════════
@@ -70,20 +74,20 @@ REGIME_PARAMS = {
         "z_threshold":        1.3,   # Was 1.5. Triggers mean-reversion earlier
         "atr_multiplier_sl":  1.14,   # Was 1.2 — 5% reduction post-Wilder compensation
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
-        "min_confidence":     0.55,  # Was 0.58. 55% win-probability required
+        "min_confidence":     0.55,  # PHASE-2.3: was 0.58, lowered to 55% to allow entries in RANGE
         "rr_target":          1.8,   # 1.8:1 minimum R:R
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
         "panic_threshold":    2.5,   # Flash-crash trigger
         "candle_gate_sec":    30,    # Was 45s. Faster entry
         "htf_block":          False, # Counter-HTF is the strategy in RANGE
-        "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (quiet market recovers fast)
+        "cascade_cooldown_s": 180,   # PHASE-2.5: was 300s, lowered to 180s for RANGE recovery
     },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
         "z_threshold":        1.5,
         "atr_multiplier_sl":  1.43,
-        "ofi_bound":          0.12,
-        "min_confidence":     0.58,
+        "ofi_bound":          0.10,  # PHASE-4.1: was 0.12, lowered to 0.10 for more signal pass-through
+        "min_confidence":     0.55,  # PHASE-2.4: was 0.58, lowered to 55% for more entry opportunity
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "panic_threshold":    5.0,
@@ -109,12 +113,12 @@ REGIME_PARAMS = {
         "z_threshold":        1.5,
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.12,
-        "min_confidence":     0.62,
+        "min_confidence":     0.55,  # PHASE-2.3: was 0.62, lowered to 55% for more LIQUIDITY signals
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "panic_threshold":    5.0,
         "candle_gate_sec":    45,    # Was 60s
-        "htf_block":          False, 
+        "htf_block":          False,
         "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (sweep may repeat next candle)
     },
 }
