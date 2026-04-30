@@ -356,9 +356,20 @@ async def run_heartbeat(stats: dict) -> None:
                 equity_doc["timestamp"] = _time.time()
                 _buffered_append({"type": "equity", **equity_doc, "ts": _time.time()})
             else:
-                equity_ref = _db.collection("equityCurve")
+                # P2-2 FIX: Day-bucketed documents instead of equity_ref.add() per minute.
+                # Old: 1 new Firestore doc/minute = 86,400 docs after 60 days.
+                # New: 1 doc/day with arrayUnion; merge=True creates doc if missing.
                 try:
-                    await asyncio.to_thread(equity_ref.add, equity_doc)
+                    from datetime import datetime
+                    _day_key = datetime.utcnow().strftime("%Y-%m-%d")
+                    _equity_point = {k: v for k, v in equity_doc.items() if k != "timestamp"}
+                    _equity_point["ts"] = _time.time()
+                    _equity_day_ref = _db.collection("equityCurve").document(_day_key)
+                    await asyncio.to_thread(
+                        _equity_day_ref.set,
+                        {"points": fs.ArrayUnion([_equity_point]), "date": _day_key},
+                        True,
+                    )
                 except Exception as e:
                     _consecutive_failures += 1
                     logger.warning(f"[Heartbeat] Equity write error: {e}")

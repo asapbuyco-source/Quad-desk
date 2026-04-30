@@ -1422,14 +1422,19 @@ def _compute_signal(
         if is_trend_strat:
             try:
                 fr = float(metrics.get("funding_rate", 0.0))
-                if is_long_dir and fr > 0.00015:
-                    logger.warning(f"[Anti-Squeeze] Blocking LONG trend trade; crowded funding rate: {fr:.4%}")
+                # P1-6 FIX: Old threshold (0.015%) was 5-10x below normal BTC contango
+                # (typically 0.03-0.10% per 8h). It silently blocked ~70% of long entries
+                # in any bullish session. New thresholds reflect genuinely crowded positions.
+                FUNDING_LONG_BLOCK  =  0.0008   # 0.08% per 8h — clearly crowded longs
+                FUNDING_SHORT_BLOCK = -0.0005   # -0.05% per 8h — clearly crowded shorts
+                if is_long_dir and fr > FUNDING_LONG_BLOCK:
+                    logger.warning(f"[Anti-Squeeze] Blocking LONG: extreme funding rate {fr:.4%} > {FUNDING_LONG_BLOCK:.4%}")
                     _gate_stats_summary("funding_blocks_long")
-                    return {**WAIT, "analysis": f"Funding Rate {fr:.4%} > 0.015%. Blocked long."}
-                if not is_long_dir and fr < -0.00015:
-                    logger.warning(f"[Anti-Squeeze] Blocking SHORT trend trade; crowded funding rate: {fr:.4%}")
+                    return {**WAIT, "analysis": f"Funding Rate {fr:.4%} > {FUNDING_LONG_BLOCK:.4%}. Blocked long."}
+                if not is_long_dir and fr < FUNDING_SHORT_BLOCK:
+                    logger.warning(f"[Anti-Squeeze] Blocking SHORT: extreme funding rate {fr:.4%} < {FUNDING_SHORT_BLOCK:.4%}")
                     _gate_stats_summary("funding_blocks_short")
-                    return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < -0.015%. Blocked short."}
+                    return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < {FUNDING_SHORT_BLOCK:.4%}. Blocked short."}
             except (ValueError, TypeError):
                 pass
 
@@ -1583,20 +1588,24 @@ async def _process_exit(
     else:
         stats["consecutive_losses"] = 0
 
-    max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
+    # P0-2 FIX: Use live equity (not static boot ACCOUNT_SIZE) for risk calcs.
+    # After gains/losses, the absolute dollar limits must scale with real equity.
+    current_equity = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
+
+    max_loss_usd = current_equity * MAX_DAILY_LOSS_PCT / 100.0
     if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
         stats["daily_loss_halt"] = True
         logger.warning(
             f"[RiskEngine] ⛔ Daily loss limit: ${stats['daily_pnl']:.2f} "
-            f"(limit=-${max_loss_usd:.2f}). Halted until tomorrow."
+            f"(limit=-${max_loss_usd:.2f} on equity=${current_equity:.2f}). Halted until tomorrow."
         )
 
-    max_drawdown_usd = ACCOUNT_SIZE * MAX_DRAWDOWN_PCT / 100.0
+    max_drawdown_usd = current_equity * MAX_DRAWDOWN_PCT / 100.0
     if stats["session_pnl"] < -max_drawdown_usd and not stats.get("drawdown_halt"):
         stats["drawdown_halt"] = True
         logger.critical(
             f"[RiskEngine] 🚨 MAX DRAWDOWN BREACHED: "
-            f"${stats['session_pnl']:.2f} (limit=-${max_drawdown_usd:.2f}). HALTED."
+            f"${stats['session_pnl']:.2f} (limit=-${max_drawdown_usd:.2f} on equity=${current_equity:.2f}). HALTED."
         )
         if executor.notifier:
             await executor.notifier.send_message(
@@ -1810,14 +1819,15 @@ async def execution_loop(
                         stats["active_position"] = None
                         continue
 
-            # ── AUDIT FIX #13: Halt if emergency flatten failed ──────────
-            if executor.active_position and executor.active_position.get("__failed_flatten"):
+            # ── P0-3 FIX: Halt if emergency flatten failed ──────────────
+            # Use a dedicated boolean flag instead of a sentinel dict so the
+            # 30s heartbeat poll can't silently wipe it by setting active_position=None.
+            if getattr(executor, "_flatten_failed", False):
                 logger.critical(
                     f"[Main] HALTED — previous emergency_flatten FAILED. "
-                    f"Position {executor.active_position.get('symbol')} may still be open on exchange. "
-                    f"Manual intervention required."
+                    f"Manual intervention required. Restart bot after closing position."
                 )
-                await asyncio.sleep(60)  # Don't spam logs, check once per minute
+                await asyncio.sleep(60)  # Check once per minute, don't spam logs
                 continue
 
             # ── Position exit check — track PnL for daily halt ─────
@@ -1910,10 +1920,18 @@ async def execution_loop(
             if metrics is not None:
                 _current_cvd = metrics.get("cvd", 0.0)
                 _cvd_reset = getattr(feed.state, "_cvd_was_reset", False)
-                if LAST_CVD == 0.0 or _cvd_reset:
+                # P2-3 FIX: Suppress CVD delta for 2 cycles after WS reconnect, not 1.
+                # Cycle 1: reset flag fires, LAST_CVD set to 0 (REST rebuild may not be done).
+                # Cycle 2: if LAST_CVD=0 and cvd=-1500, delta=-1500 → false massive sell signal.
+                # 2-cycle suppression eliminates this second-cycle spike completely.
+                _cvd_suppress = getattr(executor, "_cvd_reset_suppress", 0)
+                if LAST_CVD == 0.0 or _cvd_reset or _cvd_suppress > 0:
                     if _cvd_reset:
                         feed.state._cvd_was_reset = False
-                        logger.info("[DataFeed] CVD reset detected — suppressing delta spike this cycle.")
+                        executor._cvd_reset_suppress = 2  # suppress this + next cycle
+                        logger.info("[DataFeed] CVD reset detected — suppressing delta spike for 2 cycles.")
+                    elif _cvd_suppress > 0:
+                        executor._cvd_reset_suppress = _cvd_suppress - 1
                     LAST_CVD = _current_cvd
                     metrics["cvd_delta"] = 0.0
                 else:

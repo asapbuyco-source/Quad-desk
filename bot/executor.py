@@ -58,6 +58,13 @@ class TradingExecutor:
         self.lock_expiry: float = 0.0
         self.last_panic_reason: str = ""
         self.failed_order_ts: float = 0.0  # Cooldown after live order failure (prevents -2015 spam)
+        # P0-3 FIX: Dedicated flag set when emergency_flatten fails.
+        # A boolean survives the heartbeat poll clearing active_position; a sentinel dict does not.
+        self._flatten_failed: bool = False
+        # P0-1 FIX: Lock to prevent TOCTOU race between heartbeat poll and main loop
+        # both reading/writing active_position in overlapping async yield points.
+        import asyncio as _asyncio_for_lock
+        self._position_lock = _asyncio_for_lock.Lock()
 
         # PHASE-0.3: Exchange-specific fee table.
         # Fees were hardcoded as Binance USDM rates in 3 separate places.
@@ -1248,15 +1255,10 @@ class TradingExecutor:
                     await self.notifier.send_message(msg)
                 except Exception as notify_err:
                     logger.error(f"[Executor] Also failed to send Telegram alert: {notify_err}")
-            # AUDIT FIX #13: Mark position as failed-flatten so execution loop
-            # knows to HALT instead of continuing to "HOLD" a ghost position.
-            # Without this, the bot logs "HOLDING" forever while the naked
-            # position bleeds on the exchange.
-            self.active_position = {
-                "__failed_flatten": True,
-                "symbol": ex_symbol,
-                "side": side,
-                "size": size,
-                "error": str(e),
-            }
-
+            # P0-3 FIX: Use a dedicated boolean flag, NOT a sentinel dict.
+            # The 30s heartbeat poll calls _check_live_position_exit which sets
+            # active_position = None if the symbol is gone — silently wiping the
+            # sentinel dict and allowing the bot to resume trading unprotected.
+            # A separate boolean survives the poll clearing active_position.
+            self._flatten_failed = True
+            self.active_position = None  # Clear position — halt is enforced via _flatten_failed flag

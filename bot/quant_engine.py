@@ -308,7 +308,13 @@ class QuantEngine:
 
         vw_variance = np.sum(v * (typical - vwap) ** 2) / vol_sum
         std = np.sqrt(vw_variance)
-        if std <= 0:
+        # P1-7 FIX: Guard against near-zero std during zero-volatility periods.
+        # std <= 0 catches exact zero, but flat markets produce std=1e-10 (positive).
+        # 1e-10 passes the <= 0 guard, then Z = (price - vwap) / 1e-10 = 1e9, clipped to 4.0.
+        # Bot then fires continuous mean-reversion entries during dead sessions.
+        # 0.005% of price is the meaningful noise floor for BTC on 15m timeframe.
+        MIN_STD = current_price * 0.00005  # 0.005% of current price
+        if std < MIN_STD:
             return 0.0
 
         z_gaussian = (current_price - vwap) / std
