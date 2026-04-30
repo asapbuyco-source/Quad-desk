@@ -288,7 +288,7 @@ class BinanceDataFeed:
                     # PHASE-0.3: Fetch funding rate immediately on connection (before WS loop)
                     asyncio.create_task(self._fetch_funding_rate())
                     import asyncio as _asyncio
-                    while self.is_running and not self._reconnect_event.is_set():
+                    while self.is_running and not self.state._reconnect_event.is_set():
                         try:
                             msg = await _asyncio.wait_for(ws.recv(), timeout=120)
                             await self._handle_message(msg)
@@ -297,12 +297,10 @@ class BinanceDataFeed:
                             break
                         except websockets.exceptions.ConnectionClosedOK:
                             break
-                    # Wait for reconnect signal if triggered by health monitor
-                    if self.is_running:
-                        reconnect_triggered = self._reconnect_event.wait(timeout=retry_delay + 5)
-                        self._reconnect_event.clear()
-                        if not reconnect_triggered:
-                            break
+                    # Clear reconnect signal so the outer loop reconnects immediately
+                    if self.state._reconnect_event.is_set():
+                        self.state._reconnect_event.clear()
+                        logger.info('[DataFeed] Reconnect event consumed - reconnecting now.')
 
             except websockets.exceptions.ConnectionClosedOK:
                 logger.info("[DataFeed] Connection closed cleanly.")
@@ -353,7 +351,7 @@ class BinanceDataFeed:
                         await notifier.send_message(alert_msg)
                     except Exception:
                         pass
-                self._reconnect_event.set()
+                self.state._reconnect_event.set()
                 logger.info("[DataFeed] Feed health monitor forcing WS reconnect.")
 
             # PHASE-2.2: Check aggTrade stream health
@@ -371,7 +369,7 @@ class BinanceDataFeed:
                         except Exception:
                             pass
                     if trade_age > 180:
-                        self._reconnect_event.set()
+                        self.state._reconnect_event.set()
                         logger.info("[DataFeed] AggTrade stale >180s — forcing WS reconnect.")
 
     def stop(self):

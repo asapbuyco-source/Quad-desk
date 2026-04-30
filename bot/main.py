@@ -482,7 +482,7 @@ class _HMMRegimeClassifier:
         """
         if len(self._obs_buf) < 20:
             return
-        obs = np.array(self._obs_buf[-self._window:], dtype=float)
+        obs = np.array(list(self._obs_buf)[-self._window:], dtype=float)
         states = self._viterbi(obs)
         for s in range(3):
             mask = states == s
@@ -525,7 +525,7 @@ class _HMMRegimeClassifier:
 
         # Need at least 3 observations for a meaningful forward pass
         n_obs = min(len(self._obs_buf), self._window)
-        seq   = np.array(self._obs_buf[-n_obs:], dtype=float)
+        seq   = np.array(list(self._obs_buf)[-n_obs:], dtype=float)
 
         if len(seq) < 3:
             # Fall back to simple thresholds while warming up
