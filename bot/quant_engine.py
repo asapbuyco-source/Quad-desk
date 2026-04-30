@@ -202,13 +202,9 @@ class QuantEngine:
         #   0.05 = ATR is in bottom 5% — very quiet
         #   0.95 = ATR is in top 5% — very volatile
         # More robust than raw ATR% which varies with BTC price level.
+        arr = np.array(list(self._atr_history)) if self._atr_history else np.array([atr])
+        atr_pct_rank = float(np.mean(arr <= atr))
         self._atr_history.append(atr)
-        if len(self._atr_history) >= 2:
-            arr = np.array(self._atr_history)
-            # Fraction of historical ATRs that are <= current ATR
-            atr_pct_rank = float(np.mean(arr <= atr))
-        else:
-            atr_pct_rank = 0.5  # Neutral fallback during warmup
 
         vpoc = self._volume_poc(c_list)
         funding_rate = getattr(self.state, 'funding_rate', 0.0)

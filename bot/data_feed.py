@@ -26,6 +26,7 @@ class MarketState:
         self.funding_rate: float = 0.0
         self._reconnect_event: asyncio.Event = asyncio.Event()
         self._last_trade_ts: float = 0.0   # epoch-seconds of last aggTrade received
+        self._cvd_was_reset: bool = False  # flag to suppress CVD delta spike after reconnect
 
     # ------------------------------------------------------------------
     # Candle management
@@ -127,6 +128,7 @@ class BinanceDataFeed:
         )
         self.ws_url = f"{base_url}/stream?streams={streams}"
         self.is_running = False
+        self._rest_fetch_lock = asyncio.Lock()
         self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
         self._last_kline_frame_ts: float = 0.0  # epoch-seconds of last kline WS frame received
 
@@ -205,60 +207,61 @@ class BinanceDataFeed:
     # ------------------------------------------------------------------
     async def _fetch_historical_candles_rest(self):
         """Fetch 100 recent candles from Binance USDM Futures REST to warm up the Quant Engine."""
-        # Futures klines live under /fapi/v1/klines, NOT /api/v3/klines (spot)
-        url = f"{self.rest_url}/fapi/v1/klines"
-        params = {
-            "symbol": self.symbol.upper(),
-            "interval": self.interval,
-            "limit": 100
-        }
-        import os
-        api_key = os.environ.get("BINANCE_API_KEY", "")
-        headers = {"X-MBX-APIKEY": api_key} if api_key else {}
+        async with self._rest_fetch_lock:
+            # Futures klines live under /fapi/v1/klines, NOT /api/v3/klines (spot)
+            url = f"{self.rest_url}/fapi/v1/klines"
+            params = {
+                "symbol": self.symbol.upper(),
+                "interval": self.interval,
+                "limit": 100
+            }
+            import os
+            api_key = os.environ.get("BINANCE_API_KEY", "")
+            headers = {"X-MBX-APIKEY": api_key} if api_key else {}
 
-        # 3.3 FIX: Snapshot CVD before any mutation.
-        # If REST fails (network drop, reconnect), we preserve the existing baseline
-        # rather than resetting to 0.0 which would produce a false CVD delta spike.
-        prev_cvd = self.state.cvd
+            # 3.3 FIX: Snapshot CVD before any mutation.
+            # If REST fails (network drop, reconnect), we preserve the existing baseline
+            # rather than resetting to 0.0 which would produce a false CVD delta spike.
+            prev_cvd = self.state.cvd
 
-        try:
-            logger.info(f"[DataFeed] Fetching historical {self.interval} candles from {url}...")
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
+            try:
+                logger.info(f"[DataFeed] Fetching historical {self.interval} candles from {url}...")
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(url, params=params, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
 
-            # Reset CVD to re-anchor perfectly based on REST history (only on success)
-            self.state.cvd = 0.0
-            parsed_candles = []
-            for k in data:
-                # Binance REST returns an array of arrays
-                # [openTime, open, high, low, close, volume, closeTime, qav, trades, taker_buy_base, taker_buy_quote, ...]
-                c_data = {
-                    't': int(k[0]),
-                    'o': float(k[1]),
-                    'h': float(k[2]),
-                    'l': float(k[3]),
-                    'c': float(k[4]),
-                    'v': float(k[5]),
-                }
-                parsed_candles.append({"close": float(k[4]), "high": float(k[2]), "low": float(k[3]), "volume": float(k[5])})
-                self.state.add_candle(c_data, is_final=True)
+                # Reset CVD to re-anchor perfectly based on REST history (only on success)
+                self.state.cvd = 0.0
+                parsed_candles = []
+                for k in data:
+                    # Binance REST returns an array of arrays
+                    # [openTime, open, high, low, close, volume, closeTime, qav, trades, taker_buy_base, taker_buy_quote, ...]
+                    c_data = {
+                        't': int(k[0]),
+                        'o': float(k[1]),
+                        'h': float(k[2]),
+                        'l': float(k[3]),
+                        'c': float(k[4]),
+                        'v': float(k[5]),
+                    }
+                    parsed_candles.append({"close": float(k[4]), "high": float(k[2]), "low": float(k[3]), "volume": float(k[5])})
+                    self.state.add_candle(c_data, is_final=True)
 
-                # Rebuild CVD analytically
-                taker_buy_base = float(k[9])
-                vol = float(k[5])
-                self.state.cvd += (2.0 * taker_buy_base) - vol
+                    # Rebuild CVD analytically
+                    taker_buy_base = float(k[9])
+                    vol = float(k[5])
+                    self.state.cvd += (2.0 * taker_buy_base) - vol
 
-            logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles. CVD rebuilt: {self.state.cvd:.0f}")
-            self.candles_seeded = True
-            return parsed_candles
-        except Exception as e:
-            logger.warning(
-                f"[DataFeed] Failed to prefetch historical candles ({e}). "
-                f"Preserving existing CVD={prev_cvd:.0f} to avoid false delta spike."
-            )
-            self.state.cvd = prev_cvd  # restore — do not corrupt the signal
+                logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles. CVD rebuilt: {self.state.cvd:.0f}")
+                self.candles_seeded = True
+                return parsed_candles
+            except Exception as e:
+                logger.warning(
+                    f"[DataFeed] Failed to prefetch historical candles ({e}). "
+                    f"Preserving existing CVD={prev_cvd:.0f} to avoid false delta spike."
+                )
+                self.state.cvd = prev_cvd  # restore — do not corrupt the signal
 
 
 
@@ -283,7 +286,8 @@ class BinanceDataFeed:
                     close_timeout=10
                 ) as ws:
                     retry_delay = 1  # Reset back-off on successful connect
-                    self.state.cvd = 0.0  # NEW-3: Reset CVD on new WebSocket connection
+                    self.state.cvd = 0.0
+                    self.state._cvd_was_reset = True  # Signal main loop to suppress next delta
                     logger.info("[DataFeed] Connected ✓")
                     # PHASE-0.3: Fetch funding rate immediately on connection (before WS loop)
                     asyncio.create_task(self._fetch_funding_rate())

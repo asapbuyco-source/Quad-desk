@@ -437,6 +437,7 @@ class _HMMRegimeClassifier:
         posterior = np.exp(log_posterior)
 
         # Safety: ensure sums to 1.0 (numerical precision)
+        posterior = np.nan_to_num(posterior, nan=0.0, posinf=0.0, neginf=0.0)
         posterior = np.maximum(posterior, 0.0)
         total = posterior.sum()
         if total > 0:
@@ -1544,6 +1545,67 @@ def _compute_signal(
 # ── CORE EXECUTION LOOP ────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
+async def _process_exit(
+    pnl: float,
+    regime: str,
+    stats: dict,
+    quant,
+    executor,
+):
+    """Single source of truth for all post-trade state updates.
+    Called from both the main exit path and the 30s heartbeat poll path."""
+    global LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_TRADE_WAS_SL
+
+    LAST_ANY_TRADE_CLOSE_TIME = time.time()
+    LAST_TRADE_WAS_SL = (pnl < 0)
+
+    stats["daily_pnl"]   = stats.get("daily_pnl",   0.0) + pnl
+    stats["session_pnl"] = stats.get("session_pnl", 0.0) + pnl
+
+    quant.update_win_rate(won=(pnl >= 0), regime=regime)
+
+    if pnl < 0:
+        LAST_CASCADE_TIME = time.time()
+        stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
+        now_t = time.time()
+        loss_times = [t for t in stats.get("loss_times", []) if now_t - t < 1800]
+        loss_times.append(now_t)
+        stats["loss_times"] = loss_times
+        if len(loss_times) >= 3:
+            stats["cooldown_until"] = now_t + 1800
+            stats["loss_times"] = []
+            logger.error("[RiskManager] 3 SL exits within 30 min — 30-min cooldown active.")
+            if executor.notifier:
+                await executor.notifier.send_message(
+                    f"🛑 Quad-Desk CONSECUTIVE LOSS HALT\n"
+                    f"3 SL exits within 30 minutes. Paused 30 min."
+                )
+    else:
+        stats["consecutive_losses"] = 0
+
+    max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
+    if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
+        stats["daily_loss_halt"] = True
+        logger.warning(
+            f"[RiskEngine] ⛔ Daily loss limit: ${stats['daily_pnl']:.2f} "
+            f"(limit=-${max_loss_usd:.2f}). Halted until tomorrow."
+        )
+
+    max_drawdown_usd = ACCOUNT_SIZE * MAX_DRAWDOWN_PCT / 100.0
+    if stats["session_pnl"] < -max_drawdown_usd and not stats.get("drawdown_halt"):
+        stats["drawdown_halt"] = True
+        logger.critical(
+            f"[RiskEngine] 🚨 MAX DRAWDOWN BREACHED: "
+            f"${stats['session_pnl']:.2f} (limit=-${max_drawdown_usd:.2f}). HALTED."
+        )
+        if executor.notifier:
+            await executor.notifier.send_message(
+                f"🚨 Quad-Desk MAX DRAWDOWN HIT\n"
+                f"Session PnL: ${stats['session_pnl']:.2f} / Limit: -${max_drawdown_usd:.2f}\n"
+                f"Bot halted. Restart to resume."
+            )
+
+
 async def execution_loop(
     feed,
     quant: QuantEngine,
@@ -1574,6 +1636,8 @@ async def execution_loop(
                 ACCOUNT_SIZE = fetched_bal
         except Exception as e:
             logger.warning(f"[Main] Could not dynamically fetch account balance at startup: {e}")
+
+    stats["account_equity"] = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
 
     EQUITY_MIN_TRADEABLE = 200.0
     if ACCOUNT_SIZE < EQUITY_MIN_TRADEABLE:
@@ -1654,6 +1718,8 @@ async def execution_loop(
                     except Exception as _bal_err:
                         logger.warning(f"[RiskEngine] Could not refresh ACCOUNT_SIZE: {_bal_err}")
 
+                    stats["account_equity"] = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
+
                 # PHASE-6.3: Daily performance telemetry
                 logger.info(
                     f"[DailyReport] Trades={stats.get('total_trades',0)} | "
@@ -1702,17 +1768,10 @@ async def execution_loop(
                 executor._last_pos_poll = _now
                 _hb_exited, _hb_pnl = await executor._check_live_position_exit(current_price)
                 if _hb_exited:
-                    _cached_positions = None  # PHASE-3.4: Invalidate cache after exit
-                    logger.info(f"[Heartbeat] Position closed detected via 30s poll. PnL=${_hb_pnl:.2f}")
-                    new_daily = stats.get("daily_pnl", 0.0) + _hb_pnl
-                    stats["daily_pnl"] = new_daily
-                    LAST_ANY_TRADE_CLOSE_TIME = time.time()
-                    LAST_TRADE_WAS_SL = (_hb_pnl < 0)
-                    if _hb_pnl < 0:
-                        LAST_CASCADE_TIME = time.time()
-                        stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
-                    else:
-                        stats["consecutive_losses"] = 0
+                    _cached_positions = None
+                    pos_regime = (executor.active_position or {}).get("regime", "NEUTRAL")
+                    logger.info(f"[Heartbeat] Position closed via 30s poll. PnL=${_hb_pnl:.2f}")
+                    await _process_exit(_hb_pnl, pos_regime, stats, quant, executor)
                     stats["active_position"] = None
 
             # ── System lock check (Panic Mode cooldown) ─────────────────────
@@ -1777,40 +1836,11 @@ async def execution_loop(
                     candle_low=candle.get("low")
                 )
                 if exited:
-                    _cached_positions = None  # PHASE-3.4: Invalidate cache after exit
+                    _cached_positions = None
+                    await _process_exit(pnl, pos_snapshot.get("regime", "NEUTRAL"), stats, quant, executor)
+
                     if pnl < 0:
-                        LAST_CASCADE_TIME = time.time()
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
-
-                        
-                        # PHASE-3.3: Rolling 30-min loss window (was absolute consecutive counter)
-                        # Tracks losses within a 30-minute rolling window instead of all-time.
-                        # This prevents permanent bot lockout when losses are spaced hours apart.
-                        loss_times = stats.get("loss_times", [])
-                        now_loss = time.time()
-                        loss_times = [t for t in loss_times if now_loss - t < 1800]  # Keep only last 30 min
-                        if pnl < 0:
-                            loss_times.append(now_loss)
-                        stats["loss_times"] = loss_times
-
-                        if len(loss_times) >= 3:
-                            stats["cooldown_until"] = time.time() + 1800
-                            stats["loss_times"] = []
-                            halt_msg = (
-                                f"🛑 Quad-Desk CONSECUTIVE LOSS HALT\n"
-                                f"3 SL exits within 30 minutes. All trading paused for 30 minutes.\n"
-                                f"Resumes at {time.strftime('%H:%M:%S', time.localtime(time.time() + 1800))}"
-                            )
-                            logger.error("[RiskManager] 3 consecutive SL exits within 30 min! Activating 30-minute cooldown.")
-                            if executor.notifier:
-                                await executor.notifier.send_message(halt_msg)
-                    
-                    # Update the Bayesian win-rate prior for self-calibration
-                    # P1: pass current regime so per-regime beta prior is updated
-                    quant.update_win_rate(
-                        won=(pnl >= 0),
-                        regime=pos_snapshot.get("regime", "NEUTRAL"),
-                    )
 
                     # In live mode, simulate the exchange fill through crossover and clean up
                     if not executor.dry_run:
@@ -1829,43 +1859,6 @@ async def execution_loop(
                                     logger.info(f"[Executor] Opposing {label} order {cancel_id} already gone (Binance cleaned it) ✓")
                                 else:
                                     logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
-
-                    new_daily_pnl = stats.get("daily_pnl", 0.0) + pnl
-                    stats["daily_pnl"] = new_daily_pnl
-
-                    # FREQ-1 FIX: Split TP/SL cooldown — 45s after wins, 90s after losses.
-                    # A TP means the thesis was right. Re-entering faster is correct.
-                    # The 90s blanket cooldown on wins was unnecessarily conservative.
-                    LAST_ANY_TRADE_CLOSE_TIME = time.time()
-                    LAST_TRADE_WAS_SL = (pnl < 0)
-
-                    max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
-                    if new_daily_pnl < -max_loss_usd and not stats.get("daily_loss_halt"):
-                        stats["daily_loss_halt"] = True
-                        logger.warning(
-                            f"[RiskEngine] ⛔ Daily loss limit breached: "
-                            f"${new_daily_pnl:.2f} (limit=-${max_loss_usd:.2f}). "
-                            f"All trading halted until tomorrow."
-                        )
-
-                    # 3.5 FIX: Max Drawdown check (session cumulative)
-                    # Distinct from daily loss cap — this is absolute session PnL
-                    session_pnl = stats.get("session_pnl", 0.0) + pnl
-                    stats["session_pnl"] = session_pnl
-                    max_drawdown_usd = ACCOUNT_SIZE * MAX_DRAWDOWN_PCT / 100.0
-                    if session_pnl < -max_drawdown_usd and not stats.get("drawdown_halt"):
-                        stats["drawdown_halt"] = True
-                        logger.critical(
-                            f"[RiskEngine] 🚨 MAX DRAWDOWN BREACHED: "
-                            f"${session_pnl:.2f} (limit=-${max_drawdown_usd:.2f}). "
-                            f"ALL TRADING HALTED. Restart bot to resume."
-                        )
-                        if executor.notifier:
-                            await executor.notifier.send_message(
-                                f"🚨 Quad-Desk MAX DRAWDOWN HIT\n"
-                                f"Session PnL: ${session_pnl:.2f} / Limit: -${max_drawdown_usd:.2f}\n"
-                                f"Bot has halted all trading. Restart to resume."
-                            )
 
 
             stats["active_position"] = executor.active_position
@@ -1916,7 +1909,11 @@ async def execution_loop(
             # (e.g. CVD=-1500 → delta=-1500, triggering a spurious bearish signal). (Patch #5)
             if metrics is not None:
                 _current_cvd = metrics.get("cvd", 0.0)
-                if LAST_CVD == 0.0:  # First cycle after bot restart — initialise without delta spike
+                _cvd_reset = getattr(feed.state, "_cvd_was_reset", False)
+                if LAST_CVD == 0.0 or _cvd_reset:
+                    if _cvd_reset:
+                        feed.state._cvd_was_reset = False
+                        logger.info("[DataFeed] CVD reset detected — suppressing delta spike this cycle.")
                     LAST_CVD = _current_cvd
                     metrics["cvd_delta"] = 0.0
                 else:

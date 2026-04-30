@@ -31,6 +31,15 @@ _LOCAL_TRADES_PATH = "/tmp/quad_bot_trades.jsonl"
 _write_buffer: list = []
 _consecutive_failures: int = 0
 _use_local_fallback: bool = False
+MAX_BUFFER_SIZE = 500
+
+
+def _buffered_append(entry: dict) -> None:
+    """Append to write buffer with a size cap — drop oldest on overflow."""
+    global _write_buffer
+    if len(_write_buffer) >= MAX_BUFFER_SIZE:
+        _write_buffer.pop(0)
+    _write_buffer.append(entry)
 
 
 def _normalize_pem(raw_key: str) -> str:
@@ -209,7 +218,12 @@ class FirestoreLogHandler(logging.Handler):
                 # Wait for Firebase to be initialised if it isn't yet (race condition fix)
                 if _db is None:
                     import time
+                    import queue
                     time.sleep(1)
+                    try:
+                        self.log_queue.put_nowait(record)
+                    except queue.Full:
+                        pass
                     self.log_queue.task_done()
                     continue
 
@@ -312,7 +326,7 @@ async def run_heartbeat(stats: dict) -> None:
                 status_doc = dict(payload)
                 status_doc["lastHeartbeat"] = _time.time()
                 status_doc["timestamp"] = _time.time()
-                _write_buffer.append({"type": "status", **status_doc, "ts": _time.time()})
+                _buffered_append({"type": "status", **status_doc, "ts": _time.time()})
             else:
                 try:
                     await asyncio.to_thread(doc_ref.set, payload)
@@ -340,7 +354,7 @@ async def run_heartbeat(stats: dict) -> None:
             if _use_local_fallback:
                 # BUG-6 FIX: Use numeric timestamp for JSON serialization
                 equity_doc["timestamp"] = _time.time()
-                _write_buffer.append({"type": "equity", **equity_doc, "ts": _time.time()})
+                _buffered_append({"type": "equity", **equity_doc, "ts": _time.time()})
             else:
                 equity_ref = _db.collection("equityCurve")
                 try:
