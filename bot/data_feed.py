@@ -25,8 +25,10 @@ class MarketState:
         # Negative = shorts pay longs (crowded short → bullish squeeze).
         self.funding_rate: float = 0.0
         self._reconnect_event: asyncio.Event = asyncio.Event()
-        self._last_trade_ts: float = 0.0   # epoch-seconds of last aggTrade received
+        self._last_trade_ts: float = time.time()   # epoch-seconds of last aggTrade received (P0-1 FIX: was 0.0 → time.time())
         self._cvd_was_reset: bool = False  # flag to suppress CVD delta spike after reconnect
+        self._aggtrade_msg_count: int = 0  # P0-1 FIX: throughput counter for monitoring
+        self._aggtrade_count_reset_ts: float = time.time()  # last reset for msg/min calculation
 
     # ------------------------------------------------------------------
     # Candle management
@@ -69,6 +71,7 @@ class MarketState:
             'time': t_data['T']  # Binance millisecond timestamp
         }
         self._last_trade_ts = t_data['T'] / 1000.0
+        self._aggtrade_msg_count += 1
         self.recent_trades.append(trade)
 
         # Update CVD
@@ -361,6 +364,14 @@ class BinanceDataFeed:
             # PHASE-2.2: Check aggTrade stream health
             if hasattr(self.state, '_last_trade_ts') and self.state._last_trade_ts > 0:
                 trade_age = time.time() - self.state._last_trade_ts
+                # P0-1 FIX: Compute aggTrade throughput (msgs/min)
+                now = time.time()
+                elapsed = now - getattr(self.state, '_aggtrade_count_reset_ts', now)
+                if elapsed >= 60.0:
+                    msgs_per_min = int(getattr(self.state, '_aggtrade_msg_count', 0) / elapsed * 60)
+                    logger.info(f"[DataFeed] aggTrade throughput: {msgs_per_min} msgs/min")
+                    self.state._aggtrade_msg_count = 0
+                    self.state._aggtrade_count_reset_ts = now
                 if trade_age > 90:
                     trade_alert = (
                         f"⚠️ [DataFeed] AGGTRADE STALE: no trade data for {trade_age:.0f}s. "

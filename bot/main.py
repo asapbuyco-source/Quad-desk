@@ -1119,6 +1119,154 @@ def _apply_ulis_gate(
 
 
 # ══════════════════════════════════════════════════════════════════════
+# ── STAGE 4.5 — CVD DIVERGENCE GATE ──────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+
+def _apply_cvd_divergence_gate(
+    raw_direction: str,
+    metrics: Dict[str, Any],
+    current_confidence: float,
+) -> Tuple[float, Optional[str]]:
+    """
+    Stage 4.5: CVD Divergence Gate — Institutional Alpha v2.0
+    Sits between Strategy (Stage 4) and Bayesian Fusion (Stage 5).
+
+    ── ROLE ────────────────────────────────────────────────────────────
+    The ONLY gate in the pipeline that reads ACROSS candle boundaries.
+    All other layers (OFI, tape, RSI) are single-snapshot.  This gate
+    reads institutional footprint across 1–8 candles of history.
+
+    ── OUTCOMES ────────────────────────────────────────────────────────
+
+    1. CONFIRMING DIVERGENCE  — divergence direction agrees with trade
+       → Confidence BOOST scaled by strength + volume confirmation
+       → swing_extrema method receives additional +0.01 structural bonus
+
+    2. OPPOSING DIVERGENCE    — divergence opposes trade direction
+       → Confidence PENALTY scaled by strength
+       → STRONG opposing + volume spike → HARD VETO (blocks trade)
+         Veto threshold: strength ≥ 0.62 AND confirms ≥ 1 AND vol ≥ 1.4×
+
+    3. NO DIVERGENCE / INSUFFICIENT DATA
+       → Uncertainty-scaled penalty instead of flat -0.03
+         penalty = 0.10 × (1 - n_snaps / MIN_VALID_SNAPS)
+         MIN_VALID_SNAPS = 4  (1 hour of 15m candles)
+
+         At n_snaps=0: penalty = -0.10  (completely blind)
+         At n_snaps=2: penalty = -0.05  (partial data)
+         At n_snaps=4: penalty =  0.00  (sufficient data, no penalty)
+         At n_snaps>4: penalty = +0.00  (no reward for more data alone)
+
+    ── VETO THRESHOLD JUSTIFICATION ───────────────────────────────────
+    Veto fires when ALL THREE conditions hold:
+        (a) strength ≥ 0.62  — EMA-Z normalised, age-weighted, vol-confirmed
+        (b) confirms ≥ 1     — at least one confirming candle pair
+        (c) vol_spike ≥ 1.4  — elevated volume at the divergence extreme
+
+    Returns:
+        (adjusted_confidence: float,  veto_reason: Optional[str])
+        veto_reason is None when no veto is issued.
+    """
+    MIN_VALID_SNAPS = 4
+    VETO_STRENGTH   = 0.62
+    VETO_VOL_SPIKE  = 1.40
+
+    div = metrics.get("cvd_divergence", {})
+    div_type    = div.get("type",              "NONE")
+    div_str     = div.get("strength",           0.0)
+    confirms    = div.get("candles_confirmed",   0)
+    vol_spike   = div.get("vol_spike",           1.0)
+    method      = div.get("detection_method",   "none")
+    n_snaps     = div.get("n_snaps",             0)
+
+    is_long  = raw_direction in ("BUY",  "MEAN_REVERSAL_LONG")
+    is_short = raw_direction in ("SELL", "MEAN_REVERSAL_SHORT")
+
+    if div_type == "NONE" or div_str < 0.28:
+        if n_snaps >= MIN_VALID_SNAPS:
+            penalty = 0.0
+            reason  = f"No divergence (sufficient data n={n_snaps})"
+        else:
+            completeness = n_snaps / MIN_VALID_SNAPS
+            penalty      = round(0.10 * (1.0 - completeness), 4)
+            reason       = (
+                f"Insufficient CVD history "
+                f"(n={n_snaps}/{MIN_VALID_SNAPS}) — "
+                f"uncertainty penalty={penalty:.2%}"
+            )
+        adjusted = max(0.0, current_confidence - penalty)
+        logger.debug(f"[CVDGate] {reason} | conf {current_confidence:.2%} → {adjusted:.2%}")
+        return adjusted, None
+
+    confirming = (
+        (is_long  and div_type == "BULLISH") or
+        (is_short and div_type == "BEARISH")
+    )
+    opposing = (
+        (is_long  and div_type == "BEARISH") or
+        (is_short and div_type == "BULLISH")
+    )
+
+    if confirming:
+        if div_str >= 0.65:
+            boost = 0.07
+        elif div_str >= 0.45:
+            boost = 0.05
+        else:
+            boost = 0.03
+
+        vol_bonus = 0.01 if vol_spike >= 1.40 else 0.0
+        method_bonus = 0.01 if method == "swing_extrema" else 0.0
+
+        total_boost = boost + vol_bonus + method_bonus
+        adjusted    = min(1.0, current_confidence + total_boost)
+
+        logger.info(
+            f"[CVDGate] ✅ CONFIRMING {div_type} | "
+            f"strength={div_str:.3f} method={method} "
+            f"confirms={confirms} vol={vol_spike:.2f}× | "
+            f"boost={total_boost:.2%} → conf {current_confidence:.2%} → {adjusted:.2%}"
+        )
+        return adjusted, None
+
+    if opposing:
+        if (div_str    >= VETO_STRENGTH and
+                confirms   >= 1            and
+                vol_spike  >= VETO_VOL_SPIKE):
+
+            veto_msg = (
+                f"CVD DIVERGENCE VETO: {div_type} divergence opposes "
+                f"{raw_direction} | "
+                f"strength={div_str:.3f} method={method} "
+                f"confirms={confirms} vol={vol_spike:.2f}× | "
+                f"Institutional footprint contradicts entry direction."
+            )
+            logger.warning(f"[CVDGate] 🚫 {veto_msg}")
+            return 0.0, veto_msg
+
+        if div_str >= 0.50:
+            penalty = 0.09
+        elif div_str >= 0.40:
+            penalty = 0.06
+        else:
+            penalty = 0.03
+
+        if vol_spike >= 1.40:
+            penalty = min(penalty + 0.02, 0.12)
+
+        adjusted = max(0.0, current_confidence - penalty)
+        logger.info(
+            f"[CVDGate] ⚠️  OPPOSING {div_type} | "
+            f"strength={div_str:.3f} method={method} "
+            f"confirms={confirms} vol={vol_spike:.2f}× | "
+            f"penalty={penalty:.2%} → conf {current_confidence:.2%} → {adjusted:.2%}"
+        )
+        return adjusted, None
+
+    return current_confidence, None
+
+
+# ══════════════════════════════════════════════════════════════════════
 # ── STAGE 7 — RISK ENGINE ─────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
@@ -1280,7 +1428,7 @@ def _compute_signal(
     time_since_last_trade = time.time() - LAST_ANY_TRADE_CLOSE_TIME
     # FREQ-1: wire split cooldown — 45s after TP, 90s after SL
     _last_was_sl = LAST_TRADE_WAS_SL
-    _cooldown = POST_TRADE_COOLDOWN_S if _last_was_sl else 45
+    _cooldown = POST_TRADE_COOLDOWN_S if _last_was_sl else 120
     if time_since_last_trade < _cooldown:
         _gate_stats_summary("post_trade_cooldown")
         return {**WAIT, "analysis": f"Post-trade cooldown ({_cooldown - int(time_since_last_trade)}s remain, {'SL' if _last_was_sl else 'TP'} exit)"}
@@ -1448,6 +1596,17 @@ def _compute_signal(
         logger.info(f"[VPOC] Near VPOC ({vpoc:.0f}). Confidence boosted by +{vpoc_boost:.2%} → {confidence:.2%}")
 
     logger.info(f"[BayesFusion] direction={raw_direction} | P={confidence:.2%}")
+
+    # ── STAGE 4.5 — CVD DIVERGENCE GATE (Addition A) ─────────────────
+    # Sits between Bayesian Fusion (Stage 5) and ULIS Gate (Stage 6).
+    # The ONLY gate that reads ACROSS candle boundaries.
+    # All other layers (OFI, tape, RSI) are single-snapshot.
+    confidence, cvd_veto_reason = _apply_cvd_divergence_gate(
+        raw_direction, metrics, confidence
+    )
+    if cvd_veto_reason:
+        _gate_stats_summary("cvd_divergence_veto")
+        return {**WAIT, "analysis": f"CVD Divergence veto: {cvd_veto_reason}"}
 
     # Stage 6 ★ ULIS/ALDE gate FIRST (applies confidence boost)
     should_trade, confidence, ulis_verdict_str = _apply_ulis_gate(
@@ -1716,6 +1875,25 @@ async def execution_loop(
                 feed.state.cvd = 0.0
                 LAST_CVD = 0.0
                 logger.info("[RiskEngine] 🌅 Daily counters + CVD reset for new trading session.")
+                # ── FIX #6: CVD Divergence Snapshot Reset (Addition B) ──────────
+                # CRITICAL: Without clearing snapshots, first divergence comparison
+                # of the new day measures ΔCVD = 0 - prior_session_CVD(e.g. -8000)
+                # → spurious BULLISH divergence of strength ~1.0 on first signal.
+                # Also reset EMA-variance state to prevent prior-session CVD
+                # magnitude contamination of Welford's online estimator.
+                if hasattr(quant, "_cvd_candle_snapshots"):
+                    prior_count = len(quant._cvd_candle_snapshots)
+                    quant._cvd_candle_snapshots.clear()
+                    quant._last_snapped_candle_ts = 0.0
+                    quant._cvd_delta_ewma_mu = 0.0
+                    quant._cvd_delta_ewma_var = 1.0
+                    quant._cvd_delta_ewma_n = 0
+                    logger.info(
+                        f"[DailyReset] 🧹 CVD divergence state cleared "
+                        f"({prior_count} snapshots removed). "
+                        f"EMA-variance estimator reset. "
+                        f"Divergence gate enters cold-start penalty mode."
+                    )
                 # HIGH-5 FIX: Refresh ACCOUNT_SIZE daily so daily loss cap stays accurate.
                 # A stale startup balance misprices the loss limit after gains/losses.
                 if not executor.dry_run:
@@ -1890,13 +2068,19 @@ async def execution_loop(
                     )
                     bot_has_pos = executor.active_position is not None
                     if exchange_has_pos and not bot_has_pos:
+                        # Issue #7 FIX: Auto-close orphan position on boot.
+                        # If the bot crashes/restarts while holding a position,
+                        # the orphan sits on the exchange with no SL/TP management.
+                        # Auto-close is the safest resolution (auto-adopt is riskier).
                         logger.critical(
-                            "[Reconciliation] EXCHANGE has open position but BOT does not. "
-                            "Manual intervention required."
+                            "[Reconciliation] Auto-closing orphan position — "
+                            "exchange has open position but bot has no tracking. "
+                            "Emergency flatten initiated."
                         )
                         await executor.notifier.send_error_alert(
-                            "⚠️ Position mismatch: exchange open, bot closed."
+                            "⚠️ Orphan position auto-closed on boot. No internal SL/TP existed."
                         )
+                        await executor.emergency_flatten("Orphan position detected on reconciliation boot")
                     elif not exchange_has_pos and bot_has_pos:
                         logger.warning(
                             "[Reconciliation] BOT thinks position open but EXCHANGE does not. "

@@ -69,6 +69,22 @@ class QuantEngine:
         # different EMA seeds.
         self._rsi_history: deque = deque(maxlen=3)
 
+        # ── CVD Divergence Snapshot History ────────────────────────────────────
+        # Per-candle snapshots of {candle_ts, close, low, high, cvd} taken at
+        # the moment each new 15m candle is detected.  maxlen=12 (3 hours).
+        # Needed because self.state.cvd is a running session total with no memory
+        # of prior candle closes — divergence detection requires comparing CVD
+        # at candle N vs candle N-k.
+        self._cvd_candle_snapshots: deque = deque(maxlen=12)
+        self._last_snapped_candle_ts: float = 0.0
+
+        # ── CVD Delta EMA-Variance Normalization (Fix #1) ──────────────────────
+        # Welford's online EMA for CVD delta normalization (replaces fragile
+        # session-range denominator). λ=0.92 → half-life ≈ 8 observations (~2h).
+        self._cvd_delta_ewma_mu:  float = 0.0
+        self._cvd_delta_ewma_var: float = 1.0
+        self._cvd_delta_ewma_n:   int   = 0
+
         # Persistence path — survives Railway restarts if /tmp is mounted
         self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
         self._load_state()
@@ -113,50 +129,127 @@ class QuantEngine:
         return result
 
     # ------------------------------------------------------------------
-    # State Persistence: survives restarts (Beta prior + OFI EWMA)
+    # State Persistence: Firestore primary, /tmp/ file fallback
+    # Issue #3 FIX: /tmp/ is wiped on every Railway container restart.
+    # Firestore survives indefinitely. Load order on boot:
+    #   1. Firestore (botState/quantEngine document)
+    #   2. /tmp/ local file (fast path for same-container warm restarts)
+    #   3. Fresh Beta(5,5) prior (true cold start)
     # ------------------------------------------------------------------
     def _save_state(self):
-        """Persist Beta prior and OFI EWMA state to disk."""
+        """
+        Persist Bayesian priors and OFI EWMA state.
+        Writes to Firestore in a background thread (non-blocking, won't
+        slow down the main trading loop) and also writes to /tmp/ as a
+        local cache for rapid same-container restarts.
+        """
+        import threading
+        data = {
+            "alpha":          self._alpha,
+            "beta":           self._beta,
+            "regime_alpha":   self._regime_alpha,
+            "regime_beta":    self._regime_beta,
+            "regime_count":   self._regime_trade_count,
+            "ofi_ewma_mu":    self._ofi_ewma_mu,
+            "ofi_ewma_var":   self._ofi_ewma_var,
+            "ofi_smooth":     self._ofi_smooth,
+            "saved_at":       time.time(),
+        }
+
+        # ── 1. Firestore write (background thread, non-blocking) ────────
+        def _write_firestore(payload: dict) -> None:
+            try:
+                from bot.heartbeat import get_db
+                db = get_db()
+                if db is not None:
+                    db.collection("botState").document("quantEngine").set(payload)
+                    logger.debug("[QuantEngine] State saved to Firestore ✓")
+            except Exception as e:
+                logger.warning(f"[QuantEngine] Firestore state save failed: {e}")
+
+        threading.Thread(
+            target=_write_firestore,
+            args=(dict(data),),
+            daemon=True,
+            name="QuantEngine-FSWrite",
+        ).start()
+
+        # ── 2. /tmp/ file as local cache (synchronous) ──────────────────
         try:
-            data = {
-                "alpha":          self._alpha,
-                "beta":           self._beta,
-                "regime_alpha":   self._regime_alpha,
-                "regime_beta":    self._regime_beta,
-                "regime_count":   self._regime_trade_count,
-                "ofi_ewma_mu":    self._ofi_ewma_mu,
-                "ofi_ewma_var":   self._ofi_ewma_var,
-                "ofi_smooth":     self._ofi_smooth,
-            }
             with open(self._persist_path, "w") as f:
                 json.dump(data, f)
         except Exception as e:
-            logger.warning(f"[QuantEngine] State save failed: {e}")
+            logger.warning(f"[QuantEngine] Local state cache write failed: {e}")
 
     def _load_state(self):
+        """
+        Load Bayesian priors on startup.
+        Tries Firestore first (survives Railway deploys), then falls back
+        to the /tmp/ local file (useful for same-container warm restarts),
+        then initialises a fresh Beta(5,5) prior.
+        """
+        # ── 1. Try Firestore ────────────────────────────────────────────
+        try:
+            from bot.heartbeat import get_db
+            db = get_db()
+            if db is not None:
+                doc = db.collection("botState").document("quantEngine").get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    self._alpha = float(data.get("alpha", 5.0))
+                    self._beta  = float(data.get("beta",  5.0))
+                    saved_ra = data.get("regime_alpha", {})
+                    saved_rb = data.get("regime_beta",  {})
+                    saved_rc = data.get("regime_count", {})
+                    for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+                        self._regime_alpha[r]       = float(saved_ra.get(r, 5.0))
+                        self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
+                        self._regime_trade_count[r] = int(saved_rc.get(r, 0))
+                    n_trades = sum(self._regime_trade_count.values())
+                    p_bull   = self._alpha / (self._alpha + self._beta)
+                    logger.info(
+                        f"[QuantEngine] ✅ State loaded from Firestore — "
+                        f"α={self._alpha:.0f} β={self._beta:.0f} "
+                        f"P(bull)={p_bull:.1%} | "
+                        f"n_trades={n_trades} "
+                        f"(saved {(time.time() - float(data.get('saved_at', time.time()))):.0f}s ago)"
+                    )
+                    return  # ← success: stop here
+                else:
+                    logger.info("[QuantEngine] Firestore botState/quantEngine: no document yet — checking /tmp/")
+        except Exception as e:
+            logger.warning(f"[QuantEngine] Firestore state load failed: {e} — falling back to /tmp/")
+
+        # ── 2. Try /tmp/ local file ─────────────────────────────────────
         try:
             if os.path.exists(self._persist_path):
                 with open(self._persist_path) as f:
                     data = json.load(f)
                 self._alpha = float(data.get("alpha", 5.0))
-                self._beta = float(data.get("beta", 5.0))
+                self._beta  = float(data.get("beta",  5.0))
                 saved_ra = data.get("regime_alpha", {})
-                saved_rb = data.get("regime_beta", {})
+                saved_rb = data.get("regime_beta",  {})
                 saved_rc = data.get("regime_count", {})
                 for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
-                    self._regime_alpha[r] = float(saved_ra.get(r, 5.0))
-                    self._regime_beta[r] = float(saved_rb.get(r, 5.0))
+                    self._regime_alpha[r]       = float(saved_ra.get(r, 5.0))
+                    self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
                     self._regime_trade_count[r] = int(saved_rc.get(r, 0))
-                logger.info("[QuantEngine] State loaded from disk.")
-            else:
-                for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
-                    self._regime_alpha[r] = 5.0
-                    self._regime_beta[r] = 5.0
-                    self._regime_trade_count[r] = 0
-                self._alpha = 5.0; self._beta = 5.0
-                logger.info("[QuantEngine] Fresh deploy: Beta(5,5) informed prior.")
+                logger.info(
+                    "[QuantEngine] ⚠️ State loaded from /tmp/ (Firestore unavailable). "
+                    "Prior will be lost on next Railway deploy."
+                )
+                return  # ← success
         except Exception as e:
-            logger.warning(f"[QuantEngine] State load error: {e}")
+            logger.warning(f"[QuantEngine] /tmp/ state load error: {e}")
+
+        # ── 3. Cold start — fresh Beta(5,5) ─────────────────────────────
+        for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+            self._regime_alpha[r]       = 5.0
+            self._regime_beta[r]        = 5.0
+            self._regime_trade_count[r] = 0
+        self._alpha = 5.0
+        self._beta  = 5.0
+        logger.info("[QuantEngine] 🆕 Cold start: Beta(5,5) uninformed prior.")
 
 
     # ------------------------------------------------------------------
@@ -216,6 +309,32 @@ class QuantEngine:
             len(self.state.recent_trades) >= 5
         )
 
+        # ── CVD Candle Snapshot (Divergence Layer) ────────────────────────────
+        # Detect a new candle by comparing the latest candle's timestamp to the
+        # last one we snapped.  When a new candle has opened (previous one closed),
+        # record the closed candle's OHLC and the CVD value AT THAT MOMENT.
+        current_candle_ts = float(c_list[-1].get("time", 0.0)) if c_list else 0.0
+        if (current_candle_ts != self._last_snapped_candle_ts
+                and len(c_list) >= 2):
+            closed_candle = c_list[-2]
+            snap = {
+                "candle_ts": float(closed_candle.get("time",  0.0)),
+                "close":     float(closed_candle.get("close", current_price)),
+                "low":       float(closed_candle.get("low",   current_price)),
+                "high":      float(closed_candle.get("high",  current_price)),
+                "volume":    float(closed_candle.get("volume", 0.0)),
+                "cvd":       float(cvd),
+            }
+            self._cvd_candle_snapshots.append(snap)
+            self._last_snapped_candle_ts = current_candle_ts
+            logger.debug(
+                f"[CVDSnap] New candle — snapped CVD={cvd:.0f} "
+                f"low={snap['low']:.2f} high={snap['high']:.2f} vol={snap['volume']:.1f}"
+            )
+
+        # ── CVD Divergence Detection ──────────────────────────────────────────
+        cvd_divergence = self._cvd_divergence(current_price, atr)
+
         return {
             "symbol":            self.state.symbol,
             "price":             current_price,
@@ -252,6 +371,8 @@ class QuantEngine:
             "nearest_sell_wall": nearest_ask,
             "top_buy_walls":     top_bids,
             "top_sell_walls":    top_asks,
+            # ── CVD Divergence ────────────────────────────────────────────────
+            "cvd_divergence":    cvd_divergence,
         }
 
     # ------------------------------------------------------------------
@@ -624,3 +745,216 @@ class QuantEngine:
         if not price_vol:
             return None
         return float(max(price_vol, key=price_vol.get))
+
+    # ------------------------------------------------------------------
+    # CVD Divergence Detector — Institutional Alpha v2.0
+    # Fixes: #1 EMA-Z normalization | #2 True ATR | #3 Swing extrema
+    #        #4 Volume confirmation  | #5 Uncertainty penalty data
+    # ------------------------------------------------------------------
+    def _cvd_divergence(self, current_price: float, true_atr: float = 0.0) -> Dict[str, Any]:
+        """
+        Institutional-grade CVD divergence detector operating on per-candle
+        close snapshots.  All six head-office criticisms addressed.
+
+        ── FIX #1: EMA-VARIANCE NORMALIZATION ──────────────────────────────────
+        Replaces the fragile session-range denominator using Welford's online EMA.
+
+        ── FIX #2: TRUE ATR ────────────────────────────────────────────────────
+        Receives the Wilder 14-period ATR already computed in compute_metrics().
+
+        ── FIX #3: SWING-EXTREMA ADAPTIVE LOOKBACK ─────────────────────────────
+        Finds swing low/high within full snapshot window instead of fixed k-back.
+
+        ── FIX #4: VOLUME SPIKE CONFIRMATION ───────────────────────────────────
+        Institutional absorption/distribution requires elevated volume.
+
+        ── FIX #5: SNAPSHOT COUNT FOR UNCERTAINTY SCALING ───────────────────────
+        Returns n_snaps so the gate can apply data-driven penalties.
+
+        Returns:
+            {
+                "type":              "BULLISH" | "BEARISH" | "NONE",
+                "strength":          float ∈ [0, 1],
+                "candles_confirmed": int,
+                "price_delta":       float,
+                "cvd_delta":         float,
+                "lookback_k":        int,
+                "vol_spike":         float,
+                "detection_method":  "swing_extrema" | "sequential" | "none",
+                "n_snaps":           int,
+            }
+        """
+        λ = 0.92
+
+        NULL_RESULT = {
+            "type": "NONE", "strength": 0.0,
+            "candles_confirmed": 0, "price_delta": 0.0,
+            "cvd_delta": 0.0, "lookback_k": 0,
+            "vol_spike": 1.0, "detection_method": "none",
+            "n_snaps": len(self._cvd_candle_snapshots),
+        }
+
+        snaps = list(self._cvd_candle_snapshots)
+        n_snaps = len(snaps)
+
+        if n_snaps < 2:
+            return NULL_RESULT
+
+        latest = snaps[-1]
+
+        atr_ref = max(true_atr * 1.5, current_price * 0.003, 1.0)
+
+        all_vols = [s.get("volume", 0.0) for s in snaps]
+        mean_vol = float(np.mean(all_vols)) if all_vols else 1.0
+        mean_vol = max(mean_vol, 1e-8)
+
+        if n_snaps >= 2:
+            latest_delta_raw = snaps[-1]["cvd"] - snaps[-2]["cvd"]
+            self._cvd_delta_ewma_mu  = (λ * self._cvd_delta_ewma_mu +
+                                        (1 - λ) * latest_delta_raw)
+            self._cvd_delta_ewma_var = (λ * self._cvd_delta_ewma_var +
+                                        (1 - λ) * (latest_delta_raw - self._cvd_delta_ewma_mu) ** 2)
+            self._cvd_delta_ewma_n  += 1
+
+        ewma_std = math.sqrt(max(self._cvd_delta_ewma_var, 1.0))
+
+        def _norm_cvd(cvd_delta_raw: float) -> float:
+            z = (cvd_delta_raw - self._cvd_delta_ewma_mu) / ewma_std
+            return float(np.clip(abs(math.tanh(z / 2.0)), 0.0, 1.0))
+
+        def _norm_price(price_delta: float) -> float:
+            return float(min(abs(price_delta) / atr_ref, 1.0))
+
+        def _norm_vol(snap_vol: float) -> float:
+            spike = snap_vol / mean_vol
+            return float(np.clip(math.tanh(spike / 2.0), 0.0, 1.0))
+
+        def _age_weight(k: int) -> float:
+            if k <= 4:
+                return 1.0
+            return math.exp(-0.30 * (k - 4))
+
+        def _score(price_delta: float, cvd_delta_raw: float, vol_at_extreme: float, k: int) -> float:
+            nP   = _norm_price(price_delta)
+            nC   = _norm_cvd(cvd_delta_raw)
+            nV   = _norm_vol(vol_at_extreme)
+            age  = _age_weight(k)
+            return age * (0.35 * nP + 0.45 * nC + 0.20 * nV)
+
+        swing_bull_result = None
+        swing_bear_result = None
+
+        if n_snaps >= 3:
+            swing_low_idx = int(np.argmin([s["low"] for s in snaps]))
+            swing_low_snap = snaps[swing_low_idx]
+            k_swing_bull = n_snaps - 1 - swing_low_idx
+
+            if (swing_low_idx < n_snaps - 1 and
+                    latest["low"] > swing_low_snap["low"] and
+                    latest["cvd"] > swing_low_snap["cvd"]):
+                price_delta_mag  = abs(latest["low"] - swing_low_snap["low"])
+                cvd_delta_raw    = latest["cvd"] - swing_low_snap["cvd"]
+                vol_at_low       = swing_low_snap.get("volume", mean_vol)
+                s = _score(price_delta_mag, cvd_delta_raw, vol_at_low, k_swing_bull)
+                swing_bull_result = (s, k_swing_bull, price_delta_mag,
+                                     cvd_delta_raw, vol_at_low / mean_vol)
+
+            swing_high_idx = int(np.argmax([s["high"] for s in snaps]))
+            swing_high_snap = snaps[swing_high_idx]
+            k_swing_bear = n_snaps - 1 - swing_high_idx
+
+            if (swing_high_idx < n_snaps - 1 and
+                    latest["high"] < swing_high_snap["high"] and
+                    latest["cvd"] < swing_high_snap["cvd"]):
+                price_delta_mag  = abs(latest["high"] - swing_high_snap["high"])
+                cvd_delta_raw    = swing_high_snap["cvd"] - latest["cvd"]
+                vol_at_high      = swing_high_snap.get("volume", mean_vol)
+                s = _score(price_delta_mag, cvd_delta_raw, vol_at_high, k_swing_bear)
+                swing_bear_result = (s, k_swing_bear, price_delta_mag,
+                                     cvd_delta_raw, vol_at_high / mean_vol)
+
+        max_k = min(8, n_snaps - 1)
+        seq_bull_best  = (0.0, 0, 0.0, 0.0, 1.0)
+        seq_bear_best  = (0.0, 0, 0.0, 0.0, 1.0)
+        bull_confirms  = 0
+        bear_confirms  = 0
+
+        for k in range(1, max_k + 1):
+            prior = snaps[-(k + 1)]
+
+            if latest["low"] < prior["low"] and latest["cvd"] > prior["cvd"]:
+                bull_confirms += 1
+                pd   = prior["low"] - latest["low"]
+                cd   = latest["cvd"] - prior["cvd"]
+                vl   = prior.get("volume", mean_vol)
+                s    = _score(pd, cd, vl, k)
+                if s > seq_bull_best[0]:
+                    seq_bull_best = (s, k, pd, cd, vl / mean_vol)
+
+            if latest["high"] > prior["high"] and latest["cvd"] < prior["cvd"]:
+                bear_confirms += 1
+                pd   = latest["high"] - prior["high"]
+                cd   = prior["cvd"] - latest["cvd"]
+                vl   = prior.get("volume", mean_vol)
+                s    = _score(pd, cd, vl, k)
+                if s > seq_bear_best[0]:
+                    seq_bear_best = (s, k, pd, cd, vl / mean_vol)
+
+        best_bull_s, best_bull_k, best_bull_pd, best_bull_cd, best_bull_vs = 0.0, 0, 0.0, 0.0, 1.0
+        best_bull_meth = "none"
+        if swing_bull_result and swing_bull_result[0] >= seq_bull_best[0]:
+            best_bull_s, best_bull_k, best_bull_pd, best_bull_cd, best_bull_vs = swing_bull_result
+            best_bull_meth = "swing_extrema"
+        elif seq_bull_best[0] > 0.0:
+            best_bull_s, best_bull_k, best_bull_pd, best_bull_cd, best_bull_vs = seq_bull_best
+            best_bull_meth = "sequential"
+
+        best_bear_s, best_bear_k, best_bear_pd, best_bear_cd, best_bear_vs = 0.0, 0, 0.0, 0.0, 1.0
+        best_bear_meth = "none"
+        if swing_bear_result and swing_bear_result[0] >= seq_bear_best[0]:
+            best_bear_s, best_bear_k, best_bear_pd, best_bear_cd, best_bear_vs = swing_bear_result
+            best_bear_meth = "swing_extrema"
+        elif seq_bear_best[0] > 0.0:
+            best_bear_s, best_bear_k, best_bear_pd, best_bear_cd, best_bear_vs = seq_bear_best
+            best_bear_meth = "sequential"
+
+        MIN_STRENGTH = 0.28
+
+        if best_bull_s >= MIN_STRENGTH or best_bear_s >= MIN_STRENGTH:
+            if best_bull_s >= best_bear_s:
+                logger.info(
+                    f"[CVDDiv] ✅ BULLISH | strength={best_bull_s:.3f} "
+                    f"method={best_bull_meth} k={best_bull_k} "
+                    f"confirms={bull_confirms} vol_spike={best_bull_vs:.2f}×"
+                )
+                return {
+                    "type":              "BULLISH",
+                    "strength":          round(best_bull_s, 4),
+                    "candles_confirmed": bull_confirms,
+                    "price_delta":       round(best_bull_pd, 4),
+                    "cvd_delta":         round(best_bull_cd, 2),
+                    "lookback_k":        best_bull_k,
+                    "vol_spike":         round(best_bull_vs, 3),
+                    "detection_method":  best_bull_meth,
+                    "n_snaps":           n_snaps,
+                }
+            else:
+                logger.info(
+                    f"[CVDDiv] ✅ BEARISH | strength={best_bear_s:.3f} "
+                    f"method={best_bear_meth} k={best_bear_k} "
+                    f"confirms={bear_confirms} vol_spike={best_bear_vs:.2f}×"
+                )
+                return {
+                    "type":              "BEARISH",
+                    "strength":          round(best_bear_s, 4),
+                    "candles_confirmed": bear_confirms,
+                    "price_delta":       round(best_bear_pd, 4),
+                    "cvd_delta":         round(best_bear_cd, 2),
+                    "lookback_k":        best_bear_k,
+                    "vol_spike":         round(best_bear_vs, 3),
+                    "detection_method":  best_bear_meth,
+                    "n_snaps":           n_snaps,
+                }
+
+        NULL_RESULT["n_snaps"] = n_snaps
+        return NULL_RESULT

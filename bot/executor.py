@@ -739,20 +739,28 @@ class TradingExecutor:
             tp_placed = False
 
             if self.is_futures:
-                # ── FUTURES: STOP_MARKET + TAKE_PROFIT_MARKET ────────────────
-                # closePosition=True closes the full position; workingType=MARK_PRICE
-                # avoids wick-triggered stops from momentary spread spikes.
+                # ── FUTURES: STOP_LIMIT + TAKE_PROFIT_MARKET ─────────────────
+                # Issue #4 FIX: STOP_MARKET → STOP_LIMIT with ATR buffer.
+                # STOP_MARKET has no price protection — wicks can slip through
+                # and trigger SL at undesirable prices. STOP_LIMIT fills at
+                # the specified price or better (atr * 0.02 buffer ≈ $63 on BTC).
+                # closePosition=True closes the full position.
+                atr_for_sl = signal.get("atr_at_entry", 0.0)
+                sl_limit_price = float(self.exchange.price_to_precision(
+                    ex_symbol,
+                    stop_loss + (atr_for_sl * 0.02) if side == "buy" else stop_loss - (atr_for_sl * 0.02)
+                ))
                 sl_order = None
                 _sl_last_err = None
                 for attempt in range(3):
                     try:
                         sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
+                            symbol=ex_symbol, type="STOP_LIMIT", side=sl_side,
                             amount=fmt_size,
+                            price=sl_limit_price,
                             params={
                                 "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
                                 "closePosition": True,
-                                "workingType":  "MARK_PRICE",
                             },
                         )
                         sl_placed = True
@@ -765,7 +773,7 @@ class TradingExecutor:
                 if not sl_placed:
                     raise RuntimeError(f"SL placement failed after 3 attempts: {_sl_last_err}")
                 sl_order_id = sl_order.get("id")
-                logger.info(f"[Executor] Futures STOP_MARKET at {stop_loss} (id={sl_order_id}) ✓")
+                logger.info(f"[Executor] Futures STOP_LIMIT at {stop_loss} (limit={sl_limit_price}) (id={sl_order_id}) ✓")
 
                 tp_order = None
                 _tp_last_err = None
