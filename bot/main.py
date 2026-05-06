@@ -1834,6 +1834,8 @@ async def execution_loop(
     )
 
     _last_recon_ts = 0.0
+    _orphan_flatten_attempts: int = 0          # how many times we've tried to flatten an orphan
+    _last_orphan_flatten_ts: float = 0.0       # timestamp of last flatten attempt
 
     # Startup lockout: prevent any entry for the first 90s after boot.
     # The REST prefetch loads 100 historical candles, but live CVD, OFI and
@@ -2068,19 +2070,43 @@ async def execution_loop(
                     )
                     bot_has_pos = executor.active_position is not None
                     if exchange_has_pos and not bot_has_pos:
-                        # Issue #7 FIX: Auto-close orphan position on boot.
-                        # If the bot crashes/restarts while holding a position,
-                        # the orphan sits on the exchange with no SL/TP management.
-                        # Auto-close is the safest resolution (auto-adopt is riskier).
-                        logger.critical(
-                            "[Reconciliation] Auto-closing orphan position — "
-                            "exchange has open position but bot has no tracking. "
-                            "Emergency flatten initiated."
-                        )
-                        await executor.notifier.send_error_alert(
-                            "⚠️ Orphan position auto-closed on boot. No internal SL/TP existed."
-                        )
-                        await executor.emergency_flatten("Orphan position detected on reconciliation boot")
+                        # Issue #7 FIX: Auto-close orphan position.
+                        # Only attempt once per 30 minutes to prevent Telegram spam.
+                        # After the first attempt, log a single warning and stand down
+                        # until the user manually resolves or the position closes.
+                        _now_ts = time.time()
+                        _time_since_last_orphan = _now_ts - _last_orphan_flatten_ts
+                        if _orphan_flatten_attempts == 0 or _time_since_last_orphan >= 1800:
+                            _orphan_flatten_attempts += 1
+                            _last_orphan_flatten_ts = _now_ts
+                            logger.critical(
+                                f"[Reconciliation] Orphan position detected (attempt #{_orphan_flatten_attempts}) — "
+                                "exchange has open position but bot has no tracking. "
+                                "Emergency flatten initiated."
+                            )
+                            try:
+                                await executor.notifier.send_error_alert(
+                                    f"⚠️ Orphan position detected (attempt #{_orphan_flatten_attempts}).\n"
+                                    "Bot has no SL/TP for this position.\n"
+                                    "Auto-flatten initiated. If this repeats, close manually on Binance."
+                                )
+                                await executor.emergency_flatten("Orphan position detected on reconciliation")
+                                logger.info("[Reconciliation] Emergency flatten call completed.")
+                            except Exception as flatten_err:
+                                logger.error(
+                                    f"[Reconciliation] Emergency flatten FAILED: {flatten_err}. "
+                                    "Position may still be open on exchange — MANUAL ACTION REQUIRED."
+                                )
+                                await executor.notifier.send_error_alert(
+                                    f"🚨 AUTO-FLATTEN FAILED: {flatten_err}\n"
+                                    "⛔ Manual intervention required on Binance."
+                                )
+                        else:
+                            remaining = int(1800 - _time_since_last_orphan)
+                            logger.warning(
+                                f"[Reconciliation] Orphan still detected — standing down for {remaining}s "
+                                f"(attempted {_orphan_flatten_attempts}× already). Manual action may be needed."
+                            )
                     elif not exchange_has_pos and bot_has_pos:
                         logger.warning(
                             "[Reconciliation] BOT thinks position open but EXCHANGE does not. "

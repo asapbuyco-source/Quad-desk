@@ -361,31 +361,45 @@ class BinanceDataFeed:
                 self.state._reconnect_event.set()
                 logger.info("[DataFeed] Feed health monitor forcing WS reconnect.")
 
-            # PHASE-2.2: Check aggTrade stream health
-            if hasattr(self.state, '_last_trade_ts') and self.state._last_trade_ts > 0:
-                trade_age = time.time() - self.state._last_trade_ts
-                # P0-1 FIX: Compute aggTrade throughput (msgs/min)
-                now = time.time()
-                elapsed = now - getattr(self.state, '_aggtrade_count_reset_ts', now)
-                if elapsed >= 60.0:
-                    msgs_per_min = int(getattr(self.state, '_aggtrade_msg_count', 0) / elapsed * 60)
-                    logger.info(f"[DataFeed] aggTrade throughput: {msgs_per_min} msgs/min")
-                    self.state._aggtrade_msg_count = 0
-                    self.state._aggtrade_count_reset_ts = now
-                if trade_age > 90:
-                    trade_alert = (
-                        f"⚠️ [DataFeed] AGGTRADE STALE: no trade data for {trade_age:.0f}s. "
-                        f"Buffer={len(self.state.recent_trades)} trades. CVD/tape unreliable."
+            # PHASE-2.2: aggTrade stream watchdog (count-delta based)
+            # The multiplexed WebSocket can stay "connected" via kline frames
+            # while the aggTrade sub-stream is silently dead. Checking only
+            # _last_trade_ts misses this because the timestamp never advances
+            # but ws.recv() never times out (klines keep the connection alive).
+            # Solution: snapshot msg count each 60s cycle. If count is identical
+            # two cycles in a row the sub-stream is genuinely dead → reconnect.
+            _prev_count  = getattr(self, "_aggtrade_watchdog_prev_count", -1)
+            _curr_count  = getattr(self.state, "_aggtrade_msg_count", 0)
+            now          = time.time()
+            elapsed      = now - getattr(self.state, "_aggtrade_count_reset_ts", now)
+
+            if elapsed >= 60.0:
+                msgs_per_min = int(_curr_count / max(elapsed, 1) * 60)
+                logger.info(f"[DataFeed] aggTrade throughput: {msgs_per_min} msgs/min (Δ={_curr_count - _prev_count})")
+                # Reset counters
+                self._aggtrade_watchdog_prev_count = _curr_count
+                self.state._aggtrade_msg_count     = 0
+                self.state._aggtrade_count_reset_ts = now
+
+                if msgs_per_min == 0 and _prev_count >= 0:
+                    # Zero throughput AND we've had at least one prior measurement
+                    trade_age = time.time() - getattr(self.state, "_last_trade_ts", 0)
+                    logger.warning(
+                        f"[DataFeed] ⚠️ aggTrade sub-stream DEAD — 0 msgs/min, "
+                        f"last trade {trade_age:.0f}s ago. Forcing WebSocket reconnect."
                     )
-                    logger.error(trade_alert)
-                    if notifier:
+                    if notifier and trade_age > 75:
                         try:
-                            await notifier.send_message(trade_alert)
+                            await notifier.send_message(
+                                f"⚠️ aggTrade stream dead ({trade_age:.0f}s). "
+                                "Forcing reconnect — CVD/tape will be briefly unreliable."
+                            )
                         except Exception:
                             pass
-                    if trade_age > 180:
-                        self.state._reconnect_event.set()
-                        logger.info("[DataFeed] AggTrade stale >180s — forcing WS reconnect.")
+                    self.state._reconnect_event.set()
+                    logger.info("[DataFeed] aggTrade watchdog: _reconnect_event set.")
+
+
 
     def stop(self):
         logger.info("[DataFeed] Stop requested.")

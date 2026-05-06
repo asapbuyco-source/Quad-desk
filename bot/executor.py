@@ -739,12 +739,13 @@ class TradingExecutor:
             tp_placed = False
 
             if self.is_futures:
-                # ── FUTURES: STOP_LIMIT + TAKE_PROFIT_MARKET ─────────────────
-                # Issue #4 FIX: STOP_MARKET → STOP_LIMIT with ATR buffer.
-                # STOP_MARKET has no price protection — wicks can slip through
-                # and trigger SL at undesirable prices. STOP_LIMIT fills at
-                # the specified price or better (atr * 0.02 buffer ≈ $63 on BTC).
-                # closePosition=True closes the full position.
+                # ── FUTURES: STOP (stop-limit) + TAKE_PROFIT_MARKET ──────────
+                # Binance USDM futures uses order type "STOP" for stop-limit orders
+                # (NOT "STOP_LIMIT" which is a spot-only type). "STOP" requires both
+                # a stopPrice (trigger) and a price (limit fill level).
+                # ATR buffer (atr * 0.02) gives ~$63 of slippage room on BTC.
+                # If "STOP" is rejected by the exchange, we fall back to STOP_MARKET
+                # so the bot never enters a position naked without any SL protection.
                 atr_for_sl = signal.get("atr_at_entry", 0.0)
                 sl_limit_price = float(self.exchange.price_to_precision(
                     ex_symbol,
@@ -752,28 +753,49 @@ class TradingExecutor:
                 ))
                 sl_order = None
                 _sl_last_err = None
+                # ── Attempt 1: STOP (stop-limit, preferred — no slippage) ─────
                 for attempt in range(3):
                     try:
                         sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_LIMIT", side=sl_side,
+                            symbol=ex_symbol, type="STOP", side=sl_side,
                             amount=fmt_size,
                             price=sl_limit_price,
                             params={
-                                "stopPrice":    float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
+                                "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
                                 "closePosition": True,
                             },
                         )
                         sl_placed = True
+                        logger.info(f"[Executor] Futures STOP (stop-limit) SL at {stop_loss} (limit={sl_limit_price}) ✓")
                         break
                     except Exception as e:
                         _sl_last_err = e
-                        logger.warning(f"[Executor] Futures SL attempt {attempt+1}/3 failed: {e}")
+                        logger.warning(f"[Executor] Futures STOP attempt {attempt+1}/3 failed: {e}")
                         if attempt < 2:
                             await asyncio.sleep(1.0)
+
+                # ── Fallback: STOP_MARKET if STOP rejected ────────────────────
                 if not sl_placed:
-                    raise RuntimeError(f"SL placement failed after 3 attempts: {_sl_last_err}")
+                    logger.warning(
+                        f"[Executor] STOP order rejected after 3 attempts ({_sl_last_err}). "
+                        f"Falling back to STOP_MARKET — slippage risk accepted over naked position."
+                    )
+                    try:
+                        sl_order = await self.exchange.create_order(
+                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
+                            amount=fmt_size,
+                            params={
+                                "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
+                                "closePosition": True,
+                            },
+                        )
+                        sl_placed = True
+                        logger.info(f"[Executor] Futures STOP_MARKET SL (fallback) at {stop_loss} ✓")
+                    except Exception as e2:
+                        raise RuntimeError(
+                            f"SL placement failed: STOP ({_sl_last_err}) and STOP_MARKET ({e2}) both rejected"
+                        )
                 sl_order_id = sl_order.get("id")
-                logger.info(f"[Executor] Futures STOP_LIMIT at {stop_loss} (limit={sl_limit_price}) (id={sl_order_id}) ✓")
 
                 tp_order = None
                 _tp_last_err = None
