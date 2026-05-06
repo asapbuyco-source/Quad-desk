@@ -120,13 +120,13 @@ class BinanceDataFeed:
             self.rest_url = "https://testnet.binancefuture.com"
             base_url = "wss://stream.binancefuture.com"
         else:
-            # Live Futures — global endpoint, no regional block on Railway/USA
-            self.rest_url = "https://fapi.binance.com"
-            base_url = "wss://fstream.binance.com"
+            # LIVE FUTURES DATA BLOCKED IN EU/US — using Spot Proxy for WS Data
+            self.rest_url = "https://fapi.binance.com"  # REST works via API keys/CDN
+            base_url = "wss://stream.binance.com:9443"  # Spot WebSocket bypasses geoblock
 
         streams = (
             f"{self.symbol}@kline_{self.interval}"
-            f"/{self.symbol}@aggTrade"      # Futures uses aggTrade, not trade
+            f"/{self.symbol}@aggTrade"      # Spot & Futures both use aggTrade
             f"/{self.symbol}@depth20@100ms"
         )
         self.ws_url = f"{base_url}/stream?streams={streams}"
@@ -337,13 +337,33 @@ class BinanceDataFeed:
         # Give the feed 60s to warm up before monitoring
         await asyncio.sleep(60)
 
+        # FIX: Track boot time so we can detect "kline never arrived at all"
+        _monitor_boot_ts = time.time()
+
         while self.is_running:
             await asyncio.sleep(60)
             if not self.is_running:
                 break
 
-            # Skip check if feed just started (no frames yet)
+            # FIX: If kline frames have NEVER arrived (e.g. geoblock), force
+            # reconnect after 180s instead of skipping forever.  The old code
+            # did `continue` here, meaning a fully dead kline stream would
+            # never trigger a reconnect.
             if self._last_kline_frame_ts == 0.0:
+                secs_since_boot = time.time() - _monitor_boot_ts
+                if secs_since_boot > 180:
+                    alert_msg = (
+                        f"⚠️ [DataFeed] FEED DEAD: zero kline frames received "
+                        f"since boot ({secs_since_boot:.0f}s ago). Forcing reconnect."
+                    )
+                    logger.error(alert_msg)
+                    if notifier:
+                        try:
+                            await notifier.send_message(alert_msg)
+                        except Exception:
+                            pass
+                    self.state._reconnect_event.set()
+                    _monitor_boot_ts = time.time()  # reset to avoid spam
                 continue
 
             age = time.time() - self._last_kline_frame_ts
@@ -368,7 +388,10 @@ class BinanceDataFeed:
             # but ws.recv() never times out (klines keep the connection alive).
             # Solution: snapshot msg count each 60s cycle. If count is identical
             # two cycles in a row the sub-stream is genuinely dead → reconnect.
-            _prev_count  = getattr(self, "_aggtrade_watchdog_prev_count", -1)
+            # FIX: Initialize _prev_count to 0 (not -1) so the very first
+            # measurement cycle can detect a dead stream without needing a
+            # warmup cycle.
+            _prev_count  = getattr(self, "_aggtrade_watchdog_prev_count", 0)
             _curr_count  = getattr(self.state, "_aggtrade_msg_count", 0)
             now          = time.time()
             elapsed      = now - getattr(self.state, "_aggtrade_count_reset_ts", now)
