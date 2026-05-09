@@ -242,23 +242,16 @@ class FirestoreLogHandler(logging.Handler):
                 self.log_queue.task_done()
                 
     def emit(self, record):
-        # We only care about root logger outputs from the bot strategies
-        # (mostly from main.py, quant_engine, and executor)
+        # FIXED: Only forward ERROR+ to Firestore to stay under 20K/day quota.
+        # WARNING and below stays in Railway/local logs only.
+        # Errors (SL failures, order rejections, Firebase outages) still reach Firestore.
+        if record.levelno < logging.ERROR:
+            return
         if record.name.startswith("bot.") or record.name == "__main__":
-            msg = record.getMessage()
-            # Filter out high-frequency cyclic logs to stay under Firebase 20K/day free tier quota
-            if record.levelno < logging.WARNING and (
-                msg.startswith("[Metrics]") or msg.startswith("[Regime]") or 
-                msg.startswith("[Sweep]") or msg.startswith("[MetaModel]") or 
-                msg.startswith("[BayesFusion]") or msg.startswith("[SweepStrat]") or
-                "[Main] WAIT" in msg or "strategy_analysis" in msg
-            ):
-                return
-                
             try:
                 self.log_queue.put_nowait(record)
             except queue.Full:
-                pass # Silently drop logs under severe backpressure to protect memory
+                pass
 
 
 def get_db() -> Optional[Any]:
@@ -340,6 +333,29 @@ async def run_heartbeat(stats: dict) -> None:
                     if _consecutive_failures >= 3:
                         _use_local_fallback = True
                         logger.warning("[Heartbeat] 3 consecutive failures — switching to local JSON fallback.")
+                        # FIXED: Alert operator that dashboard is dark
+                        _tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+                        _tg_chat  = os.environ.get("TELEGRAM_CHAT_ID", "")
+                        if _tg_token and _tg_chat:
+                            try:
+                                import httpx as _httpx
+                                asyncio.create_task(
+                                    _httpx.AsyncClient().post(
+                                        f"https://api.telegram.org/bot{_tg_token}/sendMessage",
+                                        json={
+                                            "chat_id": _tg_chat,
+                                            "text": (
+                                                "⚠️ Quad-Desk: Firebase is DARK\n"
+                                                "3 consecutive write failures.\n"
+                                                "Trade data → local /tmp fallback only.\n"
+                                                "Check Firestore quota or credentials."
+                                            )
+                                        },
+                                        timeout=5.0
+                                    )
+                                )
+                            except Exception:
+                                pass
                     else:
                         backoff = min(backoff * 2 + 30, 300)
                         logger.info(f"[Heartbeat] Exponential backoff: {backoff}s")

@@ -24,6 +24,8 @@ class MarketState:
         # Positive = longs pay shorts (crowded long → bearish pressure).
         # Negative = shorts pay longs (crowded short → bullish squeeze).
         self.funding_rate: float = 0.0
+        self.basis: float = 0.0       # Futures mark price - Spot close
+        self.mark_price: float = 0.0  # Latest Futures mark price
         self._reconnect_event: asyncio.Event = asyncio.Event()
         self._last_trade_ts: float = time.time()   # epoch-seconds of last aggTrade received (P0-1 FIX: was 0.0 → time.time())
         self._cvd_was_reset: bool = False  # flag to suppress CVD delta spike after reconnect
@@ -186,7 +188,20 @@ class BinanceDataFeed:
                 data = resp.json()
             rate = float(data.get("lastFundingRate", 0.0))
             self.state.funding_rate = rate
-            logger.info(f"[DataFeed] Funding rate: {rate:+.6f} ({rate*100:+.4f}%)")
+            # NEW: Track Futures-Spot basis for SL/TP price correction
+            mark_price = float(data.get("markPrice", 0.0))
+            index_price = float(data.get("indexPrice", 0.0))
+            if mark_price > 0 and len(self.state.candles) > 0:
+                spot_close = self.state.candles[-1]["close"]
+                self.state.basis = mark_price - spot_close   # positive = Futures premium
+                self.state.mark_price = mark_price
+            else:
+                self.state.basis = 0.0
+                self.state.mark_price = mark_price
+            logger.info(
+                f"[DataFeed] Funding rate: {rate:+.6f} ({rate*100:+.4f}%) | "
+                f"Basis: {getattr(self.state, 'basis', 0.0):+.2f}"
+            )
         except Exception as e:
             logger.warning(f"[DataFeed] Failed to fetch funding rate: {e}")
 
@@ -427,3 +442,75 @@ class BinanceDataFeed:
     def stop(self):
         logger.info("[DataFeed] Stop requested.")
         self.is_running = False
+
+    async def run_user_data_stream(self, api_key: str, on_fill_callback) -> None:
+        """
+        Binance USDM Futures user data stream for real-time fill detection.
+        Subscribes to ORDER_TRADE_UPDATE events to detect position closes immediately.
+        Run as a separate asyncio.create_task() alongside run().
+        """
+        import httpx as _httpx
+
+        if "testnet" in self.rest_url:
+            listen_key_url = f"{self.rest_url}/fapi/v1/listenKey"
+            ws_base = "wss://stream.binancefuture.com"
+        else:
+            listen_key_url = "https://fapi.binance.com/fapi/v1/listenKey"
+            ws_base = "wss://fstream.binance.com"
+
+        headers = {"X-MBX-APIKEY": api_key}
+
+        while self.is_running:
+            try:
+                # Create listenKey
+                async with _httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(listen_key_url, headers=headers)
+                    resp.raise_for_status()
+                    listen_key = resp.json()["listenKey"]
+
+                logger.info(f"[UserDataStream] listenKey created ✓")
+
+                # Keepalive — Binance expires listenKey after 60 min without ping
+                async def _keepalive():
+                    while self.is_running:
+                        await asyncio.sleep(29 * 60)
+                        try:
+                            async with _httpx.AsyncClient(timeout=5.0) as c:
+                                await c.put(
+                                    listen_key_url, headers=headers,
+                                    params={"listenKey": listen_key}
+                                )
+                            logger.info("[UserDataStream] listenKey keepalive ✓")
+                        except Exception as e:
+                            logger.warning(f"[UserDataStream] Keepalive failed: {e}")
+
+                keepalive_task = asyncio.create_task(_keepalive())
+
+                async with websockets.connect(
+                    f"{ws_base}/ws/{listen_key}",
+                    ping_interval=20, ping_timeout=30
+                ) as ws:
+                    logger.info("[UserDataStream] Connected ✓")
+                    while self.is_running:
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                            event = json.loads(raw)
+                            if event.get("e") == "ORDER_TRADE_UPDATE":
+                                order = event.get("o", {})
+                                # Filled + reduceOnly = position exit
+                                if order.get("X") == "FILLED" and order.get("R"):
+                                    pnl = float(order.get("rp", 0.0))
+                                    logger.info(
+                                        f"[UserDataStream] Fill: orderId={order.get('i')} "
+                                        f"PnL=${pnl:.2f}"
+                                    )
+                                    await on_fill_callback(pnl)
+                        except asyncio.TimeoutError:
+                            logger.warning("[UserDataStream] recv timeout — reconnecting")
+                            break
+
+                keepalive_task.cancel()
+
+            except Exception as e:
+                logger.warning(f"[UserDataStream] Error: {e} — retry in 10s")
+                await asyncio.sleep(10)

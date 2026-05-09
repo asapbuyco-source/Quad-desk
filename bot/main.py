@@ -175,9 +175,11 @@ BOT_STATS: Dict[str, Any] = {
         "micro_confirms_failed":    0,
         "sweep_confirms_failed":    0,
         "fee_geometry":             0,
-        "signal_none":              0,
+"signal_none":              0,
         "total_passed":             0,
+        "cvd_divergence_veto":      0,
     },
+    "equity_peak": ACCOUNT_SIZE,
 }
 
 GATE_STATS_LAST_LOG = 0.0  # timestamp of last 30-min gate summary
@@ -368,8 +370,9 @@ class _HMMRegimeClassifier:
     _LABELS = ["RANGE", "TREND", "NEUTRAL"]  # VOLATILE maps to NEUTRAL
 
     # Confidence & hysteresis thresholds
-    MIN_CONFIDENCE       = 0.60  # PHASE-2.2: was 0.70, lowered to 60% for faster HMM transitions
-    HYSTERESIS_CANDLES   = 3     # Consecutive candles before regime change
+    MIN_CONFIDENCE        = 0.60
+    HYSTERESIS_CANDLES    = 2     # FIXED: 30-min lag (was 3 = 45-min lag)
+    FAST_TRACK_CONFIDENCE = 0.88  # NEW: 1-candle commit at very high confidence
 
     def __init__(self, window: int = 60, update_every: int = 50):
         self._window    = window
@@ -559,13 +562,18 @@ class _HMMRegimeClassifier:
 
         # Commit the new regime only if it's been consistent for N candles
         # AND meets the confidence threshold
-        if (self._candidate_regime != self._committed_regime
-                and self._candidate_streak >= self.HYSTERESIS_CANDLES
-                and raw_conf >= self.MIN_CONFIDENCE):
+        _fast = (raw_conf >= self.FAST_TRACK_CONFIDENCE
+                 and self._candidate_regime != self._committed_regime)
+        _normal = (self._candidate_streak >= self.HYSTERESIS_CANDLES
+                   and raw_conf >= self.MIN_CONFIDENCE
+                   and self._candidate_regime != self._committed_regime)
+
+        if _fast or _normal:
             old = self._committed_regime
             self._committed_regime = self._candidate_regime
             logger.info(
-                f"[HMM] Regime TRANSITION: {old} → {self._committed_regime} "
+                f"[HMM] Regime TRANSITION ({'FAST' if _fast else 'normal'}): "
+                f"{old} → {self._committed_regime} "
                 f"(conf={raw_conf:.1%}, streak={self._candidate_streak})"
             )
 
@@ -719,7 +727,7 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
                              sell_walls: List[float],
                              candle_history: list) -> Optional[str]:
     if len(candle_history) < 2 or not sell_walls or not buy_walls:
-        return None, None
+        return None, None, None
 
     price = metrics["price"]
     nearest_sell = sell_walls[0]
@@ -732,14 +740,14 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
         candle = candle_history[idx]
 
         if candle["high"] > nearest_sell and price < nearest_sell:
-            logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (src={label} candle)")
-            return "ABOVE_HIGHS", float(candle["time"])
+            logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (wick={candle['high']:.2f})")
+            return "ABOVE_HIGHS", float(candle["time"]), float(candle["high"])
 
         if candle["low"] < nearest_buy and price > nearest_buy:
-            logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (src={label} candle)")
-            return "BELOW_LOWS", float(candle["time"])
+            logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (wick={candle['low']:.2f})")
+            return "BELOW_LOWS", float(candle["time"]), float(candle["low"])
 
-    return None, None
+    return None, None, None
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1270,6 +1278,25 @@ def _apply_cvd_divergence_gate(
 # ── STAGE 7 — RISK ENGINE ─────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
+def _drawdown_adjusted_risk(equity: float, peak_equity: float, base_risk_pct: float) -> float:
+    """
+    Reduces risk percentage during drawdown. f_adj = base × (1 - DD)^1.5
+    Floor: 0.4% (prevents sizing below exchange notional minimum).
+    No adjustment when DD < 5% (below noise threshold).
+    """
+    if peak_equity <= 0:
+        return base_risk_pct
+    dd = max(0.0, (peak_equity - equity) / peak_equity)
+    if dd < 0.05:
+        return base_risk_pct
+    f_adj = max(base_risk_pct * ((1.0 - dd) ** 1.5), 0.4)
+    logger.info(
+        f"[RiskEngine] DD={dd:.1%} → risk {base_risk_pct:.1%}→{f_adj:.1%} "
+        f"(equity=${equity:.0f} peak=${peak_equity:.0f})"
+    )
+    return f_adj
+
+
 def _risk_engine(
     direction: str,
     strategy_type: str,
@@ -1283,6 +1310,7 @@ def _risk_engine(
     candle_history: Optional[List[Dict[str, Any]]] = None,
     metrics: Optional[Dict[str, Any]] = None,  # BUG-4: needed for atr_pct_rank
     regime_p: Optional[Dict[str, Any]] = None,  # PHASE-3.2: needed for panic_threshold
+    signal: Optional[Dict[str, Any]] = None,   # NEW: for sweep_wick access
 ) -> Tuple[float, float]:
     """
     ATR-based SL/TP calculator with regime-adaptive multipliers (P0).
@@ -1375,6 +1403,22 @@ def _risk_engine(
             sl_dist = abs(price - buy_walls[0]) + (atr * 0.5)
         else:
             sl_dist = atr * SL_MULT
+        _sl_wick_override = None
+        if signal is not None:
+            _wick = signal.get("sweep_wick", 0.0)
+            if signal.get("strategy_type") == "LIQUIDITY_SWEEP" and _wick > 0:
+                _buf = 0.20 * atr
+                if is_long:
+                    _sl_wick_candidate = _wick - _buf
+                    if _sl_wick_candidate < price - sl_dist:
+                        _sl_wick_override = _sl_wick_candidate
+                else:
+                    _sl_wick_candidate = _wick + _buf
+                    if _sl_wick_candidate > price + sl_dist:
+                        _sl_wick_override = _sl_wick_candidate
+                if _sl_wick_override is not None:
+                    logger.info(f"[RiskEngine] Wick SL: {price - sl_dist:.2f}→{_sl_wick_override:.2f}")
+                    sl_dist = abs(price - _sl_wick_override)
         return sl_tp(max(sl_dist, atr * SL_MULT))
     elif strategy_type == "TREND":
         return sl_tp(atr * SL_MULT)
@@ -1445,7 +1489,7 @@ def _compute_signal(
     sell_walls = [p for p, _ in metrics.get("top_sell_walls", [])]
 
     # Stage 1b: Pre-detect sweep (needed for LIQUIDITY cap in _detect_regime)
-    sweep, sweep_ts = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
+    sweep, sweep_ts, sweep_wick = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
 
     # Stage 2: Regime
     regime = _detect_regime(metrics, buy_walls, sell_walls, quant=quant, sweep=sweep)
@@ -1586,6 +1630,15 @@ def _compute_signal(
             except (ValueError, TypeError):
                 pass
 
+    # FIXED: CVD gate BEFORE Bayes fusion (was after)
+    _pre_div_conf = metrics.get("bayesianPosterior", 0.5)
+    _div_conf, _div_veto = _apply_cvd_divergence_gate(raw_direction, metrics, _pre_div_conf)
+    if _div_veto:
+        _gate_stats_summary("cvd_divergence_veto")
+        return {**WAIT, "analysis": f"CVD divergence veto: {_div_veto}"}
+    if abs(_div_conf - _pre_div_conf) > 0.001:
+        metrics = {**metrics, "bayesianPosterior": _div_conf}
+
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
 
@@ -1596,17 +1649,6 @@ def _compute_signal(
         logger.info(f"[VPOC] Near VPOC ({vpoc:.0f}). Confidence boosted by +{vpoc_boost:.2%} → {confidence:.2%}")
 
     logger.info(f"[BayesFusion] direction={raw_direction} | P={confidence:.2%}")
-
-    # ── STAGE 4.5 — CVD DIVERGENCE GATE (Addition A) ─────────────────
-    # Sits between Bayesian Fusion (Stage 5) and ULIS Gate (Stage 6).
-    # The ONLY gate that reads ACROSS candle boundaries.
-    # All other layers (OFI, tape, RSI) are single-snapshot.
-    confidence, cvd_veto_reason = _apply_cvd_divergence_gate(
-        raw_direction, metrics, confidence
-    )
-    if cvd_veto_reason:
-        _gate_stats_summary("cvd_divergence_veto")
-        return {**WAIT, "analysis": f"CVD Divergence veto: {cvd_veto_reason}"}
 
     # Stage 6 ★ ULIS/ALDE gate FIRST (applies confidence boost)
     should_trade, confidence, ulis_verdict_str = _apply_ulis_gate(
@@ -1636,12 +1678,15 @@ def _compute_signal(
 
     # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
     stop_loss, take_profit = _risk_engine(
-        raw_direction, strategy_type, price, atr, buy_walls, sell_walls, sweep,
+        raw_direction, strategy_type,
+        effective_price if "effective_price" in verdict_json else price,
+        atr, buy_walls, sell_walls, sweep,
         sl_mult=regime_p["atr_multiplier_sl"],
         tp_mult_ratio=regime_p["rr_target"],
         candle_history=candle_history,
         metrics=metrics,  # BUG-4: pass for atr_pct_rank vol scaling
         regime_p=regime_p,  # PHASE-3.2: pass for panic_threshold
+        signal=verdict_json,  # NEW: pass for sweep_wick
     )
 
     # Sanity check — geometry must be valid
@@ -1702,6 +1747,8 @@ def _compute_signal(
         "regime":       regime,   # P1: stored in position for per-regime Beta update on exit
         "be_lock_trigger": regime_p.get("be_lock_trigger", 1.0),
         "atr_at_entry": atr,      # stored in position for any future trailing logic
+        "sweep_wick":   sweep_wick if sweep else 0.0,
+        "strategy_type": strategy_type,
     }
 
 
@@ -1924,6 +1971,13 @@ async def execution_loop(
                     )
 
             current_price = feed.state.candles[-1]["close"]
+            # NEW: Use Futures mark price when available (corrects Spot-Futures basis)
+            _mark = getattr(feed.state, "mark_price", 0.0)
+            _basis = getattr(feed.state, "basis", 0.0)
+            if _mark > 0 and abs(_basis) < 200:  # sanity check: ignore if basis > $200
+                effective_price = _mark   # use for SL/TP distance calculation
+            else:
+                effective_price = current_price
 
             # PHASE-3.4: Cache positions per cycle to avoid duplicate fetch_positions API calls
             _cached_positions = None
@@ -2130,15 +2184,11 @@ async def execution_loop(
             if metrics is not None:
                 _current_cvd = metrics.get("cvd", 0.0)
                 _cvd_reset = getattr(feed.state, "_cvd_was_reset", False)
-                # P2-3 FIX: Suppress CVD delta for 2 cycles after WS reconnect, not 1.
-                # Cycle 1: reset flag fires, LAST_CVD set to 0 (REST rebuild may not be done).
-                # Cycle 2: if LAST_CVD=0 and cvd=-1500, delta=-1500 → false massive sell signal.
-                # 2-cycle suppression eliminates this second-cycle spike completely.
                 _cvd_suppress = getattr(executor, "_cvd_reset_suppress", 0)
                 if LAST_CVD == 0.0 or _cvd_reset or _cvd_suppress > 0:
                     if _cvd_reset:
                         feed.state._cvd_was_reset = False
-                        executor._cvd_reset_suppress = 2  # suppress this + next cycle
+                        executor._cvd_reset_suppress = 2
                         logger.info("[DataFeed] CVD reset detected — suppressing delta spike for 2 cycles.")
                     elif _cvd_suppress > 0:
                         executor._cvd_reset_suppress = _cvd_suppress - 1
@@ -2148,12 +2198,9 @@ async def execution_loop(
                     metrics["cvd_delta"] = _current_cvd - LAST_CVD
                     LAST_CVD = _current_cvd
 
-                # P1: Inject per-regime win-rate priors so _bayesian_fusion
-                # can blend them with the base posterior after regime is known.
+                # Inject per-regime win-rate priors for Bayesian fusion blending
                 metrics["_regime_priors"] = quant.get_all_regime_priors()
                 metrics["_regime_samples"] = quant.get_regime_trade_counts()
-                # FINDING-2: Also inject alpha/beta counts so cold-start guard
-                # can count total trades before enabling regime blending.
                 metrics["_regime_alpha"] = dict(quant._regime_alpha)
                 metrics["_regime_beta"]  = dict(quant._regime_beta)
 
@@ -2214,7 +2261,7 @@ async def execution_loop(
                     "confidence": 0.0,
                     "stop_loss": 0.0,
                     "take_profit": 0.0,
-                    "analysis": f"Consecutive Loss Cooldown active. Resumes at {time.strftime('%H:%M:%S', time.localtime(stats['cooldown_until']))}",
+"analysis": f"Consecutive Loss Cooldown active. Resumes at {time.strftime('%H:%M:%S', time.localtime(stats['cooldown_until']))}",
                     "ulis_verdict": "—"
                 }
             else:
@@ -2254,24 +2301,27 @@ async def execution_loop(
 
             is_actionable = action in ("BUY", "SELL", "MEAN_REVERSAL_LONG", "MEAN_REVERSAL_SHORT")
             if is_actionable:
-                # Startup lockout: log the signal but don't trade yet
                 if _in_startup_lockout:
                     remaining_lockout = int(_STARTUP_LOCKOUT_SECS - _startup_elapsed)
                     logger.info(
-                        f"[Main] \u23f3 Startup lockout — would fire {action} but waiting "
+                        f"[Main] ⏳ Startup lockout — would fire {action} but waiting "
                         f"{remaining_lockout}s for live feed to settle. "
                         f"(conf={conf:.0%} SL={stop_loss} TP={take_profit})"
                     )
                 else:
+                    verdict_json["effective_price"] = effective_price
+                    _cur_equity  = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
+                    _peak_equity = stats.get("equity_peak", ACCOUNT_SIZE)
+                    if _cur_equity > _peak_equity:
+                        stats["equity_peak"] = _cur_equity
+                        _peak_equity = _cur_equity
+                    _effective_risk = _drawdown_adjusted_risk(_cur_equity, _peak_equity, MAX_RISK_PCT)
                     await executor.execute_signal(
-                        SYMBOL, metrics["execution_price"], verdict_json, MAX_RISK_PCT,
+                        SYMBOL, metrics["execution_price"], verdict_json, _effective_risk,
                         account_size=ACCOUNT_SIZE, ulis_verdict=ulis_str
                     )
-                # Only count the trade if execution actually opened a position
                 if executor.active_position is not None:
                     stats["total_trades"] += 1
-                    # P1: Tag position with the current regime so update_win_rate()
-                    # can update the correct per-regime Beta prior on exit.
                     if executor.active_position:
                         executor.active_position["regime"] = verdict_json.get("regime", "NEUTRAL")
             else:
@@ -2320,6 +2370,21 @@ async def main():
         tg_token=TG_BOT_TOKEN,
         tg_chat_id=TG_CHAT_ID
     )
+
+    # NEW: Real-time fill detection via user data stream
+    async def _on_ws_fill(pnl: float):
+        """Called immediately when exchange confirms position close."""
+        async with executor._position_lock:
+            if executor.active_position:
+                pos_regime = executor.active_position.get("regime", "NEUTRAL")
+                logger.info(f"[WsFill] Position closed via ORDER_TRADE_UPDATE PnL=${pnl:.2f}")
+                await _process_exit(pnl, pos_regime, BOT_STATS, quant, executor)
+                BOT_STATS["active_position"] = None
+
+    if not DRY_RUN and BINANCE_API_KEY:
+        asyncio.create_task(
+            feed.run_user_data_stream(BINANCE_API_KEY, _on_ws_fill)
+        )
 
     # PHASE-4.2: Seed HMM observations from REST historical candles on startup
     # This gives the HMM meaningful priors from the first cycle instead of

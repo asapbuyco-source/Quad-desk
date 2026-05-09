@@ -761,8 +761,8 @@ class TradingExecutor:
                             amount=fmt_size,
                             price=sl_limit_price,
                             params={
-                                "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
-                                "closePosition": True,
+                                "stopPrice":  float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
+                                "reduceOnly": True,   # FIXED: reduceOnly works with amount; closePosition does not
                             },
                         )
                         sl_placed = True
