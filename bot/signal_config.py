@@ -18,9 +18,12 @@ MIN_BAYESIAN           = 0.62   # Minimum posterior confidence for any entry
 MIN_BAYESIAN_STRONG    = 0.72   # Strong-signal threshold (STRONG_LONG / STRONG_SHORT)
 
 # ── Z-Score (Student's t-distribution VWAP Z) ────────────────────────────────
-Z_OVERSOLD             = -1.5   # Z below this = statistically depressed price
-Z_OVERBOUGHT           =  1.5   # Z above this = statistically stretched price
-MEAN_REV_Z_THRESHOLD   =  1.5   # matches NEUTRAL z_threshold in REGIME_PARAMS
+# M-02 FIX: _vwap_z_score_t() already shrinks the Gaussian Z by t_scale=0.8165.
+# Thresholds must be multiplied by 0.8165 to restore the intended σ boundaries.
+# e.g. old 1.5 → effective Gaussian req of 1.83σ → now correctly 1.22 = 1.5×0.8165
+Z_OVERSOLD             = -1.22  # Student-t adj: was -1.5
+Z_OVERBOUGHT           =  1.22  # Student-t adj: was  1.5
+MEAN_REV_Z_THRESHOLD   =  1.22  # Student-t adj: was  1.5 — matches NEUTRAL z_threshold
 
 # ── OFI (tanh output, range -1 to +1) ────────────────────────────────────────
 OFI_STRONG_THRESHOLD   =  0.6   # Strong directional flow (equivalent to old |OFI| > 40)
@@ -71,7 +74,7 @@ COLD_START_CONFIDENCE_DISCOUNT = 0.05
 REGIME_PARAMS = {
     "RANGE": {
         # Low-volatility: small deviations are statistically meaningful
-        "z_threshold":        1.3,   # Was 1.5. Triggers mean-reversion earlier
+        "z_threshold":        1.06,  # M-02 FIX: was 1.3, Student-t adj (1.3×0.8165)
         "atr_multiplier_sl":  1.14,   # Was 1.2 — 5% reduction post-Wilder compensation
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
         "min_confidence":     0.55,  # PHASE-2.3: was 0.58, lowered to 55% to allow entries in RANGE
@@ -84,7 +87,7 @@ REGIME_PARAMS = {
     },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
-        "z_threshold":        1.5,
+        "z_threshold":        1.22,  # M-02 FIX: was 1.5, Student-t adj (1.5×0.8165)
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.10,  # PHASE-4.1: was 0.12, lowered to 0.10 for more signal pass-through
         "min_confidence":     0.55,  # PHASE-2.4: was 0.58, lowered to 55% for more entry opportunity
@@ -110,7 +113,7 @@ REGIME_PARAMS = {
     },
 "LIQUIDITY": {
         # Wall-proximity sweeps
-        "z_threshold":        1.5,
+        "z_threshold":        1.22,  # M-02 FIX: was 1.5, Student-t adj (1.5×0.8165)
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.12,
         "min_confidence":     0.55,  # PHASE-2.3: was 0.62, lowered to 55% for more LIQUIDITY signals

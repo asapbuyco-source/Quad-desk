@@ -360,6 +360,8 @@ class QuantEngine:
             # Z-score is meaningless with fewer than 10 bars of data in the
             # current session — it's fitting noise from too-small a sample.
             "z_score_valid":     len(closes) >= 10,
+            # Z-06: Log-Return Z-Score — velocity-based momentum signal for TREND
+            "zScore_ret":        self._log_return_z_score(closes),
             # PHASE-0.2: aggTrade stream health flag.
             "trade_buffer_healthy": trade_buffer_healthy,
             # PHASE-0.4: Order book mid-price for execution (not candle close).
@@ -393,7 +395,38 @@ class QuantEngine:
         return float(np.mean(((valid - mean) / np.sqrt(var)) ** 3))
 
     # ------------------------------------------------------------------
-    # 2. VWAP-Anchored Z-Score — Student's t robust (20 periods)
+    # 1b. Log-Return Z-Score (Z-06) — momentum / breakout detection
+    # ------------------------------------------------------------------
+    def _log_return_z_score(self, closes: np.ndarray, window: int = 20) -> float:
+        """
+        Z-06: Measures whether the current price VELOCITY (log-return) is
+        statistically unusual compared to recent history.  Unlike the VWAP
+        Z-score which measures price LEVEL deviation (mean-reversion), this
+        measures price SPEED deviation — the correct signal for TREND momentum.
+
+        Formula (PDF §5 / Z-06):
+            r_t   = ln(P_t / P_{t-1})
+            r̄     = mean of last `window` log-returns
+            σ_r   = std  of last `window` log-returns
+            Z_ret = (r_t - r̄) / σ_r
+
+        Output clipped to [-4, +4].  Returns 0.0 if insufficient data.
+        """
+        if len(closes) < window + 2:
+            return 0.0
+        log_rets = np.log(closes[-(window + 1):][1:] / closes[-(window + 1):][:-1])
+        valid = log_rets[np.isfinite(log_rets)]
+        if len(valid) < 5:
+            return 0.0
+        mu    = float(np.mean(valid))
+        sigma = float(np.std(valid))
+        if sigma < 1e-10:
+            return 0.0
+        z_ret = (float(valid[-1]) - mu) / sigma
+        return float(np.clip(z_ret, -4.0, 4.0))
+
+    # ------------------------------------------------------------------
+    # 2. VWAP-Anchored Z-Score — Student’s t robust (20 periods)
     # ------------------------------------------------------------------
     def _vwap_z_score_t(
         self,
@@ -676,12 +709,14 @@ class QuantEngine:
         L_rsi = 1.8 if rsi > 60 else 0.55 if rsi < 40 else 1.0
 
         # ── Step 3: OFI + Z-Score combined gate (OFI now in (-1,+1)) ──────
-        if z_score < -1.5 and ofi > 0.2:       # oversold + buying flow
+        # M-02 FIX: z_score is already Z_t (shrunk by t_scale=0.8165).
+        # Thresholds updated 1.5 → 1.22 to match corrected signal_config.py.
+        if z_score < -1.22 and ofi > 0.2:       # oversold + buying flow
             L_flow = 2.0
-        elif z_score > 1.5 and ofi < -0.2:     # overbought + selling flow
+        elif z_score > 1.22 and ofi < -0.2:     # overbought + selling flow
             L_flow = 0.5
         else:
-            L_z = 1.3 if z_score < -1.5 else 0.76 if z_score > 1.5 else 1.0
+            L_z = 1.3 if z_score < -1.22 else 0.76 if z_score > 1.22 else 1.0
             L_o = 1.2 if ofi > 0.3 else 0.83 if ofi < -0.3 else 1.0  # tanh thresholds
             L_flow = L_z * L_o
 

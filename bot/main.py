@@ -760,6 +760,8 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     cvd        = metrics["cvd"]
     dominant   = metrics["tapeDominant"]
     tape_speed = metrics.get("tapeSpeed", "NORMAL")  # Added: differentiate SCREAMING vs NORMAL tape
+    # Z-06 Log-Return Z (P2): velocity-based momentum confirmation
+    z_ret = metrics.get("zScore_ret", 0.0)
 
     score = 0.0
     if bayes > 0.65:    score += 2.0
@@ -783,6 +785,12 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
         score += 1.0 if tape_speed == "SCREAMING" else 0.5
     elif "SELL" in dominant:
         score -= 1.0 if tape_speed == "SCREAMING" else 0.5
+
+    # P2: Z-06 momentum velocity score modifier (max +/-0.75)
+    if z_ret > 1.5:    score += 0.75
+    elif z_ret > 0.8:  score += 0.30
+    elif z_ret < -1.5: score -= 0.75
+    elif z_ret < -0.8: score -= 0.30
 
     ofi_bull = ofi > 0.15
     cvd_bull = cvd > 0
