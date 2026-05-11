@@ -85,17 +85,6 @@ class QuantEngine:
         self._cvd_delta_ewma_var: float = 1.0
         self._cvd_delta_ewma_n:   int   = 0
 
-        # ── CVD Divergence Streak Tracker (Age Cap Fix) ─────────────────────────
-        # If the SAME divergence direction fires for >8 consecutive candle snapshots
-        # (~2 hours), it is measuring a macro TREND not a divergence.  Decay the
-        # strength exponentially so the signal expires naturally.
-        # exp(-0.15 × (12-8)) ≈ 0.55 — well below MIN_STRENGTH=0.28 at 12 candles.
-        self._cvd_div_streak_dir:   str = "NONE"
-        self._cvd_div_streak_count: int = 0
-
-        # ── Consecutive-Loss Tracker (Prior Softening) ──────────────────────────
-        self._consecutive_losses: int = 0
-
         # Persistence path — survives Railway restarts if /tmp is mounted
         self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
         self._load_state()
@@ -108,24 +97,9 @@ class QuantEngine:
         if won:
             self._alpha += 1.0
             self._regime_alpha[regime] = self._regime_alpha.get(regime, 1.0) + 1.0
-            self._consecutive_losses = 0   # reset streak on any win
         else:
             self._beta += 1.0
             self._regime_beta[regime] = self._regime_beta.get(regime, 1.0) + 1.0
-            self._consecutive_losses = getattr(self, "_consecutive_losses", 0) + 1
-            # Prior-softening: after 3+ consecutive losses the Beta prior has drifted
-            # too bearish to recover naturally. Pull it 15% toward Beta(5,5) each loss
-            # so the bot can re-engage after a bad streak without a full cold-start reset.
-            if self._consecutive_losses >= 3:
-                _target = 5.0
-                self._alpha = self._alpha * 0.85 + _target * 0.15
-                self._beta  = self._beta  * 0.85 + _target * 0.15
-                logger.warning(
-                    f"[QuantEngine] Consecutive loss #{self._consecutive_losses} — "
-                    f"softening prior toward Beta(5,5): "
-                    f"α={self._alpha:.1f} β={self._beta:.1f} "
-                    f"P(bull)={self._alpha/(self._alpha+self._beta):.1%}"
-                )
         self._regime_trade_count[regime] = self._regime_trade_count.get(regime, 0) + 1
         p_bull = self._alpha / (self._alpha + self._beta)
         n = self._alpha + self._beta - 2
@@ -137,22 +111,6 @@ class QuantEngine:
 
     def get_regime_trade_counts(self) -> dict:
         return dict(self._regime_trade_count)
-
-    def reset_cvd_divergence_state(self) -> None:
-        """
-        Call this whenever the daily CVD accumulator is reset to zero.
-        Prevents the divergence detector from comparing fresh post-reset CVD
-        values against stale pre-reset snapshots, which would produce a false
-        massive BULLISH spike.
-        """
-        self._cvd_candle_snapshots.clear()
-        self._last_snapped_candle_ts = 0.0
-        self._cvd_delta_ewma_mu  = 0.0
-        self._cvd_delta_ewma_var = 1.0
-        self._cvd_delta_ewma_n   = 0
-        self._cvd_div_streak_dir   = "NONE"
-        self._cvd_div_streak_count = 0
-        logger.info("[QuantEngine] CVD divergence state cleared (daily reset hook).")
 
     # ------------------------------------------------------------------
     # P1: Per-regime win rate accessor
@@ -996,50 +954,12 @@ class QuantEngine:
             best_bear_meth = "sequential"
 
         MIN_STRENGTH = 0.28
-        AGE_CAP_CANDLES = 8   # beyond 8 candles (~2h) in same direction = TREND, not divergence
-        DECAY_RATE      = 0.15  # exp(-0.15*(streak-8)); at streak=12: factor≈0.55 → below threshold
 
         if best_bull_s >= MIN_STRENGTH or best_bear_s >= MIN_STRENGTH:
-            # Determine winning direction BEFORE applying age cap
-            winning_dir = "BULLISH" if best_bull_s >= best_bear_s else "BEARISH"
-            winning_s   = best_bull_s if winning_dir == "BULLISH" else best_bear_s
-
-            # ── Streak / Age-Cap Logic ─────────────────────────────────────────
-            # Track how many consecutive candle snapshots this direction has fired.
-            # If it exceeds AGE_CAP_CANDLES, the "divergence" is actually a trend —
-            # decay strength so it naturally falls below MIN_STRENGTH and expires.
-            if winning_dir == self._cvd_div_streak_dir:
-                self._cvd_div_streak_count += 1
-            else:
-                self._cvd_div_streak_dir   = winning_dir
-                self._cvd_div_streak_count = 1
-
-            streak = self._cvd_div_streak_count
-            if streak > AGE_CAP_CANDLES:
-                decay = math.exp(-DECAY_RATE * (streak - AGE_CAP_CANDLES))
-                winning_s_decayed = winning_s * decay
-                logger.debug(
-                    f"[CVDDiv] Age-cap decay: dir={winning_dir} streak={streak} "
-                    f"strength {winning_s:.3f} → {winning_s_decayed:.3f} (decay={decay:.3f})"
-                )
-                if winning_s_decayed < MIN_STRENGTH:
-                    logger.info(
-                        f"[CVDDiv] ⏰ {winning_dir} signal expired (streak={streak} candles, "
-                        f"aged below MIN_STRENGTH={MIN_STRENGTH}). Treating as TREND, not divergence."
-                    )
-                    NULL_RESULT["n_snaps"] = n_snaps
-                    return NULL_RESULT
-                winning_s = winning_s_decayed
-                if winning_dir == "BULLISH":
-                    best_bull_s = winning_s
-                else:
-                    best_bear_s = winning_s
-            # ── End Age-Cap ───────────────────────────────────────────────────
-
             if best_bull_s >= best_bear_s:
                 logger.info(
                     f"[CVDDiv] ✅ BULLISH | strength={best_bull_s:.3f} "
-                    f"method={best_bull_meth} k={best_bull_k} streak={self._cvd_div_streak_count} "
+                    f"method={best_bull_meth} k={best_bull_k} "
                     f"confirms={bull_confirms} vol_spike={best_bull_vs:.2f}×"
                 )
                 return {
@@ -1056,7 +976,7 @@ class QuantEngine:
             else:
                 logger.info(
                     f"[CVDDiv] ✅ BEARISH | strength={best_bear_s:.3f} "
-                    f"method={best_bear_meth} k={best_bear_k} streak={self._cvd_div_streak_count} "
+                    f"method={best_bear_meth} k={best_bear_k} "
                     f"confirms={bear_confirms} vol_spike={best_bear_vs:.2f}×"
                 )
                 return {
@@ -1070,10 +990,6 @@ class QuantEngine:
                     "detection_method":  best_bear_meth,
                     "n_snaps":           n_snaps,
                 }
-        else:
-            # Direction changed — reset streak
-            self._cvd_div_streak_dir   = "NONE"
-            self._cvd_div_streak_count = 0
 
         NULL_RESULT["n_snaps"] = n_snaps
         return NULL_RESULT

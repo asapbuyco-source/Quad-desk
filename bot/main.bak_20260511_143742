@@ -733,27 +733,19 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
     nearest_sell = sell_walls[0]
     nearest_buy  = buy_walls[0]
 
-    # FIX (CandleGate root cause): Check LIVE candle (-1) FIRST, then prev (-2).
-    # The original order [(-2,"prev"),(-1,"live")] always returned the prev candle's
-    # stale open-time (25+ min old) even when the live candle also had the wick above
-    # the wall. CandleGate then permanently blocked every entry as >945s stale.
-    #
-    # NEW RULE:
-    #   Live candle sweep  -> sweep_ts = time.time()        (detected RIGHT NOW, age=0s)
-    #   Prev candle sweep  -> sweep_ts = open_time + 900s   (approx when candle closed)
-    # A live-candle sweep will ALWAYS pass the CandleGate freshness check.
-    for idx, label in [(-1, "live"), (-2, "prev")]:
+    # STRATEGY-C: Check BOTH previous (-2) AND current (-1) candle for sweeps.
+    # Old code only checked [-2] — if the current candle sweeps a wall and reverses,
+    # we wouldn't detect it until candle close, by which time CandleGate may stale it.
+    for idx, label in [(-2, "prev"), (-1, "live")]:
         candle = candle_history[idx]
 
         if candle["high"] > nearest_sell and price < nearest_sell:
             logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (wick={candle['high']:.2f})")
-            sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
-            return "ABOVE_HIGHS", sweep_ts, float(candle["high"])
+            return "ABOVE_HIGHS", float(candle["time"]), float(candle["high"])
 
         if candle["low"] < nearest_buy and price > nearest_buy:
             logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (wick={candle['low']:.2f})")
-            sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
-            return "BELOW_LOWS", sweep_ts, float(candle["low"])
+            return "BELOW_LOWS", float(candle["time"]), float(candle["low"])
 
     return None, None, None
 
@@ -1472,19 +1464,6 @@ def _compute_signal(
         _gate_stats_summary("drawdown_halt")
         return {**WAIT, "analysis": "Max drawdown breached. Restart bot to resume."}
 
-    # ── Capital Hard Stop ─────────────────────────────────────────────────────
-    # Below $150 the leveraged round-trip fee cost consumes >30% of the maximum
-    # risk budget per trade, making sustained positive EV impossible.
-    # This is a HARD block — not just a warning — until equity is restored.
-    _MIN_VIABLE_EQUITY = 150.0
-    if ACCOUNT_SIZE < _MIN_VIABLE_EQUITY:
-        logger.warning(
-            f"[RiskEngine] 🛑 Account ${ACCOUNT_SIZE:.2f} below minimum viable "
-            f"${_MIN_VIABLE_EQUITY:.0f}. All entries blocked. Recapitalise to resume."
-        )
-        _gate_stats_summary("signal_none")
-        return {**WAIT, "analysis": f"Account ${ACCOUNT_SIZE:.2f} < ${_MIN_VIABLE_EQUITY:.0f} minimum. Deposit to resume."}
-
     # PHASE-0.4: Z-Score session guard
     # Z-score is statistically meaningless with fewer than 10 bars — it fits noise.
     if not metrics.get("z_score_valid", True):
@@ -1733,17 +1712,13 @@ def _compute_signal(
     # Reject any trade where the expected TP gain (as % of entry) is less
     # than the round-trip exchange fee cost. Without this check the bot will
     # consistently lose money even on winning trades.
-    # LEVERAGE FIX: Binance charges fee on NOTIONAL (position × price), not margin.
-    # At LEVERAGE×, the effective fee as a fraction of the TP gain must include the
-    # leverage multiplier: fee_rate × LEVERAGE × 2 sides.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
-    leveraged_fee = _EXCHANGE_FEE_RATE * LEVERAGE * 2       # entry + exit on notional
-    min_viable_tp_pct = leveraged_fee * 1.5                 # TP must cover 1.5× leveraged fees
+    round_trip_fee = _EXCHANGE_FEE_RATE * 2                  # entry + exit fee
+    min_viable_tp_pct = round_trip_fee * 2.0                 # P3 FIX: 2.0× fee buffer (raised from 1.2×). TP must be 2× round-trip fee to be viable after slippage.
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
-            f"(leveraged round-trip={leveraged_fee:.2%} at {LEVERAGE}×). "
-            f"Trade not profitable after fees. Skipping."
+            f"(round-trip fee={round_trip_fee:.2%}). Trade not profitable after fees. Skipping."
         )
         _gate_stats_summary("fee_geometry")
         return {**WAIT, "analysis": (
