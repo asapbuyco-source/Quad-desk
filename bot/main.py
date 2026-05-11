@@ -1679,14 +1679,14 @@ def _compute_signal(
     # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
     stop_loss, take_profit = _risk_engine(
         raw_direction, strategy_type,
-        effective_price if "effective_price" in verdict_json else price,
+        price,
         atr, buy_walls, sell_walls, sweep,
         sl_mult=regime_p["atr_multiplier_sl"],
         tp_mult_ratio=regime_p["rr_target"],
         candle_history=candle_history,
         metrics=metrics,  # BUG-4: pass for atr_pct_rank vol scaling
         regime_p=regime_p,  # PHASE-3.2: pass for panic_threshold
-        signal=verdict_json,  # NEW: pass for sweep_wick
+        signal={"sweep_wick": sweep_wick if sweep else 0.0, "strategy_type": strategy_type},  # NEW: pass for sweep_wick
     )
 
     # Sanity check — geometry must be valid
