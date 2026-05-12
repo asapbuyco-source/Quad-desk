@@ -1694,9 +1694,11 @@ def _compute_signal(
     # PHASE-5.2: Wire MIN_CONFIDENCE as a floor under regime threshold
     total_trades = sum(quant.get_regime_trade_counts().values()) if quant else 0
     cold_start_discount = COLD_START_CONFIDENCE_DISCOUNT if total_trades < COLD_START_TRADE_COUNT else 0.0
+    # FIX: Ensure global environment MIN_CONFIDENCE does not force an impossibly high hurdle.
+    # Use 0.50 as an absolute baseline safety floor to avoid negative expectation entries.
     regime_min_conf = max(
         regime_p["min_confidence"] - cold_start_discount,
-        MIN_CONFIDENCE * 0.8
+        0.50
     )
     if confidence < regime_min_conf:
         _gate_stats_summary("confidence_below_threshold")
@@ -1738,7 +1740,7 @@ def _compute_signal(
     # leverage multiplier: fee_rate × LEVERAGE × 2 sides.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
     leveraged_fee = _EXCHANGE_FEE_RATE * LEVERAGE * 2       # entry + exit on notional
-    min_viable_tp_pct = leveraged_fee * 1.5                 # TP must cover 1.5× leveraged fees
+    min_viable_tp_pct = leveraged_fee * 1.2                 # TP must cover 1.2× leveraged fees (softened from 1.5×)
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
