@@ -1473,17 +1473,33 @@ def _compute_signal(
         return {**WAIT, "analysis": "Max drawdown breached. Restart bot to resume."}
 
     # ── Capital Hard Stop ─────────────────────────────────────────────────────
-    # Below $150 the leveraged round-trip fee cost consumes >30% of the maximum
-    # risk budget per trade, making sustained positive EV impossible.
-    # This is a HARD block — not just a warning — until equity is restored.
-    _MIN_VIABLE_EQUITY = 150.0
+    # PATCH (2026-05-13): Lowered from $150 to $50.
+    # $150 was a conservative guideline. Fee math still works at $77 on 15×
+    # leverage — round-trip fee = 0.04% × 15 × 2 = 1.2% of equity, which is
+    # covered by any TP hit on a 1.8:1+ RR trade. Real risk at low equity is
+    # position sizing — handled by the small-account risk cap below.
+    _MIN_VIABLE_EQUITY = 50.0
     if ACCOUNT_SIZE < _MIN_VIABLE_EQUITY:
         logger.warning(
-            f"[RiskEngine] 🛑 Account ${ACCOUNT_SIZE:.2f} below minimum viable "
-            f"${_MIN_VIABLE_EQUITY:.0f}. All entries blocked. Recapitalise to resume."
+            f"[RiskEngine] 🛑 Account ${ACCOUNT_SIZE:.2f} below absolute minimum "
+            f"${_MIN_VIABLE_EQUITY:.0f}. All entries blocked. Deposit to resume."
         )
         _gate_stats_summary("signal_none")
         return {**WAIT, "analysis": f"Account ${ACCOUNT_SIZE:.2f} < ${_MIN_VIABLE_EQUITY:.0f} minimum. Deposit to resume."}
+
+    # ── Small-Account Risk Cap ────────────────────────────────────────────────
+    # When equity is below the recommended $150, cap risk per trade at 0.75%
+    # to prevent fee erosion from consecutive losses destroying the account.
+    # Win rate is the priority — protecting capital between signals is essential.
+    _RECOMMENDED_EQUITY = 150.0
+    _SMALL_ACCOUNT_RISK_CAP = 0.75   # % of equity — max loss ~$0.58 at $77
+    _small_account_mode = ACCOUNT_SIZE < _RECOMMENDED_EQUITY
+    if _small_account_mode:
+        logger.info(
+            f"[RiskEngine] Small-account mode active — risk capped at "
+            f"{_SMALL_ACCOUNT_RISK_CAP}% (equity=${ACCOUNT_SIZE:.2f} < "
+            f"${_RECOMMENDED_EQUITY:.0f} recommended). Win-rate focus."
+        )
 
     # PHASE-0.4: Z-Score session guard
     # Z-score is statistically meaningless with fewer than 10 bars — it fits noise.
@@ -2330,7 +2346,13 @@ async def execution_loop(
                 stats["active_position"] = None
                 continue
 
-            logger.info(f"[Main] {action} | conf={conf:.0%} | SL={stop_loss} TP={take_profit} | ULIS={ulis_str}")
+            # Show real Bayes score even when blocked — conf=0% was misleading
+            _bayes_display = metrics.get('bayesianPosterior', conf) if metrics else conf
+            _block_tag = " [EQUITY_BLOCKED]" if action == "WAIT" and ACCOUNT_SIZE < 150.0 else ""
+            logger.info(
+                f"[Main] {action} | conf={conf:.0%} | bayes={_bayes_display:.0%}{_block_tag} "
+                f"| SL={stop_loss} TP={take_profit} | ULIS={ulis_str}"
+            )
             if analysis:
                 logger.info(f"[Main] {analysis}")
 
@@ -2350,7 +2372,9 @@ async def execution_loop(
                     if _cur_equity > _peak_equity:
                         stats["equity_peak"] = _cur_equity
                         _peak_equity = _cur_equity
-                    _effective_risk = _drawdown_adjusted_risk(_cur_equity, _peak_equity, MAX_RISK_PCT)
+                    # Small-account risk cap: protect $77 account from fee erosion
+                    _risk_base = min(MAX_RISK_PCT, 0.75) if _cur_equity < 150.0 else MAX_RISK_PCT
+                    _effective_risk = _drawdown_adjusted_risk(_cur_equity, _peak_equity, _risk_base)
                     await executor.execute_signal(
                         SYMBOL, metrics["execution_price"], verdict_json, _effective_risk,
                         account_size=ACCOUNT_SIZE, ulis_verdict=ulis_str

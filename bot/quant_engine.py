@@ -96,6 +96,14 @@ class QuantEngine:
         # ── Consecutive-Loss Tracker (Prior Softening) ──────────────────────────
         self._consecutive_losses: int = 0
 
+        # ── CVD Post-Reset Cooldown (Ghost Signal Fix 2026-05-13) ─────────────
+        # Suppresses divergence detection for N cycles after the daily CVD reset.
+        # Without this the reset artifact triggers a spurious BEARISH divergence
+        # that persists for 100+ candles before expiring naturally (~22 min of
+        # false bearish bias). Set to 0 at boot; reset_cvd_divergence_state()
+        # sets it to 5 whenever the daily hook fires.
+        self._cvd_post_reset_cooldown: int = 0
+
         # Persistence path — survives Railway restarts if /tmp is mounted
         self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
         self._load_state()
@@ -152,7 +160,10 @@ class QuantEngine:
         self._cvd_delta_ewma_n   = 0
         self._cvd_div_streak_dir   = "NONE"
         self._cvd_div_streak_count = 0
-        logger.info("[QuantEngine] CVD divergence state cleared (daily reset hook).")
+        # Suppress divergence for 5 candles post-reset to prevent ghost bearish signal
+        self._cvd_post_reset_cooldown = 5
+        logger.info("[QuantEngine] CVD divergence state cleared (daily reset hook). "
+                    "Divergence suppressed for 5 candles to prevent ghost signal.")
 
     # ------------------------------------------------------------------
     # P1: Per-regime win rate accessor
@@ -327,7 +338,13 @@ class QuantEngine:
 
         tape_speed, dominant_side = self._tape_metrics()
         ofi, wall_context, all_walls_str, execution_price, valid_bids, valid_asks, nearest_bid, nearest_ask, top_bids, top_asks = self._lob_metrics(current_price)
-        bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi)
+        z_ret = self._log_return_z_score(closes)
+        # Lightweight regime proxy for z_vel gating: |Z_t| > 1.5 ≈ TREND-like.
+        # Full HMM regime is determined later in main.py; this gives quant engine
+        # a useful signal without a circular dependency on the regime classifier.
+        _regime_proxy = "TREND" if abs(z_score) > 1.5 else "NEUTRAL"
+        bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi,
+                                            z_ret=z_ret, regime=_regime_proxy)
         cvd = self.state.cvd
         atr = self._atr(highs, lows, closes)
 
@@ -402,8 +419,8 @@ class QuantEngine:
             # Z-score is meaningless with fewer than 10 bars of data in the
             # current session — it's fitting noise from too-small a sample.
             "z_score_valid":     len(closes) >= 10,
-            # Z-06: Log-Return Z-Score — velocity-based momentum signal for TREND
-            "zScore_ret":        self._log_return_z_score(closes),
+            # Z-06: Log-Return Z-Score — reuse value computed for _bayesian() above
+            "zScore_ret":        z_ret,
             # PHASE-0.2: aggTrade stream health flag.
             "trade_buffer_healthy": trade_buffer_healthy,
             # PHASE-0.4: Order book mid-price for execution (not candle close).
@@ -735,22 +752,26 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # 6. Bayesian Posterior P(Bull | Evidence) — Beta conjugate prior
     # ------------------------------------------------------------------
-    def _bayesian(self, rsi: float, z_score: float, skewness: float, ofi: float) -> float:
+    def _bayesian(self, rsi: float, z_score: float, skewness: float,
+                  ofi: float, z_ret: float = 0.0, regime: str = "NEUTRAL") -> float:
         """
         Beta(α,β) conjugate prior — self-calibrates to historical win rate.
 
         OFI is now in (-1, +1) from the Three-Stage Pipeline (tanh output).
         Thresholds updated from the old ±100 scale to the new ±1 scale.
+
+        z_ret  : Log-Return Z-Score (Z-06) — velocity-based signal for TREND.
+        regime : Current HMM regime — gates the z_ret likelihood to TREND only.
         """
-        # ── Step 1: Beta prior ───────────────────────────────────────
+        # ── Step 1: Beta prior ───────────────────────────────────────────────
         p_prior = self._alpha / (self._alpha + self._beta)
         p_prior = max(0.01, min(0.99, p_prior))
         prior_odds = p_prior / (1.0 - p_prior)
 
-        # ── Step 2: RSI likelihood ─────────────────────────────────────
+        # ── Step 2: RSI likelihood ───────────────────────────────────────────
         L_rsi = 1.8 if rsi > 60 else 0.55 if rsi < 40 else 1.0
 
-        # ── Step 3: OFI + Z-Score combined gate (OFI now in (-1,+1)) ──────
+        # ── Step 3: OFI + Z-Score combined gate (OFI now in (-1,+1)) ─────────
         # M-02 FIX: z_score is already Z_t (shrunk by t_scale=0.8165).
         # Thresholds updated 1.5 → 1.22 to match corrected signal_config.py.
         if z_score < -1.22 and ofi > 0.2:       # oversold + buying flow
@@ -759,21 +780,38 @@ class QuantEngine:
             L_flow = 0.5
         else:
             L_z = 1.3 if z_score < -1.22 else 0.76 if z_score > 1.22 else 1.0
-            L_o = 1.2 if ofi > 0.3 else 0.83 if ofi < -0.3 else 1.0  # tanh thresholds
+            L_o = 1.2 if ofi > 0.3 else 0.83 if ofi < -0.3 else 1.0
             L_flow = L_z * L_o
 
-        # ── Step 4: Skewness likelihood ────────────────────────────────
+        # ── Step 4: Skewness likelihood ──────────────────────────────────────
         L_skew = 1.2 if skewness > 0.3 else 0.83 if skewness < -0.3 else 1.0
 
-        # ── Step 5: Update odds ──────────────────────────────────────────
-        posterior_odds = prior_odds * L_rsi * L_flow * L_skew
+        # ── Step 4b: Z_vel likelihood — TREND regime only (C2 / tx.txt fix) ──
+        # VWAP Z measures price LEVEL vs anchor (mean-reversion signal).
+        # Z_vel measures price SPEED vs recent history (momentum signal).
+        # In TREND regime the VWAP signal is uninformative; Z_vel fills the gap.
+        # Capped at ±25% odds multiplier — conservative during cold-start prior.
+        L_zvel = 1.0
+        if regime == "TREND" and abs(z_ret) > 0.5:
+            if z_ret > 1.5:
+                L_zvel = 1.25   # Strong upward velocity → strong bullish evidence
+            elif z_ret < -1.5:
+                L_zvel = 0.80   # Strong downward velocity → bearish drag on long odds
+            elif z_ret > 0.5:
+                L_zvel = 1.10   # Mild upward momentum → slight boost
+            else:
+                L_zvel = 0.93   # Mild downward pressure → slight penalty
 
-        # ── Step 6: Convert back to probability ───────────────────────────
+        # ── Step 5: Update odds ──────────────────────────────────────────────
+        posterior_odds = prior_odds * L_rsi * L_flow * L_skew * L_zvel
+
+        # ── Step 6: Convert back to probability ──────────────────────────────
         p_bull = posterior_odds / (1.0 + posterior_odds)
 
         logger.debug(
             f"[QuantEngine] Bayesian — prior={p_prior:.2%} "
             f"L_rsi={L_rsi:.2f} L_flow={L_flow:.2f} L_skew={L_skew:.2f} "
+            f"L_zvel={L_zvel:.2f}(regime={regime} z_ret={z_ret:.2f}) "
             f"ofi_tanh={ofi:.4f} → posterior={p_bull:.2%}"
         )
         return float(p_bull)
@@ -873,6 +911,19 @@ class QuantEngine:
 
         snaps = list(self._cvd_candle_snapshots)
         n_snaps = len(snaps)
+
+        # ── Post-reset cooldown ────────────────────────────────────────────────────
+        # Suppress divergence for N candles after daily CVD reset.
+        # Each call to _cvd_divergence() corresponds to one compute_metrics()
+        # cycle (~15 s). At 5 candles = ~75 s of suppression after reset.
+        if self._cvd_post_reset_cooldown > 0:
+            self._cvd_post_reset_cooldown -= 1
+            logger.debug(
+                f"[CVDDiv] Post-reset cooldown: {self._cvd_post_reset_cooldown} cycles remain. "
+                "Returning NONE to prevent ghost signal."
+            )
+            NULL_RESULT["n_snaps"] = n_snaps
+            return NULL_RESULT
 
         if n_snaps < 2:
             return NULL_RESULT
