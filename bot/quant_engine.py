@@ -855,7 +855,8 @@ class QuantEngine:
             return None
         price_vol: Dict[int, float] = {}
         for c in candle_list:
-            bucket = int(round(float(c["close"]) / 10.0)) * 10
+            bucket_size = max(10.0, round(float(c["close"]) * 0.001 / 10.0) * 10)
+            bucket = int(round(float(c["close"]) / bucket_size)) * bucket_size
             price_vol[bucket] = price_vol.get(bucket, 0.0) + float(c.get("volume", 0.0))
         if not price_vol:
             return None

@@ -34,8 +34,8 @@ CONFIG = {
     "skew_period": 20,  # was 50 — matches live bot Fix 2
     
     # Thresholds
-    "trend_atr_threshold": 0.006,  # 0.6% — aligned with live bot (was 0.005)
-    "range_z_threshold": 1.5,
+    "trend_atr_threshold": 0.006,
+    "range_z_threshold": 1.06,
 
     # ── Realistic execution friction ─────────────────────────────────
     # slippage_bps: half-spread cost per side (3 bps on a $95k BTC ≈ $2.85 per side)
@@ -43,7 +43,7 @@ CONFIG = {
     "slippage_bps": 3,
     # commission_pct: exchange fee per trade LEG (Coinbase Advanced taker = 0.10%)
     # Total round-trip cost at defaults: 3 bps slip ×2 + 0.10% comm ×2 = ~0.26% per trade
-    "commission_pct": 0.001,    # expressed as a fraction (0.001 = 0.1%)
+    "commission_pct": 0.0004,    # expressed as a fraction (0.001 = 0.1%)
 }
 
 # ==============================================================================
@@ -206,6 +206,12 @@ def backtest_hybrid(df, config, symbol):
     valid_idx = close > 0
     atr_pct[valid_idx] = atr[valid_idx] / close[valid_idx]
 
+    atr_pct_rank = np.zeros(len(close))
+    for idx in range(50, len(close)):
+        window = atr_pct[max(0, idx-2880):idx]
+        if len(window) > 0:
+            atr_pct_rank[idx] = np.mean(window <= atr_pct[idx])
+
     # Proxies for missing live data (LOB / Tape)
     # We use local extreme rollings to simulate walls / liquidity pools
     sw_high = pd.Series(high).rolling(20).max().shift(1).values
@@ -262,7 +268,7 @@ def backtest_hybrid(df, config, symbol):
 
                 # ── Apply realistic friction ─────────────────────────────
                 slip = config.get('slippage_bps', 3) / 10_000.0
-                comm = config.get('commission_pct', 0.001)
+                comm = config.get('commission_pct', 0.0004)  # Binance USDM futures default
 
                 # Slippage worsens both fill prices
                 if is_long:
@@ -364,17 +370,19 @@ def backtest_hybrid(df, config, symbol):
         curr_ofi = ofi_normalised[i]  # tanh scale (-1, +1), replaces raw proxy * 10.0
 
         L_rsi  = 1.8 if curr_rsi > 60 else 0.55 if curr_rsi < 40 else 1.0
-        if curr_z < -1.5 and curr_ofi > 0.15:
+        if curr_z < -1.22 and curr_ofi > 0.15:
             L_flow = 2.0
-        elif curr_z > 1.5 and curr_ofi < -0.15:
+        elif curr_z > 1.22 and curr_ofi < -0.15:
             L_flow = 0.5
         else:
-            L_z = 1.3 if curr_z < -1.5 else 0.76 if curr_z > 1.5 else 1.0
+            L_z = 1.3 if curr_z < -1.22 else 0.76 if curr_z > 1.22 else 1.0
             L_o = 1.2 if curr_ofi > 0.30 else 0.83 if curr_ofi < -0.30 else 1.0
             L_flow = L_z * L_o
 
         L_skew = 1.2 if curr_skew > 0.3 else 0.83 if curr_skew < -0.3 else 1.0
-        bull_odds = L_rsi * L_flow * L_skew
+        p_prior = backtest_alpha / (backtest_alpha + backtest_beta)
+        prior_odds = p_prior / (1.0 - p_prior)
+        bull_odds = prior_odds * L_rsi * L_flow * L_skew
         bayes = bull_odds / (bull_odds + 1.0)
                 
         # 5. Strategy Layer
@@ -413,18 +421,18 @@ def backtest_hybrid(df, config, symbol):
             
         elif regime == "RANGE":
             strategy = "MEAN_REVERSION"
-            atr_rank = 0.5  # proxy for ATR rank (midpoint)
+            atr_rank = atr_pct_rank[i]
             if atr_rank < 0.5:
                 rsi_long_gate = 55.0
                 rsi_short_gate = 45.0
             else:
                 rsi_long_gate = 42.0
                 rsi_short_gate = 58.0
-            if curr_z >= 1.3 and curr_rsi > rsi_short_gate: raw_direction = "SELL"
-            elif curr_z <= -1.3 and curr_rsi < rsi_long_gate: raw_direction = "BUY"
+            if curr_z >= 1.06 and curr_rsi > rsi_short_gate: raw_direction = "SELL"
+            elif curr_z <= -1.06 and curr_rsi < rsi_long_gate: raw_direction = "BUY"
             
         if not raw_direction: continue
-        
+
         # 6. Bayesian Fusion + ULIS proxy
         odds = 1.0
         if curr_ofi > 0.30:    odds *= 2.0
@@ -434,12 +442,7 @@ def backtest_hybrid(df, config, symbol):
 
         if cvd[i] > 0: odds *= 1.25
         elif cvd[i] < 0: odds *= 0.8
-        
-        if curr_ofi > 0 and vol_surge: odds *= 1.20
-        elif curr_ofi > 0:             odds *= 1.10
-        elif curr_ofi < 0 and vol_surge: odds *= 0.75
-        elif curr_ofi < 0:             odds *= 0.90
-        
+
         if curr_skew > 0.3: odds *= 1.12
         elif curr_skew < -0.3: odds *= 0.88
         
@@ -448,7 +451,14 @@ def backtest_hybrid(df, config, symbol):
         
         p_bull = odds / (odds + 1.0)
         conf = p_bull if raw_direction == "BUY" else (1.0 - p_bull)
-        
+
+        # CVD directional gate: penalise trades where CVD contradicts direction.
+        # Mirrors Stage 4.5 CVD divergence logic in the live bot.
+        cvd_confirms_long  = (raw_direction == "BUY"  and cvd[i] > 0)
+        cvd_confirms_short = (raw_direction == "SELL" and cvd[i] < 0)
+        if not (cvd_confirms_long or cvd_confirms_short):
+            conf -= 0.04  # Mild penalty for CVD-contradicting direction
+
         if (raw_direction == "BUY" and curr_ofi < 0 and curr_z < 0) or \
            (raw_direction == "SELL" and curr_ofi > 0 and curr_z > 0):
             conf -= 0.15 # ULIS cascade veto penalty simulation
@@ -533,7 +543,7 @@ def load_data(symbol: str, years_back: int = 2) -> pd.DataFrame:
       3. Synthetic random walk    — LAST RESORT, results are non-predictive
     """
     # ── 1. Real Binance data (preferred) ───────────────────────────────────────
-    df = fetch_binance_candles(symbol, interval="5m", years_back=years_back)
+    df = fetch_binance_candles(symbol, interval="15m", years_back=years_back)
     if not df.empty:
         return df
 

@@ -72,7 +72,7 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
     rsi_norm     = _normalize(rsi, 20.0, 80.0)
     # Funding range: typical Binance USDM range is ±0.05% per 8h (±0.0005)
     # Invert sign: negative funding is bullish→ maps to high norm value
-    funding_norm = _normalize(-funding_rate, -0.0005, 0.0005)
+    funding_norm = _normalize(-funding_rate, -0.0010, 0.0010)
     cvd_norm     = 0.6 if cvd > 0 else 0.4
     glr_score    = _clamp(rsi_norm * 0.40 + funding_norm * 0.35 + cvd_norm * 0.25, 0.0, 1.0)
 
@@ -208,9 +208,9 @@ def _sweep_micro_confirms(metrics: dict, sweep_direction: str) -> int:
     """FIX NEW-H1: 3rd signal now orthogonal funding rate."""
     confirms = 0
     rsi = metrics.get("rsi", 50.0)
-    if sweep_direction == "bull" and rsi < 38:
+    if sweep_direction == "bull" and rsi < 48:
         confirms += 1
-    elif sweep_direction == "bear" and rsi > 62:
+    elif sweep_direction == "bear" and rsi > 52:
         confirms += 1
     ofi = metrics.get("ofi", 0.0)
     if sweep_direction == "bull" and ofi > 0.15:
@@ -334,7 +334,7 @@ def compute_ulis_verdict(
     )
     # 3.2 FIX: Removed bayes_boost — bayesianPosterior already feeds nlf_score (double-counting).
     # Only CVD boost remains as it's an orthogonal (independent) signal.
-    cvd_boost = math.tanh(cvd / 5_000_000.0) * 0.06 * math.copysign(1, liquidity_vector or 1)
+    cvd_boost = math.tanh(cvd / 50_000.0) * 0.06 * math.copysign(1, liquidity_vector or 1)
     alde_confidence = _clamp(alde_conf0 + cvd_boost, 0.0, 1.0)
 
     # ── Phase 6: Verdict AND-Gates ───────────────────────────────────────────
