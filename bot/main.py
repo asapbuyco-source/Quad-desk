@@ -1751,16 +1751,17 @@ def _compute_signal(
     # Reject any trade where the expected TP gain (as % of entry) is less
     # than the round-trip exchange fee cost. Without this check the bot will
     # consistently lose money even on winning trades.
-    # LEVERAGE FIX: Binance charges fee on NOTIONAL (position × price), not margin.
-    # At LEVERAGE×, the effective fee as a fraction of the TP gain must include the
-    # leverage multiplier: fee_rate × LEVERAGE × 2 sides.
+    # LEVERAGE FIX: Binance charges fee on NOTIONAL (position × price).
+    # Since tp_gain_pct is measured as a raw asset price movement (not ROI on margin),
+    # the required break-even price movement is simply the round-trip fee rate on the notional.
+    # We do NOT multiply by LEVERAGE here, because leverage magnifies both profit and fees equally.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
-    leveraged_fee = _EXCHANGE_FEE_RATE * LEVERAGE * 2       # entry + exit on notional
-    min_viable_tp_pct = leveraged_fee * 1.2                 # TP must cover 1.2× leveraged fees (softened from 1.5×)
+    round_trip_fee_rate = _EXCHANGE_FEE_RATE * 2            # entry + exit on notional
+    min_viable_tp_pct = round_trip_fee_rate * 1.2           # TP must cover 1.2× fees
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
-            f"(leveraged round-trip={leveraged_fee:.2%} at {LEVERAGE}×). "
+            f"(round-trip fee rate={round_trip_fee_rate:.2%}). "
             f"Trade not profitable after fees. Skipping."
         )
         _gate_stats_summary("fee_geometry")
