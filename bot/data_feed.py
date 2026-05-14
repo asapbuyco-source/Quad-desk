@@ -27,6 +27,7 @@ class MarketState:
         self.basis: float = 0.0       # Futures mark price - Spot close
         self.mark_price: float = 0.0  # Latest Futures mark price
         self._reconnect_event: asyncio.Event = asyncio.Event()
+        self.candle_close_event: asyncio.Event = asyncio.Event()  # NEW: Event-driven execution trigger
         self._last_trade_ts: float = time.time()   # epoch-seconds of last aggTrade received (P0-1 FIX: was 0.0 → time.time())
         self._cvd_was_reset: bool = False  # flag to suppress CVD delta spike after reconnect
         self._aggtrade_msg_count: int = 0  # P0-1 FIX: throughput counter for monitoring
@@ -48,6 +49,7 @@ class MarketState:
         if is_final:
             # Closed candle — always append
             self.candles.append(candle)
+            self.candle_close_event.set()  # Trigger zero-latency execution
         else:
             # Live candle — replace if same timestamp, otherwise append
             if self.candles and self.candles[-1]['time'] == candle['time']:

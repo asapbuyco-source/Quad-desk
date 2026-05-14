@@ -104,6 +104,11 @@ class QuantEngine:
         # sets it to 5 whenever the daily hook fires.
         self._cvd_post_reset_cooldown: int = 0
 
+        # ── Session VWAP Anchor (Phase 2) ───────────────────────────────────
+        self._session_vwap_num: float = 0.0
+        self._session_vwap_den: float = 0.0
+        self._session_date = None
+
         # Persistence path — survives Railway restarts if /tmp is mounted
         self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
         self._load_state()
@@ -206,6 +211,9 @@ class QuantEngine:
             "ofi_ewma_mu":    self._ofi_ewma_mu,
             "ofi_ewma_var":   self._ofi_ewma_var,
             "ofi_smooth":     self._ofi_smooth,
+            "session_vwap_num": self._session_vwap_num,
+            "session_vwap_den": self._session_vwap_den,
+            "session_date":     str(self._session_date) if self._session_date else None,
             "saved_at":       time.time(),
         }
 
@@ -258,6 +266,17 @@ class QuantEngine:
                         self._regime_alpha[r]       = float(saved_ra.get(r, 5.0))
                         self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
                         self._regime_trade_count[r] = int(saved_rc.get(r, 0))
+                    
+                    self._session_vwap_num = float(data.get("session_vwap_num", 0.0))
+                    self._session_vwap_den = float(data.get("session_vwap_den", 0.0))
+                    s_date = data.get("session_date")
+                    from datetime import datetime
+                    if s_date and s_date != "None":
+                        try:
+                            self._session_date = datetime.strptime(s_date, "%Y-%m-%d").date()
+                        except:
+                            self._session_date = None
+
                     n_trades = sum(self._regime_trade_count.values())
                     p_bull   = self._alpha / (self._alpha + self._beta)
                     logger.info(
@@ -287,6 +306,16 @@ class QuantEngine:
                     self._regime_alpha[r]       = float(saved_ra.get(r, 5.0))
                     self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
                     self._regime_trade_count[r] = int(saved_rc.get(r, 0))
+
+                self._session_vwap_num = float(data.get("session_vwap_num", 0.0))
+                self._session_vwap_den = float(data.get("session_vwap_den", 0.0))
+                s_date = data.get("session_date")
+                from datetime import datetime
+                if s_date and s_date != "None":
+                    try:
+                        self._session_date = datetime.strptime(s_date, "%Y-%m-%d").date()
+                    except:
+                        self._session_date = None
                 logger.info(
                     "[QuantEngine] ⚠️ State loaded from /tmp/ (Firestore unavailable). "
                     "Prior will be lost on next Railway deploy."
@@ -323,8 +352,14 @@ class QuantEngine:
 
         current_price = closes[-1]
 
+        # Calculate ATR and rank early for session VWAP and fix BUG-V3-03
+        atr = self._atr(highs, lows, closes)
+        self._atr_history.append(atr)
+        arr = np.array(list(self._atr_history))
+        atr_pct_rank = float(np.mean(arr <= atr))
+
         skewness       = self._skewness(closes)
-        z_score        = self._vwap_z_score_t(highs, lows, closes, vols, current_price)
+        z_score        = self._session_vwap_z(highs, lows, closes, vols, current_price, atr_pct_rank)
         zScore_prev    = getattr(self, "_last_z_score", z_score)
         self._last_z_score = z_score
 
@@ -346,17 +381,6 @@ class QuantEngine:
         bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi,
                                             z_ret=z_ret, regime=_regime_proxy)
         cvd = self.state.cvd
-        atr = self._atr(highs, lows, closes)
-
-        # ── P2: ATR Percentile Rank (30-day rolling window) ──────────────
-        # Rank current ATR within a rolling 2880-candle (30-day) window.
-        # Output: atr_pct_rank in [0.0, 1.0].
-        #   0.05 = ATR is in bottom 5% — very quiet
-        #   0.95 = ATR is in top 5% — very volatile
-        # More robust than raw ATR% which varies with BTC price level.
-        arr = np.array(list(self._atr_history)) if self._atr_history else np.array([atr])
-        atr_pct_rank = float(np.mean(arr <= atr))
-        self._atr_history.append(atr)
 
         vpoc = self._volume_poc(c_list)
         funding_rate = getattr(self.state, 'funding_rate', 0.0)
@@ -485,57 +509,68 @@ class QuantEngine:
         return float(np.clip(z_ret, -4.0, 4.0))
 
     # ------------------------------------------------------------------
-    # 2. VWAP-Anchored Z-Score — Student’s t robust (20 periods)
+    # 2. VWAP-Anchored Z-Score — True Session VWAP (Phase 2)
     # ------------------------------------------------------------------
-    def _vwap_z_score_t(
+    def _session_vwap_z(
         self,
         highs: np.ndarray,
         lows: np.ndarray,
         closes: np.ndarray,
         vols: np.ndarray,
         current_price: float,
+        atr_pct_rank: float = 0.5,
     ) -> float:
-        """
-        Fat-tail-robust Z-score using Student's t scaling.
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date()
+        if self._session_date != today:
+            self._session_vwap_num = 0.0
+            self._session_vwap_den = 0.0
+            self._session_date = today
 
-        Steps:
-        1. Compute volume-weighted standard deviation (Gaussian baseline).
-        2. Estimate degrees-of-freedom ν from excess kurtosis of typical prices:
-               ν ≈ max(4, 4 + 6 / excess_kurtosis)   [Cornish-Fisher approx]
-        3. Scale Gaussian Z by the t-distribution's std-dev correction:
-               Z_t = Z_gaussian × sqrt((ν - 2) / ν)
-           This *shrinks* Z during fat-tailed regimes, preventing false extremes.
-        4. Clip to [-4, +4].
-        """
-        h = highs[-20:]
-        l = lows[-20:]
-        c = closes[-20:]
-        v = vols[-20:]
-        if len(c) == 0:
+        if len(closes) == 0:
             return 0.0
-        typical  = (h + l + c) / 3.0
-        vol_sum  = np.sum(v)
+
+        # Update running VWAP with latest candle
+        tp = float((highs[-1] + lows[-1] + closes[-1]) / 3.0)
+        v = float(vols[-1])
+        self._session_vwap_num += tp * v
+        self._session_vwap_den += v
+        
+        if self._session_vwap_den <= 0:
+            return 0.0
+        vwap_session = self._session_vwap_num / self._session_vwap_den
+
+        # Adaptive sigma window
+        n_sig = max(10, int(atr_pct_rank * 40))
+        if len(closes) < n_sig:
+            n_sig = len(closes)
+            
+        if n_sig <= 0:
+            return 0.0
+            
+        h = highs[-n_sig:]
+        l = lows[-n_sig:]
+        c = closes[-n_sig:]
+        vv = vols[-n_sig:]
+        
+        tp_w = (h + l + c) / 3.0
+        vol_sum = np.sum(vv)
         if vol_sum <= 0:
             return 0.0
-        vwap = np.sum(typical * v) / vol_sum
-
-        vw_variance = np.sum(v * (typical - vwap) ** 2) / vol_sum
-        std = np.sqrt(vw_variance)
+            
+        vw_var = np.sum(vv * (tp_w - vwap_session)**2) / vol_sum
+        std = np.sqrt(vw_var)
+        
         # P1-7 FIX: Guard against near-zero std during zero-volatility periods.
-        # std <= 0 catches exact zero, but flat markets produce std=1e-10 (positive).
-        # 1e-10 passes the <= 0 guard, then Z = (price - vwap) / 1e-10 = 1e9, clipped to 4.0.
-        # Bot then fires continuous mean-reversion entries during dead sessions.
-        # 0.005% of price is the meaningful noise floor for BTC on 15m timeframe.
         MIN_STD = current_price * 0.00005  # 0.005% of current price
         if std < MIN_STD:
             return 0.0
-
-        z_gaussian = (current_price - vwap) / std
-
-        NU_FIXED = 6.0  # Fixed BTC 15m degrees-of-freedom
+            
+        # t-scale correction factor
+        NU_FIXED = 6.0
         t_scale = math.sqrt((NU_FIXED - 2.0) / NU_FIXED)  # = sqrt(4/6) = 0.8165
-        z_t = z_gaussian * t_scale
-        return float(np.clip(z_t, -4.0, 4.0))
+        z = (current_price - vwap_session) / std
+        return float(np.clip(z * t_scale, -4.0, 4.0))
 
     # ------------------------------------------------------------------
     # 3. RSI (14 period) — Wilder EMA smoothing (Fix #7 from audit)

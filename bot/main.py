@@ -1948,7 +1948,16 @@ async def execution_loop(
 
     while True:
         try:
-            await asyncio.sleep(ANALYSIS_INTERVAL)
+            # ── Event-driven execution (Phase 6) ───────────────────────────
+            try:
+                # Wait for candle close OR timeout (whichever comes first)
+                await asyncio.wait_for(
+                    feed.state.candle_close_event.wait(),
+                    timeout=ANALYSIS_INTERVAL
+                )
+                feed.state.candle_close_event.clear()
+            except asyncio.TimeoutError:
+                pass  # Fallback to polling if websocket hasn't fired yet
 
             n_candles = len(feed.state.candles)
             if n_candles < QuantEngine.MIN_CANDLES:
