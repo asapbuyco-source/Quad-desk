@@ -387,6 +387,71 @@ class _HMMRegimeClassifier:
         self._candidate_regime = "RANGE"   # regime the HMM is suggesting
         self._candidate_streak = 0         # consecutive candles suggesting candidate
 
+        self._persist_path = os.environ.get("HMM_STATE_PATH", "/tmp/quad_hmm_state.json")
+        self._load_state()
+
+    def _save_state(self):
+        import threading
+        import json
+        import time
+        data = {
+            "mu": self._mu.tolist(),
+            "sigma": self._sigma.tolist(),
+            "saved_at": time.time(),
+        }
+
+        def _write_firestore(payload: dict) -> None:
+            try:
+                from bot.heartbeat import get_db
+                db = get_db()
+                if db is not None:
+                    db.collection("botState").document("hmmEngine").set(payload)
+                    logger.debug("[HMM] State saved to Firestore ✓")
+            except Exception as e:
+                logger.warning(f"[HMM] Firestore state save failed: {e}")
+
+        threading.Thread(
+            target=_write_firestore,
+            args=(dict(data),),
+            daemon=True,
+            name="HMMEngine-FSWrite",
+        ).start()
+
+        try:
+            with open(self._persist_path, "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            pass
+
+    def _load_state(self):
+        import json
+        import time
+        try:
+            from bot.heartbeat import get_db
+            db = get_db()
+            if db is not None:
+                doc = db.collection("botState").document("hmmEngine").get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    self._mu = np.array(data.get("mu", self._MU.tolist()))
+                    self._sigma = np.array(data.get("sigma", self._SIGMA.tolist()))
+                    logger.info("[HMM] ✅ State loaded from Firestore")
+                    return
+        except Exception as e:
+            logger.warning(f"[HMM] Firestore state load failed: {e} — falling back to /tmp/")
+
+        try:
+            import os
+            if os.path.exists(self._persist_path):
+                with open(self._persist_path) as f:
+                    data = json.load(f)
+                self._mu = np.array(data.get("mu", self._MU.tolist()))
+                self._sigma = np.array(data.get("sigma", self._SIGMA.tolist()))
+                logger.info("[HMM] ⚠️ State loaded from /tmp/")
+                return
+        except Exception as e:
+            pass
+
     # ------------------------------------------------------------------
     def _gaussian_log_prob(self, obs: np.ndarray) -> np.ndarray:
         """Log P(obs | state) for all 3 states. obs shape = (F,)."""
@@ -493,6 +558,8 @@ class _HMMRegimeClassifier:
             if mask.sum() >= 3:
                 self._mu[s]    = obs[mask].mean(axis=0)
                 self._sigma[s] = np.maximum(obs[mask].std(axis=0), 1e-4)
+                
+        self._save_state()
 
     # ------------------------------------------------------------------
     def classify(self, atr_pct: float, z_score: float, tape: str,
