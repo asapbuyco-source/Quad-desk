@@ -399,7 +399,7 @@ def compute_ulis_verdict(
     elif verdict == "AVOID" or verdict == "UNWIND":
         confidence_boost = -1.0   # This ensures confidence drops below threshold
     elif verdict == "NEUTRAL":
-        confidence_boost = 0.03  # PHASE-2.5: Was 0.0 — mild "no objection" nudge for NEUTRAL
+        confidence_boost = 0.0  # FIX-P3: NEUTRAL = no actionable edge → zero boost (was +0.03 which inflated every entry)
     elif verdict == "BREAKOUT_WATCH":
         confidence_boost = -0.02  # Mild caution: breakout vacuum, not a directional veto
 

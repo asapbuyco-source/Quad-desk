@@ -116,7 +116,7 @@ REGIME_PARAMS = {
         "z_threshold":        1.22,  # M-02 FIX: was 1.5, Student-t adj (1.5×0.8165)
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.12,
-        "min_confidence":     0.55,  # PHASE-2.3: was 0.62, lowered to 55% for more LIQUIDITY signals
+        "min_confidence":     0.62,  # FIX-P10: was 0.55 which == sweep neutralizer floor (no-op); raised to 0.62 so threshold is meaningful
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "panic_threshold":    5.0,

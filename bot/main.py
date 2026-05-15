@@ -191,6 +191,9 @@ LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can comput
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
 LAST_ANY_TRADE_CLOSE_TIME = 0.0  # Track any trade exit for post-trade cooldown
 LAST_TRADE_WAS_SL: bool = False  # Track if last exit was SL for split cooldown logic
+# FIX-P5: Sweep deduplication — track the candle-open-time of the last fired sweep.
+# The same stale wick fires as a "new" sweep every 15s cycle without this guard.
+_LAST_FIRED_SWEEP_CANDLE_TS: float = 0.0
 
 
 def _gate_stats_summary(reason: str, confidence: float = 0.0) -> None:
@@ -809,17 +812,31 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
     #   Live candle sweep  -> sweep_ts = time.time()        (detected RIGHT NOW, age=0s)
     #   Prev candle sweep  -> sweep_ts = open_time + 900s   (approx when candle closed)
     # A live-candle sweep will ALWAYS pass the CandleGate freshness check.
+    # FIX-P5: Per-candle sweep deduplication.
+    # The same wick on the same candle was re-firing every 15s cycle (audit Problem 5).
+    # Only allow one sweep signal per unique candle open-timestamp.
+    global _LAST_FIRED_SWEEP_CANDLE_TS
     for idx, label in [(-1, "live"), (-2, "prev")]:
         candle = candle_history[idx]
+        candle_open_ts = float(candle.get("time", 0.0))
+
+        if candle_open_ts > 0 and candle_open_ts == _LAST_FIRED_SWEEP_CANDLE_TS:
+            logger.debug(
+                f"[Sweep] Dedup: candle ts={candle_open_ts:.0f} already fired. "
+                "Suppressing repeat sweep from same candle."
+            )
+            continue
 
         if candle["high"] > nearest_sell and price < nearest_sell:
             logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (wick={candle['high']:.2f})")
             sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
+            _LAST_FIRED_SWEEP_CANDLE_TS = candle_open_ts
             return "ABOVE_HIGHS", sweep_ts, float(candle["high"])
 
         if candle["low"] < nearest_buy and price > nearest_buy:
             logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (wick={candle['low']:.2f})")
             sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
+            _LAST_FIRED_SWEEP_CANDLE_TS = candle_open_ts
             return "BELOW_LOWS", sweep_ts, float(candle["low"])
 
     return None, None, None
@@ -1002,26 +1019,29 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     tape      = metrics.get("tapeSpeed", "NORMAL")
     rsi       = metrics.get("rsi", 50.0)
 
-    # [IMPROVED] SWEEP NEUTRALIZER: context-aware confidence floor.
-    # STRATEGY-A: Raised floors from 0.52/0.55/0.60 → 0.55/0.58/0.65.
-    # A confirmed sweep with 2/3 micro-confirms is the highest-conviction setup —
-    # the old floors were too conservative and caused sweeps to fail the
-    # min_confidence gate even when all evidence aligned.
+    # [FIX-P2] SWEEP NEUTRALIZER: Only apply confidence floor when Bayesian SUPPORTS direction.
+    # The old unconditional floor of 0.55 overrode a Bayes=35% (bearish) BUY signal,
+    # making the Bayesian posterior entirely decorative. The floor now only activates
+    # when p_signal_prior >= 0.45 (i.e. Bayes is at least neutral on the direction).
+    # A sub-0.45 Bayesian reading means the core signal says no — let it fail the threshold.
     if is_sweep:
-        strong_confirm = (
-            (is_long  and ofi >  0.3 and cvd_delta > 0) or
-            (not is_long and ofi < -0.3 and cvd_delta < 0)
-        )
-        mild_confirm = (
-            (is_long  and (ofi > 0.15 or cvd_delta > 0)) or
-            (not is_long and (ofi < -0.15 or cvd_delta < 0))
-        )
-        if strong_confirm:
-            p_signal_prior = max(0.65, p_signal_prior)   # was 0.60
-        elif mild_confirm:
-            p_signal_prior = max(0.58, p_signal_prior)   # was 0.55
-        else:
-            p_signal_prior = max(0.55, p_signal_prior)   # was 0.52
+        bayes_supports_direction = p_signal_prior >= 0.45
+        if bayes_supports_direction:
+            strong_confirm = (
+                (is_long  and ofi >  0.3 and cvd_delta > 0) or
+                (not is_long and ofi < -0.3 and cvd_delta < 0)
+            )
+            mild_confirm = (
+                (is_long  and (ofi > 0.15 or cvd_delta > 0)) or
+                (not is_long and (ofi < -0.15 or cvd_delta < 0))
+            )
+            if strong_confirm:
+                p_signal_prior = max(0.65, p_signal_prior)   # strong OFI+CVD: floor at 0.65
+            elif mild_confirm:
+                p_signal_prior = max(0.58, p_signal_prior)   # mild confirm: floor at 0.58
+            else:
+                p_signal_prior = max(0.55, p_signal_prior)   # no extra confirm: floor at 0.55
+        # If Bayesian < 0.45 (against direction), no floor — let it die at threshold
 
     # 3. Transform to Odds
     # Clip to avoid division by zero/infinity during transformation
@@ -1433,8 +1453,10 @@ def _risk_engine(
     if candle_history and len(candle_history) >= 20:
         recent_candles = list(candle_history)[-5:]
         baseline_candles = list(candle_history)[-20:]
-        recent_atr = _calc_atr_from_candles(recent_candles)
-        baseline_atr = _calc_atr_from_candles(baseline_candles)
+        # FIX-P8: recent_atr always returned 0.0 because length 5 is < period+1 (15).
+        # We must explicitly set period=4 for the 5-candle recent slice.
+        recent_atr = _calc_atr_from_candles(recent_candles, period=4)
+        baseline_atr = _calc_atr_from_candles(baseline_candles, period=14)
         vol_ratio = recent_atr / max(baseline_atr, 1e-8)
     else:
         vol_ratio = 1.0
@@ -1741,6 +1763,29 @@ def _compute_signal(
                     return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < {FUNDING_SHORT_BLOCK:.4%}. Blocked short."}
             except (ValueError, TypeError):
                 pass
+
+    # FIX-P4: HTF Directional Filter for LIQUIDITY Sweep entries.
+    # htf_block=False in LIQUIDITY correctly allows the regime — sweeps ARE reversal setups.
+    # BUT: a BELOW_LOWS BUY sweep into a 4H BEAR trend is a continuation, not a reversal.
+    # The audit found 13 trades, many of which were BUY sweeps into a sustained BEAR 4H.
+    # Fix: sweep entries must align with the reversal implied by the sweep direction vs HTF.
+    # HTF=NEUTRAL → no bias, allow both directions.
+    is_sweep_strat = strategy_type == "LIQUIDITY_SWEEP" and sweep is not None
+    if is_sweep_strat and htf != "NEUTRAL":
+        if htf == "BEAR" and is_long_dir:
+            logger.warning(
+                "[HTF-Sweep] BUY sweep BLOCKED — 4H BEAR trend. "
+                "BELOW_LOWS into a bear trend is a continuation, not a reversal."
+            )
+            _gate_stats_summary("htf_counter_trend")
+            return {**WAIT, "analysis": "HTF=BEAR blocks BUY sweep (not a genuine reversal setup)."}
+        if htf == "BULL" and not is_long_dir:
+            logger.warning(
+                "[HTF-Sweep] SELL sweep BLOCKED — 4H BULL trend. "
+                "ABOVE_HIGHS into a bull trend is a continuation, not a reversal."
+            )
+            _gate_stats_summary("htf_counter_trend")
+            return {**WAIT, "analysis": "HTF=BULL blocks SELL sweep (not a genuine reversal setup)."}
 
     # FIXED: CVD gate BEFORE Bayes fusion (was after)
     _pre_div_conf = metrics.get("bayesianPosterior", 0.5)
@@ -2542,6 +2587,31 @@ async def main():
                 _hmm_classifier.classify(atr_pct, z_approx, tape_proxy, atr_pct_rank=0.5)
             logger.info(f"[HMM] Seeded with {len(rest_candles)-20} historical observations from REST candles.")
             _seeded = True
+
+            # FIX-P1: Pre-seed quant._atr_history from REST candles (audit Problem 1).
+            # Without this, _atr_history starts EMPTY. The first live ATR appended is
+            # simultaneously min AND max → np.mean(arr <= atr) = 1.0 = 100% rank always.
+            # This triggers PANIC SL (1.0×ATR not 1.43×ATR) on EVERY single entry.
+            # Fix: compute rolling Wilder ATR at each historical step and seed the deque.
+            _atr_seeded = 0
+            for i in range(15, len(rest_candles)):
+                _h = highs[max(0, i-43):i+1]
+                _l = lows[max(0, i-43):i+1]
+                _c = closes[max(0, i-43):i+1]
+                if len(_c) >= 15:
+                    _pc = _c[:-1]
+                    _tr = np.maximum(_h[1:]-_l[1:], np.maximum(np.abs(_h[1:]-_pc), np.abs(_l[1:]-_pc)))
+                    if len(_tr) >= 14:
+                        _av = float(np.mean(_tr[:14]))
+                        for _j in range(14, len(_tr)):
+                            _av = (_av * 13 + float(_tr[_j])) / 14
+                        quant._atr_history.append(_av)
+                        _atr_seeded += 1
+            logger.info(
+                f"[ATR] Pre-seeded _atr_history: {_atr_seeded} values "
+                f"(deque={len(quant._atr_history)}). "
+                "atr_pct_rank now meaningful from first live cycle."
+            )
     except Exception as e:
         logger.warning(f"[HMM] HMM seeding from history failed (will use cold-start): {e}")
 
