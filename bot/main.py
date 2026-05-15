@@ -55,6 +55,7 @@ from bot.data_feed import BinanceDataFeed
 from bot.quant_engine import QuantEngine
 from bot.executor import TradingExecutor
 from bot.ulis_engine import compute_ulis_verdict
+from bot.derivatives_context import DerivativesContext
 from bot import heartbeat
 from bot.signal_config import (
     REGIME_PARAMS, POST_TRADE_COOLDOWN_S, COLD_START_TRADE_COUNT, 
@@ -178,6 +179,7 @@ BOT_STATS: Dict[str, Any] = {
 "signal_none":              0,
         "total_passed":             0,
         "cvd_divergence_veto":      0,
+        "derivatives_veto":         0,
     },
     "equity_peak": ACCOUNT_SIZE,
 }
@@ -315,6 +317,60 @@ def _vpoc_confidence_boost(price: float, vpoc: Optional[float], direction: str) 
     if dist_pct <= 0.003:
         return round(0.06 * (1.0 - dist_pct / 0.003), 4)
     return 0.0
+
+
+async def _derivatives_gate(direction: str, deriv_context: dict) -> tuple[bool, str]:
+    """
+    Pre-entry veto using free institutional signals.
+    Returns (should_trade: bool, reason: str).
+    Called inside _compute_signal after strategy selection, before Bayesian.
+    """
+    is_long = direction in ("BUY", "MEAN_REVERSAL_LONG")
+
+    oi    = deriv_context.get("open_interest", {})
+    tt    = deriv_context.get("top_traders", {})
+    opts  = deriv_context.get("options", {})
+    flow  = deriv_context.get("taker_flow", {})
+
+    crowd        = tt.get("crowd_signal", "NEUTRAL")
+    opts_signal  = opts.get("options_signal", "NEUTRAL")
+    oi_collapsing = oi.get("oi_collapsing", False)
+    taker_imbalance = flow.get("taker_imbalance", 0.0)
+
+    veto_reasons = []
+
+    # VETO 1: Top traders crowded in SAME direction as our trade = no edge
+    # 70%+ of whales already positioned same as us = crowded trade, squeeze risk
+    if is_long and crowd == "CROWDED_LONG":
+        veto_reasons.append("Top traders 70%+ LONG — crowded, no squeeze potential")
+    if not is_long and crowd == "CROWDED_SHORT":
+        veto_reasons.append("Top traders 70%+ SHORT — crowded, no squeeze potential")
+
+    # VETO 2: Options market in FEAR while we want to buy
+    # Institutions paying for downside puts = they expect lower prices
+    if is_long and opts_signal == "FEAR":
+        veto_reasons.append("Options FEAR — institutions hedging downside aggressively")
+
+    # VETO 3: OI collapsing = deleveraging, not new trend forming
+    if oi_collapsing:
+        oi_mom = oi.get("oi_momentum_1h", 0.0)
+        veto_reasons.append(f"OI collapsing {oi_mom:.1f}% in 1h — deleveraging, no new trend")
+
+    if veto_reasons:
+        return False, " | ".join(veto_reasons)
+
+    # BOOST signals (logged but don't force entry)
+    boosts = []
+    if is_long and crowd == "CROWDED_SHORT":
+        boosts.append("SHORT SQUEEZE SETUP — whales crowded short")
+    if not is_long and crowd == "CROWDED_LONG":
+        boosts.append("LONG SQUEEZE SETUP — whales crowded long")
+    if abs(taker_imbalance) > 0.3:
+        direction_match = (is_long and taker_imbalance > 0) or (not is_long and taker_imbalance < 0)
+        if direction_match:
+            boosts.append(f"Taker flow confirms: imbalance={taker_imbalance:.2f}")
+
+    return True, " | ".join(boosts) if boosts else "No institutional conflict"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -669,6 +725,9 @@ class _HMMRegimeClassifier:
 
 # Module-level singleton — persists observations across cycles
 _hmm_classifier = _HMMRegimeClassifier(window=60, update_every=200)
+
+# Derivatives context for institutional signals
+_derivatives_ctx = DerivativesContext(symbol=FEED_SYMBOL)
 
 
 
@@ -1537,7 +1596,7 @@ def _risk_engine(
 # ── FULL 7-STAGE SIGNAL ENGINE ────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
-def _compute_signal(
+async def _compute_signal(
     metrics: Dict[str, Any],
     candle_history: list,
     feed_state,
@@ -1786,6 +1845,17 @@ def _compute_signal(
             )
             _gate_stats_summary("htf_counter_trend")
             return {**WAIT, "analysis": "HTF=BULL blocks SELL sweep (not a genuine reversal setup)."}
+
+    # === DERIVATIVES GATE: Institutional signal check ===
+    # Fetch context (cached, so this is near-instant on most calls)
+    _deriv_ctx = await _derivatives_ctx.get_full_context()
+    _deriv_ok, _deriv_reason = await _derivatives_gate(raw_direction, _deriv_ctx)
+    if not _deriv_ok:
+        logger.warning(f"[DerivGate] VETO: {_deriv_reason}")
+        _gate_stats_summary("derivatives_veto")
+        return {**WAIT, "analysis": f"Derivatives gate veto: {_deriv_reason}"}
+    if _deriv_reason:
+        logger.info(f"[DerivGate] PASS ({_deriv_reason})")
 
     # FIXED: CVD gate BEFORE Bayes fusion (was after)
     _pre_div_conf = metrics.get("bayesianPosterior", 0.5)
@@ -2438,7 +2508,7 @@ async def execution_loop(
                     "ulis_verdict": "—"
                 }
             else:
-                verdict_json = _compute_signal(
+                verdict_json = await _compute_signal(
                     metrics,
                     candle_history=feed.state.candles,
                     feed_state=feed.state,

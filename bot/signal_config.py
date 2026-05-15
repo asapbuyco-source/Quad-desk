@@ -77,7 +77,7 @@ REGIME_PARAMS = {
         "z_threshold":        1.06,  # M-02 FIX: was 1.3, Student-t adj (1.3×0.8165)
         "atr_multiplier_sl":  1.14,   # Was 1.2 — 5% reduction post-Wilder compensation
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
-        "min_confidence":     0.55,  # PHASE-2.3: was 0.58, lowered to 55% to allow entries in RANGE
+        "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
         "rr_target":          1.8,   # 1.8:1 minimum R:R
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
         "panic_threshold":    2.5,   # Flash-crash trigger
@@ -90,7 +90,7 @@ REGIME_PARAMS = {
         "z_threshold":        1.22,  # M-02 FIX: was 1.5, Student-t adj (1.5×0.8165)
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.10,  # PHASE-4.1: was 0.12, lowered to 0.10 for more signal pass-through
-        "min_confidence":     0.55,  # PHASE-2.4: was 0.58, lowered to 55% for more entry opportunity
+        "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "panic_threshold":    5.0,
