@@ -461,11 +461,15 @@ class _HMMRegimeClassifier:
 
         def _write_firestore(payload: dict) -> None:
             try:
+                import json
+                fs_payload = payload.copy()
+                fs_payload["mu"] = json.dumps(fs_payload.get("mu", []))
+                fs_payload["sigma"] = json.dumps(fs_payload.get("sigma", []))
                 from bot.heartbeat import get_db
                 db = get_db()
                 if db is not None:
-                    db.collection("botState").document("hmmEngine").set(payload)
-                    logger.debug("[HMM] State saved to Firestore ✓")
+                    db.collection("botState").document("hmmEngine").set(fs_payload)
+                    logger.debug("[HMM] State saved to Firestore 💾")
             except Exception as e:
                 logger.warning(f"[HMM] Firestore state save failed: {e}")
 
@@ -492,8 +496,12 @@ class _HMMRegimeClassifier:
                 doc = db.collection("botState").document("hmmEngine").get()
                 if doc.exists:
                     data = doc.to_dict()
-                    self._mu = np.array(data.get("mu", self._MU.tolist()))
-                    self._sigma = np.array(data.get("sigma", self._SIGMA.tolist()))
+                    mu_val = data.get("mu")
+                    sig_val = data.get("sigma")
+                    if isinstance(mu_val, str): mu_val = json.loads(mu_val)
+                    if isinstance(sig_val, str): sig_val = json.loads(sig_val)
+                    self._mu = np.array(mu_val if mu_val is not None else self._MU.tolist())
+                    self._sigma = np.array(sig_val if sig_val is not None else self._SIGMA.tolist())
                     logger.info("[HMM] ✅ State loaded from Firestore")
                     return
         except Exception as e:
@@ -1225,13 +1233,23 @@ def _apply_ulis_gate(
     ulis_bullish = verdict_str in ("STRONG_LONG", "LONG")
     ulis_bearish = verdict_str in ("STRONG_SHORT", "SHORT")
 
+    BAYES_OVERRIDE_THRESHOLD = 0.78
     if is_long and ulis_bearish:
-        logger.warning(f"[ULIS] Direction conflict — bot=LONG, ULIS={verdict_str}. Skipping.")
-        return False, 0.0, verdict_str
+        if confidence >= BAYES_OVERRIDE_THRESHOLD:
+            logger.info(f"[ULIS] Bayesian override ({confidence:.2%} >= {BAYES_OVERRIDE_THRESHOLD:.0%}) - proceeding despite ULIS={verdict_str}")
+            confidence *= 0.92
+        else:
+            logger.warning(f"[ULIS] Direction conflict - bot=LONG, ULIS={verdict_str}. Skipping.")
+            return False, 0.0, verdict_str
 
     if not is_long and ulis_bullish:
-        logger.warning(f"[ULIS] Direction conflict — bot=SHORT, ULIS={verdict_str}. Skipping.")
-        return False, 0.0, verdict_str
+        if confidence >= BAYES_OVERRIDE_THRESHOLD:
+            logger.info(f"[ULIS] Bayesian override ({confidence:.2%} >= {BAYES_OVERRIDE_THRESHOLD:.0%}) - proceeding despite ULIS={verdict_str}")
+            confidence *= 0.92
+        else:
+            logger.warning(f"[ULIS] Direction conflict - bot=SHORT, ULIS={verdict_str}. Skipping.")
+            return False, 0.0, verdict_str
+
 
     # --- PROPER ALIGNMENT FRAMEWORK: Triple Alignment Gate ---
     rsi = metrics.get("rsi", 50.0)
@@ -2466,6 +2484,18 @@ async def execution_loop(
                         f" | now={current_price:.2f} | PnL={pnl_pct:+.2f}%"
                         f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
                     )
+                    
+                    if not pos.get("breakeven_moved", False):
+                        entry = pos["entry_price"]
+                        tp = pos["take_profit"]
+                        pct_to_tp = abs(current_price - entry) / abs(tp - entry) if abs(tp - entry) > 0 else 0.0
+                        if pct_to_tp >= 0.50:
+                            pos["stop_loss"] = entry
+                            pos["breakeven_moved"] = True
+                            logger.info(f"[Breakeven] 🔒 Position reached 50% of TP — SL moved to breakeven @ {entry:.2f}")
+                            if hasattr(executor, "move_sl_to_breakeven") and not executor._dry_run:
+                                import asyncio
+                                asyncio.create_task(executor.move_sl_to_breakeven(pos["symbol"], entry))
                 continue
 
             if metrics is None:
@@ -2751,3 +2781,4 @@ async def main():
 if __name__ == "__main__":
     print("🤖 [Quad-Desk] Python process started — launching bot...", flush=True)
     asyncio.run(main())
+

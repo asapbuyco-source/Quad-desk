@@ -988,6 +988,59 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Position monitor (called from main loop for dry-run)
     # ------------------------------------------------------------------
+
+    async def move_sl_to_breakeven(self, symbol: str, entry_price: float):
+        """Moves the current Stop Loss to the entry price (Breakeven)."""
+        if self._dry_run:
+            logger.info("[Executor] DRY-RUN: Simulated moving SL to breakeven.")
+            return
+
+        logger.info(f"[Executor] Moving Stop Loss to Breakeven @ {entry_price:.2f}")
+        try:
+            if not self.active_position:
+                return
+                
+            # Phase 1: Place the NEW Stop Loss FIRST
+            # This ensures we NEVER have a naked position if the API fails
+            fmt_size = self.exchange.amount_to_precision(symbol, self.active_position["size"])
+            close_side = "sell" if self.active_position["side"] == "buy" else "buy"
+            
+            new_order = await self.exchange.create_order(
+                symbol,
+                "STOP_MARKET",
+                close_side,
+                fmt_size,
+                None,
+                params={
+                    "stopPrice": float(self.exchange.price_to_precision(symbol, entry_price)),
+                    "reduceOnly": True
+                }
+            )
+            logger.info("[Executor] Phase 1 Success: New Breakeven SL safely placed on exchange.")
+            
+            # Phase 2: Now that new SL is secure, cancel the OLD Stop Loss
+            open_orders = await self.exchange.fetch_open_orders(symbol)
+            for order in open_orders:
+                is_stop = order.get("type", "").lower() in ("stop", "stop_market", "stopmarket")
+                is_not_new = str(order.get("id")) != str(new_order.get("id"))
+                if is_stop and is_not_new:
+                    await self.exchange.cancel_order(order["id"], symbol)
+                    logger.debug(f"[Executor] Phase 2 Success: Cancelled old SL order {order['id']}")
+            
+            if hasattr(self, "notifier") and self.notifier:
+                await self.notifier.send_message(f"?? **Breakeven Secured**
+Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
+                    
+        except Exception as e:
+            # If Phase 1 fails, Phase 2 never runs. The original Stop Loss remains active.
+            # Your capital is still fully protected.
+            err_msg = f"Failed to move SL to breakeven on Live Exchange: {e}"
+            logger.error(f"[Executor] CRITICAL: {err_msg}")
+            if hasattr(self, "notifier") and self.notifier:
+                await self.notifier.send_error_alert(f"?? **Breakeven Move Failed!**
+{err_msg}
+*Note: Original Stop Loss is still active.*")
+
     async def check_position_exit(self, current_price: float,
                                    candle_high: float = None,
                                    candle_low: float = None) -> tuple:

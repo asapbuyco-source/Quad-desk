@@ -249,6 +249,12 @@ class QuantEngine:
         to the /tmp/ local file (useful for same-container warm restarts),
         then initialises a fresh Beta(5,5) prior.
         """
+        import os
+        if os.getenv("DEV_RESET", "True").lower() in ("true", "1", "yes"):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info("[QuantEngine] DEV_RESET=True - skipping Firestore/local cache. Starting with fresh Beta(5,5) prior.")
+            return
         # ── 1. Try Firestore ────────────────────────────────────────────
         try:
             from bot.heartbeat import get_db
@@ -1082,7 +1088,8 @@ class QuantEngine:
             best_bear_s, best_bear_k, best_bear_pd, best_bear_cd, best_bear_vs = seq_bear_best
             best_bear_meth = "sequential"
 
-        MIN_STRENGTH = 0.28
+        atr_rank = min(max(getattr(self, '_atr_pct_rank', 0.5), 0.1), 1.0)
+        MIN_STRENGTH = 0.14 + (0.14 * atr_rank)
         AGE_CAP_CANDLES = 8   # beyond 8 candles (~2h) in same direction = TREND, not divergence
         DECAY_RATE      = 0.15  # exp(-0.15*(streak-8)); at streak=12: factor≈0.55 → below threshold
 
@@ -1164,3 +1171,4 @@ class QuantEngine:
 
         NULL_RESULT["n_snaps"] = n_snaps
         return NULL_RESULT
+
