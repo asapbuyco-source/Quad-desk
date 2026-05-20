@@ -1028,7 +1028,7 @@ class TradingExecutor:
                     logger.debug(f"[Executor] Phase 2 Success: Cancelled old SL order {order['id']}")
             
             if hasattr(self, "notifier") and self.notifier:
-                await self.notifier.send_message(f"?? **Breakeven Secured**
+                await self.notifier.send_message(f"🔒 **Breakeven Secured**\
 Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                     
         except Exception as e:
@@ -1037,8 +1037,8 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             err_msg = f"Failed to move SL to breakeven on Live Exchange: {e}"
             logger.error(f"[Executor] CRITICAL: {err_msg}")
             if hasattr(self, "notifier") and self.notifier:
-                await self.notifier.send_error_alert(f"?? **Breakeven Move Failed!**
-{err_msg}
+                await self.notifier.send_error_alert(f"⚠️ **Breakeven Move Failed!**\
+{err_msg}\
 *Note: Original Stop Loss is still active.*")
 
     async def check_position_exit(self, current_price: float,
@@ -1345,3 +1345,4 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             # A separate boolean survives the poll clearing active_position.
             self._flatten_failed = True
             self.active_position = None  # Clear position — halt is enforced via _flatten_failed flag
+
