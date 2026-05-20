@@ -129,7 +129,7 @@ VALID_GEMINI_MODELS = {
 }
 DEFAULT_MODEL = "gemini-2.0-flash"
 
-# Ordered fallback chain: newest/fastest → oldest
+# Order fallback chain: newest/fastest → oldest
 # When the preferred model fails, the next one in the chain is tried automatically.
 FALLBACK_CHAIN = [
     "gemini-2.5-flash-preview",
