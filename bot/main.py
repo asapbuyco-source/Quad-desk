@@ -2497,8 +2497,7 @@ async def execution_loop(
                             pos["stop_loss"] = entry
                             pos["breakeven_moved"] = True
                             logger.info(f"[Breakeven] 🔒 Position reached 50% of TP — SL moved to breakeven @ {entry:.2f}")
-                            if hasattr(executor, "move_sl_to_breakeven") and not executor._dry_run:
-                                import asyncio
+                            if hasattr(executor, "move_sl_to_breakeven") and not getattr(executor, "dry_run", getattr(executor, "_dry_run", True)):
                                 asyncio.create_task(executor.move_sl_to_breakeven(pos["symbol"], entry))
                 continue
 
