@@ -2152,14 +2152,18 @@ async def execution_loop(
             try:
                 # Wait for candle close OR timeout (whichever comes first)
                 await asyncio.wait_for(
-                    feed.state.candle_close_event.wait(),
-                    timeout=ANALYSIS_INTERVAL
+                    asyncio.shield(feed.state.candle_close_event.wait()),
+                    timeout=float(ANALYSIS_INTERVAL)
                 )
                 feed.state.candle_close_event.clear()
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 pass  # Fallback to polling if websocket hasn't fired yet
 
+            # ── DIAGNOSTIC: confirm loop is alive every cycle ──────────────
             n_candles = len(feed.state.candles)
+            logger.debug(f"[Main] Cycle tick | candles={n_candles} | "
+                         f"trades={len(feed.state.recent_trades)} | cvd={feed.state.cvd:.0f}")
+
             if n_candles < QuantEngine.MIN_CANDLES:
                 logger.info(f"[Main] Warming up… {n_candles}/{QuantEngine.MIN_CANDLES} candles")
                 continue
@@ -2499,6 +2503,11 @@ async def execution_loop(
                 continue
 
             if metrics is None:
+                logger.warning(
+                    f"[Main] compute_metrics() returned None "
+                    f"(candles={len(feed.state.candles)}, trades={len(feed.state.recent_trades)}). "
+                    "Skipping signal evaluation this cycle."
+                )
                 continue
 
             logger.info(
@@ -2615,16 +2624,25 @@ async def execution_loop(
             _LAST_CYCLE_ERROR = str(e)
             if _CYCLE_ERROR_COUNT % 5 == 0:
                 logger.critical(
-                    f"[MainLoop] {5} consecutive errors! Last: {_LAST_CYCLE_ERROR}"
+                    f"[MainLoop] {_CYCLE_ERROR_COUNT} consecutive errors! Last: {_LAST_CYCLE_ERROR}"
                 )
                 if executor.notifier:
-                    await executor.notifier.send_message(
-                        f"🚨 Bot error loop: {_CYCLE_ERROR_COUNT} errors. Last: {_LAST_CYCLE_ERROR[:200]}"
-                    )
+                    try:
+                        await executor.notifier.send_message(
+                            f"🚨 Bot error loop: {_CYCLE_ERROR_COUNT} errors. Last: {_LAST_CYCLE_ERROR[:200]}"
+                        )
+                    except Exception:
+                        pass
                 await asyncio.sleep(30)
             else:
                 logger.error(f"[Main] Execution loop error: {e}", exc_info=True)
                 await asyncio.sleep(5)
+        except BaseException as e:
+            # Catches SystemExit, KeyboardInterrupt, etc. — log before re-raising
+            logger.critical(
+                f"[MainLoop] FATAL unhandled BaseException — loop will die: {type(e).__name__}: {e}"
+            )
+            raise  # Re-raise to allow proper task/process cleanup
         else:
             _CYCLE_ERROR_COUNT = 0
 
@@ -2732,11 +2750,38 @@ async def main():
         except NotImplementedError:
             pass
 
+    def _task_death_callback(task: asyncio.Task):
+        """Log and alert if any critical task dies unexpectedly."""
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            exc = None  # Normal shutdown
+        except Exception:
+            exc = None
+        if exc is not None:
+            logger.critical(
+                f"[Main] CRITICAL — task '{task.get_name()}' died with "
+                f"{type(exc).__name__}: {exc}",
+                exc_info=exc
+            )
+            if executor.notifier:
+                asyncio.create_task(
+                    executor.notifier.send_error_alert(
+                        f"💀 Task '{task.get_name()}' crashed: {type(exc).__name__}: {str(exc)[:200]}\n"
+                        "Bot may need restart."
+                    )
+                )
+
+    _exec_task = asyncio.create_task(
+        execution_loop(feed, quant, executor, BOT_STATS), name="exec_loop"
+    )
+    _exec_task.add_done_callback(_task_death_callback)
+
     tasks = [
-        asyncio.create_task(feed.run(),                                            name="data_feed"),
-        asyncio.create_task(feed.funding_rate_loop(),                              name="funding_rate"),
-        asyncio.create_task(execution_loop(feed, quant, executor, BOT_STATS),     name="exec_loop"),
-        asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS),                   name="heartbeat"),
+        asyncio.create_task(feed.run(),                    name="data_feed"),
+        asyncio.create_task(feed.funding_rate_loop(),      name="funding_rate"),
+        _exec_task,
+        asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS), name="heartbeat"),
         # P0-2 FIX: Feed health monitor — detects frozen WebSocket and forces reconnect
         asyncio.create_task(
             feed.feed_health_monitor(notifier=executor.notifier),
