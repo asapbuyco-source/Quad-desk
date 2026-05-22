@@ -2489,19 +2489,7 @@ async def execution_loop(
                         f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
                     )
                     
-                    if not pos.get("breakeven_moved", False):
-                        entry = pos["entry_price"]
-                        tp = pos["take_profit"]
-                        is_winning = (current_price > entry) if pos["side"] == "buy" else (current_price < entry)
-                        
-                        if is_winning:
-                            pct_to_tp = abs(current_price - entry) / abs(tp - entry) if abs(tp - entry) > 0 else 0.0
-                            if pct_to_tp >= 0.50:
-                                pos["stop_loss"] = entry
-                                pos["breakeven_moved"] = True
-                                logger.info(f"[Breakeven] 🔒 Position reached 50% of TP — SL moved to breakeven @ {entry:.2f}")
-                                if hasattr(executor, "move_sl_to_breakeven") and not getattr(executor, "dry_run", getattr(executor, "_dry_run", True)):
-                                    asyncio.create_task(executor.move_sl_to_breakeven(pos["symbol"], entry))
+
                 continue
 
             if metrics is None:
