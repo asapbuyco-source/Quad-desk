@@ -1089,7 +1089,7 @@ class QuantEngine:
             best_bear_meth = "sequential"
 
         atr_rank = min(max(getattr(self, '_atr_pct_rank', 0.5), 0.1), 1.0)
-        MIN_STRENGTH = 0.14 + (0.14 * atr_rank)
+        MIN_STRENGTH = 0.10 + (0.10 * atr_rank)
         AGE_CAP_CANDLES = 8   # beyond 8 candles (~2h) in same direction = TREND, not divergence
         DECAY_RATE      = 0.15  # exp(-0.15*(streak-8)); at streak=12: factor≈0.55 → below threshold
 

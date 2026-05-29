@@ -363,7 +363,7 @@ def compute_ulis_verdict(
     ):
         verdict = "STRONG_LONG"
         regime_label = "ALDE+ULIS Bullish Confluence · Full Alignment — High Probability Long"
-    elif liquidity_vector > 0.12 and alde_confidence > 0.58 and cascade_risk < 0.62:
+    elif liquidity_vector > 0.08 and alde_confidence > 0.52 and cascade_risk < 0.62:
         verdict = "LONG"
         regime_label = "Bullish Bias · Liquidity Vector Positive — Moderate ALDE Alignment"
     elif (
@@ -376,7 +376,7 @@ def compute_ulis_verdict(
     ):
         verdict = "STRONG_SHORT"
         regime_label = "ALDE+ULIS Bearish Confluence · Full Alignment — High Probability Short"
-    elif liquidity_vector < -0.12 and alde_confidence > 0.58 and cascade_risk < 0.62:
+    elif liquidity_vector < -0.08 and alde_confidence > 0.52 and cascade_risk < 0.62:
         verdict = "SHORT"
         regime_label = "Bearish Bias · Liquidity Vector Negative — Moderate ALDE Alignment"
     elif is_mean_reversion:

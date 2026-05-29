@@ -1673,6 +1673,13 @@ async def _compute_signal(
         _gate_stats_summary("zscore_warmup")
         return {**WAIT, "analysis": "Session warmup: Z-Score not yet valid (<10 bars)."}
 
+    # --- AUDIT FIX 1: ATR PANIC GATE ---
+    atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
+    if atr_pct_rank >= 0.95:
+        logger.warning(f"[RiskEngine] 🛑 ATR PANIC HALT — ATR rank={atr_pct_rank:.0%} >= 95%. Volatility too extreme to trade. Blocking entry.")
+        _gate_stats_summary("atr_panic_halt")
+        return {**WAIT, "analysis": f"ATR PANIC HALT (rank={atr_pct_rank:.0%}). Volatility too extreme."}
+
     global LAST_CASCADE_TIME
     import time
     # NOTE: Cascade cooldown moved AFTER regime detection (Strategy-B)
@@ -1720,6 +1727,19 @@ async def _compute_signal(
     # RANGE/LIQUIDITY = 180s (quiet markets recover fast, sweeps repeat).
     # TREND = 240s (trend may still be valid). NEUTRAL = 300s (default).
     cascade_cd = regime_p.get("cascade_cooldown_s", 300)
+
+    # --- AUDIT FIX 4: ESCALATING COOLDOWNS & CONSECUTIVE LOSS HALT ---
+    if quant:
+        consecutive_losses = getattr(quant, "_consecutive_losses", 0)
+        if consecutive_losses >= 3:
+            logger.warning(f"[RiskEngine] 🛑 3 CONSECUTIVE LOSSES — Session Halted. Taking a break to prevent further drawdowns.")
+            _gate_stats_summary("consecutive_loss_halt")
+            return {**WAIT, "analysis": "3 consecutive losses halt. Session paused."}
+        
+        if consecutive_losses > 0:
+            cascade_cd *= (1 + consecutive_losses)
+            logger.info(f"[RiskEngine] Escalating cooldown active. {consecutive_losses} losses -> cascade_cd extended to {cascade_cd}s")
+
     time_since_cascade = time.time() - LAST_CASCADE_TIME
     if time_since_cascade < cascade_cd:
         remaining = cascade_cd - int(time_since_cascade)
@@ -1806,6 +1826,18 @@ async def _compute_signal(
         _gate_stats_summary("signal_none")
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
 
+    # --- AUDIT FIX 3: RSI EXTREMES GATE ---
+    rsi = metrics.get("rsi", 50.0)
+    is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
+    if is_long_dir and rsi > 70.0:
+        logger.warning(f"[RiskEngine] 🛑 RSI OVERBOUGHT HALT — Blocking {raw_direction} at RSI={rsi:.1f} > 70.0")
+        _gate_stats_summary("rsi_overbought")
+        return {**WAIT, "analysis": f"RSI={rsi:.1f} > 70.0 blocks {raw_direction} entry."}
+    if not is_long_dir and rsi < 30.0:
+        logger.warning(f"[RiskEngine] 🛑 RSI OVERSOLD HALT — Blocking {raw_direction} at RSI={rsi:.1f} < 30.0")
+        _gate_stats_summary("rsi_oversold")
+        return {**WAIT, "analysis": f"RSI={rsi:.1f} < 30.0 blocks {raw_direction} entry."}
+
     # Stage 4b: HTF Counter-Trend Block
     # P0: htf_block is regime-conditional. In RANGE, mean-reversion against HTF is the strategy.
     is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
@@ -1886,6 +1918,12 @@ async def _compute_signal(
 
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
+
+    # --- AUDIT FIX 2: BAYES FLOOR GATE ---
+    if confidence < 0.50:
+        logger.warning(f"[RiskEngine] 🛑 BAYES FLOOR HALT — Bayesian posterior {confidence:.2%} < 50%. Edge is worse than a coin flip.")
+        _gate_stats_summary("bayes_floor_veto")
+        return {**WAIT, "analysis": f"Bayesian Posterior {confidence:.2%} < 50% blocks entry."}
 
     # Stage 5b: VPOC Proximity Confidence Boost
     vpoc_boost = _vpoc_confidence_boost(price, vpoc, raw_direction)
