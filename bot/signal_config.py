@@ -6,52 +6,18 @@ Single source of truth for ALL signal thresholds across the Quad-Desk trading bo
 Update thresholds HERE — never in individual files.  Both the live execution engine
 (bot/main.py) and backtester (bot/backtest_hybrid.py) should import from this module
 so that backtest and live results are always synchronised.
-
-OFI RANGE NOTE (v3, Apr 2026):
-    After the Three-Stage OFI Integrity Pipeline (quant_engine.py), OFI output
-    is in the range (-1, +1) via tanh normalisation.  All OFI thresholds below
-    are expressed in this new normalised scale.  Old scale was ±100.
 """
-
-# ── Bayesian / Confidence ─────────────────────────────────────────────────────
-MIN_BAYESIAN           = 0.62   # Minimum posterior confidence for any entry
-MIN_BAYESIAN_STRONG    = 0.72   # Strong-signal threshold (STRONG_LONG / STRONG_SHORT)
-
-# ── Z-Score (Student's t-distribution VWAP Z) ────────────────────────────────
-# M-02 FIX: _vwap_z_score_t() already shrinks the Gaussian Z by t_scale=0.8165.
-# Thresholds must be multiplied by 0.8165 to restore the intended σ boundaries.
-# e.g. old 1.5 → effective Gaussian req of 1.83σ → now correctly 1.22 = 1.5×0.8165
-Z_OVERSOLD             = -1.22  # Student-t adj: was -1.5
-Z_OVERBOUGHT           =  1.22  # Student-t adj: was  1.5
-MEAN_REV_Z_THRESHOLD   =  1.22  # Student-t adj: was  1.5 — matches NEUTRAL z_threshold
-
-# ── OFI (tanh output, range -1 to +1) ────────────────────────────────────────
-OFI_STRONG_THRESHOLD   =  0.6   # Strong directional flow (equivalent to old |OFI| > 40)
-OFI_MID_THRESHOLD      =  0.3   # Moderate flow (equivalent to old |OFI| > 10)
-OFI_WEAK_THRESHOLD     =  0.15  # Weak / noise floor
-
-# ── Skewness ──────────────────────────────────────────────────────────────────
-SKEW_SIGNIFICANT       = 0.3    # |skewness| above this is considered meaningful
 
 # ── Risk / Position Sizing ────────────────────────────────────────────────────
 MAX_RISK_PCT           = 1.0    # Max risk per trade as % of equity
 MAX_DAILY_LOSS_PCT     = 3.0    # Stop trading if daily loss hits this %
 MAX_DRAWDOWN_PCT       = 15.0   # Hard session drawdown halt (restart required)
-ATR_SL_MULTIPLIER      = 1.5    # SL = entry ± ATR × this
-ATR_TP_MULTIPLIER      = 3.0    # TP = entry ± ATR × this (3:2 RR minimum)
 
-# ── Strategy Scoring ──────────────────────────────────────────────────────────
-TREND_SCORE_MIN        = 1.5    # Minimum composite score for a trend entry
-WALL_PROXIMITY_PCT     = 0.003  # % distance to qualify as LIQUIDITY regime
-
-# ── ULIS Gate ─────────────────────────────────────────────────────────────────
-ULIS_CONFIDENCE_STRONG = 0.68   # ALDE confidence threshold for STRONG_LONG/SHORT
-ULIS_CASCADE_ABORT     = 0.65   # cascade_risk above this → AVOID verdict
+# ── Global Confidence Floor ───────────────────────────────────────────────────
+MIN_CONFIDENCE_GLOBAL  = 0.62   # Used as floor for MIN_CONFIDENCE env override
 
 # ── Cooldowns ─────────────────────────────────────────────────────────────────
 POST_TRADE_COOLDOWN_S  = 90     # seconds after any exit before new entry allowed
-CASCADE_COOLDOWN_S     = 300    # seconds after SL exit (cascade prevention)
-CONSECUTIVE_LOSS_HALT  = 3      # was 2 — reduces false lockouts
 
 # ── Bayesian Cold-Start ─────────────────────────────────────────────────────────
 COLD_START_TRADE_COUNT = 30
@@ -60,6 +26,10 @@ COLD_START_CONFIDENCE_DISCOUNT = 0.05
 # ══════════════════════════════════════════════════════════════════════════════
 # ── REGIME-CONDITIONAL PARAMETER MATRIX (HMM Spec, Apr 2026) ─────────────────
 # ══════════════════════════════════════════════════════════════════════════════
+#
+# C7 PLACEHOLDER: These regime parameters are hand-tuned placeholders.
+# Run backtest sensitivity analysis (C4) to derive optimal thresholds for
+# your specific market conditions, timeframe, and risk tolerance.
 #
 # Every downstream stage reads from this dict rather than using static constants.
 # Replaces fixed thresholds (e.g. z >= 2.2 always) with adaptive ones that fit
@@ -80,20 +50,22 @@ REGIME_PARAMS = {
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
         "rr_target":          1.8,   # 1.8:1 minimum R:R
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
-        "panic_threshold":    2.5,   # Flash-crash trigger
+        "time_exit_sec":      300,   # A2: 5 min max hold in range-bound markets
+        "panic_threshold":    10.0,  # FIX-R4: was 2.5 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    30,    # Was 45s. Faster entry
         "htf_block":          False, # Counter-HTF is the strategy in RANGE
         "cascade_cooldown_s": 180,   # PHASE-2.5: was 300s, lowered to 180s for RANGE recovery
     },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
-        "z_threshold":        1.22,  # M-02 FIX: was 1.5, Student-t adj (1.5×0.8165)
+        "z_threshold":        1.50,  # B3: raised from 1.22 (Student-t adj no longer applied)
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.10,  # PHASE-4.1: was 0.12, lowered to 0.10 for more signal pass-through
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
-        "panic_threshold":    5.0,
+        "time_exit_sec":      600,   # A2: 10 min max hold in neutral markets
+        "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          True,
         "cascade_cooldown_s": 300,   # STRATEGY-B: 5min (default)
@@ -106,20 +78,22 @@ REGIME_PARAMS = {
         "min_confidence":     0.65,  # Was 0.72. Massive increase in trend trades
         "rr_target":          2.5,
         "be_lock_trigger":    2.0,  # widened: let trend breathe — do not lock BE until 2×ATR profit
-        "panic_threshold":    8.0,   
+        "time_exit_sec":      900,   # A2: 15 min max hold in trend markets
+        "panic_threshold":    10.0,  # FIX-R4: was 8.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    60,    # Was 90s
         "htf_block":          True,  
         "cascade_cooldown_s": 240,   # STRATEGY-B: 4min (trend may still be valid)
     },
-"LIQUIDITY": {
+    "LIQUIDITY": {
         # Wall-proximity sweeps
-        "z_threshold":        1.22,  # M-02 FIX: was 1.5, Student-t adj (1.5×0.8165)
+        "z_threshold":        1.50,  # B3: raised from 1.22 (Student-t adj no longer applied)
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.12,
         "min_confidence":     0.62,  # FIX-P10: was 0.55 which == sweep neutralizer floor (no-op); raised to 0.62 so threshold is meaningful
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
-        "panic_threshold":    5.0,
+        "time_exit_sec":      480,   # A2: 8 min max hold for liquidity sweeps
+        "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          False,
         "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (sweep may repeat next candle)

@@ -33,6 +33,9 @@ class DerivativesContext:
             return data
         except Exception as e:
             logger.warning(f"[Derivatives] {key} fetch failed: {e}")
+            if key in self._cache:
+                logger.info(f"[Derivatives] Returning stale cache for {key} (age={(now - self._cache_ts.get(key, now)):.0f}s)")
+                return self._cache[key]
             return {}
 
     async def get_open_interest(self) -> dict:

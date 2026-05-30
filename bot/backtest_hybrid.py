@@ -111,15 +111,45 @@ def calc_cvd_proxy(close, open_, volume, period=20, taker_buy_base=None):
 
 
 # ==============================================================================
-# REAL DATA FETCHER — Binance Public REST API
+# REAL DATA FETCHER — Binance Public REST API + Local Cache
+# C1: Added persistent local cache to avoid repeated API calls.
 # ==============================================================================
 
-def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2) -> pd.DataFrame:
+CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+_CACHE_TTL_HOURS = 24  # Refresh cache if older than this
+
+
+def _cache_path(symbol: str, interval: str) -> str:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    safe_sym = symbol.replace("/", "_")
+    return os.path.join(CACHE_DIR, f"{safe_sym}_{interval}_cached.pkl")
+
+
+def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2,
+                          use_cache: bool = True) -> pd.DataFrame:
     """
-    Fetch real OHLCV + taker-buy-volume klines from the Binance public API.
+    C1 FIX: Fetch real OHLCV + taker-buy-volume klines from the Binance public API
+    with local disk cache to avoid repeated API calls.
+
     Returns a DataFrame with columns: open, high, low, close, volume, taker_buy_base
     Falls back to an empty DataFrame on any network/API error.
     """
+    cache_file = _cache_path(symbol, interval)
+
+    # ── Return cached data if fresh enough ───────────────────────────────────
+    if use_cache and os.path.exists(cache_file):
+        file_age_h = (time.time() - os.path.getmtime(cache_file)) / 3600.0
+        if file_age_h < _CACHE_TTL_HOURS:
+            try:
+                import pickle
+                df = pd.read_pickle(cache_file)
+                print(f"  ✓ Loaded {len(df):,} bars from local cache "
+                      f"(age={file_age_h:.1f}h < {_CACHE_TTL_HOURS}h TTL)")
+                return df
+            except Exception:
+                pass  # Corrupt cache — refetch
+
+    # ── Fetch from Binance ───────────────────────────────────────────────────
     try:
         import requests as _req
     except ImportError:
@@ -177,6 +207,15 @@ def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2
 
     print(f"  ✓ {len(df):,} real bars loaded  "
           f"({df.index[0].date()} → {df.index[-1].date()})")
+
+    # ── Persist to local cache ───────────────────────────────────────────────
+    if use_cache:
+        try:
+            df.to_pickle(cache_file)
+            print(f"  ✓ Cached to {cache_file}")
+        except Exception as e:
+            print(f"  ⚠️  Could not write cache: {e}")
+
     return df
 
 
@@ -631,8 +670,105 @@ def run():
         )
         print(by_regime.to_string())
         print(f"\n{Fore.CYAN}{Style.BRIGHT}{'━'*62}{Style.RESET_ALL}\n")
-        
+
     print(f"  Total time: {time.time() - t_start:.2f}s")
+
+
+# ==============================================================================
+# C5: HMM PRIOR CALIBRATION SCRIPT
+# ==============================================================================
+# Run this script to calibrate HMM emission parameters (_MU, _SIGMA) from
+# historical data. The calibrated values should replace the placeholders in
+# quant_engine.py (_HMMRegimeClassifier._MU / _SIGMA).
+#
+# Usage:
+#   python -c "from backtest_hybrid import run_hmm_calibration; run_hmm_calibration()"
+# ==============================================================================
+
+def run_hmm_calibration(symbol: str = "BTCUSDT", interval: str = "15m",
+                       years_back: int = 1):
+    """
+    C5: Calibrate HMM emission parameters from historical OHLCV data.
+
+    This uses a simple EM-style approach to fit Gaussian emission parameters
+    for the 3regime HMM based on observed feature distributions.
+
+    Returns:
+        dict with calibrated 'mu' and 'sigma' arrays ready to paste into
+        quant_engine.py _HMMRegimeClassifier.
+    """
+    print(f"\n{Fore.CYAN}{Style.BRIGHT}{'━'*62}")
+    print(f"  HMM Prior Calibration — {symbol} {interval}")
+    print(f"{'━'*62}{Style.RESET_ALL}\n")
+
+    df = load_data(symbol, years_back=years_back)
+    if df.empty:
+        print("  ⚠️  No data loaded. Calibration aborted.")
+        return
+
+    close = df['close'].values
+    high = df['high'].values
+    low = df['low'].values
+    open_ = df['open'].values
+    vol = df['volume'].values
+
+    # Compute features matching _HMMRegimeClassifier expectation
+    atr = calc_atr(high, low, close, CONFIG['atr_period'])
+    atr_pct = np.zeros_like(atr)
+    valid_idx = close > 0
+    atr_pct[valid_idx] = atr[valid_idx] / close[valid_idx]
+
+    zscore = calc_vwap_zscore(df, CONFIG['vwap_period'])
+    abs_z = np.abs(zscore)
+
+    vol_sma_60 = pd.Series(vol).rolling(60, min_periods=1).mean().shift(1).fillna(0).values
+    vol_surge = np.where(vol > vol_sma_60 * 3.0, 1.0, 0.0)
+
+    atr_pct_rank = np.zeros(len(close))
+    for idx in range(50, len(close)):
+        window = atr_pct[max(0, idx-2880):idx]
+        if len(window) > 0:
+            atr_pct_rank[idx] = np.mean(window <= atr_pct[idx])
+
+    features = np.column_stack([
+        atr_pct[50:],
+        abs_z[50:],
+        vol_surge[50:],
+        atr_pct_rank[50:],
+    ])
+
+    # Simple K-means initialization for the 3 regimes
+    from sklearn.cluster import KMeans
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    kmeans.fit(features)
+
+    # Order clusters by ATR% (low → RANGE, medium → NEUTRAL, high → TREND)
+    cluster_centers = kmeans.cluster_centers_
+    ordered_indices = np.argsort(cluster_centers[:, 0])
+    regime_names = ["RANGE", "NEUTRAL", "TREND"]
+
+    mu_calibrated = cluster_centers[ordered_indices]
+    sigma_calibrated = np.zeros_like(mu_calibrated)
+    for i, idx in enumerate(ordered_indices):
+        mask = kmeans.labels_ == idx
+        sigma_calibrated[i] = features[mask].std(axis=0)
+
+    print(f"  Calibrated _MU (emission means):")
+    for i, name in enumerate(regime_names):
+        print(f"    {name}: atr_pct={mu_calibrated[i,0]:.4f}, |z|={mu_calibrated[i,1]:.2f}, "
+              f"tape={mu_calibrated[i,2]:.2f}, atr_rank={mu_calibrated[i,3]:.2f}")
+
+    print(f"\n  Calibrated _SIGMA (emission std):")
+    for i, name in enumerate(regime_names):
+        print(f"    {name}: atr_pct={sigma_calibrated[i,0]:.4f}, |z|={sigma_calibrated[i,1]:.2f}, "
+              f"tape={sigma_calibrated[i,2]:.2f}, atr_rank={sigma_calibrated[i,3]:.2f}")
+
+    print(f"\n  → Paste these into quant_engine.py _HMMRegimeClassifier:")
+    print(f"  _MU = np.array({mu_calibrated.tolist()}, dtype=float)")
+    print(f"  _SIGMA = np.array({sigma_calibrated.tolist()}, dtype=float)")
+
+    return {"mu": mu_calibrated, "sigma": sigma_calibrated}
+
 
 if __name__ == "__main__":
     run()

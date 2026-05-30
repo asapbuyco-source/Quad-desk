@@ -129,7 +129,7 @@ class QuantEngine:
             # Prior-softening: after 3+ consecutive losses the Beta prior has drifted
             # too bearish to recover naturally. Pull it 15% toward Beta(5,5) each loss
             # so the bot can re-engage after a bad streak without a full cold-start reset.
-            if self._consecutive_losses >= 3:
+            if self._consecutive_losses >= 2:
                 _target = 5.0
                 self._alpha = self._alpha * 0.85 + _target * 0.15
                 self._beta  = self._beta  * 0.85 + _target * 0.15
@@ -211,9 +211,6 @@ class QuantEngine:
             "ofi_ewma_mu":    self._ofi_ewma_mu,
             "ofi_ewma_var":   self._ofi_ewma_var,
             "ofi_smooth":     self._ofi_smooth,
-            "session_vwap_num": self._session_vwap_num,
-            "session_vwap_den": self._session_vwap_den,
-            "session_date":     str(self._session_date) if self._session_date else None,
             "saved_at":       time.time(),
         }
 
@@ -272,16 +269,6 @@ class QuantEngine:
                         self._regime_alpha[r]       = float(saved_ra.get(r, 5.0))
                         self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
                         self._regime_trade_count[r] = int(saved_rc.get(r, 0))
-                    
-                    self._session_vwap_num = float(data.get("session_vwap_num", 0.0))
-                    self._session_vwap_den = float(data.get("session_vwap_den", 0.0))
-                    s_date = data.get("session_date")
-                    from datetime import datetime
-                    if s_date and s_date != "None":
-                        try:
-                            self._session_date = datetime.strptime(s_date, "%Y-%m-%d").date()
-                        except:
-                            self._session_date = None
 
                     n_trades = sum(self._regime_trade_count.values())
                     p_bull   = self._alpha / (self._alpha + self._beta)
@@ -313,15 +300,6 @@ class QuantEngine:
                     self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
                     self._regime_trade_count[r] = int(saved_rc.get(r, 0))
 
-                self._session_vwap_num = float(data.get("session_vwap_num", 0.0))
-                self._session_vwap_den = float(data.get("session_vwap_den", 0.0))
-                s_date = data.get("session_date")
-                from datetime import datetime
-                if s_date and s_date != "None":
-                    try:
-                        self._session_date = datetime.strptime(s_date, "%Y-%m-%d").date()
-                    except:
-                        self._session_date = None
                 logger.info(
                     "[QuantEngine] ⚠️ State loaded from /tmp/ (Firestore unavailable). "
                     "Prior will be lost on next Railway deploy."
@@ -363,6 +341,7 @@ class QuantEngine:
         self._atr_history.append(atr)
         arr = np.array(list(self._atr_history))
         atr_pct_rank = float(np.mean(arr <= atr))
+        self._atr_pct_rank = atr_pct_rank  # make available to _cvd_divergence
 
         skewness       = self._skewness(closes)
         z_score        = self._session_vwap_z(highs, lows, closes, vols, current_price, atr_pct_rank)
@@ -813,14 +792,13 @@ class QuantEngine:
         L_rsi = 1.8 if rsi > 60 else 0.55 if rsi < 40 else 1.0
 
         # ── Step 3: OFI + Z-Score combined gate (OFI now in (-1,+1)) ─────────
-        # M-02 FIX: z_score is already Z_t (shrunk by t_scale=0.8165).
-        # Thresholds updated 1.5 → 1.22 to match corrected signal_config.py.
-        if z_score < -1.22 and ofi > 0.2:       # oversold + buying flow
+        # B3 FIX: Z-score threshold raised 1.22 → 1.50 for tighter signal gating.
+        if z_score < -1.50 and ofi > 0.2:       # oversold + buying flow
             L_flow = 2.0
-        elif z_score > 1.22 and ofi < -0.2:     # overbought + selling flow
+        elif z_score > 1.50 and ofi < -0.2:     # overbought + selling flow
             L_flow = 0.5
         else:
-            L_z = 1.3 if z_score < -1.22 else 0.76 if z_score > 1.22 else 1.0
+            L_z = 1.3 if z_score < -1.50 else 0.76 if z_score > 1.50 else 1.0
             L_o = 1.2 if ofi > 0.3 else 0.83 if ofi < -0.3 else 1.0
             L_flow = L_z * L_o
 

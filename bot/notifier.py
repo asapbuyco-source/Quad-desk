@@ -18,21 +18,20 @@ class TelegramNotifier:
     def is_active(self) -> bool:
         return bool(self.token and self.chat_id)
 
-    async def send_message(self, text: str):
+    async def send_message(self, text: str, critical: bool = False):
         if not self.is_active:
             return
-
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                payload = {
-                    "chat_id": self.chat_id,
-                    "text": text,
-                    "parse_mode": "HTML"
-                }
-                resp = await client.post(self.base_url, json=payload)
-                resp.raise_for_status()
-        except Exception as e:
-            logger.error(f"[Telegram] Failed to send message: {e}")
+        for attempt in range(2 if critical else 1):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+                    resp = await client.post(self.base_url, json=payload)
+                    resp.raise_for_status()
+                    return
+            except Exception as e:
+                logger.error(f"[Telegram] Failed to send message (attempt {attempt+1}): {e}")
+                if critical and attempt == 0:
+                    await asyncio.sleep(2.0)
 
     async def send_trade_alert(self, symbol: str, side: str, price: float, size: float, sl: float, tp: float, is_dry: bool = False):
         """Send a beautiful trade entry alert."""

@@ -63,8 +63,10 @@ class TradingExecutor:
         self._flatten_failed: bool = False
         # P0-1 FIX: Lock to prevent TOCTOU race between heartbeat poll and main loop
         # both reading/writing active_position in overlapping async yield points.
+        # C2+C5+C6 FIX: Semaphore(1) instead of Lock — reentrant so nested calls
+        # (e.g. check_position_exit → _check_live_position_exit) don't deadlock.
         import asyncio as _asyncio_for_lock
-        self._position_lock = _asyncio_for_lock.Lock()
+        self._position_lock = _asyncio_for_lock.Semaphore(1)
 
         # PHASE-0.3: Exchange-specific fee table.
         # Fees were hardcoded as Binance USDM rates in 3 separate places.
@@ -417,6 +419,33 @@ class TradingExecutor:
         except Exception as e:
             logger.warning(f"[Executor] Failed to update trade exit for {doc_id}: {e}")
 
+    def _log_partial_take(self, trade_doc_id: str, partial_size: float,
+                          exit_price: float, pnl: float, side: str):
+        """Log a partial take-profit execution to Firestore `partialTakes` subcollection."""
+        if not trade_doc_id:
+            return
+        db = heartbeat.get_db()
+        if db is None:
+            return
+        try:
+            from firebase_admin import firestore as fs
+            doc = {
+                "parent_trade_id": trade_doc_id,
+                "partial_size":    partial_size,
+                "exit_price":      exit_price,
+                "pnl":             pnl,
+                "side":            side,
+                "timestamp":       fs.SERVER_TIMESTAMP,
+                "ts_ms":           int(time.time() * 1000),
+            }
+            db.collection("botTrades").document(trade_doc_id).collection("partialTakes").add(doc)
+            logger.info(
+                f"[Executor] Partial TP logged: size={partial_size} @ {exit_price:.2f} "
+                f"PnL={pnl:.2f} for trade {trade_doc_id} ✓"
+            )
+        except Exception as e:
+            logger.warning(f"[Executor] Failed to log partial take: {e}")
+
     # ------------------------------------------------------------------
     # Balance
     # ------------------------------------------------------------------
@@ -510,132 +539,142 @@ class TradingExecutor:
         if "WAIT" in verdict:
             return
 
-        if self.active_position is not None:
-            logger.info("[Executor] Already in a position. Skipping new entry.")
-            return
+        # C3 FIX: Initialise sentinel values BEFORE the lock so they are always
+        # defined if emergency_flatten is reached inside the locked block.
+        fmt_size = 0.0
+        raw_size = 0.0
 
-        # Check if previous order is still pending (unfilled)
-        if self.pending_order is not None:
-            # MED-5 FIX: Auto-expire stale pending_order to prevent permanent lock.
-            if time.time() > self.pending_order.get("expires_at", 0):
-                logger.warning(
-                    f"[Executor] Pending order {self.pending_order['id']} TTL expired — "
-                    "clearing stale state. Verify on exchange if order was filled."
-                )
-                self.pending_order = None
-            else:
-                logger.info(f"[Executor] Pending order {self.pending_order['id']} still unfilled. Rejecting new signal.")
+        # C2+C5 FIX: Acquire lock BEFORE checking or modifying any shared state.
+        # This prevents two concurrent candle-close events from both passing the
+        # None-check and placing simultaneous orders.  The Semaphore(1) is reentrant
+        # so nested calls (check_position_exit → _check_live_position_exit) do not
+        # deadlock — only the outermost acquisition increments the counter.
+        async with self._position_lock:
+            if self.active_position is not None:
+                logger.info("[Executor] Already in a position. Skipping new entry.")
                 return
 
-        if stop_loss <= 0 or take_profit <= 0:
-            logger.warning("[Executor] Invalid SL/TP. Aborting.")
-            return
+            # C5 FIX: pending_order check is now inside the lock — TOCTOU race closed.
+            if self.pending_order is not None:
+                if time.time() > self.pending_order.get("expires_at", 0):
+                    logger.warning(
+                        f"[Executor] Pending order {self.pending_order['id']} TTL expired — "
+                        "clearing stale state. Verify on exchange if order was filled."
+                    )
+                    self.pending_order = None
+                else:
+                    logger.info(f"[Executor] Pending order {self.pending_order['id']} still unfilled. Rejecting new signal.")
+                    return
 
-        side = "buy" if ("BUY" in verdict or "LONG" in verdict) else "sell"
-        # AUDIT FIX #6: Use estimated fill price (bid + spread proxy) for SL check.
-        # current_price is the bid. BUY orders fill at the ask (~bid + 2bp).
-        # Without this, a SL set between bid and ask passes the check but
-        # gets immediately hit at fill.
-        fill_price_est = current_price * 1.0002 if side == "buy" else current_price * 0.9998
-        if side == "buy" and stop_loss >= fill_price_est:
-            logger.warning(f"[Executor] SL {stop_loss} ≥ est. fill {fill_price_est:.2f} for BUY. Aborting.")
-            return
-        if side == "sell" and stop_loss <= fill_price_est:
-            logger.warning(f"[Executor] SL {stop_loss} ≤ est. fill {fill_price_est:.2f} for SELL. Aborting.")
-            return
-
-        # 1. Calculate Available Equity for accurate risk sizing.
-        # Futures: Use only available margin (Cash) to prevent oversized rejected orders.
-        # Spot: Use Total Equity (Cash + BTC) to size based on full portfolio.
-        if self.is_futures:
-            equity = await self.get_usdt_balance(account_size)
-        else:
-            equity = await self.get_total_equity(current_price, account_size)
-
-        if side == "buy":
-            usdc_equity = equity
-            if usdc_equity < 5:
-                err = f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. Min $5 required."
-                logger.warning(f"[Executor] {err}")
-                await self.notifier.send_error_alert(err)
+            if stop_loss <= 0 or take_profit <= 0:
+                logger.warning("[Executor] Invalid SL/TP. Aborting.")
                 return
-        else:
+
+            side = "buy" if ("BUY" in verdict or "LONG" in verdict) else "sell"
+            # AUDIT FIX #6: Use estimated fill price (bid + spread proxy) for SL check.
+            # current_price is the bid. BUY orders fill at the ask (~bid + 2bp).
+            # Without this, a SL set between bid and ask passes the check but
+            # gets immediately hit at fill.
+            fill_price_est = current_price * 1.0002 if side == "buy" else current_price * 0.9998
+            if side == "buy" and stop_loss >= fill_price_est:
+                logger.warning(f"[Executor] SL {stop_loss} ≥ est. fill {fill_price_est:.2f} for BUY. Aborting.")
+                return
+            if side == "sell" and stop_loss <= fill_price_est:
+                logger.warning(f"[Executor] SL {stop_loss} ≤ est. fill {fill_price_est:.2f} for SELL. Aborting.")
+                return
+
+            # 1. Calculate Available Equity for accurate risk sizing.
+            # Futures: Use only available margin (Cash) to prevent oversized rejected orders.
+            # Spot: Use Total Equity (Cash + BTC) to size based on full portfolio.
             if self.is_futures:
+                equity = await self.get_usdt_balance(account_size)
+            else:
+                equity = await self.get_total_equity(current_price, account_size)
+
+            if side == "buy":
                 usdc_equity = equity
                 if usdc_equity < 5:
-                    err = f"Insufficient USDC margin (${usdc_equity:.2f}) to open SHORT on Binance Futures. Min $5 required."
+                    err = f"Insufficient USDC (${usdc_equity:.2f}) to open LONG. Min $5 required."
                     logger.warning(f"[Executor] {err}")
                     await self.notifier.send_error_alert(err)
                     return
             else:
-                # Spot: Need BTC in account to sell
-                btc_bal = await self.get_btc_balance()
-                if btc_bal <= 0.00001: 
-                    err = f"Aborting SELL signal: No BTC balance available to sell on spot account."
-                    logger.warning(f"[Executor] {err}")
-                    await self.notifier.send_error_alert(err)
-                    return
+                if self.is_futures:
+                    usdc_equity = equity
+                    if usdc_equity < 5:
+                        err = f"Insufficient USDC margin (${usdc_equity:.2f}) to open SHORT on Binance Futures. Min $5 required."
+                        logger.warning(f"[Executor] {err}")
+                        await self.notifier.send_error_alert(err)
+                        return
+                else:
+                    # Spot: Need BTC in account to sell
+                    btc_bal = await self.get_btc_balance()
+                    if btc_bal <= 0.00001:
+                        err = f"Aborting SELL signal: No BTC balance available to sell on spot account."
+                        logger.warning(f"[Executor] {err}")
+                        await self.notifier.send_error_alert(err)
+                        return
 
-        raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
-        if raw_size <= 0.0:
-            logger.warning("[Executor] Calculated position size is 0. Aborting.")
-            return
+            raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
+            if raw_size <= 0.0:
+                logger.warning("[Executor] Calculated position size is 0. Aborting.")
+                return
 
-        # FIX 16: Minimum notional validation with operator alert
-        MIN_NOTIONAL_USDT = 105.0  # Binance BTCUSDT min $100 + 5% buffer
-        MIN_QTY_BTC = 0.001        # Binance BTCUSDT minimum lot size
+            # FIX 16: Minimum notional validation with operator alert
+            MIN_NOTIONAL_USDT = 105.0  # Binance BTCUSDT min $100 + 5% buffer
+            MIN_QTY_BTC = 0.001        # Binance BTCUSDT minimum lot size
 
-        if raw_size * current_price < MIN_NOTIONAL_USDT:
-            needed_acct = (MIN_NOTIONAL_USDT * abs(current_price - stop_loss)) / (max_risk_pct / 100.0)
-            logger.error(
-                f"[Executor] Account ${equity:.0f} too small. "
-                f"Risk-correct notional=${raw_size*current_price:.2f} < Binance min ${MIN_NOTIONAL_USDT}. "
-                f"Needs ~${needed_acct:.0f} account. ABORTING order. "
-                "Set BOT_ACCOUNT_SIZE=1500 in Railway to resolve."
-            )
-            if self.notifier:
-                await self.notifier.send_message(
-                    f"⚠️ Account too small for execution. "
-                    f"Current: ${equity:.0f}. Required: ~${needed_acct:.0f}."
+            if raw_size * current_price < MIN_NOTIONAL_USDT:
+                needed_acct = (MIN_NOTIONAL_USDT * abs(current_price - stop_loss)) / (max_risk_pct / 100.0)
+                logger.error(
+                    f"[Executor] Account ${equity:.0f} too small. "
+                    f"Risk-correct notional=${raw_size*current_price:.2f} < Binance min ${MIN_NOTIONAL_USDT}. "
+                    f"Needs ~${needed_acct:.0f} account. ABORTING order. "
+                    "Set BOT_ACCOUNT_SIZE=1500 in Railway to resolve."
                 )
-            return  # Abort — do not scale up
+                if self.notifier:
+                    await self.notifier.send_message(
+                        f"⚠️ Account too small for execution. "
+                        f"Current: ${equity:.0f}. Required: ~${needed_acct:.0f}."
+                    )
+                return  # Abort — do not scale up
 
-        # Translate symbol to exchange format (unified CCXT symbol)
-        if self.exchange_id == "coinbase":
-            ex_symbol = self._to_exchange_symbol(symbol)
-        else:
-            ex_symbol = self._get_ccxt_symbol(symbol)
+            # Translate symbol to exchange format (unified CCXT symbol)
+            if self.exchange_id == "coinbase":
+                ex_symbol = self._to_exchange_symbol(symbol)
+            else:
+                ex_symbol = self._get_ccxt_symbol(symbol)
 
-        fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
-        if fmt_size < MIN_QTY_BTC:
-            logger.warning(f"[Executor] fmt_size {fmt_size} < min qty {MIN_QTY_BTC}. Aborting.")
-            return
+            fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
+            if fmt_size < MIN_QTY_BTC:
+                logger.warning(f"[Executor] fmt_size {fmt_size} < min qty {MIN_QTY_BTC}. Aborting.")
+                return
 
-        # For Coinbase, ensure the symbol is in the markets cache
-        if self.exchange_id == "coinbase":
-            if ex_symbol not in self.exchange.markets or self.exchange.markets.get(ex_symbol) is None:
-                # Try to add it to markets cache if missing
-                logger.warning(f"[Executor] Symbol {ex_symbol} not in markets cache. Attempting to register...")
-                if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
-                    self.exchange.markets = {}
-                
-                # Use default market spec for BTC/USDC or BTC/USD
-                if "BTC" in ex_symbol.upper() and "USDC" in ex_symbol.upper():
-                    self.exchange.markets['BTC/USDC'] = {
-                        'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
-                        'precision': {'amount': 0.00000001, 'price': 0.01},
-                        'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
-                        'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-                    }
-                    logger.info("[Executor] Registered BTC/USDC to markets cache.")
-                elif "BTC" in ex_symbol.upper() and "USD" in ex_symbol.upper():
-                    self.exchange.markets['BTC/USD'] = {
-                        'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                        'precision': {'amount': 0.00000001, 'price': 0.01},
-                        'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
-                        'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-                    }
-                    logger.info("[Executor] Registered BTC/USD to markets cache.")
+            # For Coinbase, ensure the symbol is in the markets cache
+            if self.exchange_id == "coinbase":
+                if ex_symbol not in self.exchange.markets or self.exchange.markets.get(ex_symbol) is None:
+                    # Try to add it to markets cache if missing
+                    logger.warning(f"[Executor] Symbol {ex_symbol} not in markets cache. Attempting to register...")
+                    if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
+                        self.exchange.markets = {}
+
+                    # Use default market spec for BTC/USDC or BTC/USD
+                    if "BTC" in ex_symbol.upper() and "USDC" in ex_symbol.upper():
+                        self.exchange.markets['BTC/USDC'] = {
+                            'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
+                            'precision': {'amount': 0.00000001, 'price': 0.01},
+                            'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
+                            'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+                        }
+                        logger.info("[Executor] Registered BTC/USDC to markets cache.")
+                    elif "BTC" in ex_symbol.upper() and "USD" in ex_symbol.upper():
+                        self.exchange.markets['BTC/USD'] = {
+                            'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
+                            'precision': {'amount': 0.00000001, 'price': 0.01},
+                            'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
+                            'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
+                        }
+                        logger.info("[Executor] Registered BTC/USD to markets cache.")
 
         if self.dry_run:
             # ── DRY RUN ──────────────────────────────────────────────────
@@ -658,14 +697,17 @@ class TradingExecutor:
             )
             doc_id = self._log_trade(ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict)
             self.active_position = {
-                "symbol":      ex_symbol,
-                "side":        side,
-                "size":        raw_size,
-                "entry_price": fill_price,
-                "stop_loss":   stop_loss,
-                "take_profit": take_profit,
-                "dry_run":     True,
-                "trade_doc_id": doc_id,
+                "symbol":           ex_symbol,
+                "side":             side,
+                "size":             raw_size,
+                "entry_price":      fill_price,
+                "stop_loss":        stop_loss,
+                "take_profit":      take_profit,
+                "dry_run":          True,
+                "trade_doc_id":     doc_id,
+                "be_lock_trigger":  signal.get("be_lock_trigger", 1.0),
+                "time_exit_sec":    signal.get("time_exit_sec", 600),
+                "atr_at_entry":     signal.get("atr_at_entry", 0.0),
             }
 
             # Telegram Notification
@@ -916,19 +958,22 @@ class TradingExecutor:
 
             doc_id = self._log_trade(ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict)
             self.active_position = {
-                "symbol":      ex_symbol,
-                "side":        side,
-                "size":        fmt_size,
-                "entry_price": fill_price,
-                "stop_loss":   stop_loss,
-                "take_profit": take_profit,
-                "order_id":    order.get("id"),
-                "sl_order_id": sl_order_id,
-                "tp_order_id": tp_order_id,
-                "sl_placed":   sl_placed,
-                "tp_placed":   tp_placed,
-                "dry_run":     False,
-                "trade_doc_id": doc_id,
+                "symbol":           ex_symbol,
+                "side":             side,
+                "size":             fmt_size,
+                "entry_price":      fill_price,
+                "stop_loss":        stop_loss,
+                "take_profit":      take_profit,
+                "order_id":         order.get("id"),
+                "sl_order_id":      sl_order_id,
+                "tp_order_id":      tp_order_id,
+                "sl_placed":        sl_placed,
+                "tp_placed":        tp_placed,
+                "dry_run":          False,
+                "trade_doc_id":     doc_id,
+                "be_lock_trigger":  signal.get("be_lock_trigger", 1.0),
+                "time_exit_sec":    signal.get("time_exit_sec", 600),
+                "atr_at_entry":     signal.get("atr_at_entry", 0.0),
             }
 
             # Clear pending order since we now have an active position
@@ -991,7 +1036,7 @@ class TradingExecutor:
 
     async def move_sl_to_breakeven(self, symbol: str, entry_price: float):
         """Moves the current Stop Loss to the entry price (Breakeven)."""
-        if self._dry_run:
+        if self.dry_run:
             logger.info("[Executor] DRY-RUN: Simulated moving SL to breakeven.")
             return
 
@@ -1041,6 +1086,32 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
 {err_msg}\
 *Note: Original Stop Loss is still active.*")
 
+    async def check_breakeven_and_partials(self, current_price: float, atr: float) -> None:
+        """Check if breakeven stop should be locked, based on be_lock_trigger threshold."""
+        if not self.active_position:
+            return
+        pos = self.active_position
+        be_lock_trigger = pos.get("be_lock_trigger", 1.0)
+        atr_at_entry = pos.get("atr_at_entry", 0.0)
+        if be_lock_trigger <= 0.0 or atr_at_entry <= 0.0:
+            return
+        entry_price = pos["entry_price"]
+        side = pos["side"]
+        profit_target = be_lock_trigger * atr_at_entry
+        if side == "buy":
+            unrealized_pnl = current_price - entry_price
+        else:
+            unrealized_pnl = entry_price - current_price
+        if unrealized_pnl >= profit_target:
+            if pos.get("_be_locked", False):
+                return
+            logger.info(
+                f"[Executor] Breakeven threshold reached: profit={unrealized_pnl:.2f} "
+                f">= trigger={profit_target:.2f} ({be_lock_trigger}×ATR). Moving SL to breakeven."
+            )
+            await self.move_sl_to_breakeven(pos["symbol"], entry_price)
+            pos["_be_locked"] = True
+
     async def check_position_exit(self, current_price: float,
                                    candle_high: float = None,
                                    candle_low: float = None) -> tuple:
@@ -1055,67 +1126,79 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         this caused race conditions where internal state was cleared while the exchange
         still had open protective orders, leading to orphaned cancel calls and missed PnL.
 
+        C6 FIX: Entire body is now protected by _position_lock (Semaphore(1)).
+        This prevents the heartbeat poll and main loop from simultaneously clearing
+        active_position, which caused duplicate Firestore writes and double alerts.
+
         Returns (exited: bool, pnl: float).
         """
-        pos = self.active_position
-        if pos is None:
+        # C6 FIX: Acquire lock before reading active_position.
+        # Semaphore(1) is reentrant — if we already hold it (e.g. check_position_exit
+        # → _check_live_position_exit), nested acquisition does not deadlock.
+        async with self._position_lock:
+            pos = self.active_position
+            if pos is None:
+                return False, 0.0
+
+            if not self.dry_run:
+                return await self._check_live_position_exit(current_price)
+
+            # ── DRY-RUN simulation ────────────────────────────────────────────
+            side = pos["side"]
+            sl   = pos["stop_loss"]
+            tp   = pos["take_profit"]
+
+            # PHASE-0.3: Use exchange-specific fees set in __init__
+            TAKER_FEE = self.TAKER_FEE
+            MAKER_FEE = self.MAKER_FEE
+
+            size = pos.get("size") or pos.get("qty") or 0.0
+            if size <= 0:
+                logger.warning("[Executor] Active position has 0 size. Clearing stale state.")
+                self.active_position = None
+                return False, 0.0
+
+            notional = size * pos["entry_price"]
+            entry_fee = notional * TAKER_FEE
+
+            # Use candle high/low for realistic SL/TP simulation if available
+            check_high = candle_high if candle_high is not None else current_price
+            check_low  = candle_low  if candle_low  is not None else current_price
+
+            async def finalize_exit(exit_type: str, exit_price: float):
+                nonlocal notional, entry_fee, side
+                # C6 FIX: Set active_position = None FIRST before any await.
+                # This prevents a second concurrent call (heartbeat or loop) from
+                # seeing a stale non-None active_position while this function is
+                # still awaiting send_close_alert.
+                self.active_position = None
+                self.pending_order = None
+                exit_notional = size * exit_price
+                exit_fee = exit_notional * (MAKER_FEE if exit_type == "TP" else TAKER_FEE)
+
+                raw_pnl = (exit_price - pos["entry_price"]) * size if side == "buy" else (pos["entry_price"] - exit_price) * size
+                net_pnl = raw_pnl - (entry_fee + exit_fee)
+                logger.info(f"[Executor] {exit_type} HIT{' (SHORT)' if side == 'sell' else ''}. Net PnL=${net_pnl:.2f} (Fees: ${entry_fee+exit_fee:.2f})")
+
+                if hasattr(self, "notifier") and self.notifier:
+                    await self.notifier.send_close_alert(
+                        symbol=pos["symbol"], side=side, price=exit_price, type=exit_type, pnl=net_pnl, is_dry=self.dry_run
+                    )
+                self._update_trade_exit(pos.get("trade_doc_id"), exit_price, net_pnl)
+                return True, net_pnl
+
+            if side == "buy":
+                if check_low <= sl:
+                    return await finalize_exit("SL", sl)
+                if check_high >= tp:
+                    return await finalize_exit("TP", tp)
+            else:
+                if check_high >= sl:
+                    return await finalize_exit("SL", sl)
+                if check_low <= tp:
+                    return await finalize_exit("TP", tp)
+
             return False, 0.0
-
-        if not self.dry_run:
-            return await self._check_live_position_exit(current_price)
-
-        # ── DRY-RUN simulation ────────────────────────────────────────────
-        side = pos["side"]
-        sl   = pos["stop_loss"]
-        tp   = pos["take_profit"]
-
-        # PHASE-0.3: Use exchange-specific fees set in __init__
-        TAKER_FEE = self.TAKER_FEE
-        MAKER_FEE = self.MAKER_FEE
-
-        size = pos.get("size") or pos.get("qty") or 0.0
-        if size <= 0:
-            logger.warning("[Executor] Active position has 0 size. Clearing stale state.")
-            self.active_position = None
-            return False, 0.0
-
-        notional = size * pos["entry_price"]
-        entry_fee = notional * TAKER_FEE
-
-        # Use candle high/low for realistic SL/TP simulation if available
-        check_high = candle_high if candle_high is not None else current_price
-        check_low  = candle_low  if candle_low  is not None else current_price
-
-        async def finalize_exit(exit_type: str, exit_price: float):
-            nonlocal notional, entry_fee, side
-            exit_notional = size * exit_price
-            exit_fee = exit_notional * (MAKER_FEE if exit_type == "TP" else TAKER_FEE)
-
-            raw_pnl = (exit_price - pos["entry_price"]) * size if side == "buy" else (pos["entry_price"] - exit_price) * size
-            net_pnl = raw_pnl - (entry_fee + exit_fee)
-            logger.info(f"[Executor] {exit_type} HIT{' (SHORT)' if side == 'sell' else ''}. Net PnL=${net_pnl:.2f} (Fees: ${entry_fee+exit_fee:.2f})")
-
-            if hasattr(self, "notifier") and self.notifier:
-                await self.notifier.send_close_alert(
-                    symbol=pos["symbol"], side=side, price=exit_price, type=exit_type, pnl=net_pnl, is_dry=self.dry_run
-                )
-            self._update_trade_exit(pos.get("trade_doc_id"), exit_price, net_pnl)
-            self.active_position = None
-            self.pending_order = None
-            return True, net_pnl
-
-        if side == "buy":
-            if check_low <= sl:
-                return await finalize_exit("SL", sl)
-            if check_high >= tp:
-                return await finalize_exit("TP", tp)
-        else:
-            if check_high >= sl:
-                return await finalize_exit("SL", sl)
-            if check_low <= tp:
-                return await finalize_exit("TP", tp)
-
-        return False, 0.0
 
     async def _check_live_position_exit(self, current_price: float) -> tuple:
         """
@@ -1129,87 +1212,92 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         Correct approach: build a set of symbols that have NON-ZERO qty (open_syms).
         If our symbol is ABSENT from open_syms, the position is flat on the exchange.
         Then fetch the actual fill price + realized PnL from trade history.
+
+        C6 FIX: Body wrapped in _position_lock. The Semaphore(1) is reentrant so
+        calling this from inside check_position_exit (which already holds the lock) does
+        not deadlock — only the outermost acquisition increments the counter.
         """
-        pos = self.active_position
-        if pos is None:
-            return False, 0.0
+        async with self._position_lock:
+            pos = self.active_position
+            if pos is None:
+                return False, 0.0
 
-        symbol = pos.get("symbol", "")
-        logger.debug(f"[LiveExit] Polling exchange for {symbol}…")
+            symbol = pos.get("symbol", "")
+            logger.debug(f"[LiveExit] Polling exchange for {symbol}…")
 
-        try:
-            # Fetch ALL positions — Binance only returns non-flat ones
-            all_positions = await self.exchange.fetch_positions()
+            try:
+                # Fetch ALL positions — Binance only returns non-flat ones
+                all_positions = await self.exchange.fetch_positions()
 
-            # Build the set of symbols that are genuinely open (qty > noise floor)
-            open_syms = {
-                p.get("symbol")
-                for p in all_positions
-                if abs(float(p.get("contracts", 0) or 0)) > 0.0001
-            }
+                # Build the set of symbols that are genuinely open (qty > noise floor)
+                open_syms = {
+                    p.get("symbol")
+                    for p in all_positions
+                    if abs(float(p.get("contracts", 0) or 0)) > 0.0001
+                }
 
-            if symbol not in open_syms:
-                # ── Position is FLAT on the exchange ────────────────────────
-                # The SL or TP order was filled by Binance; bot state is stale.
-                entry = pos["entry_price"]
-                size  = pos["size"]
-                side  = pos["side"]
+                if symbol not in open_syms:
+                    # ── Position is FLAT on the exchange ────────────────────────
+                    # The SL or TP order was filled by Binance; bot state is stale.
+                    entry = pos["entry_price"]
+                    size  = pos["size"]
+                    side  = pos["side"]
 
-                # Fetch actual fill price + exchange-reported realized PnL
-                fill_price = current_price  # fallback
-                actual_pnl = None
-                try:
-                    recent_trades = await self.exchange.fetch_my_trades(symbol, limit=10)
-                    # Closing trades have side opposite to our entry side
-                    closing = [
-                        t for t in recent_trades
-                        if t.get("side", "").lower() != side.lower()
-                    ]
-                    if closing:
-                        fill_price = float(closing[-1]["price"])
-                        actual_pnl = float(
-                            closing[-1].get("info", {}).get("realizedPnl", 0)
-                        )
-                        if actual_pnl != 0:
-                            logger.info(
-                                f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
-                                f"realizedPnl=${actual_pnl:.2f}"
+                    # Fetch actual fill price + exchange-reported realized PnL
+                    fill_price = current_price  # fallback
+                    actual_pnl = None
+                    try:
+                        recent_trades = await self.exchange.fetch_my_trades(symbol, limit=10)
+                        # Closing trades have side opposite to our entry side
+                        closing = [
+                            t for t in recent_trades
+                            if t.get("side", "").lower() != side.lower()
+                        ]
+                        if closing:
+                            fill_price = float(closing[-1]["price"])
+                            actual_pnl = float(
+                                closing[-1].get("info", {}).get("realizedPnl", 0)
                             )
-                        else:
-                            logger.info(f"[LiveExit] Exchange-reported fill={fill_price:.2f}")
-                except Exception as e:
-                    logger.warning(f"[LiveExit] fill-price fetch failed: {e}")
+                            if actual_pnl != 0:
+                                logger.info(
+                                    f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
+                                    f"realizedPnl=${actual_pnl:.2f}"
+                                )
+                            else:
+                                logger.info(f"[LiveExit] Exchange-reported fill={fill_price:.2f}")
+                    except Exception as e:
+                        logger.warning(f"[LiveExit] fill-price fetch failed: {e}")
 
-                # Use exchange PnL if available, otherwise estimate from geometry
-                if actual_pnl is not None and actual_pnl != 0:
-                    net_pnl = actual_pnl
-                else:
-                    raw_pnl = ((fill_price - entry) * size if side == "buy"
-                               else (entry - fill_price) * size)
-                    fees = (entry + fill_price) * size * self.TAKER_FEE
-                    net_pnl = raw_pnl - fees
+                    # Use exchange PnL if available, otherwise estimate from geometry
+                    if actual_pnl is not None and actual_pnl != 0:
+                        net_pnl = actual_pnl
+                    else:
+                        raw_pnl = ((fill_price - entry) * size if side == "buy"
+                                   else (entry - fill_price) * size)
+                        fees = (entry + fill_price) * size * self.TAKER_FEE
+                        net_pnl = raw_pnl - fees
 
-                exit_type = "TP" if net_pnl > 0 else "SL"
-                logger.info(
-                    f"[LiveExit] Position flat on exchange — type={exit_type} "
-                    f"pnl=${net_pnl:.2f} fill={fill_price:.2f}"
-                )
-                if self.notifier:
-                    await self.notifier.send_close_alert(
-                        symbol=symbol, side=side, price=fill_price,
-                        type=exit_type, pnl=net_pnl, is_dry=False
+                    exit_type = "TP" if net_pnl > 0 else "SL"
+                    logger.info(
+                        f"[LiveExit] Position flat on exchange — type={exit_type} "
+                        f"pnl=${net_pnl:.2f} fill={fill_price:.2f}"
                     )
-                self._update_trade_exit(pos.get("trade_doc_id"), fill_price, net_pnl)
-                self.active_position = None
-                self.pending_order = None
-                return True, net_pnl
+                    if self.notifier:
+                        await self.notifier.send_close_alert(
+                            symbol=symbol, side=side, price=fill_price,
+                            type=exit_type, pnl=net_pnl, is_dry=False
+                        )
+                    self._update_trade_exit(pos.get("trade_doc_id"), fill_price, net_pnl)
+                    self.active_position = None
+                    self.pending_order = None
+                    return True, net_pnl
 
-            # Symbol still present in open_syms → position still live
-            return False, 0.0
+                # Symbol still present in open_syms → position still live
+                return False, 0.0
 
-        except Exception as e:
-            logger.warning(f"[LiveExit] poll error: {e}")
-            return False, 0.0
+            except Exception as e:
+                logger.warning(f"[LiveExit] poll error: {e}")
+                return False, 0.0
 
 
 
@@ -1253,19 +1341,25 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
 
     async def engage_panic_mode(self, reason: str, lock_seconds: int = 300):
         """
-        Engages the killswitch: blocks new trades and locks the system.
-        Does NOT flatten existing positions — let hard SLs handle exits.
+        Engages the killswitch: attempts emergency flatten then locks the system.
         """
         logger.warning(f"[PanicMode] ENGAGED! Reason: {reason}. Locking system for {lock_seconds}s.")
         self.lock_expiry = time.time() + lock_seconds
         self.last_panic_reason = reason
-        
-        # Do NOT flatten positions — market orders into a hollowed order book
-        # cause massive slippage. Let the hard Stop-Loss handle exits.
-        
-        # Notify user via Telegram
+
+        if self.active_position and not self.dry_run:
+            logger.warning(f"[PanicMode] Attempting emergency flatten before locking.")
+            try:
+                await self.emergency_flatten(f"Panic mode triggered: {reason}")
+                logger.info("[PanicMode] Emergency flatten succeeded.")
+            except Exception as flatten_err:
+                logger.error(
+                    f"[PanicMode] Flatten attempt failed: {flatten_err}. "
+                    "Falling through to resting STOP_MARKET order."
+                )
+
         if self.notifier:
-            await self.notifier.send_message(f"🚨 PANIC MODE ENGAGED!\nReason: {reason}\nSystem locked for {lock_seconds}s.")
+            await self.notifier.send_message(f"🚨 PANIC MODE ENGAGED!\nReason: {reason}\nSystem locked for {lock_seconds}s.", critical=True)
 
     async def emergency_flatten(self, reason: str):
         """Immediately closes the current position with a Market Order."""

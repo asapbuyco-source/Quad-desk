@@ -32,6 +32,7 @@ class MarketState:
         self._cvd_was_reset: bool = False  # flag to suppress CVD delta spike after reconnect
         self._aggtrade_msg_count: int = 0  # P0-1 FIX: throughput counter for monitoring
         self._aggtrade_count_reset_ts: float = time.time()  # last reset for msg/min calculation
+        self.last_fired_sweep_candle_ts: float = 0.0  # FIX-C3: dedup guard for sweep detection
 
     # ------------------------------------------------------------------
     # Candle management
@@ -233,7 +234,7 @@ class BinanceDataFeed:
             params = {
                 "symbol": self.symbol.upper(),
                 "interval": self.interval,
-                "limit": 100
+                "limit": 500  # was 100
             }
             import os
             api_key = os.environ.get("BINANCE_API_KEY", "")
@@ -306,8 +307,11 @@ class BinanceDataFeed:
                     close_timeout=10
                 ) as ws:
                     retry_delay = 1  # Reset back-off on successful connect
-                    self.state.cvd = 0.0
-                    self.state._cvd_was_reset = True  # Signal main loop to suppress next delta
+                    # C1 FIX: Do NOT reset CVD here. The aggTrade stream resumes from where
+                    # it left off; setting cvd=0 creates a spurious delta spike on every
+                    # reconnect. The REST prefetch already rebuilds the CVD baseline once
+                    # at startup (candles_seeded=True after that); on reconnect the stream
+                    # continues accumulating from its current value — no reset needed.
                     logger.info("[DataFeed] Connected ✓")
                     # PHASE-0.3: Fetch funding rate immediately on connection (before WS loop)
                     asyncio.create_task(self._fetch_funding_rate())
@@ -487,31 +491,35 @@ class BinanceDataFeed:
                             logger.warning(f"[UserDataStream] Keepalive failed: {e}")
 
                 keepalive_task = asyncio.create_task(_keepalive())
-
-                async with websockets.connect(
-                    f"{ws_base}/ws/{listen_key}",
-                    ping_interval=20, ping_timeout=30
-                ) as ws:
-                    logger.info("[UserDataStream] Connected ✓")
-                    while self.is_running:
+                try:
+                    async with websockets.connect(
+                        f"{ws_base}/ws/{listen_key}",
+                        ping_interval=20, ping_timeout=30
+                    ) as ws:
+                        logger.info("[UserDataStream] Connected ✓")
+                        while self.is_running:
+                            try:
+                                raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                                event = json.loads(raw)
+                                if event.get("e") == "ORDER_TRADE_UPDATE":
+                                    order = event.get("o", {})
+                                    if order.get("X") == "FILLED" and order.get("R"):
+                                        pnl = float(order.get("rp", 0.0))
+                                        logger.info(
+                                            f"[UserDataStream] Fill: orderId={order.get('i')} "
+                                            f"PnL=${pnl:.2f}"
+                                        )
+                                        await on_fill_callback(pnl)
+                            except asyncio.TimeoutError:
+                                logger.warning("[UserDataStream] recv timeout — reconnecting")
+                                break
+                finally:
+                    if not keepalive_task.done():
+                        keepalive_task.cancel()
                         try:
-                            raw = await asyncio.wait_for(ws.recv(), timeout=60)
-                            event = json.loads(raw)
-                            if event.get("e") == "ORDER_TRADE_UPDATE":
-                                order = event.get("o", {})
-                                # Filled + reduceOnly = position exit
-                                if order.get("X") == "FILLED" and order.get("R"):
-                                    pnl = float(order.get("rp", 0.0))
-                                    logger.info(
-                                        f"[UserDataStream] Fill: orderId={order.get('i')} "
-                                        f"PnL=${pnl:.2f}"
-                                    )
-                                    await on_fill_callback(pnl)
-                        except asyncio.TimeoutError:
-                            logger.warning("[UserDataStream] recv timeout — reconnecting")
-                            break
-
-                keepalive_task.cancel()
+                            await keepalive_task
+                        except asyncio.CancelledError:
+                            pass
 
             except Exception as e:
                 logger.warning(f"[UserDataStream] Error: {e} — retry in 10s")

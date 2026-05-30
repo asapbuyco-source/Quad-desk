@@ -355,7 +355,6 @@ def compute_ulis_verdict(
         regime_label = "Market Unstable — Cascade Elevated · Wait for Stabilisation"
     elif (
         liquidity_vector > 0.28 and
-        scores["nlfScore"] > 0.58 and
         scores["glrScore"] > 0.50 and
         cascade_risk < 0.45 and
         alde_confidence > 0.68 and
@@ -368,7 +367,6 @@ def compute_ulis_verdict(
         regime_label = "Bullish Bias · Liquidity Vector Positive — Moderate ALDE Alignment"
     elif (
         liquidity_vector < -0.28 and
-        scores["nlfScore"] < 0.42 and
         scores["glrScore"] < 0.50 and
         cascade_risk < 0.45 and
         alde_confidence > 0.68 and

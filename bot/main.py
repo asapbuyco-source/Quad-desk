@@ -63,7 +63,7 @@ from bot.signal_config import (
     MAX_RISK_PCT as CFG_MAX_RISK_PCT,
     MAX_DAILY_LOSS_PCT as CFG_MAX_DAILY_LOSS_PCT,
     MAX_DRAWDOWN_PCT as CFG_MAX_DRAWDOWN_PCT,
-    MIN_BAYESIAN as CFG_MIN_BAYESIAN
+    MIN_CONFIDENCE_GLOBAL as CFG_MIN_BAYESIAN
 )
 
 # ──────────────────────────────────────────────────────────────────────
@@ -156,12 +156,18 @@ BOT_STATS: Dict[str, Any] = {
     "last_ulis":       "—",
     "daily_pnl":       0.0,
     "session_pnl":    0.0,  # PHASE-3.1: Initialized for daily drawdown reset
+    "cumulative_pnl": 0.0,  # FIX-R1: never resets — lifetime PnL since first boot
     "daily_loss_halt": False,
     "consecutive_losses": 0,
     "cooldown_until":     0.0,
     "gate_stats": {
         "daily_loss_halt":           0,
         "drawdown_halt":             0,
+        "atr_panic_halt":            0,
+        "rsi_overbought":            0,
+        "rsi_oversold":              0,
+        "bayes_floor_veto":          0,
+        "consecutive_loss_halt":     0,
         "zscore_warmup":            0,
         "post_trade_cooldown":      0,
         "cascade_cooldown":         0,
@@ -176,7 +182,7 @@ BOT_STATS: Dict[str, Any] = {
         "micro_confirms_failed":    0,
         "sweep_confirms_failed":    0,
         "fee_geometry":             0,
-"signal_none":              0,
+        "signal_none":              0,
         "total_passed":             0,
         "cvd_divergence_veto":      0,
         "derivatives_veto":         0,
@@ -398,6 +404,9 @@ class _HMMRegimeClassifier:
     """
 
     # --- Emission means (μ) per state × feature -----------------------
+    # C6 PLACEHOLDER: These _MU / _SIGMA values are hand-tuned placeholders.
+    # Run C5 (HMM calibration script) on historical data to derive optimal
+    # emission parameters for your specific market conditions and timeframe.
     # Features: [atr_pct, |z_score|, tape_binary, atr_pct_rank]
     #   f0 = atr_pct       (0 – 0.02)  raw ATR as fraction of price
     #   f1 = abs(z_score)  (0 – 4)
@@ -458,13 +467,17 @@ class _HMMRegimeClassifier:
             "sigma": self._sigma.tolist(),
             "saved_at": time.time(),
         }
+        existing = getattr(self, "_fs_write_thread", None)
+        if existing is not None and existing.is_alive():
+            logger.debug("[HMM] Previous Firestore write still in progress — skipping this save.")
+            return
 
         def _write_firestore(payload: dict) -> None:
             try:
-                import json
+                import json as _json
                 fs_payload = payload.copy()
-                fs_payload["mu"] = json.dumps(fs_payload.get("mu", []))
-                fs_payload["sigma"] = json.dumps(fs_payload.get("sigma", []))
+                fs_payload["mu"] = _json.dumps(fs_payload.get("mu", []))
+                fs_payload["sigma"] = _json.dumps(fs_payload.get("sigma", []))
                 from bot.heartbeat import get_db
                 db = get_db()
                 if db is not None:
@@ -473,12 +486,13 @@ class _HMMRegimeClassifier:
             except Exception as e:
                 logger.warning(f"[HMM] Firestore state save failed: {e}")
 
-        threading.Thread(
+        self._fs_write_thread = threading.Thread(
             target=_write_firestore,
             args=(dict(data),),
             daemon=True,
             name="HMMEngine-FSWrite",
-        ).start()
+        )
+        self._fs_write_thread.start()
 
         try:
             with open(self._persist_path, "w") as f:
@@ -745,6 +759,7 @@ def _detect_regime(
     sell_walls: List[float],
     quant,  # PHASE-1.3: Reference to QuantEngine for stateful tracking
     sweep: Optional[str] = None,
+    feed_state=None,  # B1: raw order book for wall significance filter
 ) -> str:
     """
     HMM-based regime classifier with probabilistic output.
@@ -781,8 +796,11 @@ def _detect_regime(
     )
 
     if near_wall:
-        # Wall significance filter: only override if wall is ≥ 3× median level
-        all_levels = list(metrics.get("bid_depths", {}).values()) + list(metrics.get("ask_depths", {}).values())
+        # B1 FIX: Wall significance filter uses raw feed_state.bids/asks
+        # instead of lob_metrics-filtered bid_depths/ask_depths.
+        raw_bids = getattr(feed_state, "bids", {}) or {}
+        raw_asks = getattr(feed_state, "asks", {}) or {}
+        all_levels = list(raw_bids.values()) + list(raw_asks.values())
         median_level = float(np.median(all_levels)) if all_levels else 0.0
 
         # Check which wall is near
@@ -791,10 +809,10 @@ def _detect_regime(
         near_wall_size = 0.0
         near_wall_is_buy = False
         if nearest_buy and abs(price - nearest_buy) / price <= WALL_PROXIMITY:
-            near_wall_size = metrics.get("bid_depths", {}).get(nearest_buy, 0.0)
+            near_wall_size = raw_bids.get(nearest_buy, 0.0)
             near_wall_is_buy = True
         elif nearest_sell and abs(price - nearest_sell) / price <= WALL_PROXIMITY:
-            near_wall_size = metrics.get("ask_depths", {}).get(nearest_sell, 0.0)
+            near_wall_size = raw_asks.get(nearest_sell, 0.0)
 
         wall_is_significant = (median_level > 0 and near_wall_size >= median_level * 3.0)
 
@@ -860,9 +878,10 @@ def _detect_regime(
 # ══════════════════════════════════════════════════════════════════════
 
 def _detect_liquidity_sweep(metrics: Dict[str, Any],
-                             buy_walls: List[float],
-                             sell_walls: List[float],
-                             candle_history: list) -> Optional[str]:
+                              buy_walls: List[float],
+                              sell_walls: List[float],
+                              candle_history: list,
+                              feed_state) -> Optional[str]:
     if len(candle_history) < 2 or not sell_walls or not buy_walls:
         return None, None, None
 
@@ -882,12 +901,11 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
     # FIX-P5: Per-candle sweep deduplication.
     # The same wick on the same candle was re-firing every 15s cycle (audit Problem 5).
     # Only allow one sweep signal per unique candle open-timestamp.
-    global _LAST_FIRED_SWEEP_CANDLE_TS
     for idx, label in [(-1, "live"), (-2, "prev")]:
         candle = candle_history[idx]
         candle_open_ts = float(candle.get("time", 0.0))
 
-        if candle_open_ts > 0 and candle_open_ts == _LAST_FIRED_SWEEP_CANDLE_TS:
+        if candle_open_ts > 0 and candle_open_ts == feed_state.last_fired_sweep_candle_ts:
             logger.debug(
                 f"[Sweep] Dedup: candle ts={candle_open_ts:.0f} already fired. "
                 "Suppressing repeat sweep from same candle."
@@ -897,13 +915,13 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
         if candle["high"] > nearest_sell and price < nearest_sell:
             logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (wick={candle['high']:.2f})")
             sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
-            _LAST_FIRED_SWEEP_CANDLE_TS = candle_open_ts
+            feed_state.last_fired_sweep_candle_ts = candle_open_ts
             return "ABOVE_HIGHS", sweep_ts, float(candle["high"])
 
         if candle["low"] < nearest_buy and price > nearest_buy:
             logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (wick={candle['low']:.2f})")
             sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
-            _LAST_FIRED_SWEEP_CANDLE_TS = candle_open_ts
+            feed_state.last_fired_sweep_candle_ts = candle_open_ts
             return "BELOW_LOWS", sweep_ts, float(candle["low"])
 
     return None, None, None
@@ -985,16 +1003,11 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
 
 
 def _strategy_mean_reversion(metrics: Dict[str, Any], z_threshold: float = 1.5) -> Optional[str]:
-    """FIX NEW-C3: Dynamic RSI gates — adaptive to ATR rank."""
+    """B4 FIX: Hard RSI floors — RSI < 45 for longs, RSI > 55 for shorts."""
     z = metrics.get("zScore", 0.0)
     rsi = metrics.get("rsi", 50.0)
-    atr_rank = metrics.get("atr_pct_rank", 0.5)
-    if atr_rank < 0.5:
-        rsi_long_gate = 55.0
-        rsi_short_gate = 45.0
-    else:
-        rsi_long_gate = 42.0
-        rsi_short_gate = 58.0
+    rsi_long_gate = 45.0   # B4: hard floor — only enter long when RSI < 45
+    rsi_short_gate = 55.0  # B4: hard floor — only enter short when RSI > 55
     if z >= z_threshold and rsi > rsi_short_gate:
         return "MEAN_REVERSAL_SHORT"
     if z <= -z_threshold and rsi < rsi_long_gate:
@@ -1675,8 +1688,8 @@ async def _compute_signal(
 
     # --- AUDIT FIX 1: ATR PANIC GATE ---
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
-    if atr_pct_rank >= 0.95:
-        logger.warning(f"[RiskEngine] 🛑 ATR PANIC HALT — ATR rank={atr_pct_rank:.0%} >= 95%. Volatility too extreme to trade. Blocking entry.")
+    if atr_pct_rank >= 0.90:
+        logger.warning(f"[RiskEngine] 🛑 ATR PANIC HALT — ATR rank={atr_pct_rank:.0%} >= 90%. Volatility too extreme to trade. Blocking entry.")
         _gate_stats_summary("atr_panic_halt")
         return {**WAIT, "analysis": f"ATR PANIC HALT (rank={atr_pct_rank:.0%}). Volatility too extreme."}
 
@@ -1707,10 +1720,10 @@ async def _compute_signal(
     sell_walls = [p for p, _ in metrics.get("top_sell_walls", [])]
 
     # Stage 1b: Pre-detect sweep (needed for LIQUIDITY cap in _detect_regime)
-    sweep, sweep_ts, sweep_wick = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history)
+    sweep, sweep_ts, sweep_wick = _detect_liquidity_sweep(metrics, buy_walls, sell_walls, candle_history, feed_state)
 
     # Stage 2: Regime
-    regime = _detect_regime(metrics, buy_walls, sell_walls, quant=quant, sweep=sweep)
+    regime = _detect_regime(metrics, buy_walls, sell_walls, quant=quant, sweep=sweep, feed_state=feed_state)
     logger.info(f"[Regime] {regime} | Z={metrics['zScore']:.2f} | "
                 f"ATR%={metrics.get('atr_pct', 0):.3%} | Tape={metrics['tapeSpeed']}")
 
@@ -2028,17 +2041,18 @@ async def _compute_signal(
     BOT_STATS["gate_stats"]["total_passed"] += 1
 
     return {
-        "verdict":      verdict,
-        "confidence":   round(confidence, 4),
-        "stop_loss":    stop_loss,
-        "take_profit":  take_profit,
-        "analysis":     analysis,
-        "ulis_verdict": ulis_verdict_str,
-        "regime":       regime,   # P1: stored in position for per-regime Beta update on exit
+        "verdict":        verdict,
+        "confidence":     round(confidence, 4),
+        "stop_loss":      stop_loss,
+        "take_profit":    take_profit,
+        "analysis":       analysis,
+        "ulis_verdict":   ulis_verdict_str,
+        "regime":         regime,
         "be_lock_trigger": regime_p.get("be_lock_trigger", 1.0),
-        "atr_at_entry": atr,      # stored in position for any future trailing logic
-        "sweep_wick":   sweep_wick if sweep else 0.0,
-        "strategy_type": strategy_type,
+        "time_exit_sec":  regime_p.get("time_exit_sec", 600),
+        "atr_at_entry":   atr,
+        "sweep_wick":     sweep_wick if sweep else 0.0,
+        "strategy_type":  strategy_type,
     }
 
 
@@ -2062,12 +2076,13 @@ async def _process_exit(
 
     stats["daily_pnl"]   = stats.get("daily_pnl",   0.0) + pnl
     stats["session_pnl"] = stats.get("session_pnl", 0.0) + pnl
+    stats["cumulative_pnl"] = stats.get("cumulative_pnl", 0.0) + pnl
 
     quant.update_win_rate(won=(pnl >= 0), regime=regime)
+    stats["consecutive_losses"] = getattr(quant, "_consecutive_losses", 0)
 
     if pnl < 0:
         LAST_CASCADE_TIME = time.time()
-        stats["consecutive_losses"] = stats.get("consecutive_losses", 0) + 1
         now_t = time.time()
         loss_times = [t for t in stats.get("loss_times", []) if now_t - t < 1800]
         loss_times.append(now_t)
@@ -2080,9 +2095,7 @@ async def _process_exit(
                 await executor.notifier.send_message(
                     f"🛑 Quad-Desk CONSECUTIVE LOSS HALT\n"
                     f"3 SL exits within 30 minutes. Paused 30 min."
-                )
-    else:
-        stats["consecutive_losses"] = 0
+                , critical=True)
 
     # P0-2 FIX: Use live equity (not static boot ACCOUNT_SIZE) for risk calcs.
     # After gains/losses, the absolute dollar limits must scale with real equity.
@@ -2096,19 +2109,19 @@ async def _process_exit(
             f"(limit=-${max_loss_usd:.2f} on equity=${current_equity:.2f}). Halted until tomorrow."
         )
 
-    max_drawdown_usd = current_equity * MAX_DRAWDOWN_PCT / 100.0
-    if stats["session_pnl"] < -max_drawdown_usd and not stats.get("drawdown_halt"):
+    max_drawdown_usd = ACCOUNT_SIZE * MAX_DRAWDOWN_PCT / 100.0
+    if stats["cumulative_pnl"] < -max_drawdown_usd and not stats.get("drawdown_halt"):
         stats["drawdown_halt"] = True
         logger.critical(
             f"[RiskEngine] 🚨 MAX DRAWDOWN BREACHED: "
-            f"${stats['session_pnl']:.2f} (limit=-${max_drawdown_usd:.2f} on equity=${current_equity:.2f}). HALTED."
+            f"${stats['cumulative_pnl']:.2f} (limit=-${max_drawdown_usd:.2f}). HALTED."
         )
         if executor.notifier:
             await executor.notifier.send_message(
                 f"🚨 Quad-Desk MAX DRAWDOWN HIT\n"
-                f"Session PnL: ${stats['session_pnl']:.2f} / Limit: -${max_drawdown_usd:.2f}\n"
+                f"Cumulative PnL: ${stats['cumulative_pnl']:.2f} / Limit: -${max_drawdown_usd:.2f}\n"
                 f"Bot halted. Restart to resume."
-            )
+            , critical=True)
 
 
 async def execution_loop(
@@ -2218,11 +2231,8 @@ async def execution_loop(
                 stats["_last_trade_day"] = today
                 stats["daily_pnl"]       = 0.0
                 stats["daily_loss_halt"] = False
-                # PHASE-3.1: Drawdown halt must reset daily, not require manual restart
-                if stats.get("drawdown_halt"):
-                    stats["drawdown_halt"] = False
-                    stats["session_pnl"] = 0.0
-                    logger.warning("[RiskEngine] New day — drawdown halt LIFTED, session PnL reset.")
+                # FIX-R1: drawdown_halt and cumulative_pnl are NOT reset at midnight.
+                # cumulative_pnl is lifetime and drawdown_halt can only be cleared by manual restart.
                 # 3.6 FIX: Reset CVD anchor daily to prevent multi-day drift
                 feed.state.cvd = 0.0
                 LAST_CVD = 0.0
@@ -2233,19 +2243,8 @@ async def execution_loop(
                 # → spurious BULLISH divergence of strength ~1.0 on first signal.
                 # Also reset EMA-variance state to prevent prior-session CVD
                 # magnitude contamination of Welford's online estimator.
-                if hasattr(quant, "_cvd_candle_snapshots"):
-                    prior_count = len(quant._cvd_candle_snapshots)
-                    quant._cvd_candle_snapshots.clear()
-                    quant._last_snapped_candle_ts = 0.0
-                    quant._cvd_delta_ewma_mu = 0.0
-                    quant._cvd_delta_ewma_var = 1.0
-                    quant._cvd_delta_ewma_n = 0
-                    logger.info(
-                        f"[DailyReset] 🧹 CVD divergence state cleared "
-                        f"({prior_count} snapshots removed). "
-                        f"EMA-variance estimator reset. "
-                        f"Divergence gate enters cold-start penalty mode."
-                    )
+                quant.reset_cvd_divergence_state()
+                logger.info("[DailyReset] CVD divergence state reset via quant.reset_cvd_divergence_state().")
                 # HIGH-5 FIX: Refresh ACCOUNT_SIZE daily so daily loss cap stays accurate.
                 # A stale startup balance misprices the loss limit after gains/losses.
                 if not executor.dry_run:
@@ -2427,37 +2426,66 @@ async def execution_loop(
                     )
                     bot_has_pos = executor.active_position is not None
                     if exchange_has_pos and not bot_has_pos:
-                        # Issue #7 FIX: Auto-close orphan position.
-                        # Only attempt once per 30 minutes to prevent Telegram spam.
-                        # After the first attempt, log a single warning and stand down
-                        # until the user manually resolves or the position closes.
                         _now_ts = time.time()
                         _time_since_last_orphan = _now_ts - _last_orphan_flatten_ts
                         if _orphan_flatten_attempts == 0 or _time_since_last_orphan >= 1800:
                             _orphan_flatten_attempts += 1
                             _last_orphan_flatten_ts = _now_ts
-                            logger.critical(
-                                f"[Reconciliation] Orphan position detected (attempt #{_orphan_flatten_attempts}) — "
-                                "exchange has open position but bot has no tracking. "
-                                "Emergency flatten initiated."
-                            )
+                            _rehydrated = False
                             try:
-                                await executor.notifier.send_error_alert(
-                                    f"⚠️ Orphan position detected (attempt #{_orphan_flatten_attempts}).\n"
-                                    "Bot has no SL/TP for this position.\n"
-                                    "Auto-flatten initiated. If this repeats, close manually on Binance."
+                                db = heartbeat.get_db()
+                                if db is not None:
+                                    trades_ref = db.collection("botTrades") \
+                                        .where("mode", "==", "LIVE") \
+                                        .where("exit_price", "==", None) \
+                                        .order_by("ts_ms", direction="DESCENDING") \
+                                        .limit(1)
+                                    open_trades = list(trades_ref.stream())
+                                    if open_trades:
+                                        t = open_trades[0].to_dict()
+                                        executor.active_position = {
+                                            "symbol":      t.get("symbol", FEED_SYMBOL),
+                                            "side":        t.get("side", "buy"),
+                                            "size":        float(t.get("size", 0.0)),
+                                            "entry_price": float(t.get("entry_price", 0.0)),
+                                            "stop_loss":   float(t.get("stop_loss", 0.0)),
+                                            "take_profit": float(t.get("take_profit", 0.0)),
+                                            "dry_run":     False,
+                                            "trade_doc_id": open_trades[0].id,
+                                        }
+                                        logger.warning(
+                                            f"[Reconciliation] Re-hydrated position from Firestore: "
+                                            f"{executor.active_position}"
+                                        )
+                                        _rehydrated = True
+                            except Exception as rehydrate_err:
+                                logger.warning(f"[Reconciliation] Re-hydration failed: {rehydrate_err}")
+
+                            if not _rehydrated:
+                                logger.critical(
+                                    f"[Reconciliation] Orphan position detected (attempt #{_orphan_flatten_attempts}) — "
+                                    "exchange has open position but bot has no tracking. "
+                                    "Emergency flatten initiated."
                                 )
-                                await executor.emergency_flatten("Orphan position detected on reconciliation")
-                                logger.info("[Reconciliation] Emergency flatten call completed.")
-                            except Exception as flatten_err:
-                                logger.error(
-                                    f"[Reconciliation] Emergency flatten FAILED: {flatten_err}. "
-                                    "Position may still be open on exchange — MANUAL ACTION REQUIRED."
-                                )
-                                await executor.notifier.send_error_alert(
-                                    f"🚨 AUTO-FLATTEN FAILED: {flatten_err}\n"
-                                    "⛔ Manual intervention required on Binance."
-                                )
+                                try:
+                                    await executor.notifier.send_error_alert(
+                                        f"⚠️ Orphan position detected (attempt #{_orphan_flatten_attempts}).\n"
+                                        "Bot has no SL/TP for this position.\n"
+                                        "Auto-flatten initiated. If this repeats, close manually on Binance."
+                                    )
+                                    await executor.emergency_flatten("Orphan position detected on reconciliation")
+                                    logger.info("[Reconciliation] Emergency flatten call completed.")
+                                except Exception as flatten_err:
+                                    logger.error(
+                                        f"[Reconciliation] Emergency flatten FAILED: {flatten_err}. "
+                                        "Position may still be open on exchange — MANUAL ACTION REQUIRED."
+                                    )
+                                    await executor.notifier.send_error_alert(
+                                        f"🚨 AUTO-FLATTEN FAILED: {flatten_err}\n"
+                                        "⛔ Manual intervention required on Binance."
+                                    )
+                            else:
+                                logger.info("[Reconciliation] Position re-hydrated from Firestore — monitoring SL/TP.")
                         else:
                             remaining = int(1800 - _time_since_last_orphan)
                             logger.warning(
@@ -2526,7 +2554,9 @@ async def execution_loop(
                         f" | now={current_price:.2f} | PnL={pnl_pct:+.2f}%"
                         f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
                     )
-                    
+                    await executor.check_breakeven_and_partials(
+                        current_price, metrics.get("atr", 0.0)
+                    )
 
                 continue
 
@@ -2566,6 +2596,9 @@ async def execution_loop(
 
             if time.time() < stats.get("cooldown_until", 0.0):
                 stats["_was_in_cooldown"] = True
+                # NOTE: _compute_signal is async. This branch constructs an equivalent dict
+                # directly to avoid an unnecessary coroutine call during cooldown. Do not
+                # replace this with a non-awaited call to _compute_signal.
                 verdict_json = {
                     "verdict": "WAIT",
                     "confidence": 0.0,
