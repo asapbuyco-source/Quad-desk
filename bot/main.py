@@ -186,6 +186,7 @@ BOT_STATS: Dict[str, Any] = {
         "total_passed":             0,
         "cvd_divergence_veto":      0,
         "derivatives_veto":         0,
+        "throughput_thin":          0,
     },
     "equity_peak": ACCOUNT_SIZE,
 }
@@ -1504,7 +1505,7 @@ def _risk_engine(
     metrics: Optional[Dict[str, Any]] = None,  # BUG-4: needed for atr_pct_rank
     regime_p: Optional[Dict[str, Any]] = None,  # PHASE-3.2: needed for panic_threshold
     signal: Optional[Dict[str, Any]] = None,   # NEW: for sweep_wick access
-) -> Tuple[float, float]:
+) -> Tuple[float, float, float]:
     """
     ATR-based SL/TP calculator with regime-adaptive multipliers (P0).
 
@@ -1614,13 +1615,17 @@ def _risk_engine(
                 if _sl_wick_override is not None:
                     logger.info(f"[RiskEngine] Wick SL: {price - sl_dist:.2f}→{_sl_wick_override:.2f}")
                     sl_dist = abs(price - _sl_wick_override)
-        return sl_tp(max(sl_dist, atr * SL_MULT))
+        _sl, _tp = sl_tp(max(sl_dist, atr * SL_MULT))
+        return _sl, _tp, SL_MULT
     elif strategy_type == "TREND":
-        return sl_tp(atr * SL_MULT)
+        _sl, _tp = sl_tp(atr * SL_MULT)
+        return _sl, _tp, SL_MULT
     elif strategy_type == "MEAN_REVERSION":
-        return sl_tp(atr * SL_MULT)
+        _sl, _tp = sl_tp(atr * SL_MULT)
+        return _sl, _tp, SL_MULT
     else:
-        return sl_tp(price * 0.008)
+        _sl, _tp = sl_tp(price * 0.008)
+        return _sl, _tp, 1.0
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1713,6 +1718,7 @@ async def _compute_signal(
 
     price = metrics["price"]
     atr   = metrics.get("atr", price * 0.005)
+    atr_pct = metrics.get("atr_pct", 0.005)
     vpoc  = metrics.get("vpoc")
 
     # Stage 1: Parse walls
@@ -1929,6 +1935,18 @@ async def _compute_signal(
     if abs(_div_conf - _pre_div_conf) > 0.001:
         metrics = {**metrics, "bayesianPosterior": _div_conf}
 
+    # FIX-M10: Throughput gate — block new entries in thin liquidity (<300 msg/min)
+    # unless CVD conviction is strong (>0.40), which justifies acting despite thin tape.
+    _msgs_per_min = getattr(feed_state, "msgs_per_min", 999)
+    _cvd_div = metrics.get("cvd_divergence", {})
+    _cvd_strength = _cvd_div.get("strength", 0.0) if _cvd_div else 0.0
+    if _msgs_per_min < 300 and _cvd_strength < 0.40:
+        logger.warning(
+            f"[ThroughputGate] Blocked: msgs/min={_msgs_per_min} < 300, CVD strength={_cvd_strength:.2f}"
+        )
+        _gate_stats_summary("throughput_thin")
+        return {**WAIT, "analysis": f"Throughput={_msgs_per_min}/min < 300. CVD strength {_cvd_strength:.2f} < 0.40. Skipped."}
+
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
 
@@ -1975,7 +1993,7 @@ async def _compute_signal(
         )}
 
     # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
-    stop_loss, take_profit = _risk_engine(
+    stop_loss, take_profit, adaptive_mult = _risk_engine(
         raw_direction, strategy_type,
         price,
         atr, buy_walls, sell_walls, sweep,
@@ -2051,6 +2069,9 @@ async def _compute_signal(
         "be_lock_trigger": regime_p.get("be_lock_trigger", 1.0),
         "time_exit_sec":  regime_p.get("time_exit_sec", 600),
         "atr_at_entry":   atr,
+        "atr_pct":        atr_pct,
+        "atr_pct_rank":   atr_pct_rank,
+        "adaptive_mult":  adaptive_mult,
         "sweep_wick":     sweep_wick if sweep else 0.0,
         "strategy_type":  strategy_type,
     }
@@ -2186,6 +2207,8 @@ async def execution_loop(
     _last_recon_ts = 0.0
     _orphan_flatten_attempts: int = 0          # how many times we've tried to flatten an orphan
     _last_orphan_flatten_ts: float = 0.0       # timestamp of last flatten attempt
+    _queued_signal: dict = None                 # FIX-M5: best signal during lockout, queued for post-lockout execution
+    _queued_signal_price: float = 0.0           # price at which the queued signal fired
 
     # Startup lockout: prevent any entry for the first 90s after boot.
     # The REST prefetch loads 100 historical candles, but live CVD, OFI and
@@ -2652,24 +2675,61 @@ async def execution_loop(
             if is_actionable:
                 if _in_startup_lockout:
                     remaining_lockout = int(_STARTUP_LOCKOUT_SECS - _startup_elapsed)
-                    logger.info(
-                        f"[Main] ⏳ Startup lockout — would fire {action} but waiting "
-                        f"{remaining_lockout}s for live feed to settle. "
-                        f"(conf={conf:.0%} SL={stop_loss} TP={take_profit})"
-                    )
+                    if _queued_signal is None or conf > _queued_signal.get("confidence", 0):
+                        _queued_signal = verdict_json
+                        _queued_signal_price = metrics["execution_price"]
+                        logger.info(
+                            f"[Main] ⏳ Queueing {action} (conf={conf:.0%}) during lockout "
+                            f"— {remaining_lockout}s remaining. "
+                            f"(SL={stop_loss} TP={take_profit})"
+                        )
+                    else:
+                        logger.info(
+                            f"[Main] ⏳ Lockout {action} (conf={conf:.0%}) — "
+                            f"queued signal better ({_queued_signal.get('confidence', 0):.0%}), skipping."
+                        )
                 else:
-                    verdict_json["effective_price"] = effective_price
+                    _exec_signal = verdict_json
+                    _exec_price = metrics["execution_price"]
+                    _exec_ulis = ulis_str
+                    if _queued_signal is not None:
+                        _q_price = _queued_signal_price
+                        _q_conf = _queued_signal.get("confidence", 0)
+                        _q_atr = _queued_signal.get("atr_at_entry", 0)
+                        _price_ok = abs(metrics["execution_price"] - _q_price) <= (_q_atr * 0.5)
+                        if _price_ok and _q_conf >= conf:
+                            _exec_signal = _queued_signal
+                            _exec_price = _q_price
+                            _exec_ulis = _queued_signal.get("ulis_verdict", "—")
+                            logger.info(
+                                f"[Main] ▶ Executing QUEUED signal (conf={_q_conf:.0%}) "
+                                f"post-lockout — price Δ={abs(metrics['execution_price']-_q_price):.2f} "
+                                f"≤ 0.5×ATR={_q_atr*0.5:.2f}. "
+                                f"Current conf={conf:.0%}."
+                            )
+                        else:
+                            _skip_reason = "price stale" if not _price_ok else "current better"
+                            logger.info(
+                                f"[Main] Discarding queued signal ({_skip_reason}): "
+                                f"queued={_q_conf:.0%} cur={conf:.0%} "
+                                f"price_Δ={abs(metrics['execution_price']-_q_price):.2f} "
+                                f"ATR×0.5={_q_atr*0.5:.2f}"
+                            )
+                        _queued_signal = None
+                        _queued_signal_price = 0.0
+                    _exec_signal["effective_price"] = _exec_price
                     _cur_equity  = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
                     _peak_equity = stats.get("equity_peak", ACCOUNT_SIZE)
                     if _cur_equity > _peak_equity:
                         stats["equity_peak"] = _cur_equity
                         _peak_equity = _cur_equity
-                    # Small-account risk cap: protect $77 account from fee erosion
                     _risk_base = min(MAX_RISK_PCT, 0.75) if _cur_equity < 150.0 else MAX_RISK_PCT
                     _effective_risk = _drawdown_adjusted_risk(_cur_equity, _peak_equity, _risk_base)
+                    _fr = float(metrics.get("funding_rate", 0.0))
                     await executor.execute_signal(
-                        SYMBOL, metrics["execution_price"], verdict_json, _effective_risk,
-                        account_size=ACCOUNT_SIZE, ulis_verdict=ulis_str
+                        SYMBOL, _exec_price, _exec_signal, _effective_risk,
+                        account_size=ACCOUNT_SIZE, ulis_verdict=_exec_ulis,
+                        funding_rate=_fr
                     )
                 if executor.active_position is not None:
                     stats["total_trades"] += 1

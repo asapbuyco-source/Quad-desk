@@ -7,6 +7,8 @@ from bot.notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
+MAX_SHORT_EXPOSURE_BTC = 0.008
+
 
 class TradingExecutor:
     """
@@ -507,16 +509,22 @@ class TradingExecutor:
         stop_loss: float,
         equity: float,
         max_risk_pct: float,
+        atr_pct: float = 0.005,
+        atr_pct_rank: float = 0.5,
+        adaptive_mult: float = 1.0,
     ) -> float:
         """
-        Fixed-fractional sizing: risk_usd / |entry − stop|
-        risk_usd = equity × (max_risk_pct / 100)
+        Vol-normalized position sizing: constant dollar risk regardless of ATR regime.
+        Dr. Markov Alternative A: size = risk_usd / (price × atr_pct × adaptive_mult)
+        Additional inverse ATR-rank scaling reduces size further in high-vol environments
+        where the formula alone would produce larger positions.
         """
         risk_usd = equity * (max_risk_pct / 100.0)
-        distance = abs(current_price - stop_loss)
-        if distance <= 0 or current_price <= 0:
+        vol_distance = atr_pct * current_price * adaptive_mult
+        if vol_distance <= 0 or current_price <= 0:
             return 0.0
-        return risk_usd / distance
+        vol_scale = 1.0 - 0.4 * max(0.0, atr_pct_rank - 0.5)
+        return (risk_usd * vol_scale) / vol_distance
 
     # ------------------------------------------------------------------
     # Signal execution
@@ -529,6 +537,7 @@ class TradingExecutor:
         max_risk_pct: float,
         account_size: float = 100.0,
         ulis_verdict: str = "",
+        funding_rate: float = 0.0,
     ):
         verdict     = signal.get("verdict", "WAIT")
         confidence  = float(signal.get("confidence", 0))
@@ -615,7 +624,13 @@ class TradingExecutor:
                         await self.notifier.send_error_alert(err)
                         return
 
-            raw_size = self.calculate_position_size(current_price, stop_loss, equity, max_risk_pct)
+            _atr_pct = float(signal.get("atr_pct", 0.005))
+            _atr_rank = float(signal.get("atr_pct_rank", 0.5))
+            _ad_mult = float(signal.get("adaptive_mult", 1.0))
+            raw_size = self.calculate_position_size(
+                current_price, stop_loss, equity, max_risk_pct,
+                atr_pct=_atr_pct, atr_pct_rank=_atr_rank, adaptive_mult=_ad_mult
+            )
             if raw_size <= 0.0:
                 logger.warning("[Executor] Calculated position size is 0. Aborting.")
                 return
@@ -789,9 +804,10 @@ class TradingExecutor:
                 # If "STOP" is rejected by the exchange, we fall back to STOP_MARKET
                 # so the bot never enters a position naked without any SL protection.
                 atr_for_sl = signal.get("atr_at_entry", 0.0)
+                atr_multiplier = 0.015 if (side == "sell" and funding_rate > 0.00008) else 0.02
                 sl_limit_price = float(self.exchange.price_to_precision(
                     ex_symbol,
-                    stop_loss + (atr_for_sl * 0.02) if side == "buy" else stop_loss - (atr_for_sl * 0.02)
+                    stop_loss + (atr_for_sl * atr_multiplier) if side == "buy" else stop_loss - (atr_for_sl * atr_multiplier)
                 ))
                 sl_order = None
                 _sl_last_err = None

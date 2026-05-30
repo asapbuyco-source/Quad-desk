@@ -32,6 +32,7 @@ class MarketState:
         self._cvd_was_reset: bool = False  # flag to suppress CVD delta spike after reconnect
         self._aggtrade_msg_count: int = 0  # P0-1 FIX: throughput counter for monitoring
         self._aggtrade_count_reset_ts: float = time.time()  # last reset for msg/min calculation
+        self.msgs_per_min: int = 0           # FIX-M10: current throughput for signal gate
         self.last_fired_sweep_candle_ts: float = 0.0  # FIX-C3: dedup guard for sweep detection
 
     # ------------------------------------------------------------------
@@ -419,6 +420,7 @@ class BinanceDataFeed:
 
             if elapsed >= 60.0:
                 msgs_per_min = int(_curr_count / max(elapsed, 1) * 60)
+                self.state.msgs_per_min = msgs_per_min  # FIX-M10: expose for signal gate
                 logger.info(f"[DataFeed] aggTrade throughput: {msgs_per_min} msgs/min (Δ={_curr_count - _prev_count})")
                 # Reset counters
                 self._aggtrade_watchdog_prev_count = _curr_count
