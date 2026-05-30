@@ -204,6 +204,10 @@ LAST_TRADE_WAS_SL: bool = False  # Track if last exit was SL for split cooldown 
 # The same stale wick fires as a "new" sweep every 15s cycle without this guard.
 _LAST_FIRED_SWEEP_CANDLE_TS: float = 0.0
 
+# FIX-7.1: Derivatives context cache — updated by background task, read synchronously in signal pipeline
+_CACHED_DERIV_CONTEXT: dict = {}
+_DERIV_CONTEXT_LAST_UPDATE: float = 0.0
+
 
 def _gate_stats_summary(reason: str, confidence: float = 0.0) -> None:
     """
@@ -451,6 +455,7 @@ class _HMMRegimeClassifier:
         # Mutable copies so online-update can adjust them
         self._mu    = self._MU.copy()
         self._sigma = self._SIGMA.copy()
+        self._online_update_enabled = False  # Set True only after running run_hmm_calibration()
         # Hysteresis state
         self._committed_regime = "RANGE"   # currently committed regime
         self._candidate_regime = "RANGE"   # regime the HMM is suggesting
@@ -631,6 +636,8 @@ class _HMMRegimeClassifier:
         using soft-assignment (posterior from Viterbi hard assignment).
         Only runs every `update_every` cycles to avoid overhead.
         """
+        if not self._online_update_enabled:
+            return
         if len(self._obs_buf) < 20:
             return
         obs = np.array(list(self._obs_buf)[-self._window:], dtype=float)
@@ -1248,20 +1255,31 @@ def _apply_ulis_gate(
     ulis_bearish = verdict_str in ("STRONG_SHORT", "SHORT")
 
     BAYES_OVERRIDE_THRESHOLD = 0.78
+    # Compare raw Bayesian posterior, not pipeline-accumulated confidence
+    _raw_bayes = metrics.get("bayesianPosterior", 0.5)
+    _bayes_long = _raw_bayes if is_long else (1.0 - _raw_bayes)
     if is_long and ulis_bearish:
-        if confidence >= BAYES_OVERRIDE_THRESHOLD:
-            logger.info(f"[ULIS] Bayesian override ({confidence:.2%} >= {BAYES_OVERRIDE_THRESHOLD:.0%}) - proceeding despite ULIS={verdict_str}")
+        if _bayes_long >= BAYES_OVERRIDE_THRESHOLD:
+            logger.info(
+                f"[ULIS] Bayesian override: raw_bayes_long={_bayes_long:.2%} "
+                f">= {BAYES_OVERRIDE_THRESHOLD:.0%}. Proceeding with 8% confidence penalty."
+            )
             confidence *= 0.92
         else:
-            logger.warning(f"[ULIS] Direction conflict - bot=LONG, ULIS={verdict_str}. Skipping.")
+            logger.warning(f"[ULIS] Direction conflict — bot=LONG, ULIS={verdict_str}. "
+                           f"raw_bayes_long={_bayes_long:.2%} < threshold. Skipping.")
             return False, 0.0, verdict_str
 
     if not is_long and ulis_bullish:
-        if confidence >= BAYES_OVERRIDE_THRESHOLD:
-            logger.info(f"[ULIS] Bayesian override ({confidence:.2%} >= {BAYES_OVERRIDE_THRESHOLD:.0%}) - proceeding despite ULIS={verdict_str}")
+        if (1.0 - _raw_bayes) >= BAYES_OVERRIDE_THRESHOLD:
+            logger.info(
+                f"[ULIS] Bayesian override: raw_bayes_short={1.0-_raw_bayes:.2%} "
+                f">= {BAYES_OVERRIDE_THRESHOLD:.0%}. Proceeding with 8% confidence penalty."
+            )
             confidence *= 0.92
         else:
-            logger.warning(f"[ULIS] Direction conflict - bot=SHORT, ULIS={verdict_str}. Skipping.")
+            logger.warning(f"[ULIS] Direction conflict — bot=SHORT, ULIS={verdict_str}. "
+                           f"raw_bayes_short={1.0-_raw_bayes:.2%} < threshold. Skipping.")
             return False, 0.0, verdict_str
 
 
@@ -1369,7 +1387,9 @@ def _apply_cvd_divergence_gate(
         (adjusted_confidence: float,  veto_reason: Optional[str])
         veto_reason is None when no veto is issued.
     """
-    MIN_VALID_SNAPS = 4
+    MIN_VALID_SNAPS = 2  # Reduced from 4: 2 confirmed candle snaps = 30 min of history
+                         # Sufficient to establish divergence direction; full 4-snap certainty
+                         # was blocking valid signals for 60+ min after daily reset.
     VETO_STRENGTH   = 0.62
     VETO_VOL_SPIKE  = 1.40
 
@@ -1631,6 +1651,32 @@ def _risk_engine(
 # ══════════════════════════════════════════════════════════════════════
 # ── FULL 7-STAGE SIGNAL ENGINE ────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
+
+async def _derivatives_refresh_loop():
+    """
+    Background task: refreshes institutional context every 5 minutes.
+    Stores result in _CACHED_DERIV_CONTEXT so _compute_signal() can read
+    it synchronously without blocking the signal hot path.
+    """
+    global _CACHED_DERIV_CONTEXT, _DERIV_CONTEXT_LAST_UPDATE
+    await asyncio.sleep(10)  # Initial delay: let feed warm up first
+    while True:
+        try:
+            ctx = await _derivatives_ctx.get_full_context()
+            if ctx:
+                _CACHED_DERIV_CONTEXT = ctx
+                _DERIV_CONTEXT_LAST_UPDATE = time.time()
+                logger.debug(
+                    f"[DerivRefresh] Context updated: crowd={ctx.get('top_traders',{}).get('crowd_signal','?')} "
+                    f"oi_collapsing={ctx.get('open_interest',{}).get('oi_collapsing','?')}"
+                )
+        except Exception as e:
+            logger.warning(f"[DerivRefresh] Background fetch failed: {e}")
+        try:
+            await asyncio.sleep(300)  # 5 minute refresh cycle
+        except asyncio.CancelledError:
+            break
+
 
 async def _compute_signal(
     metrics: Dict[str, Any],
@@ -1916,9 +1962,14 @@ async def _compute_signal(
             return {**WAIT, "analysis": "HTF=BULL blocks SELL sweep (not a genuine reversal setup)."}
 
     # === DERIVATIVES GATE: Institutional signal check ===
-    # Fetch context (cached, so this is near-instant on most calls)
-    _deriv_ctx = await _derivatives_ctx.get_full_context()
-    _deriv_ok, _deriv_reason = await _derivatives_gate(raw_direction, _deriv_ctx)
+    # Read from pre-fetched cache — zero latency in signal hot path
+    _deriv_ctx = _CACHED_DERIV_CONTEXT
+    _age_s = time.time() - _DERIV_CONTEXT_LAST_UPDATE
+    if _age_s > 900:  # 15 minutes: cache is too stale to trust
+        logger.warning(f"[DerivGate] Cache stale ({_age_s:.0f}s) — skipping derivatives gate")
+        _deriv_ok, _deriv_reason = True, "STALE_CACHE_BYPASSED"
+    else:
+        _deriv_ok, _deriv_reason = await _derivatives_gate(raw_direction, _deriv_ctx)
     if not _deriv_ok:
         logger.warning(f"[DerivGate] VETO: {_deriv_reason}")
         _gate_stats_summary("derivatives_veto")
@@ -2295,14 +2346,11 @@ async def execution_loop(
                         f"PnL: ${stats.get('daily_pnl',0):.2f} | Session: ${stats.get('session_pnl',0):.2f}"
                     )
 
-            current_price = feed.state.candles[-1]["close"]
-            # NEW: Use Futures mark price when available (corrects Spot-Futures basis)
-            _mark = getattr(feed.state, "mark_price", 0.0)
-            _basis = getattr(feed.state, "basis", 0.0)
-            if _mark > 0 and abs(_basis) < 200:  # sanity check: ignore if basis > $200
-                effective_price = _mark   # use for SL/TP distance calculation
-            else:
-                effective_price = current_price
+            _raw_candle_close = feed.state.candles[-1]["close"]
+            _mark_px = getattr(feed.state, "mark_price", 0.0)
+            _basis_px = getattr(feed.state, "basis", 0.0)
+            current_price = _mark_px if (_mark_px > 0 and abs(_basis_px) < 200) else _raw_candle_close
+            effective_price = current_price
 
             # PHASE-3.4: Cache positions per cycle to avoid duplicate fetch_positions API calls
             _cached_positions = None
@@ -2699,14 +2747,28 @@ async def execution_loop(
                         _price_ok = abs(metrics["execution_price"] - _q_price) <= (_q_atr * 0.5)
                         if _price_ok and _q_conf >= conf:
                             _exec_signal = _queued_signal
-                            _exec_price = _q_price
+                            _exec_price = metrics["execution_price"]
                             _exec_ulis = _queued_signal.get("ulis_verdict", "—")
-                            logger.info(
-                                f"[Main] ▶ Executing QUEUED signal (conf={_q_conf:.0%}) "
-                                f"post-lockout — price Δ={abs(metrics['execution_price']-_q_price):.2f} "
-                                f"≤ 0.5×ATR={_q_atr*0.5:.2f}. "
-                                f"Current conf={conf:.0%}."
-                            )
+                            _q_sl = _queued_signal.get("stop_loss", 0)
+                            _q_tp = _queued_signal.get("take_profit", 0)
+                            if _q_sl > 0 and _q_tp > 0 and _q_atr > 0:
+                                _price_delta = _exec_price - _q_price
+                                _q_dir = _queued_signal.get("verdict", "")
+                                if "BUY" in _q_dir or "LONG" in _q_dir:
+                                    _exec_signal = {**_queued_signal, "stop_loss": _q_sl + _price_delta, "take_profit": _q_tp + _price_delta}
+                                else:
+                                    _exec_signal = {**_queued_signal, "stop_loss": _q_sl - _price_delta, "take_profit": _q_tp - _price_delta}
+                                logger.info(
+                                    f"[Main] ▶ Executing QUEUED signal (conf={_q_conf:.0%}) "
+                                    f"post-lockout — price Δ={abs(_price_delta):.2f}, "
+                                    f"SL {_q_sl:.2f}→{_exec_signal['stop_loss']:.2f}, "
+                                    f"TP {_q_tp:.2f}→{_exec_signal['take_profit']:.2f}"
+                                )
+                            else:
+                                logger.info(
+                                    f"[Main] ▶ Executing QUEUED signal (conf={_q_conf:.0%}) "
+                                    f"post-lockout at current price."
+                                )
                         else:
                             _skip_reason = "price stale" if not _price_ok else "current better"
                             logger.info(
@@ -2901,6 +2963,7 @@ async def main():
     tasks = [
         asyncio.create_task(feed.run(),                    name="data_feed"),
         asyncio.create_task(feed.funding_rate_loop(),      name="funding_rate"),
+        asyncio.create_task(_derivatives_refresh_loop(),  name="deriv_refresh"),  # FIX-7.1: background derivatives
         _exec_task,
         asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS), name="heartbeat"),
         # P0-2 FIX: Feed health monitor — detects frozen WebSocket and forces reconnect

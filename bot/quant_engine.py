@@ -129,7 +129,10 @@ class QuantEngine:
             # Prior-softening: after 3+ consecutive losses the Beta prior has drifted
             # too bearish to recover naturally. Pull it 15% toward Beta(5,5) each loss
             # so the bot can re-engage after a bad streak without a full cold-start reset.
-            if self._consecutive_losses >= 2:
+            # NEW-FIX 1: softened at >= 3 to match the halt gate (also >= 3).
+            # Previously used >= 2 which meant a 2-loss streak degraded the prior
+            # without triggering the safety halt.
+            if self._consecutive_losses >= 3:
                 _target = 5.0
                 self._alpha = self._alpha * 0.85 + _target * 0.15
                 self._beta  = self._beta  * 0.85 + _target * 0.15

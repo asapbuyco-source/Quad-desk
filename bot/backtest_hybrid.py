@@ -274,16 +274,18 @@ def backtest_hybrid(df, config, symbol):
     daily_losses = 0
     last_day = None
     daily_halt = False
+    daily_pnl_usd = 0.0
     
-    backtest_alpha = 7.0
+    backtest_alpha = 5.0  # Match live QuantEngine cold-start Beta(5,5)
     backtest_beta = 5.0
-    backtest_regime_alpha = {"RANGE": 7.0, "NEUTRAL": 7.0, "TREND": 7.0, "LIQUIDITY": 7.0}
+    backtest_regime_alpha = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
     backtest_regime_beta = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
     backtest_regime_count = {"RANGE": 0, "NEUTRAL": 0, "TREND": 0, "LIQUIDITY": 0}
     
     for i in range(50, len(close)):
         cur_day = ts[i].date()
         if cur_day != last_day:
+            daily_pnl_usd = 0.0
             daily_losses = 0
             daily_halt = False
             last_day = cur_day
@@ -339,8 +341,9 @@ def backtest_hybrid(df, config, symbol):
                 exit_px = raw_exit  # keep original for logging
                 balance += pnl
                 if pnl < 0:
-                    daily_losses += 1
-                    if daily_losses >= int(config['max_daily_loss_pct']):
+                    daily_pnl_usd = daily_pnl_usd + pnl
+                    max_loss_usd = balance * (config['max_daily_loss_pct'] / 100.0)
+                    if daily_pnl_usd < -max_loss_usd:
                         daily_halt = True
                 
                 trades.append({
@@ -461,12 +464,9 @@ def backtest_hybrid(df, config, symbol):
         elif regime == "RANGE":
             strategy = "MEAN_REVERSION"
             atr_rank = atr_pct_rank[i]
-            if atr_rank < 0.5:
-                rsi_long_gate = 55.0
-                rsi_short_gate = 45.0
-            else:
-                rsi_long_gate = 42.0
-                rsi_short_gate = 58.0
+            # B4 Fix: Hard RSI floors matching live bot (main.py _strategy_mean_reversion)
+            rsi_long_gate = 45.0
+            rsi_short_gate = 55.0
             if curr_z >= 1.06 and curr_rsi > rsi_short_gate: raw_direction = "SELL"
             elif curr_z <= -1.06 and curr_rsi < rsi_long_gate: raw_direction = "BUY"
             
@@ -537,7 +537,7 @@ def backtest_hybrid(df, config, symbol):
     # Close remaining open trades at the last known price
     last_px = close[-1]
     slip = config.get('slippage_bps', 3) / 10_000.0
-    comm = config.get('commission_pct', 0.001)
+    comm = config.get('commission_pct', 0.0004)
     for t in open_trades:
         is_long = t['dir'] == 1
         eff_entry = t['entry'] * (1.0 + slip) if is_long else t['entry'] * (1.0 - slip)

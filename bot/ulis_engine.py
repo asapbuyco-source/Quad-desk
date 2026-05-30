@@ -61,8 +61,18 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
     dominant     = metrics.get("tapeDominant", "BALANCED")
     funding_rate = metrics.get("funding_rate", 0.0)   # NEW: independent signal
 
-    # NLF Score proxy: bayesian posterior is the best single-metric bull field indicator
-    nlf_score = _clamp(bayes, 0.0, 1.0)
+    # NLF Score proxy: CVD direction (session buying pressure) + tape dominance
+    # Deliberately does NOT use bayesianPosterior — it is already counted in Stage 5 and
+    # in the STRONG_LONG/STRONG_SHORT AND-gate conditions below.
+    cvd = metrics.get("cvd", 0.0)
+    dominant = metrics.get("tapeDominant", "BALANCED")
+    tape = metrics.get("tapeSpeed", "NORMAL")
+
+    _cvd_norm = _clamp(math.tanh(cvd / 100_000.0) * 0.5 + 0.5, 0.0, 1.0)  # 0=bearish CVD, 1=bullish
+    _tape_bull = 0.65 if ("BUY" in dominant and tape == "SCREAMING") else \
+                 0.55 if "BUY" in dominant else \
+                 0.35 if "SELL" in dominant else 0.50
+    nlf_score = _clamp(_cvd_norm * 0.60 + _tape_bull * 0.40, 0.0, 1.0)
 
     # GLR Score proxy: RSI momentum + FUNDING RATE (orthogonal to OFI/Bayes) + CVD direction
     # Funding rate interpretation:
@@ -357,8 +367,7 @@ def compute_ulis_verdict(
         liquidity_vector > 0.28 and
         scores["glrScore"] > 0.50 and
         cascade_risk < 0.45 and
-        alde_confidence > 0.68 and
-        bayes > 0.58
+        alde_confidence > 0.68
     ):
         verdict = "STRONG_LONG"
         regime_label = "ALDE+ULIS Bullish Confluence · Full Alignment — High Probability Long"
@@ -369,8 +378,7 @@ def compute_ulis_verdict(
         liquidity_vector < -0.28 and
         scores["glrScore"] < 0.50 and
         cascade_risk < 0.45 and
-        alde_confidence > 0.68 and
-        bayes < 0.42
+        alde_confidence > 0.68
     ):
         verdict = "STRONG_SHORT"
         regime_label = "ALDE+ULIS Bearish Confluence · Full Alignment — High Probability Short"
