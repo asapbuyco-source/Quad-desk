@@ -62,6 +62,7 @@ class QuantEngine:
 
         # ── State variables extracted from main.py ──────────────────────────
         self._liquidity_consecutive: int = 0
+        self._liquidity_cap_cooldown: int = 0   # prevents immediate LIQUIDITY re-entry after cap
 
         # ── RSI History Cache (MED-1 fix) ─────────────────────────────────────
         # Caches the last 3 computed RSI values so rsi_prev/rsi_prev2 reflect
@@ -174,7 +175,6 @@ class QuantEngine:
         self._cvd_delta_ewma_n   = 0
         self._cvd_div_streak_dir   = "NONE"
         self._cvd_div_streak_count = 0
-        # Suppress divergence for 5 candles post-reset to prevent ghost bearish signal
         self._cvd_post_reset_cooldown = 5
         logger.info("[QuantEngine] CVD divergence state cleared (daily reset hook). "
                     "Divergence suppressed for 5 candles to prevent ghost signal.")

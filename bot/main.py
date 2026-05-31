@@ -804,40 +804,22 @@ def _detect_regime(
     )
 
     if near_wall:
-        # B1 FIX: Wall significance filter uses raw feed_state.bids/asks
-        # instead of lob_metrics-filtered bid_depths/ask_depths.
-        raw_bids = getattr(feed_state, "bids", {}) or {}
-        raw_asks = getattr(feed_state, "asks", {}) or {}
-        all_levels = list(raw_bids.values()) + list(raw_asks.values())
-        median_level = float(np.median(all_levels)) if all_levels else 0.0
-
-        # Check which wall is near
-        nearest_buy = buy_walls[0] if buy_walls else None
-        nearest_sell = sell_walls[0] if sell_walls else None
-        near_wall_size = 0.0
-        near_wall_is_buy = False
-        if nearest_buy and abs(price - nearest_buy) / price <= WALL_PROXIMITY:
-            near_wall_size = raw_bids.get(nearest_buy, 0.0)
-            near_wall_is_buy = True
-        elif nearest_sell and abs(price - nearest_sell) / price <= WALL_PROXIMITY:
-            near_wall_size = raw_asks.get(nearest_sell, 0.0)
-
-        wall_is_significant = (median_level > 0 and near_wall_size >= median_level * 3.0)
-
-        if wall_is_significant:
-            metrics["regime_confidence"] = 1.0
-            metrics["regime_probs"] = {"RANGE": 0.0, "TREND": 0.0, "NEUTRAL": 0.0, "LIQUIDITY": 1.0}
-            quant._liquidity_consecutive += 1
-            if quant._liquidity_consecutive > 3 and sweep is None:
-                logger.info("[Regime] LIQUIDITY cap reached — falling through to HMM")
-                quant._liquidity_consecutive = 0
-            else:
-                return "LIQUIDITY"
-        else:
-            # Wall is near but not significant — reset counter and fall through
+        metrics["regime_confidence"] = 1.0
+        metrics["regime_probs"] = {"RANGE": 0.0, "TREND": 0.0, "NEUTRAL": 0.0, "LIQUIDITY": 1.0}
+        quant._liquidity_consecutive += 1
+        if quant._liquidity_cap_cooldown > 0:
+            quant._liquidity_cap_cooldown -= 1
             quant._liquidity_consecutive = 0
+            logger.debug(f"[Regime] LIQUIDITY cooldown={quant._liquidity_cap_cooldown} — falling through to HMM")
+        elif quant._liquidity_consecutive > 3 and sweep is None:
+            logger.info("[Regime] LIQUIDITY cap reached — falling through to HMM")
+            quant._liquidity_consecutive = 0
+            quant._liquidity_cap_cooldown = 2
+        else:
+            return "LIQUIDITY"
     else:
         quant._liquidity_consecutive = 0
+        quant._liquidity_cap_cooldown = 0
 
     # HMM classification → probability vector (P2: pass 4th feature)
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
@@ -2001,11 +1983,25 @@ async def _compute_signal(
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
 
-    # --- AUDIT FIX 2: BAYES FLOOR GATE ---
-    if confidence < 0.50:
-        logger.warning(f"[RiskEngine] 🛑 BAYES FLOOR HALT — Bayesian posterior {confidence:.2%} < 50%. Edge is worse than a coin flip.")
+    # --- AUDIT FIX 7: DIRECTIONAL BAYES FLOOR ---
+    # The 50% floor must be applied to the DIRECTIONAL probability:
+    #   LONG  → confidence = P(bull)  → require confidence >= 0.50
+    #   SHORT → confidence = P(bear) → require (1 - confidence) >= 0.50
+    # The old uniform check confidence < 0.50 blocked valid SHORT signals where
+    # P(bear) = 57% but P(bull) = 43% (confidence = 0.43 < 0.50 wrongly vetoed).
+    _is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
+    if _is_long_dir:
+        _directional_pass = confidence >= 0.50
+    else:
+        _directional_pass = (1.0 - confidence) >= 0.50
+    if not _directional_pass:
+        logger.warning(
+            f"[RiskEngine] 🛑 BAYES FLOOR HALT — "
+            f"{'P(bull)' if _is_long_dir else 'P(bear)'}={confidence:.2%} < 50%. "
+            f"Edge is worse than a coin flip."
+        )
         _gate_stats_summary("bayes_floor_veto")
-        return {**WAIT, "analysis": f"Bayesian Posterior {confidence:.2%} < 50% blocks entry."}
+        return {**WAIT, "analysis": f"Bayesian directional {confidence:.2%} < 50% blocks entry."}
 
     # Stage 5b: VPOC Proximity Confidence Boost
     vpoc_boost = _vpoc_confidence_boost(price, vpoc, raw_direction)
@@ -2892,6 +2888,18 @@ async def main():
                 _hmm_classifier.classify(atr_pct, z_approx, tape_proxy, atr_pct_rank=0.5)
             logger.info(f"[HMM] Seeded with {len(rest_candles)-20} historical observations from REST candles.")
             _seeded = True
+
+            # FIX-BUG1: Reset HMM hysteresis state AFTER seeding completes.
+            # During seeding, _hmm_classifier.classify() is called on every historical
+            # candle, flipping _candidate_regime and _candidate_streak randomly.
+            # Without this reset, the bot enters live trading with a random committed
+            # regime from the middle of the seed sequence. Force a clean slate.
+            _hmm_classifier._committed_regime = _hmm_classifier._candidate_regime
+            _hmm_classifier._candidate_streak = _hmm_classifier.HYSTERESIS_CANDLES
+            logger.info(
+                f"[HMM] Post-seed hysteresis reset: committed={_hmm_classifier._committed_regime}, "
+                f"streak={_hmm_classifier._candidate_streak}"
+            )
 
             # FIX-P1: Pre-seed quant._atr_history from REST candles (audit Problem 1).
             # Without this, _atr_history starts EMPTY. The first live ATR appended is

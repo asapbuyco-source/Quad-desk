@@ -126,9 +126,8 @@ class BinanceDataFeed:
             self.rest_url = "https://testnet.binancefuture.com"
             base_url = "wss://stream.binancefuture.com"
         else:
-            # LIVE FUTURES DATA BLOCKED IN EU/US — using Spot Proxy for WS Data
-            self.rest_url = "https://fapi.binance.com"  # REST works via API keys/CDN
-            base_url = "wss://stream.binance.com:9443"  # Spot WebSocket bypasses geoblock
+            self.rest_url = "https://fapi.binance.com"
+            base_url = "wss://fstream.binance.com"
 
         streams = (
             f"{self.symbol}@kline_{self.interval}"
