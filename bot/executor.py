@@ -636,24 +636,35 @@ class TradingExecutor:
                 logger.warning("[Executor] Calculated position size is 0. Aborting.")
                 return
 
-            # FIX 16: Minimum notional validation with operator alert
-            MIN_NOTIONAL_USDT = 105.0  # Binance BTCUSDT min $100 + 5% buffer
+            # FIX 1: Dynamic minimum notional — warn clearly instead of silent abort
             MIN_QTY_BTC = 0.001        # Binance BTCUSDT minimum lot size
+            min_notional = max(105.0, MIN_QTY_BTC * current_price * 1.05)  # dynamic floor
 
-            if raw_size * current_price < MIN_NOTIONAL_USDT:
-                needed_acct = (MIN_NOTIONAL_USDT * abs(current_price - stop_loss)) / (max_risk_pct / 100.0)
+            if raw_size < MIN_QTY_BTC:
+                sl_dist_pct = abs(current_price - stop_loss) / current_price
+                needed_equity = (MIN_QTY_BTC * current_price * sl_dist_pct) / (max_risk_pct / 100.0)
+                msg = (
+                    f"[Executor] ⚠️ Position too small: {raw_size:.6f} BTC < min {MIN_QTY_BTC} BTC. "
+                    f"Need ~${needed_equity:.0f} equity at {max_risk_pct}% risk. "
+                    f"Current equity=${equity:.0f}. Deposit or raise BOT_MAX_RISK_PCT."
+                )
+                logger.error(msg)
+                if self.notifier:
+                    await self.notifier.send_message(msg)
+                return
+
+            if raw_size * current_price < min_notional:
+                needed_acct = (min_notional * abs(current_price - stop_loss)) / (max_risk_pct / 100.0)
                 logger.error(
                     f"[Executor] Account ${equity:.0f} too small. "
-                    f"Risk-correct notional=${raw_size*current_price:.2f} < Binance min ${MIN_NOTIONAL_USDT}. "
-                    f"Needs ~${needed_acct:.0f} account. ABORTING order. "
-                    "Set BOT_ACCOUNT_SIZE=1500 in Railway to resolve."
+                    f"Notional=${raw_size*current_price:.2f} < min ${min_notional:.2f}. "
+                    f"Needs ~${needed_acct:.0f} account. ABORTING order."
                 )
                 if self.notifier:
                     await self.notifier.send_message(
-                        f"⚠️ Account too small for execution. "
-                        f"Current: ${equity:.0f}. Required: ~${needed_acct:.0f}."
+                        f"⚠️ Account too small: ${equity:.0f} < required ~${needed_acct:.0f}."
                     )
-                return  # Abort — do not scale up
+                return
 
             # Translate symbol to exchange format (unified CCXT symbol)
             if self.exchange_id == "coinbase":

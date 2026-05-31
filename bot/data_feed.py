@@ -52,6 +52,8 @@ class MarketState:
             # Closed candle — always append
             self.candles.append(candle)
             self.candle_close_event.set()  # Trigger zero-latency execution
+            if getattr(self, "_seeding_complete", False):
+                self._live_candle_count = getattr(self, "_live_candle_count", 0) + 1
         else:
             # Live candle — replace if same timestamp, otherwise append
             if self.candles and self.candles[-1]['time'] == candle['time']:
@@ -287,7 +289,7 @@ class BinanceDataFeed:
                         'c': float(k[4]),
                         'v': float(k[5]),
                     }
-                    parsed_candles.append({"close": float(k[4]), "high": float(k[2]), "low": float(k[3]), "volume": float(k[5])})
+                    parsed_candles.append({"close": float(k[4]), "high": float(k[2]), "low": float(k[3]), "volume": float(k[5]), "time": c_data['t'] / 1000.0})
                     self.state.add_candle(c_data, is_final=True)
 
                     # Rebuild CVD analytically
@@ -297,6 +299,8 @@ class BinanceDataFeed:
 
                 logger.info(f"[DataFeed] Successfully loaded {len(self.state.candles)} historical candles. CVD rebuilt: {self.state.cvd:.0f}")
                 self.candles_seeded = True
+                self.state._seeding_complete = True
+                self.state._live_candle_count = 0
                 return parsed_candles
             except Exception as e:
                 logger.warning(

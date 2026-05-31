@@ -502,6 +502,47 @@ class QuantEngine:
         return float(np.clip(z_ret, -4.0, 4.0))
 
     # ------------------------------------------------------------------
+    # 2. VWAP Seed — Pre-populate rolling window with correct timestamps
+    # ------------------------------------------------------------------
+    def seed_vwap_from_history(self, candles: list, highs: list, lows: list,
+                                closes: list, vols: list) -> None:
+        """
+        Pre-populate _vwap_rolling with correct historical timestamps
+        so Z-score is meaningful from the very first live cycle.
+
+        candles: list of dicts with 'time' key (epoch seconds from REST response)
+        Call this AFTER clearing _vwap_rolling, BEFORE the live feed starts.
+        """
+        import time as _time
+        self._vwap_rolling.clear()
+        self._vwap_num = 0.0
+        self._vwap_den = 0.0
+
+        now_ts = _time.time()
+        WINDOW_SECS = 86400.0
+        CANDLE_INTERVAL_SECS = 900.0   # 15m
+
+        for i, candle in enumerate(candles):
+            candle_open_ts = float(candle.get("time", 0.0))
+            if candle_open_ts <= 0:
+                candle_open_ts = now_ts - (len(candles) - i) * CANDLE_INTERVAL_SECS
+
+            age = now_ts - candle_open_ts
+            if age > WINDOW_SECS:
+                continue
+
+            tp  = (highs[i] + lows[i] + closes[i]) / 3.0
+            vol = float(vols[i])
+            self._vwap_rolling.append((tp, vol, candle_open_ts))
+            self._vwap_num += tp * vol
+            self._vwap_den += vol
+
+        logger.info(
+            f"[VWAP] Pre-seeded {len(self._vwap_rolling)} candles with real timestamps. "
+            f"VWAP={self._vwap_num/max(self._vwap_den,1):.2f} den={self._vwap_den:.0f}"
+        )
+
+    # ------------------------------------------------------------------
     # 2. VWAP-Anchored Z-Score — Rolling 24h Window (HMM-SESSION-VWAP FIX)
     # ------------------------------------------------------------------
     def _session_vwap_z(

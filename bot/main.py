@@ -871,12 +871,22 @@ def _detect_regime(
 # ── STAGE 3 — LIQUIDITY SWEEP DETECTION ──────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
+_SWEEP_BOOT_GRACE_CANDLES = 3   # ignore sweeps until this many LIVE candles arrive
+
 def _detect_liquidity_sweep(metrics: Dict[str, Any],
                               buy_walls: List[float],
                               sell_walls: List[float],
                               candle_history: list,
                               feed_state) -> Optional[str]:
     if len(candle_history) < 2 or not sell_walls or not buy_walls:
+        return None, None, None
+
+    live_candle_count = getattr(feed_state, "_live_candle_count", 0)
+    if live_candle_count < _SWEEP_BOOT_GRACE_CANDLES:
+        logger.debug(
+            f"[Sweep] Boot grace — {live_candle_count}/{_SWEEP_BOOT_GRACE_CANDLES} "
+            "live candles received. Skipping sweep check."
+        )
         return None, None, None
 
     price = metrics["price"]
@@ -1376,7 +1386,8 @@ def _apply_cvd_divergence_gate(
         (adjusted_confidence: float,  veto_reason: Optional[str])
         veto_reason is None when no veto is issued.
     """
-    MIN_VALID_SNAPS = 1
+    MIN_VALID_SNAPS = 2
+    VETO_MIN_SNAPS  = 3   # Veto only fires when we have 3+ snapshots (1 prior pair + current)
     VETO_STRENGTH   = 0.62
     VETO_VOL_SPIKE  = 1.40
 
@@ -1394,13 +1405,13 @@ def _apply_cvd_divergence_gate(
     if div_type == "NONE" or div_str < 0.28:
         if n_snaps >= MIN_VALID_SNAPS:
             penalty = 0.0
-            reason  = f"No divergence (sufficient data n={n_snaps})"
+            reason  = f"No divergence (n={n_snaps} snaps, sufficient)"
+        elif n_snaps == 1:
+            penalty = 0.02
+            reason  = f"CVD history thin (n=1) — minor uncertainty penalty"
         else:
-            penalty = 0.03
-            reason  = (
-                f"CVD history empty (n={n_snaps}) — "
-                f"small uncertainty penalty={penalty:.2%}"
-            )
+            penalty = 0.04
+            reason  = f"CVD history empty (n={n_snaps}) — uncertainty penalty"
         adjusted = max(0.0, current_confidence - penalty)
         logger.debug(f"[CVDGate] {reason} | conf {current_confidence:.2%} → {adjusted:.2%}")
         return adjusted, None
@@ -1443,7 +1454,8 @@ def _apply_cvd_divergence_gate(
     if opposing:
         if (div_str    >= VETO_STRENGTH and
                 confirms   >= 1            and
-                vol_spike  >= VETO_VOL_SPIKE):
+                vol_spike  >= VETO_VOL_SPIKE and
+                n_snaps    >= VETO_MIN_SNAPS):
 
             veto_msg = (
                 f"CVD DIVERGENCE VETO: {div_type} divergence opposes "
@@ -2953,14 +2965,16 @@ async def main():
                 "atr_pct_rank now meaningful from first live cycle."
             )
 
-            # BUG-2 FIX: Clear _vwap_rolling after REST seed.
-            # During seeding, all 200 VWAP entries get stamped with time.time() (same second),
-            # creating near-zero VWAP std dev → Z-score returns 0.0 for the entire session.
-            # Let the rolling window rebuild naturally from live kline data.
-            quant._vwap_rolling.clear()
-            quant._vwap_num = 0.0
-            quant._vwap_den = 0.0
-            logger.info("[VWAP] _vwap_rolling cleared after REST seed — Z-score will rebuild from live data.")
+            # BUG-2 FIX: Seed VWAP with correct historical timestamps.
+            # Using wall-clock time for all REST candles makes the 24h expiry treat
+            # all 480 candles as "just arrived", inflating std dev and zeroing the Z-score.
+            quant.seed_vwap_from_history(
+                candles=rest_candles,
+                highs=[c["high"]  for c in rest_candles],
+                lows= [c["low"]   for c in rest_candles],
+                closes=[c["close"] for c in rest_candles],
+                vols=  [c["volume"] for c in rest_candles],
+            )
     except Exception as e:
         logger.warning(f"[HMM] HMM seeding from history failed (will use cold-start): {e}")
 
