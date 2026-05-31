@@ -420,37 +420,14 @@ class BinanceDataFeed:
         }.get(self.interval, 900)
         stale_threshold = interval_secs * 3.0
 
-        # Give the feed 60s to warm up before monitoring
-        await asyncio.sleep(60)
-
-        # FIX: Track boot time so we can detect "kline never arrived at all"
-        _monitor_boot_ts = time.time()
+        # Give the feed 120s to receive its first kline frame before monitoring
+        # (kline frames arrive at candle open, max 15m apart)
+        await asyncio.sleep(120)
 
         while self.is_running:
             await asyncio.sleep(60)
             if not self.is_running:
                 break
-
-            # FIX: If kline frames have NEVER arrived (e.g. geoblock), force
-            # reconnect after 180s instead of skipping forever.  The old code
-            # did `continue` here, meaning a fully dead kline stream would
-            # never trigger a reconnect.
-            if self._last_kline_frame_ts == 0.0:
-                secs_since_boot = time.time() - _monitor_boot_ts
-                if secs_since_boot > 180:
-                    alert_msg = (
-                        f"⚠️ [DataFeed] FEED DEAD: zero kline frames received "
-                        f"since boot ({secs_since_boot:.0f}s ago). Forcing reconnect."
-                    )
-                    logger.error(alert_msg)
-                    if notifier:
-                        try:
-                            await notifier.send_message(alert_msg)
-                        except Exception:
-                            pass
-                    self.state._reconnect_event.set()
-                    _monitor_boot_ts = time.time()  # reset to avoid spam
-                continue
 
             age = time.time() - self._last_kline_frame_ts
             if age > stale_threshold:
@@ -468,13 +445,6 @@ class BinanceDataFeed:
                 logger.info("[DataFeed] Feed health monitor forcing WS reconnect.")
 
             # PHASE-2.2: aggTrade stream watchdog (count-delta based)
-            # The multiplexed WebSocket can stay "connected" via kline frames
-            # while the aggTrade sub-stream is silently dead. Checking only
-            # _last_trade_ts misses this because the timestamp never advances
-            # but ws.recv() never times out (klines keep the connection alive).
-            # Solution: snapshot msg count each 60s cycle. If count is identical
-            # two cycles in a row the sub-stream is genuinely dead → reconnect.
-            # FIX: Initialize _prev_count to 0 (not -1) so the very first
             # measurement cycle can detect a dead stream without needing a
             # warmup cycle.
             _prev_count  = getattr(self, "_aggtrade_watchdog_prev_count", 0)
@@ -486,16 +456,22 @@ class BinanceDataFeed:
                 msgs_per_min = int(_curr_count / max(elapsed, 1) * 60)
                 self.state.msgs_per_min = msgs_per_min  # FIX-M10: expose for signal gate
                 logger.info(f"[DataFeed] aggTrade throughput: {msgs_per_min} msgs/min (Δ={_curr_count - _prev_count})")
-                # Reset counters
-                self._aggtrade_watchdog_prev_count = _curr_count
+
+                # FIX-AUDIT: Only advance the baseline if we actually received msgs.
+                # If msgs_per_min==0 the baseline should NOT advance — it must stay
+                # at the last known good value so the NEXT 60s window can properly
+                # detect a second consecutive zero and trigger reconnect.
+                if msgs_per_min > 0:
+                    self._aggtrade_watchdog_prev_count = _curr_count
+                # Reset counter regardless so the rate calculation stays fresh
                 self.state._aggtrade_msg_count     = 0
                 self.state._aggtrade_count_reset_ts = now
 
-                if msgs_per_min == 0 and _prev_count >= 0:
-                    # Zero throughput AND we've had at least one prior measurement
+                if msgs_per_min == 0 and self._aggtrade_watchdog_prev_count >= 0:
+                    # Two consecutive dead cycles (baseline didn't advance last cycle AND still 0 this cycle)
                     trade_age = time.time() - getattr(self.state, "_last_trade_ts", 0)
                     logger.warning(
-                        f"[DataFeed] ⚠️ aggTrade sub-stream DEAD — 0 msgs/min, "
+                        f"[DataFeed] ⚠️ aggTrade sub-stream DEAD — 0 msgs/min for 2+ cycles, "
                         f"last trade {trade_age:.0f}s ago. Forcing WebSocket reconnect."
                     )
                     if notifier and trade_age > 75:
