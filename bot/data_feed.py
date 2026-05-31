@@ -129,12 +129,19 @@ class BinanceDataFeed:
             self.rest_url = "https://fapi.binance.com"
             base_url = "wss://fstream.binance.com"
 
-        streams = (
-            f"{self.symbol}@kline_{self.interval}"
-            f"/{self.symbol}@aggTrade"      # Spot & Futures both use aggTrade
-            f"/{self.symbol}@depth20@100ms"
+        # FIX-A: Separate aggTrade stream to Spot WS (critical fix).
+        # The fstream.binance.com multiplexed stream can silently drop aggTrade
+        # while keeping kline alive, causing the watchdog to miss the dead sub-stream.
+        # Solution: run aggTrade on the unrestricted Spot WebSocket independently.
+        self.ws_url_futures = (
+            f"{base_url}/stream?streams="
+            f"{self.symbol}@kline_{self.interval}/"
+            f"{self.symbol}@depth20@100ms"
         )
-        self.ws_url = f"{base_url}/stream?streams={streams}"
+        self.ws_url_aggtrade = (
+            f"wss://stream.binance.com/stream?streams={self.symbol}@aggTrade"
+        )
+        self.ws_url = self.ws_url_futures  # default for run()
         self.is_running = False
         self._rest_fetch_lock = asyncio.Lock()
         self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
@@ -352,6 +359,50 @@ class BinanceDataFeed:
                 logger.error(f"[DataFeed] Network error: {e}. Retrying in {retry_delay}s…")
             except Exception as e:
                 logger.error(f"[DataFeed] Unexpected error: {e}", exc_info=True)
+
+            if self.is_running:
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 60)
+
+    # ------------------------------------------------------------------
+    # FIX-A: Separate aggTrade WebSocket on Spot (resolves dead stream issue)
+    # ------------------------------------------------------------------
+    async def run_aggtrade(self):
+        """
+        Dedicated aggTrade stream on the unrestricted Spot WebSocket.
+        Binance aggTrade is identical on Spot and Futures (documented parity).
+        Running this separately from run() ensures aggTrade never goes silently
+        dead while kline frames keep the futures socket alive.
+        """
+        self.is_running = True
+        retry_delay = 1
+        while self.is_running:
+            try:
+                logger.info(f"[DataFeed/aggTrade] Connecting → {self.ws_url_aggtrade}")
+                async with websockets.connect(
+                    self.ws_url_aggtrade,
+                    ping_interval=20,
+                    ping_timeout=30,
+                    close_timeout=10
+                ) as ws:
+                    retry_delay = 1
+                    logger.info("[DataFeed/aggTrade] Connected ✓")
+                    import asyncio as _asyncio
+                    while self.is_running:
+                        try:
+                            msg = await _asyncio.wait_for(ws.recv(), timeout=120)
+                            await self._handle_message(msg)
+                        except _asyncio.TimeoutError:
+                            logger.warning("[DataFeed/aggTrade] recv() timeout — reconnecting...")
+                            break
+                        except websockets.exceptions.ConnectionClosedOK:
+                            break
+            except websockets.exceptions.ConnectionClosed as e:
+                logger.warning(f"[DataFeed/aggTrade] Connection dropped: {e}. Retrying in {retry_delay}s…")
+            except OSError as e:
+                logger.error(f"[DataFeed/aggTrade] Network error: {e}. Retrying in {retry_delay}s…")
+            except Exception as e:
+                logger.error(f"[DataFeed/aggTrade] Unexpected error: {e}", exc_info=True)
 
             if self.is_running:
                 await asyncio.sleep(retry_delay)

@@ -1796,6 +1796,22 @@ async def _compute_signal(
         _gate_stats_summary("cascade_cooldown")
         return {**WAIT, "analysis": f"WAIT (Cascade Cooldown: {remaining}s remain, regime={regime})"}
 
+    # FIX-AUDIT: Dead-market Z guard for RANGE regime.
+    # When abs(zScore) < 0.30 for multiple consecutive cycles the market is
+    # statically flat — no edge exists regardless of other indicators.
+    # Skip signal evaluation to avoid burning cascade cooldown on a flat market.
+    if regime == "RANGE":
+        _z = abs(metrics.get("zScore", 0.0))
+        if _z < 0.30:
+            _flat_cycles = getattr(quant, "_dead_market_cycles", 0) + 1
+            quant._dead_market_cycles = _flat_cycles
+            if _flat_cycles >= 5:
+                logger.info(f"[DeadMarket] RANGE+flat Z={_z:.2f} for {_flat_cycles} cycles — no edge, skipping.")
+                _gate_stats_summary("regime_no_edge")
+                return {**WAIT, "analysis": f"Dead market: Z={_z:.2f} < 0.30 for {_flat_cycles} cycles."}
+        else:
+            quant._dead_market_cycles = 0
+
     logger.info(
         f"[RegimeParams] z_thr={regime_p['z_threshold']} "
         f"sl_mult={regime_p['atr_multiplier_sl']} "
@@ -2979,6 +2995,7 @@ async def main():
 
     tasks = [
         asyncio.create_task(feed.run(),                    name="data_feed"),
+        asyncio.create_task(feed.run_aggtrade(),           name="aggtrade_spot"),   # FIX-A: separate aggTrade on Spot WS
         asyncio.create_task(feed.funding_rate_loop(),      name="funding_rate"),
         asyncio.create_task(_derivatives_refresh_loop(),  name="deriv_refresh"),  # FIX-7.1: background derivatives
         _exec_task,

@@ -63,6 +63,7 @@ class QuantEngine:
         # ── State variables extracted from main.py ──────────────────────────
         self._liquidity_consecutive: int = 0
         self._liquidity_cap_cooldown: int = 0   # prevents immediate LIQUIDITY re-entry after cap
+        self._dead_market_cycles: int = 0    # consecutive RANGE+flat-Z cycles (dead market guard)
 
         # ── RSI History Cache (MED-1 fix) ─────────────────────────────────────
         # Caches the last 3 computed RSI values so rsi_prev/rsi_prev2 reflect
@@ -256,9 +257,7 @@ class QuantEngine:
         then initialises a fresh Beta(5,5) prior.
         """
         import os
-        if os.getenv("DEV_RESET", "True").lower() in ("true", "1", "yes"):
-            import logging
-            logger = logging.getLogger(__name__)
+        if os.getenv("DEV_RESET", "False").lower() in ("true", "1", "yes"):
             logger.info("[QuantEngine] DEV_RESET=True - skipping Firestore/local cache. Starting with fresh Beta(5,5) prior.")
             return
         # ── 1. Try Firestore ────────────────────────────────────────────
@@ -1100,6 +1099,16 @@ class QuantEngine:
                 self._cvd_div_streak_count = 1
 
             streak = self._cvd_div_streak_count
+            MAX_STREAK_HARD_CAP = AGE_CAP_CANDLES * 3  # 24 candles (~6h): force-reset runaway streak
+            if streak > MAX_STREAK_HARD_CAP:
+                logger.warning(
+                    f"[CVDDiv] ⛔ Hard streak cap reached ({streak}>{MAX_STREAK_HARD_CAP}). "
+                    f"Resetting divergence state — stale institutional bias cleared."
+                )
+                self._cvd_div_streak_dir = "NONE"
+                self._cvd_div_streak_count = 0
+                NULL_RESULT["n_snaps"] = n_snaps
+                return NULL_RESULT
             if streak > AGE_CAP_CANDLES:
                 decay = math.exp(-DECAY_RATE * (streak - AGE_CAP_CANDLES))
                 winning_s_decayed = winning_s * decay
