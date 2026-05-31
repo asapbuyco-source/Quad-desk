@@ -1310,7 +1310,10 @@ def _apply_ulis_gate(
             boost = +0.01   # Aligned: momentum building in our direction
         else:
             boost = -0.02   # Conflicting: momentum building against us
-    adjusted = min(1.0, confidence + boost)
+    if is_long:
+        adjusted = min(1.0, confidence + boost)
+    else:
+        adjusted = max(0.0, confidence - boost)
     logger.info(
         f"[ULIS] PASS — {verdict_str} | "
         f"vector={ulis['liquidity_vector']:.3f} | "
@@ -1369,9 +1372,7 @@ def _apply_cvd_divergence_gate(
         (adjusted_confidence: float,  veto_reason: Optional[str])
         veto_reason is None when no veto is issued.
     """
-    MIN_VALID_SNAPS = 2  # Reduced from 4: 2 confirmed candle snaps = 30 min of history
-                         # Sufficient to establish divergence direction; full 4-snap certainty
-                         # was blocking valid signals for 60+ min after daily reset.
+    MIN_VALID_SNAPS = 1
     VETO_STRENGTH   = 0.62
     VETO_VOL_SPIKE  = 1.40
 
@@ -1391,12 +1392,10 @@ def _apply_cvd_divergence_gate(
             penalty = 0.0
             reason  = f"No divergence (sufficient data n={n_snaps})"
         else:
-            completeness = n_snaps / MIN_VALID_SNAPS
-            penalty      = round(0.10 * (1.0 - completeness), 4)
-            reason       = (
-                f"Insufficient CVD history "
-                f"(n={n_snaps}/{MIN_VALID_SNAPS}) — "
-                f"uncertainty penalty={penalty:.2%}"
+            penalty = 0.03
+            reason  = (
+                f"CVD history empty (n={n_snaps}) — "
+                f"small uncertainty penalty={penalty:.2%}"
             )
         adjusted = max(0.0, current_confidence - penalty)
         logger.debug(f"[CVDGate] {reason} | conf {current_confidence:.2%} → {adjusted:.2%}")
@@ -1423,7 +1422,11 @@ def _apply_cvd_divergence_gate(
         method_bonus = 0.01 if method == "swing_extrema" else 0.0
 
         total_boost = boost + vol_bonus + method_bonus
-        adjusted    = min(1.0, current_confidence + total_boost)
+        _cvd_is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
+        if _cvd_is_long:
+            adjusted = min(1.0, current_confidence + total_boost)
+        else:
+            adjusted = max(0.0, current_confidence - total_boost)
 
         logger.info(
             f"[CVDGate] ✅ CONFIRMING {div_type} | "
@@ -2032,11 +2035,13 @@ async def _compute_signal(
         regime_p["min_confidence"] - cold_start_discount,
         0.50
     )
-    if confidence < regime_min_conf:
+    _is_long_for_conf = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
+    _directional_conf = confidence if _is_long_for_conf else (1.0 - confidence)
+    if _directional_conf < regime_min_conf:
         _gate_stats_summary("confidence_below_threshold")
         return {**WAIT, "analysis": (
             f"Regime={regime} strategy={strategy_type} signal={raw_direction} "
-            f"but P={confidence:.2%} < regime threshold={regime_min_conf:.0%}"
+            f"but directional_P={_directional_conf:.2%} < regime threshold={regime_min_conf:.0%}"
         )}
 
     # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
