@@ -259,6 +259,30 @@ def get_db() -> Optional[Any]:
     return _db
 
 
+async def _telegram_fallback_alert(token: str, chat_id: str) -> None:
+    """
+    H1 FIX: Fire-and-forget Telegram alert when Firebase goes dark.
+    Uses a properly-managed AsyncClient context so connections are closed.
+    """
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": (
+                        "⚠️ Quad-Desk: Firebase is DARK\n"
+                        "3 consecutive write failures.\n"
+                        "Trade data → local /tmp fallback only.\n"
+                        "Check Firestore quota or credentials."
+                    )
+                }
+            )
+    except Exception:
+        pass
+
+
 async def run_heartbeat(stats: dict) -> None:
     """
     Continuously writes bot status to Firestore every 60 s.
@@ -340,19 +364,7 @@ async def run_heartbeat(stats: dict) -> None:
                             try:
                                 import httpx as _httpx
                                 asyncio.create_task(
-                                    _httpx.AsyncClient().post(
-                                        f"https://api.telegram.org/bot{_tg_token}/sendMessage",
-                                        json={
-                                            "chat_id": _tg_chat,
-                                            "text": (
-                                                "⚠️ Quad-Desk: Firebase is DARK\n"
-                                                "3 consecutive write failures.\n"
-                                                "Trade data → local /tmp fallback only.\n"
-                                                "Check Firestore quota or credentials."
-                                            )
-                                        },
-                                        timeout=5.0
-                                    )
+                                    self._telegram_fallback_alert(_tg_token, _tg_chat)
                                 )
                             except Exception:
                                 pass

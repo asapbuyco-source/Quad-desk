@@ -105,9 +105,15 @@ class QuantEngine:
         self._cvd_post_reset_cooldown: int = 0
 
         # ── Session VWAP Anchor (Phase 2) ───────────────────────────────────
-        self._session_vwap_num: float = 0.0
-        self._session_vwap_den: float = 0.0
-        self._session_date = None
+        # Rolling 24h window: each entry is (tp, volume, timestamp_seconds)
+        # Max 96 entries at 15m candles (24h / 15m = 96)
+        # HMM-SESSION-VWAP FIX: Replaced midnight-UTC session reset with a
+        # proper 24h rolling window so VWAP is meaningful even when the bot
+        # starts mid-day or runs across the UTC midnight boundary.
+        self._vwap_rolling: deque = deque(maxlen=288)  # 288 × 15m = 72h max buffer
+        self._vwap_num: float = 0.0    # Σ(tp × vol) for active window
+        self._vwap_den: float = 0.0    # Σ(vol) for active window
+        self._vwap_24h_anchor_ts: float = 0.0  # epoch seconds of last 24h reset
 
         # Persistence path — survives Railway restarts if /tmp is mounted
         self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
@@ -497,7 +503,7 @@ class QuantEngine:
         return float(np.clip(z_ret, -4.0, 4.0))
 
     # ------------------------------------------------------------------
-    # 2. VWAP-Anchored Z-Score — True Session VWAP (Phase 2)
+    # 2. VWAP-Anchored Z-Score — Rolling 24h Window (HMM-SESSION-VWAP FIX)
     # ------------------------------------------------------------------
     def _session_vwap_z(
         self,
@@ -508,25 +514,29 @@ class QuantEngine:
         current_price: float,
         atr_pct_rank: float = 0.5,
     ) -> float:
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).date()
-        if self._session_date != today:
-            self._session_vwap_num = 0.0
-            self._session_vwap_den = 0.0
-            self._session_date = today
+        import time as _time
+        now_ts = _time.time()
+        WINDOW_SECS = 86400.0  # 24 hours
 
         if len(closes) == 0:
             return 0.0
 
-        # Update running VWAP with latest candle
+        # Expire candles older than 24h from the rolling deque
+        while self._vwap_rolling and (now_ts - self._vwap_rolling[0][2]) > WINDOW_SECS:
+            expired_tp, expired_v, _ = self._vwap_rolling.popleft()
+            self._vwap_num -= expired_tp * expired_v
+            self._vwap_den -= expired_v
+
+        # Add latest candle to rolling window
         tp = float((highs[-1] + lows[-1] + closes[-1]) / 3.0)
         v = float(vols[-1])
-        self._session_vwap_num += tp * v
-        self._session_vwap_den += v
-        
-        if self._session_vwap_den <= 0:
+        self._vwap_rolling.append((tp, v, now_ts))
+        self._vwap_num += tp * v
+        self._vwap_den += v
+
+        if self._vwap_den <= 0:
             return 0.0
-        vwap_session = self._session_vwap_num / self._session_vwap_den
+        vwap_session = self._vwap_num / self._vwap_den
 
         # Adaptive sigma window
         n_sig = max(10, int(atr_pct_rank * 40))

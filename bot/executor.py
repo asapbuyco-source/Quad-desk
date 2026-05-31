@@ -8,6 +8,7 @@ from bot.notifier import TelegramNotifier
 logger = logging.getLogger(__name__)
 
 MAX_SHORT_EXPOSURE_BTC = 0.008
+MAX_REQUEUE_ATTEMPTS = 3  # H4 FIX: retry failed TP placements up to N times before giving up
 
 
 class TradingExecutor:
@@ -877,11 +878,19 @@ class TradingExecutor:
                             await asyncio.sleep(1.0)
                 if not tp_placed:
                     # SL IS placed — position is not naked, just has no profit target.
-                    # Alert loudly but do NOT flatten; the SL protects against loss.
+                    # H4 FIX: Track requeue attempts so the heartbeat can retry TP placement
+                    # up to MAX_REQUEUE_ATTEMPTS before giving up and alerting the operator.
+                    self.active_position["requeue_tp_attempts"] = 1
+                    self.active_position["requeue_tp_side"] = sl_side
+                    self.active_position["requeue_tp_size"] = fmt_size
+                    self.active_position["requeue_tp_price"] = float(
+                        self.exchange.price_to_precision(ex_symbol, take_profit)
+                    )
+                    self.active_position["requeue_tp_symbol"] = ex_symbol
                     _tp_warn = (
                         f"⚠️ TP PLACEMENT FAILED for {side.upper()} {ex_symbol} @ {current_price}. "
                         f"SL={stop_loss} IS active (id={sl_order_id}). "
-                        f"Position protected but NO take-profit. MONITOR MANUALLY."
+                        f"Will retry TP placement (1/{MAX_REQUEUE_ATTEMPTS}). MONITOR MANUALLY."
                     )
                     logger.error(f"[Executor] {_tp_warn}")
                     await self.notifier.send_error_alert(_tp_warn)
@@ -1455,4 +1464,82 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             # A separate boolean survives the poll clearing active_position.
             self._flatten_failed = True
             self.active_position = None  # Clear position — halt is enforced via _flatten_failed flag
+
+    async def attempt_tp_requeue(self) -> bool:
+        """
+        H4 FIX: Retry TP placement for positions that entered without a TP attached.
+
+        Called by main.py on every analysis cycle when active_position has
+        requeue_tp_attempts > 0. Retries up to MAX_REQUEUE_ATTEMPTS times.
+        Returns True if TP was successfully placed, False if max attempts exhausted.
+        """
+        pos = self.active_position
+        if pos is None:
+            return False
+
+        if not pos.get("requeue_tp_attempts", 0):
+            return False  # No pending TP requeue
+
+        attempts = pos["requeue_tp_attempts"]
+        if attempts > MAX_REQUEUE_ATTEMPTS:
+            logger.warning(
+                f"[Executor] TP requeue attempts ({attempts}) >= MAX_REQUEUE_ATTEMPTS "
+                f"({MAX_REQUEUE_ATTEMPTS}). Giving up on TP. Position has SL only."
+            )
+            pos.pop("requeue_tp_attempts", None)
+            pos.pop("requeue_tp_side", None)
+            pos.pop("requeue_tp_size", None)
+            pos.pop("requeue_tp_price", None)
+            pos.pop("requeue_tp_symbol", None)
+            return False
+
+        symbol = pos.get("requeue_tp_symbol")
+        side = pos.get("requeue_tp_side")
+        size = pos.get("requeue_tp_size")
+        tp_price = pos.get("requeue_tp_price")
+
+        if not all([symbol, side, size, tp_price]):
+            logger.error("[Executor] TP requeue: missing position fields — clearing requeue state.")
+            for k in ["requeue_tp_attempts", "requeue_tp_side", "requeue_tp_size", "requeue_tp_price", "requeue_tp_symbol"]:
+                pos.pop(k, None)
+            return False
+
+        for attempt in range(3):
+            try:
+                tp_order = await self.exchange.create_order(
+                    symbol=symbol,
+                    type="TAKE_PROFIT_MARKET",
+                    side=side,
+                    amount=size,
+                    params={
+                        "stopPrice": tp_price,
+                        "closePosition": True,
+                        "workingType": "MARK_PRICE",
+                    },
+                )
+                pos["tp_order_id"] = tp_order.get("id")
+                for k in ["requeue_tp_attempts", "requeue_tp_side", "requeue_tp_size", "requeue_tp_price", "requeue_tp_symbol"]:
+                    pos.pop(k, None)
+                logger.info(f"[Executor] TP requeue SUCCESS — TP placed at {tp_price} (attempt {attempts}) ✓")
+                return True
+            except Exception as e:
+                logger.warning(
+                    f"[Executor] TP requeue attempt {attempts}/{MAX_REQUEUE_ATTEMPTS}, "
+                    f"inner attempt {attempt+1}/3 failed: {e}"
+                )
+                if attempt < 2:
+                    await asyncio.sleep(1.0)
+
+        # All 3 inner attempts failed this cycle — increment and alert
+        pos["requeue_tp_attempts"] = attempts + 1
+        logger.warning(
+            f"[Executor] TP requeue inner loop exhausted. "
+            f"Attempt {attempts+1}/{MAX_REQUEUE_ATTEMPTS}. Will retry next cycle."
+        )
+        if pos["requeue_tp_attempts"] >= MAX_REQUEUE_ATTEMPTS:
+            await self.notifier.send_error_alert(
+                f"⚠️ TP placement FAILED after {MAX_REQUEUE_ATTEMPTS} requeue attempts. "
+                f"Position is unprotected — SL active. Manual intervention required."
+            )
+        return False
 

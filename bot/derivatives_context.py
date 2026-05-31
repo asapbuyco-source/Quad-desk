@@ -11,6 +11,9 @@ class DerivativesContext:
     Fetches institutional-grade signals from free public APIs.
     All four sources are completely free — no API key required.
     Run once per candle close, cache for 5 minutes.
+
+    H1 FIX: Persistent httpx.AsyncClient reused across all requests.
+    Connection pool eliminates TLS handshake overhead on every call.
     """
 
     def __init__(self, symbol: str = "BTCUSDT"):
@@ -18,18 +21,37 @@ class DerivativesContext:
         self._cache: dict = {}
         self._cache_ts: dict = {}
         self.CACHE_TTL = 300  # 5 minutes
+        self._client: httpx.AsyncClient = None  # H1: lazy-initialized persistent client
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=8.0, limits=httpx.Limits(max_keepalive_connections=5, max_connections=10))
+        return self._client
+
+    async def close(self):
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def _fetch(self, key: str, url: str, params: dict = None) -> dict:
         now = time.time()
         if key in self._cache and (now - self._cache_ts.get(key, 0)) < self.CACHE_TTL:
             return self._cache[key]
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                data = resp.json()
-            self._cache[key] = data
-            self._cache_ts[key] = now
+            client = await self._get_client()
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            # H2 FIX: Only cache truthy non-empty responses.
+            # Empty dict/list from API errors or rate-limit blanks should not
+            # overwrite a valid prior cache entry or get cached as fresh.
+            if data:
+                self._cache[key] = data
+                self._cache_ts[key] = now
+            elif key in self._cache:
+                # Return stale cache rather than overwriting with empty
+                logger.info(f"[Derivatives] Empty response for {key} — returning stale cache (age={(now - self._cache_ts.get(key, now)):.0f}s)")
+                return self._cache[key]
             return data
         except Exception as e:
             logger.warning(f"[Derivatives] {key} fetch failed: {e}")

@@ -8,11 +8,24 @@ logger = logging.getLogger(__name__)
 class TelegramNotifier:
     """
     Handle sending trade alerts and error notifications to Telegram.
+
+    H1 FIX: Persistent httpx.AsyncClient reused across all requests.
     """
     def __init__(self, token: Optional[str], chat_id: Optional[str]):
         self.token = token
         self.chat_id = chat_id
         self.base_url = f"https://api.telegram.org/bot{token}/sendMessage" if token else None
+        self._client: httpx.AsyncClient = None  # H1: lazy-initialized persistent client
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=10.0, limits=httpx.Limits(max_keepalive_connections=3))
+        return self._client
+
+    async def close(self):
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     @property
     def is_active(self) -> bool:
@@ -23,11 +36,11 @@ class TelegramNotifier:
             return
         for attempt in range(2 if critical else 1):
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
-                    resp = await client.post(self.base_url, json=payload)
-                    resp.raise_for_status()
-                    return
+                client = await self._get_client()
+                payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+                resp = await client.post(self.base_url, json=payload)
+                resp.raise_for_status()
+                return
             except Exception as e:
                 logger.error(f"[Telegram] Failed to send message (attempt {attempt+1}): {e}")
                 if critical and attempt == 0:

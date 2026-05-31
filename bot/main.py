@@ -2459,6 +2459,10 @@ async def execution_loop(
                     if pnl < 0:
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
 
+                    # H4 FIX: Retry TP placement on every cycle for positions missing TP
+                    if executor.active_position is not None and not executor.dry_run:
+                        await executor.attempt_tp_requeue()
+
                     # In live mode, simulate the exchange fill through crossover and clean up
                     if not executor.dry_run:
                         # Cancel orphaned opposing order (SL or TP)

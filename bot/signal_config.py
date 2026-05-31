@@ -27,9 +27,14 @@ COLD_START_CONFIDENCE_DISCOUNT = 0.05
 # ── REGIME-CONDITIONAL PARAMETER MATRIX (HMM Spec, Apr 2026) ─────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# C7 PLACEHOLDER: These regime parameters are hand-tuned placeholders.
-# Run backtest sensitivity analysis (C4) to derive optimal thresholds for
-# your specific market conditions, timeframe, and risk tolerance.
+# HMM HAND-TUNING NOTE:
+# These regime parameters are hand-tuned placeholders. The HMM emission
+# parameters (_MU, _SIGMA in main.py _HMMRegimeClassifier) are ALSO
+# hand-tuned placeholders. Run `python -m bot.hmm_calibrate` on ≥6 months
+# of historical 15m data to derive validated HMM emission parameters.
+# Then update _MU / _SIGMA in main.py before deploying with live capital.
+# The backtest/sensitivity analysis script (bot/sensitivity_analysis.py) can
+# be used to derive optimal REGIME_PARAMS values for your risk tolerance.
 #
 # Every downstream stage reads from this dict rather than using static constants.
 # Replaces fixed thresholds (e.g. z >= 2.2 always) with adaptive ones that fit

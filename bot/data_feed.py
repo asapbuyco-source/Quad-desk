@@ -140,6 +140,20 @@ class BinanceDataFeed:
         self._rest_fetch_lock = asyncio.Lock()
         self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
         self._last_kline_frame_ts: float = 0.0  # epoch-seconds of last kline WS frame received
+        # H1 FIX: Persistent httpx client for REST API calls — reused across
+        # _fetch_funding_rate and _fetch_historical_candles_rest.  Eliminates
+        # TLS handshake overhead on every 60s funding poll.
+        self._http: httpx.AsyncClient = None
+
+    async def _get_http(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=10.0, limits=httpx.Limits(max_keepalive_connections=5, max_connections=10))
+        return self._http
+
+    async def _close_http(self):
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
 
     # ------------------------------------------------------------------
     # Message routing
@@ -186,10 +200,10 @@ class BinanceDataFeed:
         api_key = os.environ.get("BINANCE_API_KEY", "")
         headers = {"X-MBX-APIKEY": api_key} if api_key else {}
         try:
-            async with httpx.AsyncClient(timeout=6.0) as client:
-                resp = await client.get(url, params=params, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
+            client = await self._get_http()
+            resp = await client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
             rate = float(data.get("lastFundingRate", 0.0))
             self.state.funding_rate = rate
             # NEW: Track Futures-Spot basis for SL/TP price correction
@@ -248,10 +262,10 @@ class BinanceDataFeed:
 
             try:
                 logger.info(f"[DataFeed] Fetching historical {self.interval} candles from {url}...")
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(url, params=params, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
+                client = await self._get_http()
+                resp = await client.get(url, params=params, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
 
                 # Reset CVD to re-anchor perfectly based on REST history (only on success)
                 self.state.cvd = 0.0
@@ -451,6 +465,10 @@ class BinanceDataFeed:
         logger.info("[DataFeed] Stop requested.")
         self.is_running = False
 
+    async def aclose(self):
+        """Close all persistent HTTP clients. Call on shutdown."""
+        await self._close_http()
+
     async def run_user_data_stream(self, api_key: str, on_fill_callback) -> None:
         """
         Binance USDM Futures user data stream for real-time fill detection.
@@ -468,13 +486,17 @@ class BinanceDataFeed:
 
         headers = {"X-MBX-APIKEY": api_key}
 
+        # H1 FIX: Persistent HTTP client for user data stream (listenKey create + keepalive)
+        _uds_client: Optional[httpx.AsyncClient] = None
+
         while self.is_running:
             try:
                 # Create listenKey
-                async with _httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(listen_key_url, headers=headers)
-                    resp.raise_for_status()
-                    listen_key = resp.json()["listenKey"]
+                if _uds_client is None:
+                    _uds_client = httpx.AsyncClient(timeout=10.0, limits=httpx.Limits(max_keepalive_connections=3))
+                resp = await _uds_client.post(listen_key_url, headers=headers)
+                resp.raise_for_status()
+                listen_key = resp.json()["listenKey"]
 
                 logger.info(f"[UserDataStream] listenKey created ✓")
 
@@ -482,13 +504,14 @@ class BinanceDataFeed:
                 async def _keepalive():
                     while self.is_running:
                         await asyncio.sleep(29 * 60)
+                        if _uds_client is None:
+                            _uds_client = httpx.AsyncClient(timeout=5.0, limits=httpx.Limits(max_keepalive_connections=2))
                         try:
-                            async with _httpx.AsyncClient(timeout=5.0) as c:
-                                await c.put(
-                                    listen_key_url, headers=headers,
-                                    params={"listenKey": listen_key}
-                                )
-                            logger.info("[UserDataStream] listenKey keepalive ✓")
+                            await _uds_client.put(
+                                listen_key_url, headers=headers,
+                                params={"listenKey": listen_key}
+                            )
+                            logger.info("[UserDataStream] listenkey keepalive ✓")
                         except Exception as e:
                             logger.warning(f"[UserDataStream] Keepalive failed: {e}")
 
