@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class MarketState:
     def __init__(self, symbol: str):
         self.symbol = symbol.upper()
-        self.candles: deque = deque(maxlen=200)
+        self.candles: deque = deque(maxlen=600)  # WARN-5: was 200, 600 = ~6h of 15m candles
         # Keep all trades received; prune old ones in add_trade
         self.recent_trades: deque = deque(maxlen=50000)
         # Order Book snapshot { price_float: size_float }
@@ -145,7 +145,7 @@ class BinanceDataFeed:
         self.is_running = False
         self._rest_fetch_lock = asyncio.Lock()
         self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
-        self._last_kline_frame_ts: float = 0.0  # epoch-seconds of last kline WS frame received
+        self._last_kline_frame_ts: float = time.time()  # epoch-seconds of last kline WS frame received
         # H1 FIX: Persistent httpx client for REST API calls — reused across
         # _fetch_funding_rate and _fetch_historical_candles_rest.  Eliminates
         # TLS handshake overhead on every 60s funding poll.

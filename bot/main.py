@@ -74,6 +74,9 @@ logging.basicConfig(
     format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
     datefmt='%H:%M:%S',
 )
+# BUG-4 FIX: Prevent httpx from logging URLs containing Telegram bot token.
+# Without this the full token appears in Railway plaintext logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("bot.main")
 
 try:
@@ -196,6 +199,7 @@ _CYCLE_ERROR_COUNT = 0  # PHASE-3.1: Consecutive cycle errors for escalation
 _LAST_CYCLE_ERROR = ""  # PHASE-3.1: Last error string for escalation
 
 LAST_CASCADE_TIME = 0.0
+BOT_START_TIME = time.time()  # used for boot-grace period on throughput gate
 LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can compute delta
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
 LAST_ANY_TRADE_CLOSE_TIME = 0.0  # Track any trade exit for post-trade cooldown
@@ -1989,10 +1993,12 @@ async def _compute_signal(
 
     # FIX-M10: Throughput gate — block new entries in thin liquidity (<300 msg/min)
     # unless CVD conviction is strong (>0.40), which justifies acting despite thin tape.
+    # WARN-2 FIX: Skip this gate for the first 120s after boot — watchdog needs time to warm up.
     _msgs_per_min = getattr(feed_state, "msgs_per_min", 999)
     _cvd_div = metrics.get("cvd_divergence", {})
     _cvd_strength = _cvd_div.get("strength", 0.0) if _cvd_div else 0.0
-    if _msgs_per_min < 300 and _cvd_strength < 0.40:
+    _boot_grace = (time.time() - BOT_START_TIME) < 120
+    if not _boot_grace and _msgs_per_min < 300 and _cvd_strength < 0.40:
         logger.warning(
             f"[ThroughputGate] Blocked: msgs/min={_msgs_per_min} < 300, CVD strength={_cvd_strength:.2f}"
         )
@@ -2946,6 +2952,15 @@ async def main():
                 f"(deque={len(quant._atr_history)}). "
                 "atr_pct_rank now meaningful from first live cycle."
             )
+
+            # BUG-2 FIX: Clear _vwap_rolling after REST seed.
+            # During seeding, all 200 VWAP entries get stamped with time.time() (same second),
+            # creating near-zero VWAP std dev → Z-score returns 0.0 for the entire session.
+            # Let the rolling window rebuild naturally from live kline data.
+            quant._vwap_rolling.clear()
+            quant._vwap_num = 0.0
+            quant._vwap_den = 0.0
+            logger.info("[VWAP] _vwap_rolling cleared after REST seed — Z-score will rebuild from live data.")
     except Exception as e:
         logger.warning(f"[HMM] HMM seeding from history failed (will use cold-start): {e}")
 
