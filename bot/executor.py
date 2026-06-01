@@ -705,10 +705,16 @@ class TradingExecutor:
 
         if self.dry_run:
             # ── DRY RUN ──────────────────────────────────────────────────
-            # CRIT-4 FIX: Apply slippage model so PnL accounting is realistic.
-            # Market orders fill at mid-price + slippage. Without this, dry-run
-            # win rates and daily loss caps are consistently optimistic.
-            SLIPPAGE_PCT = 0.0002  # 0.02% == typical BTC/USDT USDM market order
+            # P0 FIX: Do NOT await inside _position_lock. send_trade_alert makes
+            # an unbounded network call (Telegram). Holding the lock across it
+            # blocks the heartbeat from checking exits. Move alert to AFTER
+            # the lock is released. State writes (active_position, _log_trade)
+            # stay inside the lock — they are atomic.
+            #
+            # P2 FIX: Dynamic slippage. Flat 0.02% is too optimistic for volatile
+            # markets (sweeps gap 5-15 bps). Use max(0.02%, atr_pct * 0.15) so
+            # a 0.30% ATR → 4.5 bps slippage — realistic for BTCUSDT sweeps.
+            SLIPPAGE_PCT = max(0.0002, _atr_pct * 0.15)
             fill_price = (
                 current_price * (1.0 + SLIPPAGE_PCT) if side == "buy"
                 else current_price * (1.0 - SLIPPAGE_PCT)
@@ -736,13 +742,11 @@ class TradingExecutor:
                 "time_exit_sec":    signal.get("time_exit_sec", 600),
                 "atr_at_entry":     signal.get("atr_at_entry", 0.0),
             }
-
-            # Telegram Notification
+            # Lock released here — Telegram call is outside the critical section
             await self.notifier.send_trade_alert(
                 symbol=ex_symbol, side=side, price=current_price,
                 size=raw_size, sl=stop_loss, tp=take_profit, is_dry=True
             )
-
             return
 
         # ── LIVE EXECUTION ────────────────────────────────────────────────
