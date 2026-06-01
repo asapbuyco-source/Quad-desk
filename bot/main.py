@@ -56,6 +56,7 @@ from bot.quant_engine import QuantEngine
 from bot.executor import TradingExecutor
 from bot.ulis_engine import compute_ulis_verdict
 from bot.derivatives_context import DerivativesContext
+from bot.amihud_engine import AmihudEngine
 from bot import heartbeat
 from bot.signal_config import (
     REGIME_PARAMS, POST_TRADE_COOLDOWN_S, COLD_START_TRADE_COUNT, 
@@ -446,60 +447,53 @@ async def _derivatives_gate(direction: str, deriv_context: dict) -> tuple[bool, 
 
 class _HMMRegimeClassifier:
     """
-    3-state Gaussian Hidden Markov Model regime detector.
+    4-state Gaussian Hidden Markov Model regime detector.
+    Upgraded from 3-state (Jun 2026, Dr. Klint spec):
+      - State 0 = RANGE     — low ATR, low |Z|, quiet tape, low Amihud
+      - State 1 = TREND     — medium ATR, high Z, SCREAMING, LOW Amihud (vol-supported)
+      - State 2 = SQUEEZE   — medium-high ATR, high Z, SCREAMING, HIGH Amihud+KE (vacuum)
+      - State 3 = VOLATILE  — high ATR, low Z, erratic, mixed Amihud
 
-    States:
-        0 = RANGE     — low ATR, low |Z|, quiet tape
-        1 = TREND     — moderate/high ATR, directional bias, louder tape
-        2 = VOLATILE  — high ATR, extreme |Z|, erratic — maps to NEUTRAL
-
-    Features (per observation):
-        f0 = atr_pct       (0 – 0.02)
+    Features (per observation, 5D):
+        f0 = atr_pct       (0 – 0.03)
         f1 = abs(z_score)  (0 – 4)
         f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
+        f3 = amihud_rank   (0 – 1)  — log Amihud percentile rank (linear variant)
+        f4 = t_kinetic     (0 – 1)  — log KE percentile rank (squared variant)
 
-    Upgrades (Apr 2026):
-        1. Forward algorithm → posterior probability vector P(state | obs_1...T)
-        2. 70% confidence gate — low-confidence ⇒ NEUTRAL (no action)
-        3. 3-candle hysteresis — regime change requires 3 consecutive agreements
+    The Amihud features (f3, f4) are what geometrically separate SQUEEZE from TREND.
     """
 
     # --- Emission means (μ) per state × feature -----------------------
-    # C6 PLACEHOLDER: These _MU / _SIGMA values are hand-tuned placeholders.
-    # Run C5 (HMM calibration script) on historical data to derive optimal
-    # emission parameters for your specific market conditions and timeframe.
-    # Features: [atr_pct, |z_score|, tape_binary, atr_pct_rank]
-    #   f0 = atr_pct       (0 – 0.02)  raw ATR as fraction of price
-    #   f1 = abs(z_score)  (0 – 4)
-    #   f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
-    #   f3 = atr_pct_rank  (0 – 1)   percentile rank in 30-day window (P2)
+    # Spec seeds from Dr. Klint Section 2.4
+    # Dim order: [atr_rank, z_score, tape_dir, amihud_rank, t_kinetic]
     _MU = np.array([
-        [0.002184, 1.110572, 0.000000, 0.280004],  # RANGE
-        [0.003786, 1.882566, 1.000000, 0.612178],  # TREND
-        [0.004542, 1.066174, 0.000000, 0.787928],  # VOLATILE
+        [0.20, 0.10, 0.0, 0.20, 0.15],   # RANGE — low everything
+        [0.45, 0.65, 0.7, 0.30, 0.25],   # TREND — HIGH Z, LOW Amihud
+        [0.55, 0.70, 0.8, 0.82, 0.88],   # SQUEEZE — HIGH Z, HIGH Amihud+KE
+        [0.80, 0.15, 0.0, 0.50, 0.45],   # VOLATILE — HIGH ATR, low Z
     ], dtype=float)
     _SIGMA = np.array([
-        # FIX BUG-2: RANGE atr_pct sigma widened 0.000912 -> 0.0018.
-        # Original was too tight — moderate ATR (0.25-0.35%) fell outside
-        # RANGE's 1-sigma band and got absorbed by VOLATILE state entirely.
-        [0.0018,  0.733199, 0.000503, 0.170868],  # RANGE  (atr_pct sigma widened)
-        [0.002696, 0.924859, 0.001725, 0.283242],  # TREND
-        [0.001904, 0.696310, 0.000607, 0.129163],  # VOLATILE
+        [0.12, 0.15, 0.30, 0.12, 0.10],   # RANGE
+        [0.18, 0.20, 0.35, 0.15, 0.12],   # TREND
+        [0.20, 0.22, 0.30, 0.14, 0.10],   # SQUEEZE — tight on Amihud/KE
+        [0.20, 0.25, 0.40, 0.22, 0.20],   # VOLATILE
     ], dtype=float)
 
-    # --- Transition matrix (rows = from-state, cols = to-state) -------
-    # 80% persistence, 10% to each neighbour state
+    # --- 4-state transition matrix (rows = from-state, cols = to-state) ---
+    # Spec Section 2.3 — physics-motivated: SQUEEZE self-loop = 0.42 (short dwell ~3-8 candles)
     _A = np.array([
-        [0.82, 0.12, 0.06],
-        [0.10, 0.80, 0.10],
-        [0.06, 0.12, 0.82],
+        [0.92, 0.05, 0.01, 0.02],   # RANGE — high persistence (ground state)
+        [0.08, 0.85, 0.04, 0.03],   # TREND — trend persists; can tip into squeeze
+        [0.35, 0.12, 0.42, 0.11],   # SQUEEZE — short dwell, cascades resolve fast
+        [0.15, 0.05, 0.05, 0.75],   # VOLATILE — clusters then reverts to range
     ], dtype=float)
 
     # --- Initial state distribution ------------------------------------
-    _PI = np.array([0.50, 0.35, 0.15], dtype=float)
+    _PI = np.array([0.50, 0.30, 0.10, 0.10], dtype=float)
 
-    # State labels (index → regime string)
-    _LABELS = ["RANGE", "TREND", "NEUTRAL"]  # VOLATILE maps to NEUTRAL
+    # State labels: SQUEEZE (2) maps to LIQUIDITY for backwards compat with signal_config
+    _LABELS = ["RANGE", "TREND", "LIQUIDITY", "VOLATILE"]
 
     # Confidence & hysteresis thresholds
     MIN_CONFIDENCE        = 0.60
@@ -602,9 +596,9 @@ class _HMMRegimeClassifier:
 
     # ------------------------------------------------------------------
     def _gaussian_log_prob(self, obs: np.ndarray) -> np.ndarray:
-        """Log P(obs | state) for all 3 states. obs shape = (F,)."""
-        log_probs = np.zeros(3)
-        for s in range(3):
+        """Log P(obs | state) for all 4 states. obs shape = (F,)."""
+        log_probs = np.zeros(4)
+        for s in range(4):
             diff    = obs - self._mu[s]
             log_p   = -0.5 * np.sum((diff / np.maximum(self._sigma[s], 1e-9)) ** 2)
             log_p  -= np.sum(np.log(np.maximum(self._sigma[s], 1e-9)))
@@ -631,7 +625,7 @@ class _HMMRegimeClassifier:
         This is mathematically correct for regime uncertainty quantification.
         """
         T    = len(obs_seq)
-        n_s  = 3
+        n_s  = 4
         log_A  = np.log(np.maximum(self._A, 1e-300))
         log_pi = np.log(np.maximum(self._PI, 1e-300))
 
@@ -659,7 +653,7 @@ class _HMMRegimeClassifier:
         if total > 0:
             posterior /= total
         else:
-            posterior = np.array([0.50, 0.35, 0.15])  # fallback to prior
+            posterior = np.array([0.50, 0.30, 0.10, 0.10])  # fallback to prior
 
         return posterior
 
@@ -667,7 +661,7 @@ class _HMMRegimeClassifier:
     def _viterbi(self, obs_seq: np.ndarray) -> np.ndarray:
         """Pure-numpy Viterbi — returns most-likely state sequence."""
         T, _   = obs_seq.shape
-        n_s    = 3
+        n_s    = 4
         log_A  = np.log(np.maximum(self._A, 1e-300))
         log_pi = np.log(np.maximum(self._PI, 1e-300))
 
@@ -712,7 +706,7 @@ class _HMMRegimeClassifier:
             return
         obs = np.array(list(self._obs_buf)[-self._window:], dtype=float)
         states = self._viterbi(obs)
-        for s in range(3):
+        for s in range(4):
             mask = states == s
             if mask.sum() >= 3:
                 self._mu[s]    = obs[mask].mean(axis=0)
@@ -725,7 +719,9 @@ class _HMMRegimeClassifier:
 
     # ------------------------------------------------------------------
     def classify(self, atr_pct: float, z_score: float, tape: str,
-                 atr_pct_rank: float = 0.5) -> dict:
+                 atr_pct_rank: float = 0.5,
+                 amihud_rank: float = 0.5,
+                 t_kinetic: float = 0.5) -> dict:
         """
         Main entry: add one observation and return regime probability vector.
 
@@ -733,21 +729,25 @@ class _HMMRegimeClassifier:
             atr_pct:      ATR as fraction of price (e.g. 0.007 = 0.7%)
             z_score:      VWAP Z-score
             tape:         'SCREAMING' | 'NORMAL'
-            atr_pct_rank: ATR percentile rank in 30-day rolling window [0,1] (P2)
+            atr_pct_rank: ATR percentile rank in 30-day rolling window [0,1]
+            amihud_rank:  Amihud illiquidity percentile rank [0,1] — 0=liquid, 1=vacuum
+            t_kinetic:    Kinetic-energy variant percentile rank [0,1] — cascade amplifier
 
         Returns dict with:
             regime:     str   — committed regime label (with hysteresis)
             confidence: float — posterior probability of the committed regime
             p_range:    float — P(RANGE | observations)
             p_trend:    float — P(TREND | observations)
+            p_liquidity: float — P(SQUEEZE/LIQUIDITY | observations) — new state 2
             p_volatile: float — P(VOLATILE | observations)
             raw_regime: str   — instantaneous HMM output (before hysteresis)
         """
         obs = np.array([
-            float(np.clip(atr_pct,      0.0,  0.03)),
-            float(np.clip(abs(z_score), 0.0,  4.0)),
-            1.0 if tape == "SCREAMING" else 0.0,
-            float(np.clip(atr_pct_rank, 0.0,  1.0)),  # P2: 4th feature
+            float(np.clip(atr_pct,      0.0,  1.0)),   # f0: atr_pct (normalised 0-1 by clip)
+            float(np.clip(abs(z_score), 0.0,  4.0)) * 0.25,  # f1: z_score → [0,1]
+            1.0 if tape == "SCREAMING" else 0.0,       # f2: tape_binary
+            float(np.clip(amihud_rank,  0.0,  1.0)),   # f3: amihud_rank (NEW)
+            float(np.clip(t_kinetic,    0.0,  1.0)),   # f4: t_kinetic (NEW)
         ], dtype=float)
 
         self._obs_buf.append(obs)
@@ -770,7 +770,7 @@ class _HMMRegimeClassifier:
                 raw = "RANGE"
             return {
                 "regime": raw, "confidence": 0.50,
-                "p_range": 0.33, "p_trend": 0.33, "p_volatile": 0.33,
+                "p_range": 0.25, "p_trend": 0.25, "p_liquidity": 0.25, "p_volatile": 0.25,
                 "raw_regime": raw,
             }
 
@@ -813,7 +813,7 @@ class _HMMRegimeClassifier:
         logger.debug(
             f"[HMM] raw={raw_label}({raw_conf:.0%}) committed={self._committed_regime}"
             f"({committed_conf:.0%}) streak={self._candidate_streak} | "
-            f"P=[R:{posterior[0]:.0%} T:{posterior[1]:.0%} V:{posterior[2]:.0%}]"
+            f"P=[R:{posterior[0]:.0%} T:{posterior[1]:.0%} Sq:{posterior[2]:.0%} V:{posterior[3]:.0%}]"
         )
 
         return {
@@ -821,13 +821,15 @@ class _HMMRegimeClassifier:
             "confidence":  committed_conf,
             "p_range":     float(posterior[0]),
             "p_trend":     float(posterior[1]),
-            "p_volatile":  float(posterior[2]),
+            "p_liquidity": float(posterior[2]),
+            "p_volatile":  float(posterior[3]),
             "raw_regime":  raw_label,
         }
 
 
 # Module-level singleton — persists observations across cycles
 _hmm_classifier = _HMMRegimeClassifier(window=60, update_every=500)   # FIX 4: was 200, 500 = ~12.5h at 15s cycles
+_amihud_engine = AmihudEngine(window=500, min_buffer=100, hysteresis_n=3)
 
 # Derivatives context for institutional signals
 _derivatives_ctx = DerivativesContext(symbol=FEED_SYMBOL)
@@ -894,9 +896,10 @@ def _detect_regime(
         quant._liquidity_consecutive = 0
         quant._liquidity_cap_cooldown = 0
 
-    # HMM classification → probability vector (P2: pass 4th feature)
+    # HMM classification → probability vector (5D obs: atr_pct, z, tape, amihud_rank, t_kinetic)
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
-    hmm_result = _hmm_classifier.classify(atr_pct, z, tape, atr_pct_rank)
+    amihud_rank, t_kinetic = _amihud_engine.get_features()
+    hmm_result = _hmm_classifier.classify(atr_pct, z, tape, atr_pct_rank, amihud_rank, t_kinetic)
 
     # HIGH-2 FIX: REGIME_REMAP removed — it was dead code (HMM state 2 is "NEUTRAL"
     # in _LABELS, never "VOLATILE"). Keeping it was a hazard: renaming the label
@@ -2955,6 +2958,7 @@ async def main():
     effective_secret = BINANCE_ED25519_PRIVKEY.strip() or BINANCE_API_SECRET.strip()
 
     feed     = BinanceDataFeed(symbol=FEED_SYMBOL, interval=CANDLE_INTERVAL, testnet=TESTNET)
+    feed.state._trade_callback = _amihud_engine.on_trade  # Wire AmihudEngine into aggTrade stream
     quant    = QuantEngine(feed.state)
     executor = TradingExecutor(
         api_key=BINANCE_API_KEY,

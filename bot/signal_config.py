@@ -103,4 +103,28 @@ REGIME_PARAMS = {
         "htf_block":          False,
         "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (sweep may repeat next candle)
     },
+    "SQUEEZE": {
+        # Apr 2026 (Dr. Klint spec): Vacuum cascade / short squeeze detection
+        # HMM state 2 (SQUEEZE) maps to LIQUIDITY for backwards compat (_LABELS[2]="LIQUIDITY").
+        # This entry provides the tighter SL / wider TP strategy for when SQUEEZE fires.
+        "z_threshold":        1.50,
+        "atr_multiplier_sl":  0.50,   # TIGHTER SL: 0.5×ATR — vacuum can extend further
+        "ofi_bound":          0.12,
+        "min_confidence":     0.65,   # Higher bar — squeeze entries are risky
+        "rr_target":          3.0,   # WIDER TP: squeeze snaps back violently
+        "be_lock_trigger":    1.0,   # Lock BE faster — squeeze resolves in 3-8 candles
+        "time_exit_sec":      300,   # 5 min max — don't hold through vacuum resolution
+        "panic_threshold":    5.0,   # Tighter panic — squeeze moves fast
+        "candle_gate_sec":    30,
+        "htf_block":          False,
+        "cascade_cooldown_s": 120,   # 2min — squeeze can repeat rapidly
+    },
+}
+
+# REGIME_ALIAS: maps HMM state names that don't have their own REGIME_PARAMS entry
+# to an existing entry. SQUEEZE (HMM state 2) is named LIQUIDITY in _LABELS, so
+# this alias is for the case where the HMM regime label is literally "SQUEEZE".
+# The bot currently uses LIQUIDITY params for SQUEEZE state (backwards compat).
+REGIME_ALIAS = {
+    "SQUEEZE": "LIQUIDITY",
 }

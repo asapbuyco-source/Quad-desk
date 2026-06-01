@@ -36,6 +36,7 @@ class MarketState:
         self._aggtrade_watchdog_first_cycle: bool = True  # P2: skip first 60s window (not enough time to receive msgs)
         self.msgs_per_min: int = 0           # FIX-M10: current throughput for signal gate
         self.last_fired_sweep_candle_ts: float = 0.0  # FIX-C3: dedup guard for sweep detection
+        self._trade_callback = None  # Optional[Callable[[float, float, bool], None]] for AmihudEngine
 
     # ------------------------------------------------------------------
     # Candle management
@@ -93,6 +94,13 @@ class MarketState:
         now_ms = time.time() * 1000
         while self.recent_trades and (now_ms - self.recent_trades[0]['time']) > 300_000:
             self.recent_trades.popleft()
+
+        # AmihudEngine: fire per-trade callback (price, qty, is_taker)
+        if self._trade_callback:
+            try:
+                self._trade_callback(price, size, not is_buyer_maker)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Order book
