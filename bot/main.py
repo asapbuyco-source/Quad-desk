@@ -204,7 +204,8 @@ BOT_STATS: Dict[str, Any] = {
         "total_passed":             0,
         "cvd_divergence_veto":      0,
         "derivatives_veto":         0,
-        "throughput_thin":          0,
+        "throughput_thin":           0,
+        "rsi_extreme_suppressed":    0,  # P3 AUDIT: RSI extreme gate suppressed (TREND regime)
     },
     "equity_peak": ACCOUNT_SIZE,
 }
@@ -249,27 +250,36 @@ def _gate_stats_summary(reason: str, confidence: float = 0.0) -> None:
         passed = g["total_passed"]
         logger.info(
             "[GateStats] === 30-min Gate Rejection Summary ===\n"
-            f"  daily_loss_halt      : {g.get('daily_loss_halt', 0)}\n"
-            f"  drawdown_halt       : {g.get('drawdown_halt', 0)}\n"
-            f"  zscore_warmup       : {g.get('zscore_warmup', 0)}\n"
-            f"  post_trade_cooldown : {g.get('post_trade_cooldown', 0)}\n"
-            f"  cascade_cooldown    : {g.get('cascade_cooldown', 0)}\n"
-            f"  regime_no_edge      : {g.get('regime_no_edge', 0)}\n"
-            f"  htf_counter_trend   : {g.get('htf_counter_trend', 0)}\n"
-            f"  funding_blocks      : {g.get('funding_blocks_long', 0) + g.get('funding_blocks_short', 0)}\n"
-            f"  ulis_veto           : {g.get('ulis_veto', 0)}\n"
-            f"  ulis_alignment_fail : {g.get('ulis_alignment_fail', 0)}\n"
-            f"  low_confidence      : {g.get('confidence_below_threshold', 0)}\n"
-            f"  candle_gate_expired : {g.get('candle_gate_expired', 0)}\n"
-            f"  micro_confirms_fail : {g.get('micro_confirms_failed', 0)}\n"
-            f"  sweep_confirms_fail : {g.get('sweep_confirms_failed', 0)}\n"
-            f"  fee_geometry        : {g.get('fee_geometry', 0)}\n"
-            f"  signal_none         : {g.get('signal_none', 0)}\n"
+            f"  daily_loss_halt       : {g.get('daily_loss_halt', 0)}\n"
+            f"  drawdown_halt        : {g.get('drawdown_halt', 0)}\n"
+            f"  atr_panic_halt        : {g.get('atr_panic_halt', 0)}\n"
+            f"  rsi_overbought        : {g.get('rsi_overbought', 0)}\n"
+            f"  rsi_oversold          : {g.get('rsi_oversold', 0)}\n"
+            f"  rsi_extreme_supprsd   : {g.get('rsi_extreme_suppressed', 0)}\n"
+            f"  bayes_floor_veto      : {g.get('bayes_floor_veto', 0)}\n"
+            f"  consecutive_loss_halt : {g.get('consecutive_loss_halt', 0)}\n"
+            f"  zscore_warmup         : {g.get('zscore_warmup', 0)}\n"
+            f"  post_trade_cooldown   : {g.get('post_trade_cooldown', 0)}\n"
+            f"  cascade_cooldown      : {g.get('cascade_cooldown', 0)}\n"
+            f"  regime_no_edge        : {g.get('regime_no_edge', 0)}\n"
+            f"  htf_counter_trend     : {g.get('htf_counter_trend', 0)}\n"
+            f"  funding_blocks        : {g.get('funding_blocks_long', 0) + g.get('funding_blocks_short', 0)}\n"
+            f"  ulis_veto             : {g.get('ulis_veto', 0)}\n"
+            f"  ulis_alignment_fail   : {g.get('ulis_alignment_fail', 0)}\n"
+            f"  confidence_below_thr  : {g.get('confidence_below_threshold', 0)}\n"
+            f"  candle_gate_expired   : {g.get('candle_gate_expired', 0)}\n"
+            f"  micro_confirms_fail   : {g.get('micro_confirms_failed', 0)}\n"
+            f"  sweep_confirms_fail   : {g.get('sweep_confirms_failed', 0)}\n"
+            f"  fee_geometry          : {g.get('fee_geometry', 0)}\n"
+            f"  signal_none           : {g.get('signal_none', 0)}\n"
+            f"  cvd_divergence_veto   : {g.get('cvd_divergence_veto', 0)}\n"
+            f"  derivatives_veto      : {g.get('derivatives_veto', 0)}\n"
+            f"  throughput_thin       : {g.get('throughput_thin', 0)}\n"
             f"  ───────────────────────\n"
-            f"  total rejections    : {total}\n"
-            f"  total passed       : {passed}\n"
-            f"  pass rate           : {passed/max(1, passed+total):.1%}\n"
-            f"  last_confidence     : {confidence:.2%}"
+            f"  total rejections      : {total}\n"
+            f"  total passed          : {passed}\n"
+            f"  pass rate             : {passed/max(1, passed+total):.1%}\n"
+            f"  last_confidence       : {confidence:.2%}"
         )
         GATE_STATS_LAST_LOG = now
 
@@ -467,33 +477,35 @@ class _HMMRegimeClassifier:
     # --- Emission means (μ) per state × feature -----------------------
     # Spec seeds from Dr. Klint Section 2.4
     # Dim order: [atr_rank, z_score, tape_dir, amihud_rank, t_kinetic]
+    # P1 AUDIT FIX: HMM calibration (Jun 2026) — 3 months BTC 15m data, hmmlearn GaussianHMM(3, diag)
+    # Features: [atr_pct, |z|*0.25, tape_bin, atr_rank]
+    # ATR%: RANGE=0.22%, TREND=0.38%, VOLATILE=0.45% — properly separated (was collapsed before)
     _MU = np.array([
-        [0.20, 0.10, 0.0, 0.20, 0.15],   # RANGE — low everything
-        [0.45, 0.65, 0.7, 0.30, 0.25],   # TREND — HIGH Z, LOW Amihud
-        [0.55, 0.70, 0.8, 0.82, 0.88],   # SQUEEZE — HIGH Z, HIGH Amihud+KE
-        [0.80, 0.15, 0.0, 0.50, 0.45],   # VOLATILE — HIGH ATR, low Z
+        [0.002187, 0.277618, 0.00, 0.280843],   # RANGE — low ATR%, moderate Z, no tape surge
+        [0.003786, 0.470641, 1.00, 0.612178],  # TREND — elevated ATR%, tape surge (vol spike)
+        [0.004548, 0.266534, 0.00, 0.788791],  # VOLATILE — high ATR%, high ATR rank
     ], dtype=float)
     _SIGMA = np.array([
-        [0.12, 0.15, 0.30, 0.12, 0.10],   # RANGE
-        [0.18, 0.20, 0.35, 0.15, 0.12],   # TREND
-        [0.20, 0.22, 0.30, 0.14, 0.10],   # SQUEEZE — tight on Amihud/KE
-        [0.20, 0.25, 0.40, 0.22, 0.20],   # VOLATILE
+        [0.000913, 0.183288, 0.000502, 0.171382],  # RANGE
+        [0.002696, 0.231221, 0.001725, 0.283242],  # TREND
+        [0.001905, 0.174059, 0.000609, 0.128682],  # VOLATILE
     ], dtype=float)
 
-    # --- 4-state transition matrix (rows = from-state, cols = to-state) ---
-    # Spec Section 2.3 — physics-motivated: SQUEEZE self-loop = 0.42 (short dwell ~3-8 candles)
+    # --- 3-state transition matrix (rows = from-state, cols = to-state) ---
+    # Calibrated from hmmlearn GaussianHMM on 3 months BTC 15m data (Jun 2026)
+    # LIQUIDITY is NOT in the HMM — it is detected independently via wall-proximity
+    # in _detect_regime() and takes precedence over HMM output when near a wall.
     _A = np.array([
-        [0.92, 0.05, 0.01, 0.02],   # RANGE — high persistence (ground state)
-        [0.08, 0.85, 0.04, 0.03],   # TREND — trend persists; can tip into squeeze
-        [0.35, 0.12, 0.42, 0.11],   # SQUEEZE — short dwell, cascades resolve fast
-        [0.15, 0.05, 0.05, 0.75],   # VOLATILE — clusters then reverts to range
+        [0.9647, 0.0325, 0.0029],   # RANGE — high persistence
+        [0.2506, 0.3701, 0.3793],    # TREND — moderate self-loop + bleeds to VOLATILE
+        [0.0207, 0.0307, 0.9486],   # VOLATILE — strong self-loop (clustered)
     ], dtype=float)
 
     # --- Initial state distribution ------------------------------------
-    _PI = np.array([0.50, 0.30, 0.10, 0.10], dtype=float)
+    _PI = np.array([0.50, 0.30, 0.20], dtype=float)
 
-    # State labels: SQUEEZE (2) maps to LIQUIDITY for backwards compat with signal_config
-    _LABELS = ["RANGE", "TREND", "LIQUIDITY", "VOLATILE"]
+    # State labels: 3 HMM states; LIQUIDITY is wall-detection, not HMM
+    _LABELS = ["RANGE", "TREND", "VOLATILE"]
 
     # Confidence & hysteresis thresholds
     MIN_CONFIDENCE        = 0.60
@@ -596,9 +608,9 @@ class _HMMRegimeClassifier:
 
     # ------------------------------------------------------------------
     def _gaussian_log_prob(self, obs: np.ndarray) -> np.ndarray:
-        """Log P(obs | state) for all 4 states. obs shape = (F,)."""
-        log_probs = np.zeros(4)
-        for s in range(4):
+        """Log P(obs | state) for all 3 HMM states. obs shape = (F,)."""
+        log_probs = np.zeros(3)
+        for s in range(3):
             diff    = obs - self._mu[s]
             log_p   = -0.5 * np.sum((diff / np.maximum(self._sigma[s], 1e-9)) ** 2)
             log_p  -= np.sum(np.log(np.maximum(self._sigma[s], 1e-9)))
@@ -625,7 +637,7 @@ class _HMMRegimeClassifier:
         This is mathematically correct for regime uncertainty quantification.
         """
         T    = len(obs_seq)
-        n_s  = 4
+        n_s  = 3
         log_A  = np.log(np.maximum(self._A, 1e-300))
         log_pi = np.log(np.maximum(self._PI, 1e-300))
 
@@ -653,7 +665,7 @@ class _HMMRegimeClassifier:
         if total > 0:
             posterior /= total
         else:
-            posterior = np.array([0.50, 0.30, 0.10, 0.10])  # fallback to prior
+            posterior = np.array([0.50, 0.30, 0.20])  # fallback to prior
 
         return posterior
 
@@ -661,7 +673,7 @@ class _HMMRegimeClassifier:
     def _viterbi(self, obs_seq: np.ndarray) -> np.ndarray:
         """Pure-numpy Viterbi — returns most-likely state sequence."""
         T, _   = obs_seq.shape
-        n_s    = 4
+        n_s    = 3
         log_A  = np.log(np.maximum(self._A, 1e-300))
         log_pi = np.log(np.maximum(self._PI, 1e-300))
 
@@ -886,7 +898,11 @@ def _detect_regime(
             quant._liquidity_cap_cooldown -= 1
             quant._liquidity_consecutive = 0
             logger.debug(f"[Regime] LIQUIDITY cooldown={quant._liquidity_cap_cooldown} — falling through to HMM")
-        elif quant._liquidity_consecutive > 3 and sweep is None:
+        # P2 AUDIT FIX: Raise cap from 3 → 6 cycles.
+        # At 15s analysis intervals, 3 cycles = 45s which is too aggressive —
+        # the cap expires before meaningful sweep setups can form, causing
+        # LIQUIDITY ↔ NEUTRAL oscillation near walls for hours.
+        elif quant._liquidity_consecutive > 6 and sweep is None:
             logger.info("[Regime] LIQUIDITY cap reached — falling through to HMM")
             quant._liquidity_consecutive = 0
             quant._liquidity_cap_cooldown = 2
@@ -1980,14 +1996,21 @@ async def _compute_signal(
         _gate_stats_summary("signal_none")
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
 
-    # --- AUDIT FIX 3: RSI EXTREMES GATE ---
+    # --- AUDIT FIX 3: RSI EXTREMES GATE (regime-conditional) ---
+    # In TREND regime: suppress RSI block for direction-with-momentum.
+    # RSI extended oversold in a bear trend routinely persists for hours;
+    # blocking SELL entries there defeats the trend strategy entirely.
+    # In RANGE/NEUTRAL/LIQUIDITY: keep the gate as-is (mean-reversion context).
     rsi = metrics.get("rsi", 50.0)
     is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
-    if is_long_dir and rsi > 70.0:
+    is_trend_strat = strategy_type == "TREND"
+    rsi_gate_suppressed = is_trend_strat  # in TREND, let RSI extremes pass
+
+    if is_long_dir and rsi > 70.0 and not rsi_gate_suppressed:
         logger.warning(f"[RiskEngine] 🛑 RSI OVERBOUGHT HALT — Blocking {raw_direction} at RSI={rsi:.1f} > 70.0")
         _gate_stats_summary("rsi_overbought")
         return {**WAIT, "analysis": f"RSI={rsi:.1f} > 70.0 blocks {raw_direction} entry."}
-    if not is_long_dir and rsi < 30.0:
+    if not is_long_dir and rsi < 30.0 and not rsi_gate_suppressed:
         logger.warning(f"[RiskEngine] 🛑 RSI OVERSOLD HALT — Blocking {raw_direction} at RSI={rsi:.1f} < 30.0")
         _gate_stats_summary("rsi_oversold")
         return {**WAIT, "analysis": f"RSI={rsi:.1f} < 30.0 blocks {raw_direction} entry."}
@@ -2461,7 +2484,7 @@ async def execution_loop(
             _raw_candle_close = feed.state.candles[-1]["close"]
             _mark_px = getattr(feed.state, "mark_price", 0.0)
             _basis_px = getattr(feed.state, "basis", 0.0)
-            current_price = _mark_px if (_mark_px > 0 and abs(_basis_px) < 200) else _raw_candle_close
+            current_price = _mark_px if (_mark_px > 0 and abs(_basis_px) < 500) else _raw_candle_close
             effective_price = current_price
 
             # PHASE-3.4: Cache positions per cycle to avoid duplicate fetch_positions API calls
