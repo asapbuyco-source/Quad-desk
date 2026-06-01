@@ -29,6 +29,7 @@ class MarketState:
         self._reconnect_event: asyncio.Event = asyncio.Event()
         self.candle_close_event: asyncio.Event = asyncio.Event()  # NEW: Event-driven execution trigger
         self._last_trade_ts: float = time.time()   # epoch-seconds of last aggTrade received (P0-1 FIX: was 0.0 → time.time())
+        self._last_closed_candle_ts: float = time.time()  # epoch-seconds of last CLOSED (final) candle
         self._cvd_was_reset: bool = False  # flag to suppress CVD delta spike after reconnect
         self._aggtrade_msg_count: int = 0  # P0-1 FIX: throughput counter for monitoring
         self._aggtrade_count_reset_ts: float = time.time()  # last reset for msg/min calculation
@@ -52,6 +53,7 @@ class MarketState:
             # Closed candle — always append
             self.candles.append(candle)
             self.candle_close_event.set()  # Trigger zero-latency execution
+            self._last_closed_candle_ts = time.time()  # FIX: track real closed-candle arrival
             if getattr(self, "_seeding_complete", False):
                 self._live_candle_count = getattr(self, "_live_candle_count", 0) + 1
         else:
@@ -324,6 +326,10 @@ class BinanceDataFeed:
 
         while self.is_running:
             try:
+                # Re-seed if reconnect cleared candles_seeded flag
+                if not getattr(self, "candles_seeded", False):
+                    await self._fetch_historical_candles_rest()
+
                 logger.info(f"[DataFeed] Connecting → {self.ws_url}")
                 async with websockets.connect(
                     self.ws_url,
@@ -353,7 +359,13 @@ class BinanceDataFeed:
                     # Clear reconnect signal so the outer loop reconnects immediately
                     if self.state._reconnect_event.is_set():
                         self.state._reconnect_event.clear()
-                        logger.info('[DataFeed] Reconnect event consumed - reconnecting now.')
+                        self._last_kline_frame_ts = time.time()
+                        self.state._last_closed_candle_ts = time.time()
+                        # FIX: Re-fetch historical candles on reconnect so the candle
+                        # buffer is re-anchored from REST rather than continuing with
+                        # whatever stale data was in the deque before the disconnect.
+                        self.candles_seeded = False
+                        logger.info('[DataFeed] Reconnect event consumed - reconnecting now. REST re-seed will follow.')
 
             except websockets.exceptions.ConnectionClosedOK:
                 logger.info("[DataFeed] Connection closed cleanly.")
@@ -414,26 +426,38 @@ class BinanceDataFeed:
 
     async def feed_health_monitor(self, notifier=None):
         """
-        P0-2 FIX: Feed health monitor — runs as an independent async task.
-        Checks every 60s whether a kline WebSocket frame was received within
-        3× the candle interval. If not (i.e. feed is frozen), sends a
-        Telegram alert and forces a reconnect by briefly stopping the feed loop.
+        Feed health monitor — runs as an independent async task.
+        Checks every 60s whether a CLOSED kline candle was received within
+        1.5× the candle interval (22.5 min for 15m candles).
+
+        FIX: Tracks _last_closed_candle_ts (not _last_kline_frame_ts).
+        Live-tick kline frames arrive every second and keep recv() alive even
+        when the kline sub-stream has silently dropped. Only a CLOSED candle
+        (is_final=True) proves the stream is genuinely delivering data.
+
+        FIX: Threshold reduced from 3× to 1.5× interval (was 45 min → now 22.5 min).
+        On stale detection, forces reconnect and triggers REST re-seed so the
+        bot doesn't trade on frozen metrics.
         """
         interval_secs = {
             "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
         }.get(self.interval, 900)
-        stale_threshold = interval_secs * 3.0
+        # FIX: Use 1.5× interval (was 3×). At 15m candles this means 22.5 min max
+        # before reconnect, not 45 min. Also use _last_closed_candle_ts (not
+        # _last_kline_frame_ts) — live-tick updates keep recv() alive even
+        # when the candle stream is not delivering closed candles.
+        stale_threshold = interval_secs * 1.5
 
-        # Give the feed 120s to receive its first kline frame before monitoring
-        # (kline frames arrive at candle open, max 15m apart)
-        await asyncio.sleep(120)
+        # Give the feed 2× the candle interval to receive its first closed candle
+        await asyncio.sleep(interval_secs * 2)
 
         while self.is_running:
             await asyncio.sleep(60)
             if not self.is_running:
                 break
 
-            age = time.time() - self._last_kline_frame_ts
+            # Use closed-candle timestamp — live-tick updates don't count
+            age = time.time() - self.state._last_closed_candle_ts
             if age > stale_threshold:
                 alert_msg = (
                     f"⚠️ [DataFeed] FEED STALE: no kline frame received for {age:.0f}s "
