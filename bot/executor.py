@@ -1129,6 +1129,16 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         pos = self.active_position
         be_lock_trigger = pos.get("be_lock_trigger", 1.0)
         atr_at_entry = pos.get("atr_at_entry", 0.0)
+        # P1 FIX: Add ATR minimum guard. Without it, a tiny atr_at_entry (quiet market)
+        # means be_lock_trigger×atr_at_entry is a micro-pip amount — breakeven fires
+        # on noise, immediately cutting the trade. Require at least 0.5×ATR of
+        # absolute movement before considering breakeven.
+        MIN_ATR_FRACTION = 0.5
+        if atr_at_entry < atr * MIN_ATR_FRACTION:
+            logger.debug(
+                f"[Breakeven] Skipped — atr_at_entry={atr_at_entry:.2f} < {MIN_ATR_FRACTION}×ATR={atr*MIN_ATR_FRACTION:.2f}. Market too quiet."
+            )
+            return
         if be_lock_trigger <= 0.0 or atr_at_entry <= 0.0:
             return
         entry_price = pos["entry_price"]
@@ -1249,91 +1259,92 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         If our symbol is ABSENT from open_syms, the position is flat on the exchange.
         Then fetch the actual fill price + realized PnL from trade history.
 
-        C6 FIX: Body wrapped in _position_lock. The Semaphore(1) is reentrant so
-        calling this from inside check_position_exit (which already holds the lock) does
-        not deadlock — only the outermost acquisition increments the counter.
+        C6 FIX: Body NOT wrapped in _position_lock. The lock is held by the caller
+        (check_position_exit → _check_live_position_exit). `_position_lock` is a
+        Semaphore(1) — Python asyncio.Semaphore is NOT reentrant. A nested
+        acquisition here would deadlock. The outer lock in check_position_exit
+        is the only acquisition needed for the entire exit check path.
         """
-        async with self._position_lock:
-            pos = self.active_position
-            if pos is None:
-                return False, 0.0
+        pos = self.active_position
+        if pos is None:
+            return False, 0.0
 
-            symbol = pos.get("symbol", "")
-            logger.debug(f"[LiveExit] Polling exchange for {symbol}…")
+        symbol = pos.get("symbol", "")
+        logger.debug(f"[LiveExit] Polling exchange for {symbol}…")
 
-            try:
-                # Fetch ALL positions — Binance only returns non-flat ones
-                all_positions = await self.exchange.fetch_positions()
+        try:
+            # Fetch ALL positions — Binance only returns non-flat ones
+            all_positions = await self.exchange.fetch_positions()
 
-                # Build the set of symbols that are genuinely open (qty > noise floor)
-                open_syms = {
-                    p.get("symbol")
-                    for p in all_positions
-                    if abs(float(p.get("contracts", 0) or 0)) > 0.0001
-                }
+            # Build the set of symbols that are genuinely open (qty > noise floor)
+            open_syms = {
+                p.get("symbol")
+                for p in all_positions
+                if abs(float(p.get("contracts", 0) or 0)) > 0.0001
+            }
 
-                if symbol not in open_syms:
-                    # ── Position is FLAT on the exchange ────────────────────────
-                    # The SL or TP order was filled by Binance; bot state is stale.
-                    entry = pos["entry_price"]
-                    size  = pos["size"]
-                    side  = pos["side"]
+            if symbol not in open_syms:
+                # ── Position is FLAT on the exchange ────────────────────────
+                # The SL or TP order was filled by Binance; bot state is stale.
+                entry = pos["entry_price"]
+                size  = pos["size"]
+                side  = pos["side"]
 
-                    # Fetch actual fill price + exchange-reported realized PnL
-                    fill_price = current_price  # fallback
-                    actual_pnl = None
-                    try:
-                        recent_trades = await self.exchange.fetch_my_trades(symbol, limit=10)
-                        # Closing trades have side opposite to our entry side
-                        closing = [
-                            t for t in recent_trades
-                            if t.get("side", "").lower() != side.lower()
-                        ]
-                        if closing:
-                            fill_price = float(closing[-1]["price"])
-                            actual_pnl = float(
-                                closing[-1].get("info", {}).get("realizedPnl", 0)
-                            )
-                            if actual_pnl != 0:
-                                logger.info(
-                                    f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
-                                    f"realizedPnl=${actual_pnl:.2f}"
-                                )
-                            else:
-                                logger.info(f"[LiveExit] Exchange-reported fill={fill_price:.2f}")
-                    except Exception as e:
-                        logger.warning(f"[LiveExit] fill-price fetch failed: {e}")
-
-                    # Use exchange PnL if available, otherwise estimate from geometry
-                    if actual_pnl is not None and actual_pnl != 0:
-                        net_pnl = actual_pnl
-                    else:
-                        raw_pnl = ((fill_price - entry) * size if side == "buy"
-                                   else (entry - fill_price) * size)
-                        fees = (entry + fill_price) * size * self.TAKER_FEE
-                        net_pnl = raw_pnl - fees
-
-                    exit_type = "TP" if net_pnl > 0 else "SL"
-                    logger.info(
-                        f"[LiveExit] Position flat on exchange — type={exit_type} "
-                        f"pnl=${net_pnl:.2f} fill={fill_price:.2f}"
-                    )
-                    if self.notifier:
-                        await self.notifier.send_close_alert(
-                            symbol=symbol, side=side, price=fill_price,
-                            type=exit_type, pnl=net_pnl, is_dry=False
+                # Fetch actual fill price + exchange-reported realized PnL
+                fill_price = current_price  # fallback
+                actual_pnl = None
+                try:
+                    recent_trades = await self.exchange.fetch_my_trades(symbol, limit=10)
+                    # Closing trades have side opposite to our entry side
+                    closing = [
+                        t for t in recent_trades
+                        if t.get("side", "").lower() != side.lower()
+                    ]
+                    if closing:
+                        fill_price = float(closing[-1]["price"])
+                        actual_pnl = float(
+                            closing[-1].get("info", {}).get("realizedPnl", 0)
                         )
-                    self._update_trade_exit(pos.get("trade_doc_id"), fill_price, net_pnl)
-                    self.active_position = None
-                    self.pending_order = None
-                    return True, net_pnl
+                        if actual_pnl != 0:
+                            logger.info(
+                                f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
+                                f"realizedPnl=${actual_pnl:.2f}"
+                            )
+                        else:
+                            logger.info(f"[LiveExit] Exchange-reported fill={fill_price:.2f}")
+                except Exception as e:
+                    logger.warning(f"[LiveExit] fill-price fetch failed: {e}")
 
-                # Symbol still present in open_syms → position still live
-                return False, 0.0
+                # Use exchange PnL if available, otherwise estimate from geometry
+                if actual_pnl is not None and actual_pnl != 0:
+                    net_pnl = actual_pnl
+                else:
+                    raw_pnl = ((fill_price - entry) * size if side == "buy"
+                               else (entry - fill_price) * size)
+                    fees = (entry + fill_price) * size * self.TAKER_FEE
+                    net_pnl = raw_pnl - fees
 
-            except Exception as e:
-                logger.warning(f"[LiveExit] poll error: {e}")
-                return False, 0.0
+                exit_type = "TP" if net_pnl > 0 else "SL"
+                logger.info(
+                    f"[LiveExit] Position flat on exchange — type={exit_type} "
+                    f"pnl=${net_pnl:.2f} fill={fill_price:.2f}"
+                )
+                if self.notifier:
+                    await self.notifier.send_close_alert(
+                        symbol=symbol, side=side, price=fill_price,
+                        type=exit_type, pnl=net_pnl, is_dry=False
+                    )
+                self._update_trade_exit(pos.get("trade_doc_id"), fill_price, net_pnl)
+                self.active_position = None
+                self.pending_order = None
+                return True, net_pnl
+
+            # Symbol still present in open_syms → position still live
+            return False, 0.0
+
+        except Exception as e:
+            logger.warning(f"[LiveExit] poll error: {e}")
+            return False, 0.0
 
 
 

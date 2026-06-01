@@ -364,7 +364,7 @@ async def run_heartbeat(stats: dict) -> None:
                             try:
                                 import httpx as _httpx
                                 asyncio.create_task(
-                                    self._telegram_fallback_alert(_tg_token, _tg_chat)
+                                    _telegram_fallback_alert(_tg_token, _tg_chat)
                                 )
                             except Exception:
                                 pass

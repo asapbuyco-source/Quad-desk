@@ -515,6 +515,8 @@ class _HMMRegimeClassifier:
         self._mu    = self._MU.copy()
         self._sigma = self._SIGMA.copy()
         self._online_update_enabled = True   # Calibrated via hmm_calibrate (Fix 4)
+        self._n_trades_since_update = 0      # P1-3: count live trades; delay online HMM update until enough data
+        self._min_trades_before_update = 10  # require ≥10 live trades before first online update
         # Hysteresis state
         self._committed_regime = "RANGE"   # currently committed regime
         self._candidate_regime = "RANGE"   # regime the HMM is suggesting
@@ -699,13 +701,25 @@ class _HMMRegimeClassifier:
             return
         if len(self._obs_buf) < 20:
             return
+        # P1-3: Don't pollute HMM parameters with online updates until we have
+        # at least _min_trades_before_update live trades worth of observations.
+        # This prevents a cold-start run of lucky/unlucky trades from distorting
+        # the calibrated regime means/sigma that we worked hard to get right.
+        if self._n_trades_since_update < self._min_trades_before_update:
+            logger.debug(
+                f"[HMM] Skipping online update — only {self._n_trades_since_update}/{self._min_trades_before_update} trades since last update."
+            )
+            return
         obs = np.array(list(self._obs_buf)[-self._window:], dtype=float)
         states = self._viterbi(obs)
         for s in range(3):
             mask = states == s
             if mask.sum() >= 3:
                 self._mu[s]    = obs[mask].mean(axis=0)
-                self._sigma[s] = np.maximum(obs[mask].std(axis=0), 1e-4)
+                self._sigma[s] = obs[mask].std(axis=0)
+                self._sigma[s] = np.maximum(self._sigma[s], 1e-4)
+                self._n_trades_since_update = 0
+                logger.info(f"[HMM] Online update complete — μ={self._mu[s]}, σ={self._sigma[s]}")
                 
         self._save_state()
 
@@ -2242,6 +2256,11 @@ async def _process_exit(
 
     quant.update_win_rate(won=(pnl >= 0), regime=regime)
     stats["consecutive_losses"] = getattr(quant, "_consecutive_losses", 0)
+
+    # P1-3: increment HMM trade counter so online updates are gated until
+    # we have enough live observations to trust the regime statistics.
+    if hasattr(_hmm_classifier, "_n_trades_since_update"):
+        _hmm_classifier._n_trades_since_update += 1
 
     if pnl < 0:
         LAST_CASCADE_TIME = time.time()
