@@ -143,7 +143,7 @@ def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2
             try:
                 import pickle
                 df = pd.read_pickle(cache_file)
-                print(f"  ✓ Loaded {len(df):,} bars from local cache "
+                print(f"  [OK] Loaded {len(df):,} bars from local cache "
                       f"(age={file_age_h:.1f}h < {_CACHE_TTL_HOURS}h TTL)")
                 return df
             except Exception:
@@ -153,7 +153,7 @@ def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2
     try:
         import requests as _req
     except ImportError:
-        print("  ⚠️  `requests` not installed. Run: pip install requests")
+        print("  [WARN]  `requests` not installed. Run: pip install requests")
         return pd.DataFrame()
 
     end_dt   = datetime.now()
@@ -162,7 +162,7 @@ def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2
     end_ms   = int(end_dt.timestamp()   * 1000)
 
     print(f"  Fetching {symbol} ({interval}) from Binance API "
-          f"[{start_dt.date()} → {end_dt.date()}]...")
+          f"[{start_dt.date()} -> {end_dt.date()}]...")
 
     all_klines: list = []
     current_ms = start_ms
@@ -181,7 +181,7 @@ def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2
             resp.raise_for_status()
             batch = resp.json()
         except Exception as exc:
-            print(f"  ⚠️  Binance API error: {exc}. Falling back to CSV / synthetic data.")
+            print(f"  [WARN]  Binance API error: {exc}. Falling back to CSV / synthetic data.")
             return pd.DataFrame()
 
         if not batch:
@@ -205,16 +205,16 @@ def fetch_binance_candles(symbol: str, interval: str = "5m", years_back: int = 2
     for col in ('open', 'high', 'low', 'close', 'volume', 'taker_buy_base'):
         df[col] = df[col].astype(float)
 
-    print(f"  ✓ {len(df):,} real bars loaded  "
-          f"({df.index[0].date()} → {df.index[-1].date()})")
+    print(f"  [OK] {len(df):,} real bars loaded  "
+          f"({df.index[0].date()} -> {df.index[-1].date()})")
 
     # ── Persist to local cache ───────────────────────────────────────────────
     if use_cache:
         try:
             df.to_pickle(cache_file)
-            print(f"  ✓ Cached to {cache_file}")
+            print(f"  [OK] Cached to {cache_file}")
         except Exception as e:
-            print(f"  ⚠️  Could not write cache: {e}")
+            print(f"  [WARN]  Could not write cache: {e}")
 
     return df
 
@@ -253,17 +253,17 @@ def backtest_hybrid(df, config, symbol):
 
     # Proxies for missing live data (LOB / Tape)
     # We use local extreme rollings to simulate walls / liquidity pools
-    sw_high = pd.Series(high).rolling(20).max().shift(1).values
-    sw_low  = pd.Series(low).rolling(20).min().shift(1).values
+    sw_high = pd.Series(high).shift(1).rolling(20).max().values
+    sw_low  = pd.Series(low).shift(1).rolling(20).min().values
     
     # OFI proxy based on volume delta momentum
     ofi_proxy = pd.Series(np.where(close >= open_, vol, -vol)).rolling(5).sum().values
     ofi_normalised = np.tanh(ofi_proxy / 2.0)  # array, index with [i] in loop
 
     # Volume-surge proxy for the live bot’s SCREAMING tape requirement (Stage 2 TREND gate)
-    # Live:  10-second taker notional > 3× per-10s rolling baseline → SCREAMING
+    # Live:  10-second taker notional > 3× per-10s rolling baseline -> SCREAMING
     # Proxy: current bar volume > 3× 60-bar rolling mean (same 3× multiplier, different window)
-    vol_sma_60 = pd.Series(vol).rolling(60, min_periods=1).mean().shift(1).fillna(0).values
+    vol_sma_60 = pd.Series(vol).shift(1).rolling(60, min_periods=1).mean().fillna(0).values
     
     print("  Simulating event-driven trades...")
     
@@ -595,8 +595,8 @@ def load_data(symbol: str, years_back: int = 2) -> pd.DataFrame:
         return df
 
     # ── 3. Synthetic fallback (CI / offline only) ───────────────────────────
-    print("\n  ⚠️  WARNING: No real data available. Using SYNTHETIC random walk.")
-    print("  ⚠️  Results are for code validation ONLY — NOT predictive of live performance.\n")
+    print("\n  [WARN]  WARNING: No real data available. Using SYNTHETIC random walk.")
+    print("  [WARN]  Results are for code validation ONLY — NOT predictive of live performance.\n")
     np.random.seed(42)
     end_date = datetime.now()
     try:
@@ -703,7 +703,7 @@ def run_hmm_calibration(symbol: str = "BTCUSDT", interval: str = "15m",
 
     df = load_data(symbol, years_back=years_back)
     if df.empty:
-        print("  ⚠️  No data loaded. Calibration aborted.")
+        print("  [WARN]  No data loaded. Calibration aborted.")
         return
 
     close = df['close'].values
@@ -721,7 +721,7 @@ def run_hmm_calibration(symbol: str = "BTCUSDT", interval: str = "15m",
     zscore = calc_vwap_zscore(df, CONFIG['vwap_period'])
     abs_z = np.abs(zscore)
 
-    vol_sma_60 = pd.Series(vol).rolling(60, min_periods=1).mean().shift(1).fillna(0).values
+    vol_sma_60 = pd.Series(vol).shift(1).rolling(60, min_periods=1).mean().fillna(0).values
     vol_surge = np.where(vol > vol_sma_60 * 3.0, 1.0, 0.0)
 
     atr_pct_rank = np.zeros(len(close))
@@ -742,7 +742,7 @@ def run_hmm_calibration(symbol: str = "BTCUSDT", interval: str = "15m",
     kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
     kmeans.fit(features)
 
-    # Order clusters by ATR% (low → RANGE, medium → NEUTRAL, high → TREND)
+    # Order clusters by ATR% (low -> RANGE, medium -> NEUTRAL, high -> TREND)
     cluster_centers = kmeans.cluster_centers_
     ordered_indices = np.argsort(cluster_centers[:, 0])
     regime_names = ["RANGE", "NEUTRAL", "TREND"]
@@ -763,7 +763,7 @@ def run_hmm_calibration(symbol: str = "BTCUSDT", interval: str = "15m",
         print(f"    {name}: atr_pct={sigma_calibrated[i,0]:.4f}, |z|={sigma_calibrated[i,1]:.2f}, "
               f"tape={sigma_calibrated[i,2]:.2f}, atr_rank={sigma_calibrated[i,3]:.2f}")
 
-    print(f"\n  → Paste these into quant_engine.py _HMMRegimeClassifier:")
+    print(f"\n  -> Paste these into quant_engine.py _HMMRegimeClassifier:")
     print(f"  _MU = np.array({mu_calibrated.tolist()}, dtype=float)")
     print(f"  _SIGMA = np.array({sigma_calibrated.tolist()}, dtype=float)")
 

@@ -422,14 +422,14 @@ class _HMMRegimeClassifier:
     #   f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
     #   f3 = atr_pct_rank  (0 – 1)   percentile rank in 30-day window (P2)
     _MU = np.array([
-        [0.003, 0.8, 0.05, 0.20],  # RANGE
-        [0.007, 1.5, 0.30, 0.55],  # TREND — retained at 0.007 per CPO
-        [0.014, 2.5, 0.65, 0.85],  # VOLATILE
+        [0.002184, 1.110572, 0.000000, 0.280004],  # RANGE
+        [0.003786, 1.882566, 1.000000, 0.612178],  # TREND
+        [0.004542, 1.066174, 0.000000, 0.787928],  # VOLATILE
     ], dtype=float)
     _SIGMA = np.array([
-        [0.0010, 0.40, 0.10, 0.10],  # RANGE — COMPRESSED (was 0.0015,0.6,0.15,0.15)
-        [0.0030, 0.80, 0.25, 0.20],  # TREND
-        [0.0050, 1.00, 0.30, 0.15],  # VOLATILE
+        [0.000912, 0.733199, 0.000503, 0.170868],  # RANGE
+        [0.002696, 0.924859, 0.001725, 0.283242],  # TREND
+        [0.001904, 0.696310, 0.000607, 0.129163],  # VOLATILE
     ], dtype=float)
 
     # --- Transition matrix (rows = from-state, cols = to-state) -------
@@ -459,7 +459,7 @@ class _HMMRegimeClassifier:
         # Mutable copies so online-update can adjust them
         self._mu    = self._MU.copy()
         self._sigma = self._SIGMA.copy()
-        self._online_update_enabled = False  # Set True only after running run_hmm_calibration()
+        self._online_update_enabled = True   # Calibrated via hmm_calibrate (Fix 4)
         # Hysteresis state
         self._committed_regime = "RANGE"   # currently committed regime
         self._candidate_regime = "RANGE"   # regime the HMM is suggesting
@@ -758,7 +758,7 @@ class _HMMRegimeClassifier:
 
 
 # Module-level singleton — persists observations across cycles
-_hmm_classifier = _HMMRegimeClassifier(window=60, update_every=200)
+_hmm_classifier = _HMMRegimeClassifier(window=60, update_every=500)   # FIX 4: was 200, 500 = ~12.5h at 15s cycles
 
 # Derivatives context for institutional signals
 _derivatives_ctx = DerivativesContext(symbol=FEED_SYMBOL)

@@ -42,7 +42,7 @@ def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: 
     zscore  = calc_vwap_zscore(df, period=20)
     abs_z   = np.abs(zscore)
 
-    vol_sma = pd.Series(vol).rolling(60, min_periods=1).shift(1).fillna(0).values
+    vol_sma = pd.Series(vol).shift(1).rolling(60, min_periods=1).mean().fillna(0).values
     tape_bin = np.where(vol > vol_sma * 3.0, 1.0, 0.0)
 
     atr_rank = np.zeros(len(close))
@@ -78,8 +78,10 @@ def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: 
     order = np.argsort(model.means_[:, 0])
     labels = ["RANGE", "TREND", "VOLATILE"]
 
-    mu_ordered    = model.means_[order]
-    sigma_ordered = np.sqrt(model.covars_[order])  # diag → sqrt gives std
+    mu_ordered    = model.means_[order].astype(float)
+    covars_diag = model.covars_[order]  # shape: (3, 4, 4)
+    n_f = covars_diag.shape[1]
+    sigma_ordered = np.sqrt(covars_diag[:, range(n_f), range(n_f)]).astype(float)
 
     print("\n--- Calibrated parameters ---")
     print("_MU = np.array([")
@@ -95,7 +97,7 @@ def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: 
     print("], dtype=float)")
 
     print("\nTransition matrix:")
-    print(model.transmat_[order][:, order])
+    print(np.array2string(model.transmat_[order][:, order], precision=4))
 
     output = {
         "mu":    mu_ordered.tolist(),
