@@ -101,6 +101,20 @@ ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "3"))    # futures leverage (3× = efficient margin on Binance USDM)
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
 
+# FIX: Warn if BOT_MIN_CONFIDENCE is set to an unusually high value.
+# The signal pipeline uses regime-adaptive thresholds (62-65%), not this env value,
+# for the actual gate. This setting only affects the startup banner display.
+# A value > 0.65 here is misleading and should be flagged.
+if MIN_CONFIDENCE > 0.65:
+    import warnings as _warn
+    _warn.warn(
+        f"[Config] BOT_MIN_CONFIDENCE={MIN_CONFIDENCE:.0%} is set very high. "
+        f"The signal pipeline uses regime-adaptive thresholds (62-65%%) not this value. "
+        f"This only affects the display banner. "
+        f"To lower it, set BOT_MIN_CONFIDENCE=0.62 in Railway.",
+        stacklevel=1,
+    )
+
 # Fee rates: Coinbase Spot 1.2% | Binance Spot 0.1% | Binance USDM Futures 0.04%
 _EXCHANGE_FEE_RATE  = 0.012 if EXCHANGE == "coinbase" else (0.0004 if EXCHANGE == "binanceusdm" else 0.001)
 
@@ -427,7 +441,10 @@ class _HMMRegimeClassifier:
         [0.004542, 1.066174, 0.000000, 0.787928],  # VOLATILE
     ], dtype=float)
     _SIGMA = np.array([
-        [0.000912, 0.733199, 0.000503, 0.170868],  # RANGE
+        # FIX BUG-2: RANGE atr_pct sigma widened 0.000912 -> 0.0018.
+        # Original was too tight — moderate ATR (0.25-0.35%) fell outside
+        # RANGE's 1-sigma band and got absorbed by VOLATILE state entirely.
+        [0.0018,  0.733199, 0.000503, 0.170868],  # RANGE  (atr_pct sigma widened)
         [0.002696, 0.924859, 0.001725, 0.283242],  # TREND
         [0.001904, 0.696310, 0.000607, 0.129163],  # VOLATILE
     ], dtype=float)
@@ -2003,19 +2020,19 @@ async def _compute_signal(
     if abs(_div_conf - _pre_div_conf) > 0.001:
         metrics = {**metrics, "bayesianPosterior": _div_conf}
 
-    # FIX-M10: Throughput gate — block new entries in thin liquidity (<300 msg/min)
-    # unless CVD conviction is strong (>0.40), which justifies acting despite thin tape.
-    # WARN-2 FIX: Skip this gate for the first 120s after boot — watchdog needs time to warm up.
+    # FIX: Throughput gate — was 300/min (too high for BTC, blocked normal 200-250 tape).
+    # Lowered to 150/min to catch truly dead markets while letting normal BTC through.
+    # CVD exception (>0.40) and boot grace (120s) both bypass this gate.
     _msgs_per_min = getattr(feed_state, "msgs_per_min", 999)
     _cvd_div = metrics.get("cvd_divergence", {})
     _cvd_strength = _cvd_div.get("strength", 0.0) if _cvd_div else 0.0
     _boot_grace = (time.time() - BOT_START_TIME) < 120
-    if not _boot_grace and _msgs_per_min < 300 and _cvd_strength < 0.40:
+    if not _boot_grace and _msgs_per_min < 150 and _cvd_strength < 0.40:
         logger.warning(
-            f"[ThroughputGate] Blocked: msgs/min={_msgs_per_min} < 300, CVD strength={_cvd_strength:.2f}"
+            f"[ThroughputGate] Blocked: msgs/min={_msgs_per_min} < 150, CVD strength={_cvd_strength:.2f}"
         )
         _gate_stats_summary("throughput_thin")
-        return {**WAIT, "analysis": f"Throughput={_msgs_per_min}/min < 300. CVD strength {_cvd_strength:.2f} < 0.40. Skipped."}
+        return {**WAIT, "analysis": f"Throughput={_msgs_per_min}/min < 150. CVD strength {_cvd_strength:.2f} < 0.40. Skipped."}
 
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
@@ -2933,11 +2950,22 @@ async def main():
             # candle, flipping _candidate_regime and _candidate_streak randomly.
             # Without this reset, the bot enters live trading with a random committed
             # regime from the middle of the seed sequence. Force a clean slate.
+
+            # FIX WARN-1: Run a focused 5-candle pass on the most recent candles to
+            # set the correct live-market regime BEFORE committing. Then clear the
+            # obs buffer so live forward passes start from scratch, not 480 seed candles
+            # that may represent different market conditions.
+            if len(rest_candles) >= 5:
+                for _rc in rest_candles[-5:]:
+                    _live_atr = (_rc["high"] - _rc["low"]) / max(_rc["close"], 1.0)
+                    _hmm_classifier.classify(_live_atr, 0.0, "NORMAL", atr_pct_rank=0.5)
+
             _hmm_classifier._committed_regime = _hmm_classifier._candidate_regime
             _hmm_classifier._candidate_streak = _hmm_classifier.HYSTERESIS_CANDLES
+            _hmm_classifier._obs_buf.clear()
             logger.info(
                 f"[HMM] Post-seed hysteresis reset: committed={_hmm_classifier._committed_regime}, "
-                f"streak={_hmm_classifier._candidate_streak}"
+                f"streak={_hmm_classifier._candidate_streak} (obs buffer cleared)"
             )
 
             # FIX-P1: Pre-seed quant._atr_history from REST candles (audit Problem 1).

@@ -225,4 +225,4 @@ class TestMinNotionalFloor:
         # No market order should have been placed
         executor.exchange.create_market_order.assert_not_awaited()
         # Error alert should have been sent
-        executor.notifier.send_error_alert.assert_awaited()
+        executor.notifier.send_message.assert_awaited()

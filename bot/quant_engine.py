@@ -578,32 +578,33 @@ class QuantEngine:
             return 0.0
         vwap_session = self._vwap_num / self._vwap_den
 
-        # Adaptive sigma window
+        # Adaptive sigma window — exclude current candle (closes[-1]) to avoid
+        # double-counting it in both the VWAP mean (vwap_session) and variance.
         n_sig = max(10, int(atr_pct_rank * 40))
-        if len(closes) < n_sig:
-            n_sig = len(closes)
-            
+        if len(closes) - 1 < n_sig:
+            n_sig = max(10, len(closes) - 1)
+
         if n_sig <= 0:
             return 0.0
-            
-        h = highs[-n_sig:]
-        l = lows[-n_sig:]
-        c = closes[-n_sig:]
-        vv = vols[-n_sig:]
-        
+
+        h = highs[-n_sig-1:-1]
+        l = lows[-n_sig-1:-1]
+        c = closes[-n_sig-1:-1]
+        vv = vols[-n_sig-1:-1]
+
         tp_w = (h + l + c) / 3.0
         vol_sum = np.sum(vv)
         if vol_sum <= 0:
             return 0.0
-            
+
         vw_var = np.sum(vv * (tp_w - vwap_session)**2) / vol_sum
         std = np.sqrt(vw_var)
-        
+
         # P1-7 FIX: Guard against near-zero std during zero-volatility periods.
         MIN_STD = current_price * 0.00005  # 0.005% of current price
         if std < MIN_STD:
             return 0.0
-            
+
         # t-scale correction factor
         NU_FIXED = 6.0
         t_scale = math.sqrt((NU_FIXED - 2.0) / NU_FIXED)  # = sqrt(4/6) = 0.8165
