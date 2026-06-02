@@ -97,24 +97,10 @@ MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        str(CFG_MA
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  str(CFG_MAX_DAILY_LOSS_PCT)))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
-MIN_CONFIDENCE      = float(os.environ.get("BOT_MIN_CONFIDENCE",      str(CFG_MIN_BAYESIAN)))
+MIN_CONFIDENCE = float(CFG_MIN_BAYESIAN)
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "3"))    # futures leverage (3× = efficient margin on Binance USDM)
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
-
-# FIX: Warn if BOT_MIN_CONFIDENCE is set to an unusually high value.
-# The signal pipeline uses regime-adaptive thresholds (62-65%), not this env value,
-# for the actual gate. This setting only affects the startup banner display.
-# A value > 0.65 here is misleading and should be flagged.
-if MIN_CONFIDENCE > 0.65:
-    import warnings as _warn
-    _warn.warn(
-        f"[Config] BOT_MIN_CONFIDENCE={MIN_CONFIDENCE:.0%} is set very high. "
-        f"The signal pipeline uses regime-adaptive thresholds (62-65%%) not this value. "
-        f"This only affects the display banner. "
-        f"To lower it, set BOT_MIN_CONFIDENCE=0.62 in Railway.",
-        stacklevel=1,
-    )
 
 # Fee rates: Coinbase Spot 1.2% | Binance Spot 0.1% | Binance USDM Futures 0.04%
 _EXCHANGE_FEE_RATE  = 0.012 if EXCHANGE == "coinbase" else (0.0004 if EXCHANGE == "binanceusdm" else 0.001)
@@ -574,7 +560,7 @@ class _HMMRegimeClassifier:
             with open(self._persist_path, "w") as f:
                 json.dump(data, f)
         except Exception as e:
-            pass
+            logger.warning(f"[HMM] /tmp/ state cache write failed: {e}")
 
     def _load_state(self):
         import json

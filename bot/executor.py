@@ -504,6 +504,13 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Position sizing
     # ------------------------------------------------------------------
+    def _kelly_scale(self, p: float, rr: float, fraction: float = 0.25) -> float:
+        """Fractional Kelly multiplier bounded [0.5, 1.5]"""
+        if rr <= 0 or p <= 0.50 or p >= 1.0:
+            return 1.0
+        f_star = (p * rr - (1.0 - p)) / rr
+        return max(0.5, min(1.5, 1.0 + f_star * fraction))
+
     def calculate_position_size(
         self,
         current_price: float,
@@ -632,6 +639,9 @@ class TradingExecutor:
                 current_price, stop_loss, equity, max_risk_pct,
                 atr_pct=_atr_pct, atr_pct_rank=_atr_rank, adaptive_mult=_ad_mult
             )
+            _rr = abs(take_profit - current_price) / max(abs(stop_loss - current_price), 1e-9)
+            kelly_mult = self._kelly_scale(confidence, _rr, fraction=0.25)
+            raw_size *= kelly_mult
             if raw_size <= 0.0:
                 logger.warning("[Executor] Calculated position size is 0. Aborting.")
                 return
@@ -665,6 +675,12 @@ class TradingExecutor:
                         f"⚠️ Account too small: ${equity:.0f} < required ~${needed_acct:.0f}."
                     )
                 return
+
+            # H-3 FIX: Hard notional cap (max 2.0x equity)
+            max_notional = equity * 2.0
+            if raw_size * current_price > max_notional:
+                raw_size = max_notional / current_price
+                logger.info(f"[Executor] Position capped to max notional (${max_notional:.2f})")
 
             # Translate symbol to exchange format (unified CCXT symbol)
             if self.exchange_id == "coinbase":
@@ -1125,6 +1141,23 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                 await self.notifier.send_error_alert(f"⚠️ **Breakeven Move Failed!**\
 {err_msg}\
 *Note: Original Stop Loss is still active.*")
+
+    # C-3 FIX: Check opposing CVD divergence — move SL to breakeven if flow flips
+        cvd = metrics.get("cvd_divergence")
+        if cvd and cvd.get("strength", 0) > 0.40:
+            side = pos.get("side", "")
+            cvd_type = cvd.get("type", "")
+            opp = (
+                (side == "buy"  and cvd_type in ("EXHAUSTION_SELL", "CONTINUATION_SELL")) or
+                (side == "sell" and cvd_type in ("EXHAUSTION_BUY",  "CONTINUATION_BUY"))
+            )
+            if opp:
+                logger.warning(
+                    f"[Executor] Opposing CVD divergence ({cvd_type}, strength={cvd.get('strength', 0):.2f}). "
+                    "Moving SL to BE."
+                )
+                await self.move_sl_to_breakeven(pos["symbol"], pos["entry_price"])
+                pos["_be_locked"] = True
 
     async def check_breakeven_and_partials(self, current_price: float, atr: float) -> None:
         """Check if breakeven stop should be locked, based on be_lock_trigger threshold."""

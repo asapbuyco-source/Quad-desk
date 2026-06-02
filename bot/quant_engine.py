@@ -144,6 +144,9 @@ class QuantEngine:
                 _target = 5.0
                 self._alpha = self._alpha * 0.85 + _target * 0.15
                 self._beta  = self._beta  * 0.85 + _target * 0.15
+                if regime in self._regime_alpha:
+                    self._regime_alpha[regime] = self._regime_alpha[regime] * 0.85 + _target * 0.15
+                    self._regime_beta[regime] = self._regime_beta[regime] * 0.85 + _target * 0.15
                 logger.warning(
                     f"[QuantEngine] Consecutive loss #{self._consecutive_losses} — "
                     f"softening prior toward Beta(5,5): "

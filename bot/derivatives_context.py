@@ -382,8 +382,10 @@ class DerivativesContext:
         oi_now  = oi_values[-1]
         oi_prev = oi_values[-2] if len(oi_values) >= 2 else oi_now
         oi_30m_ago = oi_values[-3] if len(oi_values) >= 3 else oi_prev
-        oi_velocity = (oi_now - oi_prev) / max(oi_prev, 1.0) * 100.0
-        oi_acceleration = (oi_now - 2 * oi_prev + oi_30m_ago) / max(oi_prev, 1.0) * 100.0
+        k = 1.0
+        atr_pct = 0.005
+        oi_velocity = (oi_now - oi_prev) / max(k * atr_pct * oi_prev, 1e-9)
+        oi_acceleration = (oi_now - 2 * oi_prev + oi_30m_ago) / max(k * atr_pct * oi_prev, 1e-9)
 
         divergence_raw = math.copysign(1, price_change_pct) * (-1) * math.copysign(1, oi_velocity)
         divergence = int(divergence_raw)  # +1, -1, or 0
