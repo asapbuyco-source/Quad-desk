@@ -215,6 +215,8 @@ _CYCLE_ERROR_COUNT = 0  # PHASE-3.1: Consecutive cycle errors for escalation
 _LAST_CYCLE_ERROR = ""  # PHASE-3.1: Last error string for escalation
 
 LAST_CASCADE_TIME = 0.0
+ATR_PANIC_CONSECUTIVE = 0
+ATR_PANIC_COOLDOWN_UNTIL = 0.0
 BOT_START_TIME = time.time()  # used for boot-grace period on throughput gate
 LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can compute delta
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
@@ -751,7 +753,6 @@ class _HMMRegimeClassifier:
             confidence: float — posterior probability of the committed regime
             p_range:    float — P(RANGE | observations)
             p_trend:    float — P(TREND | observations)
-            p_liquidity: float — P(SQUEEZE/LIQUIDITY | observations) — new state 2
             p_volatile: float — P(VOLATILE | observations)
             raw_regime: str   — instantaneous HMM output (before hysteresis)
         """
@@ -787,7 +788,7 @@ class _HMMRegimeClassifier:
                 raw = "RANGE"
             return {
                 "regime": raw, "confidence": 0.50,
-                "p_range": 0.25, "p_trend": 0.25, "p_liquidity": 0.25, "p_volatile": 0.25,
+                "p_range": 0.25, "p_trend": 0.25, "p_volatile": 0.25,
                 "raw_regime": raw,
             }
 
@@ -830,7 +831,7 @@ class _HMMRegimeClassifier:
         logger.debug(
             f"[HMM] raw={raw_label}({raw_conf:.0%}) committed={self._committed_regime}"
             f"({committed_conf:.0%}) streak={self._candidate_streak} | "
-            f"P=[R:{posterior[0]:.0%} T:{posterior[1]:.0%} Sq:{posterior[2]:.0%} V:{posterior[3]:.0%}]"
+            f"P=[R:{posterior[0]:.0%} T:{posterior[1]:.0%} Sq:{posterior[2]:.0%}]"
         )
 
         return {
@@ -838,8 +839,7 @@ class _HMMRegimeClassifier:
             "confidence":  committed_conf,
             "p_range":     float(posterior[0]),
             "p_trend":     float(posterior[1]),
-            "p_liquidity": float(posterior[2]),
-            "p_volatile":  float(posterior[3]),
+            "p_volatile":  float(posterior[2]),
             "raw_regime":  raw_label,
         }
 
@@ -1832,11 +1832,31 @@ async def _compute_signal(
         return {**WAIT, "analysis": "Session warmup: Z-Score not yet valid (<10 bars)."}
 
     # --- AUDIT FIX 1: ATR PANIC GATE ---
+    global ATR_PANIC_CONSECUTIVE, ATR_PANIC_COOLDOWN_UNTIL
+    import time
+    now_ts = time.time()
+    
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
-    if atr_pct_rank >= 0.90:
-        logger.warning(f"[RiskEngine] 🛑 ATR PANIC HALT — ATR rank={atr_pct_rank:.0%} >= 90%. Volatility too extreme to trade. Blocking entry.")
-        _gate_stats_summary("atr_panic_halt")
-        return {**WAIT, "analysis": f"ATR PANIC HALT (rank={atr_pct_rank:.0%}). Volatility too extreme."}
+    atr_pct      = metrics.get("atr_pct", 0.0)
+    
+    # Only panic if ATR is actually meaningfully large (>0.15% of price),
+    # preventing bot lockups after recovering from zero-volatility/stale data.
+    if atr_pct_rank >= 0.90 and atr_pct > 0.0015:
+        if now_ts < ATR_PANIC_COOLDOWN_UNTIL:
+            logger.debug(f"[RiskEngine] ATR panic ignored (grace period: {int(ATR_PANIC_COOLDOWN_UNTIL - now_ts)}s remain)")
+            ATR_PANIC_CONSECUTIVE = 0
+        else:
+            ATR_PANIC_CONSECUTIVE += 1
+            if ATR_PANIC_CONSECUTIVE >= 10:  # e.g., 10 cycles (~2.5 mins) of constant panic
+                logger.warning("[RiskEngine] Persistent ATR panic detected. Activating grace period for 15 mins.")
+                ATR_PANIC_COOLDOWN_UNTIL = now_ts + 900  # 15 min grace period
+                ATR_PANIC_CONSECUTIVE = 0
+            else:
+                logger.warning(f"[RiskEngine] 🛑 ATR PANIC HALT — ATR rank={atr_pct_rank:.0%} >= 90%. Volatility too extreme to trade. Blocking entry.")
+                _gate_stats_summary("atr_panic_halt")
+                return {**WAIT, "analysis": f"ATR PANIC HALT (rank={atr_pct_rank:.0%}). Volatility too extreme."}
+    else:
+        ATR_PANIC_CONSECUTIVE = 0
 
     global LAST_CASCADE_TIME
     import time
