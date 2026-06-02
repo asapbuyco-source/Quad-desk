@@ -476,29 +476,30 @@ class _HMMRegimeClassifier:
 
     # --- Emission means (μ) per state × feature -----------------------
     # Spec seeds from Dr. Klint Section 2.4
-    # Dim order: [atr_rank, z_score, tape_dir, amihud_rank, t_kinetic]
-    # P1 AUDIT FIX: HMM calibration (Jun 2026) — 3 months BTC 15m data, hmmlearn GaussianHMM(3, diag)
-    # Features: [atr_pct, |z|*0.25, tape_bin, atr_rank]
-    # ATR%: RANGE=0.22%, TREND=0.38%, VOLATILE=0.45% — properly separated (was collapsed before)
+    # Dim order: [atr_pct, |z|, tape_bin, atr_rank]
+    # P1 AUDIT FIX v3 (Jun 2026) — 1-year BTC 15m data, hmmlearn GaussianHMM(3, diag)
+    # 4D features matching classify() obs vector: [atr_pct, |z|, tape_bin, atr_rank]
+    # RANGE: low ATR% (0.21%), moderate Z; TREND: high Z + tape surge; VOLATILE: elevated ATR%
+    # Clipping ranges: atr_pct∈[0,0.03], |z|∈[0,4], tape∈{0,1}, atr_rank∈[0,1]
     _MU = np.array([
-        [0.002187, 0.277618, 0.00, 0.280843],   # RANGE — low ATR%, moderate Z, no tape surge
-        [0.003786, 0.470641, 1.00, 0.612178],  # TREND — elevated ATR%, tape surge (vol spike)
-        [0.004548, 0.266534, 0.00, 0.788791],  # VOLATILE — high ATR%, high ATR rank
+        [0.002143, 1.110481, 0.00, 0.198910],   # RANGE
+        [0.003256, 1.857669, 1.00, 0.553613],  # TREND — high Z + tape surge (vol spike)
+        [0.003691, 1.020432, 0.00, 0.652134],  # VOLATILE — elevated ATR%, moderate Z
     ], dtype=float)
     _SIGMA = np.array([
-        [0.000913, 0.183288, 0.000502, 0.171382],  # RANGE
-        [0.002696, 0.231221, 0.001725, 0.283242],  # TREND
-        [0.001905, 0.174059, 0.000609, 0.128682],  # VOLATILE
+        [0.001650, 0.758794, 0.001456, 0.119213],  # RANGE
+        [0.005409, 0.922987, 0.005285, 0.269366],  # TREND
+        [0.001988, 0.682877, 0.001664, 0.159848],  # VOLATILE
     ], dtype=float)
 
     # --- 3-state transition matrix (rows = from-state, cols = to-state) ---
-    # Calibrated from hmmlearn GaussianHMM on 3 months BTC 15m data (Jun 2026)
+    # Calibrated from hmmlearn GaussianHMM on 1 year BTC 15m data (Jun 2026, 4D features)
     # LIQUIDITY is NOT in the HMM — it is detected independently via wall-proximity
     # in _detect_regime() and takes precedence over HMM output when near a wall.
     _A = np.array([
-        [0.9647, 0.0325, 0.0029],   # RANGE — high persistence
-        [0.2506, 0.3701, 0.3793],    # TREND — moderate self-loop + bleeds to VOLATILE
-        [0.0207, 0.0307, 0.9486],   # VOLATILE — strong self-loop (clustered)
+        [0.9624, 0.0310, 0.0066],   # RANGE — high persistence
+        [0.2379, 0.2821, 0.4800],   # TREND — bleeds to VOLATILE on sustained moves
+        [0.0255, 0.0304, 0.9441],   # VOLATILE — strong self-loop (clustered volatility)
     ], dtype=float)
 
     # --- Initial state distribution ------------------------------------
@@ -718,7 +719,7 @@ class _HMMRegimeClassifier:
             return
         obs = np.array(list(self._obs_buf)[-self._window:], dtype=float)
         states = self._viterbi(obs)
-        for s in range(4):
+        for s in range(3):
             mask = states == s
             if mask.sum() >= 3:
                 self._mu[s]    = obs[mask].mean(axis=0)
@@ -755,12 +756,16 @@ class _HMMRegimeClassifier:
             raw_regime: str   — instantaneous HMM output (before hysteresis)
         """
         obs = np.array([
-            float(np.clip(atr_pct,      0.0,  1.0)),   # f0: atr_pct (normalised 0-1 by clip)
-            float(np.clip(abs(z_score), 0.0,  4.0)) * 0.25,  # f1: z_score → [0,1]
-            1.0 if tape == "SCREAMING" else 0.0,       # f2: tape_binary
-            float(np.clip(amihud_rank,  0.0,  1.0)),   # f3: amihud_rank (NEW)
-            float(np.clip(t_kinetic,    0.0,  1.0)),   # f4: t_kinetic (NEW)
+            float(np.clip(atr_pct,       0.0,  0.03)),   # f0: atr_pct (0-3% range, matches calibration)
+            float(np.clip(abs(z_score),  0.0,  4.0)),     # f1: |z| raw scale (matches calibration)
+            1.0 if tape == "SCREAMING" else 0.0,        # f2: tape binary
+            float(np.clip(atr_pct_rank,  0.0,  1.0)),    # f3: atr percentile rank
         ], dtype=float)
+        # NOTE: amihud_rank and t_kinetic are intentionally excluded (audit v3 P1).
+        # The calibrated 4D emission matrices (_MU/_SIGMA) do not include them.
+        # They are still passed as args and surfaced in metrics for future use.
+        # Once `python -m bot.hmm_calibrate --years 2` is run with 5D features,
+        # the obs vector can be restored to 5D by uncommenting the two lines below.
 
         self._obs_buf.append(obs)
         self._cycle += 1
