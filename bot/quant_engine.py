@@ -118,7 +118,12 @@ class QuantEngine:
         self._vwap_24h_anchor_ts: float = 0.0  # epoch seconds of last 24h reset
 
         # Persistence path — survives Railway restarts if /tmp is mounted
-        self._persist_path = os.environ.get("BOT_STATE_PATH", "/tmp/quad_bot_state.json")
+        # Symbol-isolated so multiple bots don't overwrite each other
+        _raw_sym = os.environ.get("BOT_SYMBOL", "BTC/USDT")
+        _safe_sym = _raw_sym.replace("/", "").replace(":", "").replace("-", "").upper()
+        _default_path = f"/tmp/quad_bot_state_{_safe_sym}.json"
+        self._persist_path = os.environ.get("BOT_STATE_PATH", _default_path)
+        self._firestore_doc_id = f"quantEngine_{_safe_sym}"  # e.g. quantEngine_BTCUSDT
         self._load_state()
 
 
@@ -233,7 +238,7 @@ class QuantEngine:
                 from bot.heartbeat import get_db
                 db = get_db()
                 if db is not None:
-                    db.collection("botState").document("quantEngine").set(payload)
+                    db.collection("botState").document(self._firestore_doc_id).set(payload)
                     logger.debug("[QuantEngine] State saved to Firestore ✓")
             except Exception as e:
                 logger.warning(f"[QuantEngine] Firestore state save failed: {e}")
@@ -268,7 +273,7 @@ class QuantEngine:
             from bot.heartbeat import get_db
             db = get_db()
             if db is not None:
-                doc = db.collection("botState").document("quantEngine").get()
+                doc = db.collection("botState").document(self._firestore_doc_id).get()
                 if doc.exists:
                     data = doc.to_dict()
                     self._alpha = float(data.get("alpha", 5.0))

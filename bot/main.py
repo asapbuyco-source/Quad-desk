@@ -517,7 +517,12 @@ class _HMMRegimeClassifier:
         self._candidate_regime = "RANGE"   # regime the HMM is suggesting
         self._candidate_streak = 0         # consecutive candles suggesting candidate
 
-        self._persist_path = os.environ.get("HMM_STATE_PATH", "/tmp/quad_hmm_state.json")
+        # Symbol-isolated persistence path so each coin's HMM state is independent
+        _raw_sym = os.environ.get("BOT_SYMBOL", "BTC/USDT")
+        _safe_sym = _raw_sym.replace("/", "").replace(":", "").replace("-", "").upper()
+        _default_hmm_path = f"/tmp/quad_hmm_state_{_safe_sym}.json"
+        self._persist_path = os.environ.get("HMM_STATE_PATH", _default_hmm_path)
+        self._fs_doc_id = f"hmmEngine_{_safe_sym}"  # e.g. hmmEngine_BTCUSDT
         self._load_state()
 
     def _save_state(self):
@@ -543,7 +548,7 @@ class _HMMRegimeClassifier:
                 from bot.heartbeat import get_db
                 db = get_db()
                 if db is not None:
-                    db.collection("botState").document("hmmEngine").set(fs_payload)
+                    db.collection("botState").document(self._fs_doc_id).set(fs_payload)
                     logger.debug("[HMM] State saved to Firestore 💾")
             except Exception as e:
                 logger.warning(f"[HMM] Firestore state save failed: {e}")
@@ -569,7 +574,7 @@ class _HMMRegimeClassifier:
             from bot.heartbeat import get_db
             db = get_db()
             if db is not None:
-                doc = db.collection("botState").document("hmmEngine").get()
+                doc = db.collection("botState").document(self._fs_doc_id).get()
                 if doc.exists:
                     data = doc.to_dict()
                     mu_val = data.get("mu")

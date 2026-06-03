@@ -283,6 +283,14 @@ async def _telegram_fallback_alert(token: str, chat_id: str) -> None:
         pass
 
 
+def _symbol_doc_id(symbol: str) -> str:
+    """
+    Convert a trading symbol to a safe Firestore document ID suffix.
+    e.g. 'BTC/USDT' → 'BTCUSDT', 'ETH/USDT:USDT' → 'ETHUSDT'
+    """
+    return symbol.replace("/", "").replace(":", "").replace("-", "").upper()
+
+
 async def run_heartbeat(stats: dict) -> None:
     """
     Continuously writes bot status to Firestore every 60 s.
@@ -321,7 +329,11 @@ async def run_heartbeat(stats: dict) -> None:
                 await asyncio.sleep(WRITE_INTERVAL)
                 continue
 
-            doc_ref = _db.collection("botStatus").document("live")
+            # Use a symbol-specific document so multiple bots can run simultaneously
+            # without overwriting each other's data.
+            # e.g. BTC/USDT → live_BTCUSDT, ETH/USDT → live_ETHUSDT
+            _sym_id = _symbol_doc_id(stats.get("symbol", "UNKNOWN"))
+            doc_ref = _db.collection("botStatus").document(f"live_{_sym_id}")
             payload = {
                 "isRunning":       True,
                 "lastHeartbeat":   fs.SERVER_TIMESTAMP,
@@ -392,7 +404,9 @@ async def run_heartbeat(stats: dict) -> None:
                     _day_key = datetime.utcnow().strftime("%Y-%m-%d")
                     _equity_point = {k: v for k, v in equity_doc.items() if k != "timestamp"}
                     _equity_point["ts"] = _time.time()
-                    _equity_day_ref = _db.collection("equityCurve").document(_day_key)
+                    # Symbol-isolated equity document: 2026-06-03_BTCUSDT
+                    _sym_id = _symbol_doc_id(stats.get("symbol", "UNKNOWN"))
+                    _equity_day_ref = _db.collection("equityCurve").document(f"{_day_key}_{_sym_id}")
                     await asyncio.to_thread(
                         _equity_day_ref.set,
                         {"points": fs.ArrayUnion([_equity_point]), "date": _day_key},
@@ -451,7 +465,8 @@ async def write_offline(stats: dict) -> None:
 
     try:
         from firebase_admin import firestore as fs
-        doc_ref = _db.collection("botStatus").document("live")
+        _sym_id = _symbol_doc_id(stats.get("symbol", "UNKNOWN"))
+        doc_ref = _db.collection("botStatus").document(f"live_{_sym_id}")
         await asyncio.to_thread(doc_ref.set, {
             "isRunning":       False,
             "lastHeartbeat":   fs.SERVER_TIMESTAMP,

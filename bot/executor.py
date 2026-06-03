@@ -315,36 +315,54 @@ class TradingExecutor:
         self._inject_fallback_markets()
 
     def _inject_fallback_markets(self):
-        """Injects minimal market data into CCXT to prevent crashes."""
+        """Injects minimal market data into CCXT to prevent crashes on market load failure.
+        Dynamically handles the active BOT_SYMBOL so ETH, SOL, etc. are supported.
+        """
+        import os as _os
         if not hasattr(self.exchange, 'markets') or self.exchange.markets is None:
             self.exchange.markets = {}
         if not hasattr(self.exchange, 'symbols') or self.exchange.symbols is None:
             self.exchange.symbols = []
 
+        # Determine the active symbol from env (set by launcher per-process)
+        raw_sym = _os.environ.get("BOT_SYMBOL", "BTC/USDT")
+        ccxt_sym = self._get_ccxt_symbol(raw_sym)  # e.g. ETH/USDT:USDT
+
         if self.exchange_id == "coinbase":
-            self.exchange.markets['BTC/USDC'] = {
-                'id': 'BTC-USDC', 'symbol': 'BTC/USDC', 'base': 'BTC', 'quote': 'USDC',
+            # Coinbase: inject the active symbol as a spot market
+            base  = raw_sym.split("/")[0].upper()
+            quote = raw_sym.split("/")[-1].upper() if "/" in raw_sym else "USD"
+            cb_sym = f"{base}/{quote}"
+            self.exchange.markets[cb_sym] = {
+                'id': f'{base}-{quote}', 'symbol': cb_sym, 'base': base, 'quote': quote,
                 'precision': {'amount': 0.00000001, 'price': 0.01},
-                'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
+                'limits': {'amount': {'min': 0.00001, 'max': 10000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
                 'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
             }
-            self.exchange.markets['BTC/USD'] = {
-                'id': 'BTC-USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD',
-                'precision': {'amount': 0.00000001, 'price': 0.01},
-                'limits': {'amount': {'min': 0.00001, 'max': 1000}, 'price': {'min': 0.01, 'max': 1000000}, 'cost': {'min': 1.0}},
-                'active': True, 'type': 'spot', 'spot': True, 'margin': False, 'contract': False
-            }
-            if 'BTC/USDC' not in self.exchange.symbols: self.exchange.symbols.append('BTC/USDC')
-            if 'BTC/USD' not in self.exchange.symbols: self.exchange.symbols.append('BTC/USD')
-        
+            if cb_sym not in self.exchange.symbols:
+                self.exchange.symbols.append(cb_sym)
+            logger.warning(f"[Executor] Fallback market injected for Coinbase: {cb_sym}")
+
         elif self.is_futures:
-            self.exchange.markets['BTC/USDT:USDT'] = {
-                'id': 'BTCUSDT', 'symbol': 'BTC/USDT:USDT', 'base': 'BTC', 'quote': 'USDT', 'settle': 'USDT',
-                'precision': {'amount': 0.001, 'price': 0.1},
-                'limits': {'amount': {'min': 0.001, 'max': 1000}, 'price': {'min': 0.1, 'max': 1000000}},
+            # Binance USDM: inject the active symbol as a futures market
+            # Derive precision from known symbols; default to 3dp amount / 2dp price
+            _AMOUNT_PREC = {"BTC": 0.001, "ETH": 0.001, "SOL": 0.1,
+                             "AVAX": 0.1, "BNB": 0.01, "DOGE": 1.0, "PEPE": 1.0}
+            base = raw_sym.split("/")[0].upper()
+            amt_prec = _AMOUNT_PREC.get(base, 0.01)
+            self.exchange.markets[ccxt_sym] = {
+                'id':        raw_sym.replace("/", "").replace(":", "").upper().split("USDT")[0] + "USDT",
+                'symbol':    ccxt_sym,
+                'base':      base,
+                'quote':     'USDT',
+                'settle':    'USDT',
+                'precision': {'amount': amt_prec, 'price': 0.01},
+                'limits':    {'amount': {'min': amt_prec, 'max': 100000}, 'price': {'min': 0.01, 'max': 1000000}},
                 'active': True, 'type': 'future', 'spot': False, 'margin': False, 'contract': True
             }
-            if 'BTC/USDT:USDT' not in self.exchange.symbols: self.exchange.symbols.append('BTC/USDT:USDT')
+            if ccxt_sym not in self.exchange.symbols:
+                self.exchange.symbols.append(ccxt_sym)
+            logger.warning(f"[Executor] Fallback market injected for Binance USDM: {ccxt_sym}")
 
     async def close(self):
         await self.exchange.close()
@@ -646,15 +664,33 @@ class TradingExecutor:
                 logger.warning("[Executor] Calculated position size is 0. Aborting.")
                 return
 
-            # FIX 1: Dynamic minimum notional — warn clearly instead of silent abort
-            MIN_QTY_BTC = 0.001        # Binance BTCUSDT minimum lot size
-            min_notional = max(105.0, MIN_QTY_BTC * current_price * 1.05)  # dynamic floor
+            # ── Symbol-aware minimum lot size (critical for multi-coin) ────────
+            # BTC min lot = 0.001  | ETH = 0.001  | SOL = 0.1  | AVAX = 0.1
+            # PEPE = 1  | DOGE = 1  | WIF = 0.1  | Default (unknown) = 5 USDT notional
+            # The actual exchange precision is handled by amount_to_precision() below;
+            # this check only prevents zero-size rejections before that call.
+            _sym_upper = symbol.upper().replace("/", "").replace(":", "").split("USDT")[0]
+            _MIN_QTY_MAP = {
+                "BTC":  0.001,
+                "ETH":  0.001,
+                "SOL":  0.1,
+                "AVAX": 0.1,
+                "BNB":  0.01,
+                "WIF":  0.1,
+                "PEPE": 1.0,
+                "DOGE": 1.0,
+                "INJ":  0.01,
+                "ARB":  0.1,
+                "OP":   0.1,
+            }
+            MIN_QTY = _MIN_QTY_MAP.get(_sym_upper, 0.01)  # safe default for unknown alts
+            min_notional = 5.5  # Binance USDM global minimum notional = $5
 
-            if raw_size < MIN_QTY_BTC:
+            if raw_size < MIN_QTY:
                 sl_dist_pct = abs(current_price - stop_loss) / current_price
-                needed_equity = (MIN_QTY_BTC * current_price * sl_dist_pct) / (max_risk_pct / 100.0)
+                needed_equity = (MIN_QTY * current_price * sl_dist_pct) / (max_risk_pct / 100.0)
                 msg = (
-                    f"[Executor] ⚠️ Position too small: {raw_size:.6f} BTC < min {MIN_QTY_BTC} BTC. "
+                    f"[Executor] ⚠️ Position too small: {raw_size:.6f} {_sym_upper} < min {MIN_QTY}. "
                     f"Need ~${needed_equity:.0f} equity at {max_risk_pct}% risk. "
                     f"Current equity=${equity:.0f}. Deposit or raise BOT_MAX_RISK_PCT."
                 )
@@ -689,8 +725,8 @@ class TradingExecutor:
                 ex_symbol = self._get_ccxt_symbol(symbol)
 
             fmt_size = float(self.exchange.amount_to_precision(ex_symbol, raw_size))
-            if fmt_size < MIN_QTY_BTC:
-                logger.warning(f"[Executor] fmt_size {fmt_size} < min qty {MIN_QTY_BTC}. Aborting.")
+            if fmt_size < MIN_QTY:
+                logger.warning(f"[Executor] fmt_size {fmt_size} < min qty {MIN_QTY} for {_sym_upper}. Aborting.")
                 return
 
             # For Coinbase, ensure the symbol is in the markets cache

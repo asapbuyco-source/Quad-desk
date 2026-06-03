@@ -1484,25 +1484,70 @@ export const useStore = create<AppState>((set, get) => ({
     },
 
     subscribeToBotStatus: () => {
-        const unsub = onSnapshot(doc(db, 'botStatus', 'live'), (snap) => {
-            if (snap.exists()) {
-                const data = snap.data();
-                set((state) => ({
-                    botSettings: {
-                        ...state.botSettings,
-                        status: data.isRunning ? 'ONLINE' : 'OFFLINE',
-                        lastHeartbeat: data.lastHeartbeat?.toMillis ? data.lastHeartbeat.toMillis() : Date.now(),
-                        exchange: data.exchange || state.botSettings.exchange,
-                        tradingPair: data.symbol || state.botSettings.tradingPair,
-                        botMode: data.mode,
-                        environment: data.environment,
-                        activePositions: data.activePositions || 0,
-                        totalTrades: data.totalTrades || 0,
-                        lastSignal: data.lastSignal || 'WAIT',
-                        lastUlis: data.lastUlis || '—',
-                    }
-                }));
-            }
+        // ── Multi-coin: listen to the entire botStatus collection ────────────
+        // Each running bot writes to its own document:
+        //   live_BTCUSDT, live_ETHUSDT, live_SOLUSDT ...
+        // We aggregate them all into a single "Global Portfolio" view.
+        // Legacy single-coin deployments that still write to `live` are included.
+        const q = query(collection(db, 'botStatus'));
+        const unsub = onSnapshot(q, (snap) => {
+            if (snap.empty) return;
+
+            let anyRunning = false;
+            let totalTrades = 0;
+            let totalSessionPnl = 0;
+            let totalDailyPnl = 0;
+            let totalActivePositions = 0;
+            let lastHeartbeat = 0;
+            let lastSignal = 'WAIT';
+            let lastUlis = '—';
+            let exchange = '';
+            let tradingPair = '';
+            let botMode = '';
+            let environment = '';
+
+            snap.docs.forEach(d => {
+                const data = d.data();
+                // Only aggregate documents that look like bot status entries
+                if (typeof data.isRunning !== 'boolean') return;
+
+                if (data.isRunning) anyRunning = true;
+                totalTrades += data.totalTrades || 0;
+                totalSessionPnl += data.sessionPnl || 0;
+                totalDailyPnl += data.dailyPnl || 0;
+                totalActivePositions += data.activePositions || 0;
+
+                const hb = data.lastHeartbeat?.toMillis ? data.lastHeartbeat.toMillis() : 0;
+                if (hb > lastHeartbeat) {
+                    // Use the most recently updated bot for display fields
+                    lastHeartbeat = hb;
+                    lastSignal = data.lastSignal || 'WAIT';
+                    lastUlis = data.lastUlis || '—';
+                    exchange = data.exchange || '';
+                    tradingPair = data.symbol || '';
+                    botMode = data.mode;
+                    environment = data.environment;
+                }
+            });
+
+            set((state) => ({
+                botSettings: {
+                    ...state.botSettings,
+                    status: anyRunning ? 'ONLINE' : 'OFFLINE',
+                    lastHeartbeat: lastHeartbeat || Date.now(),
+                    exchange,
+                    tradingPair,
+                    botMode,
+                    environment,
+                    activePositions: totalActivePositions,
+                    totalTrades,
+                    lastSignal,
+                    lastUlis,
+                    // Global aggregated PnL stored as extra fields for dashboard
+                    globalSessionPnl: totalSessionPnl,
+                    globalDailyPnl: totalDailyPnl,
+                }
+            }));
         }, (err) => {
             console.warn('[Store] botStatus subscription error:', err);
         });

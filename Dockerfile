@@ -26,5 +26,6 @@ RUN pip install --no-cache-dir -r bot/requirements.txt
 # Copy the full application
 COPY . .
 
-# Run the bot
-CMD ["python", "-m", "bot.main"]
+# Run the multi-coin launcher (reads BOT_SYMBOLS from env)
+# Falls back to single-coin mode via BOT_SYMBOL if BOT_SYMBOLS is not set.
+CMD ["python", "launcher.py"]
