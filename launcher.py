@@ -49,6 +49,23 @@ _processes: list[subprocess.Popen] = []
 _shutdown_event = threading.Event()
 
 
+def _send_tg_alert(message: str) -> None:
+    """Send a synchronous Telegram alert on deep crashes."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return
+    import urllib.request
+    import json
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = json.dumps({"chat_id": chat_id, "text": message}).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+
 def _stream_output(proc: subprocess.Popen, prefix: str) -> None:
     """
     Forward every stdout/stderr line from `proc` to our stdout,
@@ -135,6 +152,14 @@ while not _shutdown_event.is_set():
                 f"Restarting in {RESTART_DELAY}s…",
                 flush=True,
             )
+            if ret != 0:
+                # Alert the user to a deep crash
+                _send_tg_alert(
+                    f"🚨 **Quad-Desk Launcher Alert**\n\n"
+                    f"The `{sym}` bot process crashed unexpectedly (Exit Code: {ret}).\n"
+                    f"It will be auto-restarted in {RESTART_DELAY} seconds."
+                )
+            
             time.sleep(RESTART_DELAY)
             if not _shutdown_event.is_set():
                 _processes[i] = _start_bot(sym)
