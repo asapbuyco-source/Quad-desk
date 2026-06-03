@@ -451,14 +451,19 @@ class BinanceDataFeed:
         interval_secs = {
             "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
         }.get(self.interval, 900)
-        # FIX: Use 1.5× interval (was 3×). At 15m candles this means 22.5 min max
-        # before reconnect, not 45 min. Also use _last_closed_candle_ts (not
-        # _last_kline_frame_ts) — live-tick updates keep recv() alive even
-        # when the candle stream is not delivering closed candles.
-        stale_threshold = interval_secs * 1.5
+        # FIX-STALE: Tightened from 1.5× (22.5 min) to 1.1× (~16.5 min).
+        # The old 1.5× threshold was never hit in practice because the monitor's
+        # 2× initial sleep (30 min) meant the first check only happened at 30 min,
+        # and by then the main loop's 2.5× emergency guard (37.5 min) had already
+        # caught it. Now the monitor proactively forces reconnect at ~16.5 min,
+        # well before main.py's last-resort guard ever fires.
+        stale_threshold = interval_secs * 1.1  # ~16.5 min for 15m candles
 
-        # Give the feed 2× the candle interval to receive its first closed candle
-        await asyncio.sleep(interval_secs * 2)
+        # FIX-STALE: Reduced initial sleep from 2× to 1× interval (15 min for 15m).
+        # A closed candle should arrive within one full interval of the feed starting.
+        # Waiting 2 full intervals (30 min) meant the monitor was blind during exactly
+        # the window when silent disconnects most commonly occur after boot.
+        await asyncio.sleep(interval_secs * 1)
 
         while self.is_running:
             await asyncio.sleep(60)

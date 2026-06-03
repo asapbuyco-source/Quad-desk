@@ -1556,6 +1556,19 @@ def _apply_cvd_divergence_gate(
         if vol_spike >= 1.40:
             penalty = min(penalty + 0.02, 0.12)
 
+        # FIX-CVD: In TREND regime (raw BUY/SELL signals) an opposing CVD
+        # divergence is more likely a consolidation within the trend than a
+        # genuine institutional reversal. The log showed the bot correctly
+        # identified a SELL in a sustained BEAR TREND but a 9% CVD penalty
+        # knocked confidence below the Bayes floor, blocking a valid trade
+        # while price continued crashing. Halve soft penalty in TREND regime.
+        # Hard VETO thresholds above are intentionally unchanged.
+        if raw_direction in ("BUY", "SELL"):
+            penalty = penalty * 0.5
+            logger.debug(
+                f"[CVDGate] TREND direction: opposing CVD penalty halved → {penalty:.2%}"
+            )
+
         adjusted = max(0.0, current_confidence - penalty)
         logger.info(
             f"[CVDGate] ⚠️  OPPOSING {div_type} | "
@@ -2509,12 +2522,15 @@ async def execution_loop(
                 "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
             }.get(CANDLE_INTERVAL, 900)
             _last_candle_age = time.time() - float(feed.state.candles[-1]["time"])
-            if _last_candle_age > _interval_secs * 2.5:
+            if _last_candle_age > _interval_secs * 1.5:  # FIX-STALE: tightened from 2.5x to 1.5x
                 logger.warning(
                     f"[Main] ⚠️ Candle feed STALE ({_last_candle_age:.0f}s old, "
-                    f">{_interval_secs * 2.5:.0f}s threshold). "
+                    f">{_interval_secs * 1.5:.0f}s threshold). "
                     f"Triggering REST prefetch and skipping cycle."
                 )
+                # FIX-STALE: Force WS reconnect so dead socket is replaced.
+                # Previously only REST was fetched, leaving the dead socket open.
+                feed.state._reconnect_event.set()
                 asyncio.create_task(feed._fetch_historical_candles_rest())
                 continue  # skip — data is stale
 
@@ -2799,7 +2815,10 @@ async def execution_loop(
             )
 
             # PHASE-0.2: Warn if aggTrade stream may be stale — tape metrics unreliable
-            if not metrics.get("trade_buffer_healthy", True):
+            # FIX-WARN: Suppress warning during boot grace period (first 60s) where an
+            # empty or incomplete trade buffer is completely normal and expected.
+            _booting = getattr(feed, "_aggtrade_watchdog_first_cycle", False)
+            if not metrics.get("trade_buffer_healthy", True) and not _booting:
                 logger.warning(
                     f"[DataFeed] aggTrade stream stale or starved — "
                     f"last trade {time.time() - feed.state._last_trade_ts:.0f}s ago, "
