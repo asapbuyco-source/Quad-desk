@@ -57,6 +57,7 @@ from bot.executor import TradingExecutor
 from bot.ulis_engine import compute_ulis_verdict
 from bot.derivatives_context import DerivativesContext
 from bot.amihud_engine import AmihudEngine
+from bot.macro_shield import macro_shield
 from bot import heartbeat
 from bot.signal_config import (
     REGIME_PARAMS, POST_TRADE_COOLDOWN_S, COLD_START_TRADE_COUNT, 
@@ -1271,6 +1272,10 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
         elif not is_long and skew < 0:
             odds *= skew_boost
 
+    # 7.5 MacroShield DXY Momentum Scalar
+    dxy_mod = macro_shield.get_dxy_scalar(direction)
+    odds *= dxy_mod
+
     # 8. Convert back to probability — MUST happen before regime blending (Fix #1: UnboundLocalError)
     p_final = odds / (1.0 + odds)
 
@@ -1789,6 +1794,11 @@ async def _compute_signal(
         "stop_loss": 0.0, "take_profit": 0.0,
         "analysis": "", "ulis_verdict": "—"
     }
+
+    if not macro_shield.is_calendar_safe():
+        logger.warning(f"[MacroShield] Calendar Blackout Active: {macro_shield.next_event_name} — blocking entries.")
+        # We don't want to increment daily loss halt, let's just log and return wait.
+        return {**WAIT, "analysis": f"MacroShield Blackout: {macro_shield.next_event_name}"}
 
     if daily_loss_halt:
         logger.warning("[RiskEngine] Daily loss limit hit — all trading halted today.")
@@ -3174,6 +3184,8 @@ async def main():
         asyncio.create_task(feed.run_aggtrade(),           name="aggtrade_spot"),   # FIX-A: separate aggTrade on Spot WS
         asyncio.create_task(feed.funding_rate_loop(),      name="funding_rate"),
         asyncio.create_task(_derivatives_refresh_loop(),  name="deriv_refresh"),  # FIX-7.1: background derivatives
+        asyncio.create_task(macro_shield.run_calendar_loop(), name="macro_calendar"),
+        asyncio.create_task(macro_shield.run_dxy_loop(),      name="macro_dxy"),
         _exec_task,
         asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS), name="heartbeat"),
         # P0-2 FIX: Feed health monitor — detects frozen WebSocket and forces reconnect
