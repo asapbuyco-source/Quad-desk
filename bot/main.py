@@ -1279,6 +1279,10 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     # 8. Convert back to probability — MUST happen before regime blending (Fix #1: UnboundLocalError)
     p_final = odds / (1.0 + odds)
 
+    # 8.5 A-2/A-3/A-4: HY Covariance + Lead-Lag adjustment, gated by Transfer Entropy
+    macro_adj = macro_shield.get_macro_confidence_adj(direction)
+    p_final = float(np.clip(p_final + macro_adj, 0.0, 1.0))
+
     # 9. [P1] Regime-Weighted Posterior Blending (HMM Spec Apr 2026)
     # P_adjusted = hmm_conf * regime_prior + (1 - hmm_conf) * base_posterior
     # High HMM confidence → trust per-regime historical win rate more.
@@ -2525,6 +2529,8 @@ async def execution_loop(
             _basis_px = getattr(feed.state, "basis", 0.0)
             current_price = _mark_px if (_mark_px > 0 and abs(_basis_px) < 500) else _raw_candle_close
             effective_price = current_price
+
+            macro_shield.on_btc_update(current_price, time.time())
 
             # PHASE-3.4: Cache positions per cycle to avoid duplicate fetch_positions API calls
             _cached_positions = None

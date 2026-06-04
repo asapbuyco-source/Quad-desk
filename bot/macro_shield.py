@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import time
+import numpy as np
+from collections import deque
 from datetime import datetime, timezone, timedelta
 import httpx
 
@@ -19,8 +21,19 @@ class MacroShield:
         self.next_event_name = ""
         self.is_running = False
         
-        # High impact USD events that cause chaotic liquidity vacuums
         self.target_events = ["CPI", "FOMC", "Non-Farm Employment", "NFP", "Federal Funds Rate"]
+        
+        self._dxy_ticks = deque(maxlen=200)
+        self._btc_ticks = deque(maxlen=200)
+        self._dxy_returns_5m = deque(maxlen=200)
+        self._btc_returns_5m = deque(maxlen=200)
+        self._dxy_atr = 0.0
+        self._btc_atr = 0.0
+        self._hy_corr: float = 0.0
+        self._lead_lag_adj: float = 0.0
+        self._te_gate_open: bool = True
+        self._te_value: float = 0.0
+        self._last_candle_ts: float = 0.0
 
     async def run_calendar_loop(self):
         """
@@ -116,34 +129,162 @@ class MacroShield:
                 result = data.get("chart", {}).get("result", [])
                 if result:
                     closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
-                    # Filter out None values
                     valid_closes = [c for c in closes if c is not None]
                     
-                    if len(valid_closes) >= 5:  # Need at least 1h of data (4x15m candles)
+                    if len(valid_closes) >= 5:
                         current_dxy = valid_closes[-1]
-                        # Look back 4 candles (~1 hour)
                         dxy_1h_ago = valid_closes[-5]
+                        ts = time.time()
+                        
+                        self._dxy_ticks.append((current_dxy, ts))
+                        if len(self._dxy_ticks) >= 2:
+                            prev_price, _ = self._dxy_ticks[-2]
+                            dt = ts - (self._dxy_ticks[-2][1] if len(self._dxy_ticks) > 1 else ts)
+                            if dt > 0:
+                                self._dxy_returns_5m.append(np.log(current_dxy / prev_price))
                         
                         momentum_pct = (current_dxy - dxy_1h_ago) / dxy_1h_ago
-                        
-                        # Calculate scalar: +0.2% DXY move = ±0.15 scalar modification
-                        # Cap the modification to ±0.15 max
                         scalar_mod = (momentum_pct / 0.002) * 0.15
                         scalar_mod = max(-0.15, min(0.15, scalar_mod))
                         
-                        # Store base momentum internally. 
-                        # We apply it contextually based on trade direction in get_dxy_scalar()
                         self._dxy_momentum_mod = scalar_mod
                         self.dxy_last_update = time.time()
                         
-                        logger.debug(f"[MacroShield] DXY: {current_dxy:.2f} | 1h Mom: {momentum_pct:.2%} | Base Mod: {scalar_mod:+.3f}")
+                        self._compute_hy_covariance()
+                        
+                        logger.debug(f"[MacroShield] DXY: {current_dxy:.2f} | 1h Mom: {momentum_pct:.2%} | HY: {self._hy_corr:.3f} | TE: {self._te_value:.3f} bits")
             except Exception as e:
                 logger.warning(f"[MacroShield] Failed to fetch DXY from Yahoo Finance: {e}")
                 
             await asyncio.sleep(60)
 
+    def on_btc_update(self, price: float, ts: float) -> None:
+        self._btc_ticks.append((price, ts))
+        if len(self._btc_ticks) >= 2:
+            prev_price, prev_ts = self._btc_ticks[-2]
+            dt = ts - prev_ts
+            if dt > 0:
+                self._btc_returns_5m.append(np.log(price / prev_price))
+        if len(self._btc_ticks) >= 14:
+            returns = list(self._btc_returns_5m)
+            self._btc_atr = float(np.mean([abs(r) for r in returns[-14:]]))
+        
+        candle_ts_15m = int(ts // 900) * 900
+        if candle_ts_15m != self._last_candle_ts and self._last_candle_ts > 0:
+            self._compute_lead_lag()
+            self._compute_transfer_entropy()
+        self._last_candle_ts = candle_ts_15m
+
+    def _compute_hy_covariance(self) -> None:
+        if len(self._dxy_ticks) < 3 or len(self._btc_ticks) < 3:
+            return
+        
+        dxy_list = list(self._dxy_ticks)
+        btc_list = list(self._btc_ticks)
+        
+        dxy_returns = []
+        for i in range(1, len(dxy_list)):
+            dt = dxy_list[i][1] - dxy_list[i-1][1]
+            if dt > 0:
+                dxy_returns.append((dxy_list[i][0] - dxy_list[i-1][0]) / dxy_list[i-1][0])
+        
+        btc_returns = []
+        for i in range(1, len(btc_list)):
+            dt = btc_list[i][1] - btc_list[i-1][1]
+            if dt > 0:
+                btc_returns.append((btc_list[i][0] - btc_list[i-1][0]) / btc_list[i-1][0])
+        
+        if len(dxy_returns) < 3 or len(btc_returns) < 3:
+            return
+        
+        min_len = min(len(dxy_returns), len(btc_returns))
+        dxy_ret = np.array(dxy_returns[-min_len:])
+        btc_ret = np.array(btc_returns[-min_len:])
+        
+        dxy_atr = float(np.mean([abs(r) for r in dxy_ret[-14:]])) if len(dxy_ret) >= 14 else 1e-9
+        btc_atr = float(np.mean([abs(r) for r in btc_ret[-14:]])) if len(btc_ret) >= 14 else 1e-9
+        
+        hy_cov = float(np.sum(dxy_ret * btc_ret))
+        norm_factor = dxy_atr * btc_atr
+        
+        if norm_factor > 0:
+            self._hy_corr = hy_cov / norm_factor
+            self._hy_corr = float(np.clip(self._hy_corr, -1.0, 1.0))
+
+    def _compute_lead_lag(self) -> None:
+        if len(self._dxy_returns_5m) < 6 or len(self._btc_returns_5m) < 6:
+            return
+        
+        dxy_arr = np.array(list(self._dxy_returns_5m)[-60:])
+        btc_arr = np.array(list(self._btc_returns_5m)[-60:])
+        
+        if len(dxy_arr) < 6 or len(btc_arr) < 6:
+            return
+        
+        lags = [1, 2, 3, 4, 5]
+        best_lag = 0
+        best_corr = -1.0
+        
+        for lag in lags:
+            if lag >= len(dxy_arr) or lag >= len(btc_arr):
+                continue
+            corr = float(np.corrcoef(dxy_arr[lag:], btc_arr[:len(btc_arr)-lag])[0, 1])
+            if abs(corr) > abs(best_corr):
+                best_corr = corr
+                best_lag = lag
+        
+        sign_hy = -1 if self._hy_corr < 0 else 1
+        self._lead_lag_adj = float(np.clip(sign_hy * abs(best_corr) * 0.05, -0.05, 0.05))
+
+    def _compute_transfer_entropy(self) -> None:
+        try:
+            from pyinform.transfer_entropy import transfer_entropy
+        except ImportError:
+            self._te_gate_open = True
+            return
+        
+        min_len = min(len(self._dxy_returns_5m), len(self._btc_returns_5m))
+        if min_len < 12:
+            return
+        
+        dxy_arr = list(self._dxy_returns_5m)[-60:]
+        btc_arr = list(self._btc_returns_5m)[-60:]
+        
+        if len(dxy_arr) < 12 or len(btc_arr) < 12:
+            return
+        
+        def to_bins(arr, n_bins=8):
+            hist, edges = np.histogram(arr, bins=n_bins)
+            return [min(int(np.searchsorted(edges, v) - 1), n_bins - 1) for v in arr]
+        
+        dxy_bins = to_bins(dxy_arr)
+        btc_bins = to_bins(btc_arr)
+        
+        te = transfer_entropy(dxy_bins, btc_bins)
+        self._te_value = float(te) if not np.isnan(te) else 0.0
+        
+        if self._te_value > 0.10:
+            self._te_gate_open = True
+        elif self._te_value < 0.05:
+            self._te_gate_open = False
+
+    def get_macro_confidence_adj(self, direction: str) -> float:
+        if not self._te_gate_open:
+            return 0.0
+        
+        is_long = "BUY" in direction or "LONG" in direction
+        
+        hy_adj = 0.0
+        if self._hy_corr < -0.5:
+            hy_adj = -0.03 if is_long else 0.03
+        elif self._hy_corr > -0.2:
+            hy_adj = 0.03 if is_long else -0.03
+        
+        lag_adj = self._lead_lag_adj if not is_long else -self._lead_lag_adj
+        
+        return float(np.clip(hy_adj + lag_adj, -0.08, 0.08))
+
     def is_calendar_safe(self) -> bool:
-        """Returns True if it's safe to trade (no high-impact news)."""
         return not self.is_calendar_blackout
 
     def get_dxy_scalar(self, direction: str) -> float:
