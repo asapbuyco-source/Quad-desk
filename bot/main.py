@@ -42,6 +42,7 @@ import logging
 import os
 import re
 import signal
+import threading
 import time
 import numpy as np
 from collections import deque
@@ -60,12 +61,13 @@ from bot.amihud_engine import AmihudEngine
 from bot.macro_shield import macro_shield
 from bot import heartbeat
 from bot.signal_config import (
-    REGIME_PARAMS, POST_TRADE_COOLDOWN_S, COLD_START_TRADE_COUNT, 
+    REGIME_PARAMS, POST_TRADE_COOLDOWN_S, COLD_START_TRADE_COUNT,
     COLD_START_CONFIDENCE_DISCOUNT,
     MAX_RISK_PCT as CFG_MAX_RISK_PCT,
     MAX_DAILY_LOSS_PCT as CFG_MAX_DAILY_LOSS_PCT,
     MAX_DRAWDOWN_PCT as CFG_MAX_DRAWDOWN_PCT,
-    MIN_CONFIDENCE_GLOBAL as CFG_MIN_BAYESIAN
+    MIN_CONFIDENCE_GLOBAL as CFG_MIN_BAYESIAN,
+    EQUITY_HARD_BLOCK, EQUITY_SMALL_ACCOUNT, EQUITY_RECOMMENDED,  # P17 FIX
 )
 
 # ──────────────────────────────────────────────────────────────────────
@@ -93,12 +95,12 @@ except Exception as e:
 # ──────────────────────────────────────────────────────────────────────
 EXCHANGE            = os.environ.get("BOT_EXCHANGE",            "binanceusdm").lower()
 SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USDC" if EXCHANGE == "coinbase" else "BTC/USDT")
-TESTNET             = os.environ.get("BOT_TESTNET",             "false").lower() != "false"
+TESTNET             = os.environ.get("BOT_TESTNET",             "true").lower() != "false"   # P11 FIX: safe-by-default — testnet unless explicitly set to mainnet
 MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        str(CFG_MAX_RISK_PCT)))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  str(CFG_MAX_DAILY_LOSS_PCT)))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
-MIN_CONFIDENCE = float(CFG_MIN_BAYESIAN)
+MIN_CONFIDENCE = float(os.environ.get("BOT_MIN_CONFIDENCE", str(CFG_MIN_BAYESIAN)))  # P12 FIX: wire env var, fallback to signal_config
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "3"))    # futures leverage (3× = efficient margin on Binance USDM)
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
@@ -146,6 +148,9 @@ if EXCHANGE == "coinbase":
 else:
     # BTC/USDT  → BTCUSDT  |  BTCUSDT → BTCUSDT
     FEED_SYMBOL = SYMBOL.replace("/", "").split(":")[0]
+
+# P10 FIX: Firestore document ID for risk ledger persistence
+_RISK_LEDGER_DOC_ID = "riskLedger"
 
 # ──────────────────────────────────────────────────────────────────────
 # Shared stats (written to Firestore by heartbeat)
@@ -196,6 +201,85 @@ BOT_STATS: Dict[str, Any] = {
     },
     "equity_peak": ACCOUNT_SIZE,
 }
+
+# P10 FIX: Risk ledger persistence to Firestore.
+# On crash/restart, daily_loss_halt and drawdown_halt must NOT reset — they protect capital.
+# Only daily_pnl and session_pnl reset at midnight (tracked by last_session_reset_date).
+def _load_risk_ledger(stats: Dict[str, Any]) -> None:
+    """Load persisted risk ledger from Firestore on startup.
+    Applies midnight reset: if last_session_reset_date != today, reset daily_pnl and session_pnl.
+    """
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    try:
+        from bot.heartbeat import get_db
+        db = get_db()
+        if db is None:
+            logger.warning("[RiskLedger] Firebase not available — starting with fresh ledger.")
+            return
+        doc = db.collection("botState").document(_RISK_LEDGER_DOC_ID).get()
+        if not doc.exists:
+            logger.info(f"[RiskLedger] No persisted ledger found — starting fresh.")
+            return
+        data = doc.to_dict()
+        last_date = data.get("last_session_reset_date", "")
+        # Daily reset: if date changed, reset daily and session PnL but keep cumulative
+        if last_date and last_date != today:
+            logger.info(f"[RiskLedger] Midnight reset detected ({last_date} → {today}). Resetting daily/session PnL.")
+            stats["daily_pnl"] = 0.0
+            stats["session_pnl"] = 0.0
+            # halts are NOT reset — they carry across midnight
+        else:
+            stats["daily_pnl"] = data.get("daily_pnl", 0.0)
+            stats["session_pnl"] = data.get("session_pnl", 0.0)
+        stats["cumulative_pnl"] = data.get("cumulative_pnl", 0.0)
+        stats["daily_loss_halt"] = data.get("daily_loss_halt", False)
+        stats["consecutive_losses"] = data.get("consecutive_losses", 0)
+        stats["cooldown_until"] = data.get("cooldown_until", 0.0)
+        stats["loss_times"] = data.get("loss_times", [])
+        stats["gate_stats"]["drawdown_halt"] = data.get("drawdown_halt", 0)
+        logger.info(
+            f"[RiskLedger] Loaded from Firestore — "
+            f"daily={stats['daily_pnl']:+.2f} session={stats['session_pnl']:+.2f} "
+            f"cumulative={stats['cumulative_pnl']:+.2f} halt={stats['daily_loss_halt']}"
+        )
+    except Exception as e:
+        logger.warning(f"[RiskLedger] Failed to load from Firestore: {e} — starting fresh.")
+
+
+_risk_write_thread: threading.Thread | None = None
+
+def _save_risk_ledger(stats: Dict[str, Any]) -> None:
+    """Persist risk ledger fields to Firestore via background thread (non-blocking)."""
+    global _risk_write_thread
+    import datetime as _dt
+    payload = {
+        "daily_pnl":            stats.get("daily_pnl", 0.0),
+        "session_pnl":          stats.get("session_pnl", 0.0),
+        "cumulative_pnl":       stats.get("cumulative_pnl", 0.0),
+        "daily_loss_halt":      stats.get("daily_loss_halt", False),
+        "consecutive_losses":   stats.get("consecutive_losses", 0),
+        "cooldown_until":       stats.get("cooldown_until", 0.0),
+        "loss_times":           stats.get("loss_times", []),
+        "drawdown_halt":        stats["gate_stats"].get("drawdown_halt", 0),
+        "last_session_reset_date": _dt.date.today().isoformat(),
+    }
+
+    def _write():
+        try:
+            from bot.heartbeat import get_db
+            db = get_db()
+            if db is not None:
+                db.collection("botState").document(_RISK_LEDGER_DOC_ID).set(payload)
+                logger.debug("[RiskLedger] Saved to Firestore ✓")
+        except Exception as e:
+            logger.warning(f"[RiskLedger] Firestore save failed: {e}")
+
+    if _risk_write_thread is not None and _risk_write_thread.is_alive():
+        logger.debug("[RiskLedger] Previous write still in progress — skipping.")
+        return
+    _risk_write_thread = threading.Thread(target=_write, daemon=True, name="RiskLedger-FSWrite")
+    _risk_write_thread.start()
 
 GATE_STATS_LAST_LOG = 0.0  # timestamp of last 30-min gate summary
 _CYCLE_ERROR_COUNT = 0  # PHASE-3.1: Consecutive cycle errors for escalation
@@ -1815,25 +1899,20 @@ async def _compute_signal(
         return {**WAIT, "analysis": "Max drawdown breached. Restart bot to resume."}
 
     # ── Capital Hard Stop ─────────────────────────────────────────────────────
-    # PATCH (2026-05-13): Lowered from $150 to $50.
-    # $150 was a conservative guideline. Fee math still works at $77 on 15×
-    # leverage — round-trip fee = 0.04% × 15 × 2 = 1.2% of equity, which is
-    # covered by any TP hit on a 1.8:1+ RR trade. Real risk at low equity is
-    # position sizing — handled by the small-account risk cap below.
-    _MIN_VIABLE_EQUITY = 50.0
-    if ACCOUNT_SIZE < _MIN_VIABLE_EQUITY:
+    # P17 FIX: Thresholds centralized in signal_config as EQUITY_HARD_BLOCK
+    if ACCOUNT_SIZE < EQUITY_HARD_BLOCK:
         logger.warning(
             f"[RiskEngine] 🛑 Account ${ACCOUNT_SIZE:.2f} below absolute minimum "
-            f"${_MIN_VIABLE_EQUITY:.0f}. All entries blocked. Deposit to resume."
+            f"${EQUITY_HARD_BLOCK:.0f}. All entries blocked. Deposit to resume."
         )
         _gate_stats_summary("signal_none")
-        return {**WAIT, "analysis": f"Account ${ACCOUNT_SIZE:.2f} < ${_MIN_VIABLE_EQUITY:.0f} minimum. Deposit to resume."}
+        return {**WAIT, "analysis": f"Account ${ACCOUNT_SIZE:.2f} < ${EQUITY_HARD_BLOCK:.0f} minimum. Deposit to resume."}
 
     # ── Small-Account Risk Cap ────────────────────────────────────────────────
-    # When equity is below the recommended $150, cap risk per trade at 0.75%
+    # When equity is below EQUITY_SMALL_ACCOUNT ($150), cap risk per trade at 0.75%
     # to prevent fee erosion from consecutive losses destroying the account.
     # Win rate is the priority — protecting capital between signals is essential.
-    _RECOMMENDED_EQUITY = 150.0
+    _RECOMMENDED_EQUITY = EQUITY_SMALL_ACCOUNT  # P17 FIX: was 150.0, now centralized
     _SMALL_ACCOUNT_RISK_CAP = 0.75   # % of equity — max loss ~$0.58 at $77
     _small_account_mode = ACCOUNT_SIZE < _RECOMMENDED_EQUITY
     if _small_account_mode:
@@ -2201,11 +2280,11 @@ async def _compute_signal(
     # PHASE-5.2: Wire MIN_CONFIDENCE as a floor under regime threshold
     total_trades = sum(quant.get_regime_trade_counts().values()) if quant else 0
     cold_start_discount = COLD_START_CONFIDENCE_DISCOUNT if total_trades < COLD_START_TRADE_COUNT else 0.0
-    # FIX: Ensure global environment MIN_CONFIDENCE does not force an impossibly high hurdle.
-    # Use 0.50 as an absolute baseline safety floor to avoid negative expectation entries.
+    # P12 FIX: Ensure global environment MIN_CONFIDENCE is used as the absolute safety floor
+    # under the regime-adaptive threshold, preventing negative-expectation entries.
     regime_min_conf = max(
         regime_p["min_confidence"] - cold_start_discount,
-        0.50
+        MIN_CONFIDENCE   # P12 FIX: was hardcoded 0.50, now uses the env-bridged floor
     )
     _is_long_for_conf = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
     _directional_conf = confidence if _is_long_for_conf else (1.0 - confidence)
@@ -2373,6 +2452,10 @@ async def _process_exit(
                 f"Bot halted. Restart to resume."
             , critical=True)
 
+    # P10 FIX: Persist risk ledger to Firestore after every exit.
+    # This ensures crash/restart does NOT bypass daily_loss_halt or drawdown_halt.
+    _save_risk_ledger(stats)
+
 
 async def execution_loop(
     feed,
@@ -2380,6 +2463,9 @@ async def execution_loop(
     executor: TradingExecutor,
     stats: Dict[str, Any],
 ):
+    # P10 FIX: Load persisted risk ledger from Firestore before ANY trading logic runs.
+    # This restores daily_loss_halt, drawdown_halt, cumulative_pnl, etc. after a restart.
+    _load_risk_ledger(stats)
     await executor.initialize()
 
     # CRIT-2 FIX: Set leverage AFTER markets are loaded (initialize() calls load_markets).
@@ -2407,7 +2493,7 @@ async def execution_loop(
 
     stats["account_equity"] = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
 
-    EQUITY_MIN_TRADEABLE = 200.0
+    EQUITY_MIN_TRADEABLE = EQUITY_RECOMMENDED  # P17 FIX: was 200.0, now centralized
     if ACCOUNT_SIZE < EQUITY_MIN_TRADEABLE:
         logger.warning(
             f"[RiskEngine] ⚠️ Account ${ACCOUNT_SIZE:.2f} below recommended minimum "
@@ -2552,7 +2638,13 @@ async def execution_loop(
                 # FIX-STALE: Force WS reconnect so dead socket is replaced.
                 # Previously only REST was fetched, leaving the dead socket open.
                 feed.state._reconnect_event.set()
-                asyncio.create_task(feed._fetch_historical_candles_rest())
+                # P16 FIX: Supervise re-seed task — guard against overlapping re-seeds
+                # and alert if it dies unexpectedly.
+                if getattr(feed, '_reseed_task', None) is None or feed._reseed_task.done():
+                    feed._reseed_task = asyncio.create_task(
+                        feed._fetch_historical_candles_rest(), name="rest_reseed"
+                    )
+                    feed._reseed_task.add_done_callback(_task_death_callback)
                 continue  # skip — data is stale
 
             # ── Live-position heartbeat poll (every 30s, independent of main loop) ──
@@ -2565,10 +2657,14 @@ async def execution_loop(
                 and _now - getattr(executor, "_last_pos_poll", 0) > 30
             ):
                 executor._last_pos_poll = _now
-                _hb_exited, _hb_pnl = await executor._check_live_position_exit(current_price)
+                # P7 FIX: Use check_position_exit which holds _position_lock internally,
+                # instead of calling _check_live_position_exit directly (which bypasses the lock).
+                # P8 FIX: Snapshot regime BEFORE the exit check clears active_position.
+                _hb_pos_snapshot = dict(executor.active_position) if executor.active_position else {}  # P8 FIX: dict copy
+                _hb_exited, _hb_pnl = await executor.check_position_exit(current_price)
                 if _hb_exited:
                     _cached_positions = None
-                    pos_regime = (executor.active_position or {}).get("regime", "NEUTRAL")
+                    pos_regime = (_hb_pos_snapshot or {}).get("regime", "NEUTRAL")
                     logger.info(f"[Heartbeat] Position closed via 30s poll. PnL=${_hb_pnl:.2f}")
                     await _process_exit(_hb_pnl, pos_regime, stats, quant, executor)
                     stats["active_position"] = None
@@ -2813,7 +2909,7 @@ async def execution_loop(
                         f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
                     )
                     await executor.check_breakeven_and_partials(
-                        current_price, metrics.get("atr", 0.0)
+                        current_price, metrics.get("atr", 0.0), metrics
                     )
 
                 continue
@@ -3052,12 +3148,16 @@ async def main():
                 pos_regime = executor.active_position.get("regime", "NEUTRAL")
                 logger.info(f"[WsFill] Position closed via ORDER_TRADE_UPDATE PnL=${pnl:.2f}")
                 await _process_exit(pnl, pos_regime, BOT_STATS, quant, executor)
+                executor.active_position = None  # P2 FIX: clear so REST/poll path doesn't double-count
+                executor.pending_order = None
                 BOT_STATS["active_position"] = None
 
     if not DRY_RUN and BINANCE_API_KEY:
-        asyncio.create_task(
-            feed.run_user_data_stream(BINANCE_API_KEY, _on_ws_fill)
+        feed._uds_task = asyncio.create_task(
+            feed.run_user_data_stream(BINANCE_API_KEY, _on_ws_fill),
+            name="user_data_stream"
         )
+        feed._uds_task.add_done_callback(_task_death_callback)  # P3 FIX: supervised — alerts on unexpected death
 
     # PHASE-4.2: Seed HMM observations from REST historical candles on startup
     # This gives the HMM meaningful priors from the first cycle instead of
@@ -3199,6 +3299,8 @@ async def main():
             feed.feed_health_monitor(notifier=executor.notifier),
             name="feed_health_monitor"
         ),
+        # P4 FIX: User-data stream task added to shutdown list so it is cancelled on exit
+        *([feed._uds_task] if getattr(feed, '_uds_task', None) is not None else []),
     ]
 
     # ── Startup notification ──────────────────────────────────────────

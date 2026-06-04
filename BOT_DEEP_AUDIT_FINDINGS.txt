@@ -1,0 +1,373 @@
+Quad-Desk Bot Deep Audit Findings - Current Validation
+Date: 2026-06-04
+
+Scope
+-----
+This audit reflects the current working tree after the recent fix pass.
+
+Files reviewed:
+- bot/main.py
+- bot/executor.py
+- bot/data_feed.py
+- bot/macro_shield.py
+- bot/signal_config.py
+- tests/test_executor.py
+
+Validation run:
+- python -m py_compile bot/main.py bot/executor.py bot/data_feed.py bot/macro_shield.py bot/signal_config.py
+- python -m pytest tests/test_executor.py -q -p no:cacheprovider
+
+Validation result:
+- Python compile check passed.
+- Existing focused executor tests passed: 6 passed.
+
+
+Current Grade
+-------------
+Dry-run / research readiness: B / 78%
+Small live-capital readiness: C- / 58%
+Unattended production readiness: Not ready
+
+Reason:
+Several earlier findings were addressed, but two new live-path regressions were
+introduced. The remaining open items are concentrated in live startup, breakeven
+handling, duplicate-entry prevention, persistent risk accounting, and exchange
+parameter verification.
+
+
+Fixes Confirmed
+---------------
+
+1. TP requeue crash mostly fixed
+   File: bot/executor.py:862-1073
+
+   Previous issue:
+   TP failure wrote requeue fields into self.active_position before active_position
+   existed.
+
+   Current state:
+   Requeue fields are now stored in _requeue_tp_meta and merged into
+   active_position after it is created.
+
+   Status:
+   Improved. Still needs a regression test for market-entry success, SL success,
+   TP failure, and later attempt_tp_requeue().
+
+
+2. Feed watchdog no longer exits after first warmup cycle
+   File: bot/data_feed.py:505-511
+
+   Previous issue:
+   The first-cycle aggTrade watchdog branch used return, exiting
+   feed_health_monitor permanently.
+
+   Current state:
+   return was replaced with continue.
+
+   Status:
+   Fixed, pending test coverage.
+
+
+3. User-data listen-key keepalive scoping fixed
+   File: bot/data_feed.py:583-588
+
+   Previous issue:
+   Nested _keepalive() assigned _uds_client without nonlocal, which could cause
+   UnboundLocalError and prevent keepalive refresh.
+
+   Current state:
+   nonlocal _uds_client added.
+
+   Status:
+   Fixed, pending async lifecycle test.
+
+
+4. Macro lead/lag correlation baseline fixed
+   File: bot/macro_shield.py:228-237
+
+   Previous issue:
+   best_corr started at -1.0 and comparison used abs(best_corr), so ordinary
+   correlations could not beat the baseline.
+
+   Current state:
+   best_corr starts at 0.0.
+
+   Status:
+   Fixed, pending deterministic unit test.
+
+
+5. BOT_TESTNET default made safer
+   File: bot/main.py:97
+
+   Previous issue:
+   BOT_TESTNET defaulted to false, making mainnet the default when credentials
+   existed.
+
+   Current state:
+   BOT_TESTNET defaults to true.
+
+   Status:
+   Fixed. A stronger future improvement would require BOT_LIVE_CONFIRM=true before
+   allowing mainnet.
+
+
+6. BOT_MIN_CONFIDENCE environment variable is now wired
+   File: bot/main.py:102
+
+   Previous issue:
+   .env.example documented BOT_MIN_CONFIDENCE, but main.py ignored it.
+
+   Current state:
+   MIN_CONFIDENCE reads BOT_MIN_CONFIDENCE with config fallback.
+
+   Status:
+   Fixed.
+
+
+7. Equity thresholds centralized
+   File: bot/signal_config.py
+   File: bot/main.py:1816-1844, 2403-2419
+
+   Previous issue:
+   Low-equity thresholds were scattered across main.py.
+
+   Current state:
+   EQUITY_HARD_BLOCK, EQUITY_SMALL_ACCOUNT, and EQUITY_RECOMMENDED now live in
+   signal_config.py.
+
+   Status:
+   Improved.
+
+
+8. Stale-feed REST re-seed task is now supervised
+   File: bot/main.py:2548-2557
+
+   Previous issue:
+   REST re-seed was launched as an unnamed, untracked background task.
+
+   Current state:
+   Re-seed task is named rest_reseed, guarded against overlap, and receives a done
+   callback.
+
+   Status:
+   Improved, but see current P0 finding about callback definition order.
+
+
+9. Heartbeat poll now uses the locked exit path
+   File: bot/main.py:2567-2578
+
+   Previous issue:
+   Heartbeat poll called private _check_live_position_exit() directly without the
+   lock that method expects.
+
+   Current state:
+   It now calls check_position_exit(), which acquires _position_lock.
+
+   Status:
+   Improved.
+
+
+10. Heartbeat poll snapshots regime before exit check
+    File: bot/main.py:2573-2577
+
+    Previous issue:
+    Exit check cleared active_position before the code read the regime, causing
+    fallback to NEUTRAL.
+
+    Current state:
+    Position is snapshotted before the exit check.
+
+    Status:
+    Improved.
+
+
+Current Blocking Findings
+-------------------------
+
+P0. Live startup can crash because _task_death_callback is referenced before definition
+File: bot/main.py:3065-3070 and bot/main.py:3171
+
+Problem:
+The user-data stream task is created and _uds_task.add_done_callback(_task_death_callback)
+is called before _task_death_callback is defined later in main().
+
+Impact:
+In live mode with BINANCE_API_KEY set, startup can fail before the bot reaches the
+main task list. This is a live-path blocker.
+
+Suggested fix:
+Move the _task_death_callback definition above any create_task/add_done_callback
+usage, or delay user-data stream task creation until after the callback is defined.
+Add the user_data_stream task to the main tasks list for clean shutdown.
+
+
+P0. Breakeven CVD branch uses side before assignment
+File: bot/executor.py:1209-1228
+
+Problem:
+check_breakeven_and_partials() now accepts metrics, but the CVD branch checks
+side at lines 1213-1215 before side is assigned at line 1228.
+
+Impact:
+If metrics contains cvd_divergence with strength > 0.40, this path can raise
+UnboundLocalError and break breakeven handling.
+
+Suggested fix:
+Assign entry_price and side immediately after pos is loaded, before the metrics
+CVD branch.
+
+
+P1. User-data stream task is supervised but not included in shutdown tasks
+File: bot/main.py:3065-3070 and bot/main.py:3198-3212
+
+Problem:
+The user-data stream task gets a done callback, but it is not stored in the tasks
+list that is later cancelled and awaited during shutdown.
+
+Impact:
+Shutdown can leave the stream task outside the normal cleanup flow.
+
+Suggested fix:
+Create _uds_task = None before task creation, append it to tasks if created, and
+cancel/await it with the rest.
+
+
+P1. Duplicate live-entry race remains open
+File: bot/executor.py:587-758 and bot/executor.py:812-844
+
+Problem:
+The lock protects preflight checks but is released before live market order
+placement. pending_order is only set after create_market_order() returns.
+
+Impact:
+A second concurrent signal path can pass the no-position/no-pending checks while
+the first live order is in flight.
+
+Suggested fix:
+Set an entry_in_progress or pending_order sentinel inside _position_lock before
+releasing it for exchange calls. Clear or update it once the entry succeeds/fails.
+
+
+P1. Risk ledger is still memory-only
+File: bot/main.py:154-166 and bot/main.py:2318-2359
+
+Problem:
+daily_pnl, session_pnl, cumulative_pnl, daily_loss_halt, and drawdown_halt still
+live only in BOT_STATS process memory.
+
+Impact:
+A restart or redeploy can reset loss controls and bypass daily/cumulative halt
+state.
+
+Suggested fix:
+Persist a risk ledger to Firestore/local durable state:
+- date-scoped daily_pnl and daily_loss_halt
+- cumulative_pnl
+- drawdown_halt
+- last update timestamp
+
+Load it during startup before trading begins.
+
+
+P1. WebSocket fill callback now clears active_position, but needs idempotency guard
+File: bot/main.py:3054-3063
+
+Problem:
+The callback now clears executor.active_position after _process_exit(), which fixes
+the earlier double-count risk in the normal case. However, there is no explicit
+exit idempotency key or last-processed order/trade id.
+
+Impact:
+Duplicate ORDER_TRADE_UPDATE messages, reconnect replay, or a near-simultaneous
+poll event can still double-process an exit if timing is unlucky.
+
+Suggested fix:
+Track last processed close order id / trade id / event id, or store an
+exit_processed flag on the position before awaiting _process_exit().
+
+
+P1. Protective futures order params still need Binance testnet verification
+File: bot/executor.py:910-916 and bot/executor.py:930-936
+
+Problem:
+STOP_MARKET and TAKE_PROFIT_MARKET orders pass closePosition=True while also
+passing amount. A nearby comment says reduceOnly works with amount and
+closePosition does not.
+
+Impact:
+Protective orders may be rejected or behave differently than expected depending
+on CCXT/Binance behavior.
+
+Suggested fix:
+Verify on Binance USDM testnet. Use either:
+- closePosition=True without amount, or
+- reduceOnly=True with amount
+
+Document the chosen behavior with a testnet transcript or integration test.
+
+
+P2. Spot aggTrade vs USDM futures tape mismatch remains
+File: bot/data_feed.py:145-148
+
+Problem:
+The bot executes USDM futures, but CVD/tape comes from Binance Spot aggTrade.
+
+Impact:
+Spot flow may diverge from futures flow during liquidation, funding, and basis
+events.
+
+Suggested fix:
+Make this explicit in config and telemetry, or prefer futures aggTrade with a
+fallback to spot only when futures aggTrade is unhealthy.
+
+
+P2. Test coverage is still too narrow
+File: tests/test_executor.py
+
+Problem:
+Existing tests pass but only cover a small slice of executor behavior.
+
+Missing tests:
+- live startup with user-data task enabled
+- TP failure after market fill and SL success
+- duplicate-entry prevention while first order is in flight
+- breakeven CVD branch
+- watchdog continues after first aggTrade warmup
+- listen-key keepalive refresh
+- risk-ledger persistence/load
+- WebSocket fill idempotency
+
+Impact:
+The most important live fixes are not protected against regression.
+
+
+Recommended Fix Order
+---------------------
+
+1. Move _task_death_callback above user-data stream task creation, and include
+   user_data_stream in the shutdown tasks list.
+2. Fix breakeven side-before-assignment bug.
+3. Add regression tests for both new blockers.
+4. Add entry_in_progress/pending sentinel before live market order placement.
+5. Add risk-ledger persistence and startup loading.
+6. Add WebSocket fill idempotency.
+7. Verify Binance USDM protective order parameters on testnet.
+8. Decide and document spot-vs-futures aggTrade behavior.
+9. Expand tests around watchdog, keepalive, TP requeue, and live entry races.
+
+
+Regrade Targets
+---------------
+
+After fixing the two P0 regressions:
+- Dry-run / research: B / B+
+- Small live-capital: C+ / B-
+
+After adding duplicate-entry protection and risk-ledger persistence:
+- Small live-capital: B-
+- Unattended production: still requires exchange-parameter verification and wider
+  integration tests
+
+After exchange testnet verification and broader regression coverage:
+- Small live-capital: B / B+
+- Unattended production: B- if monitoring and operational runbooks are also in place

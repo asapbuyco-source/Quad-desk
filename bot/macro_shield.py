@@ -218,12 +218,16 @@ class MacroShield:
         dxy_arr = np.array(list(self._dxy_returns_5m)[-60:])
         btc_arr = np.array(list(self._btc_returns_5m)[-60:])
         
+        min_len = min(len(dxy_arr), len(btc_arr))
+        dxy_arr = dxy_arr[-min_len:]
+        btc_arr = btc_arr[-min_len:]
+        
         if len(dxy_arr) < 6 or len(btc_arr) < 6:
             return
         
         lags = [1, 2, 3, 4, 5]
         best_lag = 0
-        best_corr = -1.0
+        best_corr = 0.0
         
         for lag in lags:
             if lag >= len(dxy_arr) or lag >= len(btc_arr):

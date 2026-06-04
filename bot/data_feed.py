@@ -508,7 +508,7 @@ class BinanceDataFeed:
                     self._aggtrade_watchdog_prev_count = _curr_count
                     self.state._aggtrade_msg_count     = 0
                     self.state._aggtrade_count_reset_ts = now
-                    return
+                    continue  # P6 FIX: keep monitor loop alive, not return
 
                 # FIX-AUDIT: Only advance the baseline if we actually received msgs.
                 # If msgs_per_min==0 the baseline should NOT advance — it must stay
@@ -581,6 +581,7 @@ class BinanceDataFeed:
 
                 # Keepalive — Binance expires listenKey after 60 min without ping
                 async def _keepalive():
+                    nonlocal _uds_client  # P4 FIX: without nonlocal, assignment makes _uds_client local to _keepalive
                     while self.is_running:
                         await asyncio.sleep(29 * 60)
                         if _uds_client is None:

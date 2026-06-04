@@ -809,6 +809,20 @@ class TradingExecutor:
             logger.info(f"[Executor] Failed-order cooldown active — {remaining}s remaining. Skipping.")
             return
 
+        # P5 FIX: Set pending_order INFLIGHT BEFORE releasing the outer lock.
+        # This prevents a TOCTOU race where a concurrent signal checking pending_order
+        # between lock release (line 757) and market order (line 830) would see no pending order.
+        # The heartbeat check at line 592 sees INFLIGHT and skips entry for TTL duration.
+        self.pending_order = {
+            "id": None,   # filled after market order returns
+            "symbol": None,
+            "side": None,
+            "size": None,
+            "entry_price": None,
+            "status": "INFLIGHT",
+            "expires_at": time.time() + 60,
+        }
+
         try:
             # We already have ex_symbol correctly formatted at line ~506 (e.g. BTC/USDT:USDT)
             # Only do the Coinbase USDC -> USD swap if applicable
@@ -1608,7 +1622,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                     amount=size,
                     params={
                         "stopPrice": tp_price,
-                        "closePosition": True,
+                        "reduceOnly": True,   # P15 FIX: closePosition+amount undefined; use reduceOnly
                         "workingType": "MARK_PRICE",
                     },
                 )

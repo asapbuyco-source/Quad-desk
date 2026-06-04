@@ -13,6 +13,12 @@ MAX_RISK_PCT           = 1.0    # Max risk per trade as % of equity
 MAX_DAILY_LOSS_PCT     = 3.0    # Stop trading if daily loss hits this %
 MAX_DRAWDOWN_PCT       = 15.0   # Hard session drawdown halt (restart required)
 
+# ── Equity Thresholds (P17 FIX: centralized here) ──────────────────────────────
+# P17 FIX: Centralized equity thresholds — import from signal_config in main.py
+EQUITY_HARD_BLOCK      = 50.0   # Bot refuses to trade below this
+EQUITY_SMALL_ACCOUNT   = 150.0  # Below this: small-account risk cap (0.75% instead of 1%)
+EQUITY_RECOMMENDED     = 200.0  # Below this: warning logged at startup
+
 # ── Global Confidence Floor ───────────────────────────────────────────────────
 MIN_CONFIDENCE_GLOBAL  = 0.62   # Used as floor for MIN_CONFIDENCE env override
 
