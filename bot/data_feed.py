@@ -609,12 +609,15 @@ class BinanceDataFeed:
                                 if event.get("e") == "ORDER_TRADE_UPDATE":
                                     order = event.get("o", {})
                                     if order.get("X") == "FILLED" and order.get("R"):
+                                        order_id = order.get("i")
+                                        event_time = event.get("E")
+                                        fill_id = f"{order_id}_{event_time}"
                                         pnl = float(order.get("rp", 0.0))
                                         logger.info(
-                                            f"[UserDataStream] Fill: orderId={order.get('i')} "
+                                            f"[UserDataStream] Fill: orderId={order_id} "
                                             f"PnL=${pnl:.2f}"
                                         )
-                                        await on_fill_callback(pnl)
+                                        await on_fill_callback(pnl, fill_id)
                             except asyncio.TimeoutError:
                                 logger.warning("[UserDataStream] recv timeout — reconnecting")
                                 break

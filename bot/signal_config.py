@@ -19,6 +19,7 @@ EQUITY_HARD_BLOCK      = 50.0   # Bot refuses to trade below this
 EQUITY_SMALL_ACCOUNT   = 150.0  # Below this: small-account risk cap (0.75% instead of 1%)
 EQUITY_RECOMMENDED     = 200.0  # Below this: warning logged at startup
 
+
 # ── Global Confidence Floor ───────────────────────────────────────────────────
 MIN_CONFIDENCE_GLOBAL  = 0.62   # Used as floor for MIN_CONFIDENCE env override
 
@@ -29,11 +30,14 @@ POST_TRADE_COOLDOWN_S  = 90     # seconds after any exit before new entry allowe
 COLD_START_TRADE_COUNT = 30
 COLD_START_CONFIDENCE_DISCOUNT = 0.05
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ── REGIME-CONDITIONAL PARAMETER MATRIX (HMM Spec, Apr 2026) ─────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-#
-# HMM HAND-TUNING NOTE:
+# ── Strategy / Signal Thresholds ──────────────────────────────────────────────
+FUNDING_LONG_BLOCK = 0.0008
+FUNDING_SHORT_BLOCK = -0.0005
+BAYES_OVERRIDE_THRESHOLD = 0.78
+CVD_VETO_STRENGTH = 0.62
+CVD_VETO_VOL_SPIKE = 1.40
+MIN_SWEEP_CONFIRMS = 2
+
 # These regime parameters are hand-tuned placeholders. The HMM emission
 # parameters (_MU, _SIGMA in main.py _HMMRegimeClassifier) are ALSO
 # hand-tuned placeholders. Run `python -m bot.hmm_calibrate` on ≥6 months

@@ -1,0 +1,689 @@
+Quad-Desk Bot Full Implementation Plan
+Date: 2026-06-05
+
+Purpose
+-------
+This plan combines:
+1. Current code-verified findings from the Quad-Desk bot audit.
+2. Valid findings from:
+   C:\Users\pc\Downloads\quad_desk_implementation_plan (1).txt
+
+The plan is ordered by practical live-readiness priority. P0 items should be fixed
+before any live session. P1 items are next safety and correctness work. P2/P3 items
+improve model validity, testability, and long-term performance.
+
+
+Current Validation Snapshot
+---------------------------
+Commands last run:
+- python -m py_compile bot\main.py bot\executor.py bot\data_feed.py bot\macro_shield.py bot\signal_config.py
+- python -m pytest tests\test_executor.py -q -p no:cacheprovider
+
+Result:
+- Compile passed.
+- Existing focused executor tests passed: 6 passed.
+
+Important note:
+Those tests do not cover the riskiest live paths: live startup, held-position
+breakeven handling, user-data stream lifecycle, duplicate exit processing,
+primary futures protective order placement, or backtest/live parity.
+
+
+Current Grade
+-------------
+Dry-run / research readiness: B- / 75%
+Small live-capital readiness: C- / 60%
+Unattended production readiness: Not ready
+
+Main reason:
+Some meaningful fixes exist, including risk-ledger persistence and inflight entry
+protection, but current live runtime blockers remain.
+
+
+P0 - Must Fix Before Any Live Session
+=====================================
+
+P0-1. Fix _task_death_callback definition order
+------------------------------------------------
+Problem:
+bot/main.py uses _task_death_callback before it is defined.
+
+Current evidence:
+- Used at bot/main.py:3160:
+  feed._uds_task.add_done_callback(_task_death_callback)
+- Defined later at bot/main.py:3261.
+
+Impact:
+In live mode with BINANCE_API_KEY set, main() can fail at startup before the main
+bot task group is created.
+
+Implementation:
+1. Move the _task_death_callback function above the user-data stream creation block.
+2. Keep user-data stream task creation after callback definition.
+3. Keep feed._uds_task in the shutdown tasks list.
+4. Avoid creating any task with add_done_callback before the callback exists.
+
+Target structure:
+    def _task_death_callback(task: asyncio.Task):
+        ...
+
+    if not DRY_RUN and BINANCE_API_KEY:
+        feed._uds_task = asyncio.create_task(
+            feed.run_user_data_stream(BINANCE_API_KEY, _on_ws_fill),
+            name="user_data_stream",
+        )
+        feed._uds_task.add_done_callback(_task_death_callback)
+
+Acceptance criteria:
+- Live startup path with BINANCE_API_KEY set does not raise NameError or
+  UnboundLocalError.
+- user_data_stream appears in the shutdown task list if it was created.
+- py_compile passes.
+
+Tests to add:
+- A source-order regression test that asserts the first occurrence of
+  "def _task_death_callback" appears before the first "add_done_callback(_task_death_callback)".
+- Optional async startup smoke test with mocked feed/executor.
+
+
+P0-2. Fix check_breakeven_and_partials signature mismatch
+---------------------------------------------------------
+Problem:
+main.py calls check_breakeven_and_partials with three arguments:
+    current_price, atr, metrics
+
+executor.py currently defines it with two arguments:
+    current_price, atr
+
+Current evidence:
+- Call: bot/main.py:2911
+- Definition: bot/executor.py:1212
+
+Impact:
+Whenever the bot is holding a position and reaches that call, it can raise
+TypeError. This can interrupt held-position monitoring.
+
+Implementation:
+1. Change the executor method signature to:
+       async def check_breakeven_and_partials(
+           self,
+           current_price: float,
+           atr: float,
+           metrics: dict = None,
+       ) -> None:
+2. Preserve compatibility for callers passing only two args.
+3. Add a regression test that calls the method with three args.
+
+Acceptance criteria:
+- Method accepts both two-argument and three-argument calls.
+- Existing tests pass.
+- A held-position loop cannot crash from argument mismatch.
+
+
+P0-3. Remove or correctly relocate orphaned CVD breakeven block
+---------------------------------------------------------------
+Problem:
+There is an orphaned CVD divergence block under/inside move_sl_to_breakeven that
+references undefined variables metrics and pos.
+
+Current evidence:
+- bot/executor.py:1195 references metrics and pos outside valid scope.
+
+Impact:
+This path can raise NameError or behave unpredictably. It also indicates that the
+CVD breakeven logic is not located in the method that has the right inputs.
+
+Implementation:
+1. Delete the orphaned block from move_sl_to_breakeven.
+2. Move the logic into check_breakeven_and_partials, after these variables are set:
+       pos = self.active_position
+       entry_price = pos["entry_price"]
+       side = pos["side"]
+3. Use metrics only if provided:
+       if metrics:
+           cvd = metrics.get("cvd_divergence")
+           ...
+4. If opposing CVD divergence is confirmed, call move_sl_to_breakeven and set
+   pos["_be_locked"] = True.
+
+Acceptance criteria:
+- No references to metrics or pos exist outside valid scope.
+- CVD breakeven test passes for long and short positions.
+- No NameError / UnboundLocalError in breakeven code.
+
+Tests to add:
+- Long position + bearish/opposing CVD divergence triggers move_sl_to_breakeven.
+- Short position + bullish/opposing CVD divergence triggers move_sl_to_breakeven.
+- Non-opposing CVD divergence does not move SL.
+- No metrics argument does not crash.
+
+
+P0-4. Fix primary futures protective order parameters
+-----------------------------------------------------
+Problem:
+The primary futures STOP_MARKET and TAKE_PROFIT_MARKET orders still pass
+closePosition=True while also passing amount. The requeue TP path uses reduceOnly,
+but the primary path still has closePosition.
+
+Current evidence:
+- bot/executor.py:929 uses closePosition=True.
+- bot/executor.py:949 uses closePosition=True.
+- bot/executor.py:1625 already uses reduceOnly=True in TP requeue.
+
+Impact:
+Binance/CCXT behavior can reject or mis-handle closePosition=True with amount.
+Primary SL/TP placement is a capital-protection path, so this must be deterministic.
+
+Implementation:
+1. In the primary STOP_MARKET fallback order, replace:
+       "closePosition": True
+   with:
+       "reduceOnly": True
+2. In the primary TAKE_PROFIT_MARKET order, replace:
+       "closePosition": True
+   with:
+       "reduceOnly": True
+3. Keep amount=fmt_size.
+4. Confirm the STOP order path already uses reduceOnly=True.
+5. Confirm attempt_tp_requeue uses reduceOnly=True.
+
+Acceptance criteria:
+- rg "closePosition" bot\executor.py shows no active primary protective order usage
+  with amount, except historical comments if needed.
+- Binance USDM testnet accepts:
+  - market entry
+  - STOP fallback / STOP_MARKET reduceOnly
+  - TAKE_PROFIT_MARKET reduceOnly
+  - TP requeue reduceOnly
+
+Tests to add:
+- Mock create_order calls and assert reduceOnly=True for STOP_MARKET and
+  TAKE_PROFIT_MARKET.
+- Assert closePosition is not present in params when amount is passed.
+
+
+P0-5. Add idempotency guard to _process_exit
+--------------------------------------------
+Problem:
+Multiple paths can process the same exit:
+- user-data stream callback
+- 30s heartbeat/live position poll
+- main loop check_position_exit
+
+_process_exit currently increments daily_pnl, session_pnl, cumulative_pnl and
+updates win-rate state without a duplicate guard.
+
+Current evidence:
+- bot/main.py:2387 defines _process_exit.
+- bot/main.py:2401-2403 increments PnL directly.
+- No closed_trade_ids or processed_exit_ids guard found.
+
+Impact:
+One trade close can be counted twice. This can corrupt:
+- daily_pnl
+- session_pnl
+- cumulative_pnl
+- daily_loss_halt
+- drawdown_halt
+- Bayesian priors
+- consecutive loss cooldowns
+
+Implementation:
+1. Add an idempotency set to BOT_STATS:
+       "closed_trade_ids": set()
+2. At the top of _process_exit, snapshot the active position:
+       pos = executor.active_position or {}
+       doc_id = pos.get("trade_doc_id", "")
+3. If doc_id is already in stats["closed_trade_ids"], log and return.
+4. If doc_id exists and is new, add it before any await or state mutation.
+5. If doc_id is missing, use a fallback key from order id, symbol, side, and a
+   close timestamp bucket only if needed.
+6. Reset closed_trade_ids on daily reset, or keep a bounded deque/set of recent
+   processed IDs to avoid unbounded memory growth.
+
+Acceptance criteria:
+- Two rapid calls to _process_exit for the same trade only increment PnL once.
+- _process_exit remains safe if trade_doc_id is absent.
+- Existing risk-ledger save still runs after a legitimate first exit.
+
+Tests to add:
+- Duplicate _process_exit call with same trade_doc_id.
+- Two different trade_doc_ids both process normally.
+- Missing trade_doc_id path does not crash.
+
+
+P0-6. Fix derivatives cache first-boot behavior
+-----------------------------------------------
+Problem:
+_DERIV_CONTEXT_LAST_UPDATE starts at 0.0. On first _compute_signal call,
+age is approximately current epoch seconds, so the code treats cache as extremely
+stale and bypasses the derivatives gate until the background task fetches data.
+
+Current evidence:
+- bot/main.py:302 sets _DERIV_CONTEXT_LAST_UPDATE = 0.0.
+- bot/main.py:2201 computes age.
+- bot/main.py:2203 logs stale cache and bypasses derivatives gate.
+
+Impact:
+For the early boot window, derivatives veto is skipped. The downloaded audit calls
+this out correctly.
+
+Implementation:
+1. Add explicit warming state:
+       _DERIV_CONTEXT_WARMING = True
+2. In _derivatives_refresh_loop, perform first fetch immediately or after a very
+   short delay, then set _DERIV_CONTEXT_WARMING = False after success.
+3. In _compute_signal:
+       if _DERIV_CONTEXT_WARMING:
+           log INFO "[DerivGate] warming - skipping"
+           skip derivatives gate without WARNING
+       elif cache age > 900:
+           log WARNING and bypass as stale
+       else:
+           apply derivatives gate normally
+4. Do not confuse first-boot warming with stale production data.
+
+Acceptance criteria:
+- First boot logs "warming" rather than "STALE_CACHE_BYPASSED".
+- After first successful fetch, derivatives gate applies normally.
+- If cache later becomes older than 900s, stale warning still appears.
+
+
+P1 - First Safety and Correctness Pass
+======================================
+
+P1-1. Move hardcoded thresholds into signal_config.py
+-----------------------------------------------------
+Problem:
+Several tunable thresholds are still hardcoded in main.py / ulis_engine.py.
+
+Current evidence:
+- BAYES_OVERRIDE_THRESHOLD hardcoded in bot/main.py:1430.
+- VETO_STRENGTH and VETO_VOL_SPIKE hardcoded in bot/main.py:1568-1569.
+- FUNDING_LONG_BLOCK and FUNDING_SHORT_BLOCK hardcoded in bot/main.py:2162-2163.
+- MIN_SWEEP_CONFIRMS hardcoded in bot/ulis_engine.py:215.
+
+Impact:
+Operational tuning requires code edits and risks inconsistent live/backtest
+configuration.
+
+Implementation:
+1. In bot/signal_config.py, add:
+       FUNDING_LONG_BLOCK = 0.0008
+       FUNDING_SHORT_BLOCK = -0.0005
+       BAYES_OVERRIDE_THRESHOLD = 0.78
+       CVD_VETO_STRENGTH = 0.62
+       CVD_VETO_VOL_SPIKE = 1.40
+       MIN_SWEEP_CONFIRMS = 2
+2. Import these constants where used.
+3. Remove local hardcoded definitions.
+4. If any should be env-overridable, define that in one place only.
+
+Acceptance criteria:
+- rg "BAYES_OVERRIDE_THRESHOLD|VETO_STRENGTH|VETO_VOL_SPIKE|FUNDING_LONG_BLOCK|FUNDING_SHORT_BLOCK" bot\main.py
+  shows imports/usage only, not local literal definitions.
+- rg "MIN_SWEEP_CONFIRMS" bot\ulis_engine.py shows imported config usage.
+
+
+P1-2. Normalize confidence after each stage and before Kelly sizing
+-------------------------------------------------------------------
+Problem:
+Confidence is modified by several pipeline stages:
+- CVD gate
+- Bayesian fusion
+- VPOC boost
+- ULIS boost/veto/penalty
+- alignment penalties
+
+Some clipping exists, but it is inconsistent. Confidence is later used in Kelly
+sizing.
+
+Current evidence:
+- VPOC uses min(1.0, confidence + vpoc_boost) in bot/main.py:2263.
+- ULIS gate modifies confidence in _apply_ulis_gate.
+- execute_signal uses _kelly_scale(confidence, rr) in bot/executor.py:661.
+
+Impact:
+Inflated confidence can oversize trades. Negative or >1 confidence can distort
+logs, thresholds, and Kelly.
+
+Implementation:
+1. Create helper:
+       def _clamp_confidence(value: float) -> float:
+           return float(np.clip(value, 0.0, 1.0))
+2. Apply after every confidence modification in _compute_signal and _apply_ulis_gate.
+3. Before execute_signal, assert/log:
+       if not 0.0 <= confidence <= 1.0:
+           logger.error(...)
+           confidence = _clamp_confidence(confidence)
+4. In TradingExecutor.execute_signal, defensively clamp confidence before Kelly.
+
+Acceptance criteria:
+- Confidence logged in "[Signal] >>" is never outside [0, 1].
+- Kelly receives only clamped values.
+- Unit tests cover extreme confidence inputs.
+
+
+P1-3. Fix HMM cold-start regime commit after seeding
+----------------------------------------------------
+Problem:
+The HMM seeding block commits the current _candidate_regime after processing the
+last few seed candles. This can overreact to the final seed candle.
+
+Current evidence:
+- bot/main.py:3194 iterates over rest_candles[-5:].
+- bot/main.py:3198 sets _committed_regime = _candidate_regime.
+
+Impact:
+Bot can begin live trading in a regime caused by a single transitional/spike
+candle instead of the modal recent regime.
+
+Implementation:
+1. During the last-five-candle seed pass, collect raw regimes.
+2. Use Counter(...).most_common(1)[0][0] to pick the modal boot regime.
+3. Set both _committed_regime and _candidate_regime to that mode.
+4. Set _candidate_streak to HYSTERESIS_CANDLES.
+5. Clear _obs_buf after this as currently intended.
+
+Acceptance criteria:
+- A seed sequence with four RANGE candles and one final TREND spike commits RANGE.
+- Hysteresis state is consistent after boot.
+
+
+P1-4. Verify and harden risk-ledger persistence
+-----------------------------------------------
+Problem:
+Risk-ledger persistence was added and is valuable, but it needs tests and a small
+schema review.
+
+Current evidence:
+- _load_risk_ledger exists in bot/main.py:208.
+- _save_risk_ledger exists in bot/main.py:252.
+- _save_risk_ledger is called after exits in bot/main.py:2457.
+- _load_risk_ledger is called before trading loop logic in bot/main.py:2468.
+
+Potential issue:
+drawdown_halt appears mixed with gate_stats in parts of the code. The ledger should
+persist a clear top-level boolean halt state, not only a gate counter.
+
+Implementation:
+1. Add top-level BOT_STATS["drawdown_halt"] = False if not already present.
+2. Store drawdown_halt as a boolean in risk ledger.
+3. Preserve gate_stats["drawdown_halt"] only as a counter, if needed.
+4. Add mocked Firestore tests:
+   - same-day load restores daily/session/cumulative PnL
+   - next-day load resets daily/session only
+   - daily_loss_halt persists
+   - drawdown_halt persists
+   - cumulative_pnl persists
+
+Acceptance criteria:
+- Restart cannot clear daily_loss_halt or drawdown_halt.
+- Midnight cannot clear cumulative_pnl.
+- Risk ledger tests pass.
+
+
+P1-5. Add WebSocket fill idempotency using order/trade event IDs
+-----------------------------------------------------------------
+Problem:
+P0-5 protects _process_exit by trade_doc_id, but WebSocket fill events should also
+be idempotent at the event/order level.
+
+Implementation:
+1. Modify run_user_data_stream to pass event/order identifiers to callback, not only PnL.
+2. Track last processed close order IDs or event IDs in executor or BOT_STATS.
+3. Ignore duplicate ORDER_TRADE_UPDATE close events.
+4. Keep _process_exit idempotency as a second-layer guard.
+
+Acceptance criteria:
+- Duplicate ORDER_TRADE_UPDATE messages do not double process an exit.
+
+
+P1-6. Expand regression tests for live safety paths
+---------------------------------------------------
+Problem:
+Current tests pass but do not cover the most important live paths.
+
+Implementation:
+Add tests for:
+1. _task_death_callback definition before use.
+2. check_breakeven_and_partials accepts metrics arg.
+3. orphaned CVD block removed; CVD breakeven branch works.
+4. primary futures protective order params use reduceOnly with amount.
+5. duplicate _process_exit is ignored.
+6. entry INFLIGHT sentinel blocks concurrent entries.
+7. risk ledger load/save behavior.
+8. feed watchdog continues after first warmup cycle.
+9. listen-key keepalive does not fail from local variable scoping.
+
+Acceptance criteria:
+- python -m pytest -q passes.
+- At least one test fails if any P0 bug regresses.
+
+
+P2 - Model Validity and Architecture
+====================================
+
+P2-1. Improve backtest/live parity
+----------------------------------
+Problem:
+The downloaded audit correctly notes that backtest_hybrid.py is not equivalent to
+live bot logic. Live uses real aggTrade CVD, order book walls, Amihud, HMM features,
+and more detailed gates.
+
+Implementation phases:
+1. Ensure backtest CVD uses taker_buy_base:
+       delta = (2 * taker_buy_base) - total_volume
+       cvd += delta
+       reset daily
+2. Add Amihud proxy from kline data:
+       illiq_raw = abs(close - open) / (volume * close + eps)
+       rank over rolling window
+3. Extract _HMMRegimeClassifier from main.py into a dedicated module so live and
+   backtest can import the exact same classifier.
+4. Use the same regime params and signal config in backtest.
+5. Keep wall proxy if historical LOB is unavailable, but document limitations.
+
+Acceptance criteria:
+- Backtest logs regime distribution.
+- Live and backtest call the same regime classifier.
+- Backtest results are marked invalid unless parity checks pass.
+
+
+P2-2. Add confidence calibration logging and Kelly gate
+-------------------------------------------------------
+Problem:
+Kelly sizing assumes confidence approximates P(win). This is not proven.
+
+Implementation:
+1. Ensure trade records include signal confidence at entry.
+2. On exit, write:
+       result = WIN/LOSS
+       calibration_bucket = round(confidence * 10) / 10
+3. Add a calibration summary script:
+       bucket -> realized win rate, count, avg pnl
+4. Disable or cap Kelly until each bucket has enough evidence.
+5. Add config:
+       KELLY_ENABLED = False by default for live
+       MIN_CALIBRATION_TRADES = 20
+
+Acceptance criteria:
+- Kelly multiplier cannot increase size unless calibration evidence exists.
+- Calibration report can be generated from Firestore botTrades.
+
+
+P2-3. Decompose main.py into testable modules
+---------------------------------------------
+Problem:
+main.py is large and contains config, regime detection, signal computation, risk,
+execution loop, persistence, and task orchestration. This makes unit testing hard.
+
+Implementation:
+Extract:
+1. bot/risk_ledger.py
+2. bot/hmm_regime.py
+3. bot/signal_pipeline.py
+4. bot/risk_engine.py
+5. bot/task_supervision.py
+
+Acceptance criteria:
+- main.py becomes orchestration only.
+- HMM and signal pipeline have isolated tests.
+- Backtest imports the same signal/regime modules as live.
+
+
+P2-4. Decide spot-vs-futures aggTrade behavior
+----------------------------------------------
+Problem:
+Bot executes USDM futures but dedicated aggTrade stream uses Binance Spot.
+
+Current evidence:
+- bot/data_feed.py:154 defines ws_url_aggtrade using wss://stream.binance.com.
+
+Implementation options:
+1. Prefer futures aggTrade with spot fallback.
+2. Keep spot aggTrade but explicitly expose "tape_source=spot" in telemetry.
+3. Add config:
+       BOT_TAPE_SOURCE=futures|spot|auto
+
+Acceptance criteria:
+- Operator can see the tape source in logs/heartbeat.
+- Signal docs explain how tape source affects CVD.
+
+
+P2-5. Walk-forward and out-of-sample validation
+-----------------------------------------------
+Problem:
+Backtest results are not enough without out-of-sample evidence.
+
+Implementation:
+1. Split historical data into rolling train/test windows.
+2. Recalibrate HMM on train windows only.
+3. Evaluate on unseen test windows.
+4. Track:
+   - win rate
+   - expectancy
+   - max drawdown
+   - regime-specific performance
+   - confidence calibration
+
+Acceptance criteria:
+- Strategy has at least one report with OOS performance metrics.
+- Live thresholds are not changed based only on in-sample results.
+
+
+P3 - Ongoing Operations
+=======================
+
+P3-1. Weekly regime performance review
+--------------------------------------
+Review closed trades grouped by regime:
+- RANGE
+- TREND
+- LIQUIDITY
+- NEUTRAL
+
+Metrics:
+- trade count
+- win rate
+- average R
+- max adverse excursion
+- average hold time
+- largest losing streak
+
+
+P3-2. Monthly HMM recalibration
+-------------------------------
+Run calibration on fresh historical data. Compare old and new transition/emission
+parameters. Deploy only if walk-forward validation improves or stability is better.
+
+
+P3-3. Dynamic funding thresholds
+--------------------------------
+Replace static funding blocks with volatility/regime-aware thresholds after enough
+data is collected.
+
+
+P3-4. Slippage model validation
+-------------------------------
+Compare expected entry/exit prices vs actual fills. Update dry-run and backtest
+slippage assumptions monthly.
+
+
+P3-5. Macro shield transfer entropy validation
+----------------------------------------------
+Validate that DXY transfer entropy gating improves expected value rather than only
+reducing trade count.
+
+
+Recommended Execution Order
+===========================
+
+Phase 1 - Immediate Runtime Safety
+----------------------------------
+1. Fix _task_death_callback order.
+2. Fix breakeven signature mismatch.
+3. Remove/relocate orphaned CVD breakeven block.
+4. Fix primary futures protective order params.
+5. Add tests for the above.
+
+Phase 2 - Exit and Risk Accounting Safety
+-----------------------------------------
+6. Add _process_exit idempotency.
+7. Add WebSocket fill event idempotency.
+8. Harden and test risk ledger persistence.
+
+Phase 3 - Signal Correctness
+----------------------------
+9. Fix derivatives cache first-boot behavior.
+10. Move hardcoded thresholds into signal_config.py.
+11. Normalize confidence and clamp before Kelly.
+12. Fix HMM cold-start regime commit.
+
+Phase 4 - Model Validity
+------------------------
+13. Improve backtest/live parity.
+14. Add confidence calibration logging.
+15. Gate Kelly sizing on calibration evidence.
+16. Run walk-forward validation.
+
+Phase 5 - Architecture and Operations
+-------------------------------------
+17. Decompose main.py into testable modules.
+18. Decide spot-vs-futures tape source behavior.
+19. Establish weekly/monthly review process.
+
+
+Regrade Targets
+===============
+
+After Phase 1:
+- Dry-run/research: B / B+
+- Small live-capital: C+ / B-
+
+After Phase 2:
+- Small live-capital: B-
+
+After Phase 3:
+- Small live-capital: B / B+
+
+After Phase 4 and testnet verification:
+- Small live-capital: B+
+- Unattended production: B- only if monitoring, alerting, runbooks, and broader
+  integration tests are also in place.
+
+
+Final Notes
+===========
+
+The downloaded audit has real value, especially around:
+- _process_exit idempotency
+- config centralization
+- derivatives first-boot behavior
+- confidence normalization and calibration
+- HMM cold-start regime commit
+- backtest/live parity
+
+However, it does not replace the current live-readiness audit. The current code
+still has immediate runtime issues in main.py and executor.py that must be fixed
+before working through the longer model-quality roadmap.

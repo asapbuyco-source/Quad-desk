@@ -658,6 +658,8 @@ class TradingExecutor:
                 atr_pct=_atr_pct, atr_pct_rank=_atr_rank, adaptive_mult=_ad_mult
             )
             _rr = abs(take_profit - current_price) / max(abs(stop_loss - current_price), 1e-9)
+            # P1-2 FIX: Clamp confidence to [0, 1] before Kelly scaling to prevent sizing blowouts
+            confidence = max(0.0, min(1.0, float(confidence)))
             kelly_mult = self._kelly_scale(confidence, _rr, fraction=0.25)
             raw_size *= kelly_mult
             if raw_size <= 0.0:
@@ -926,7 +928,7 @@ class TradingExecutor:
                             amount=fmt_size,
                             params={
                                 "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
-                                "closePosition": True,
+                                "reduceOnly": True,
                             },
                         )
                         sl_placed = True
@@ -946,7 +948,7 @@ class TradingExecutor:
                             amount=fmt_size,
                             params={
                                 "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                                "closePosition": True,
+                                "reduceOnly": True,
                                 "workingType": "MARK_PRICE",
                             },
                         )
@@ -1192,24 +1194,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
 {err_msg}\
 *Note: Original Stop Loss is still active.*")
 
-    # C-3 FIX: Check opposing CVD divergence — move SL to breakeven if flow flips
-        cvd = metrics.get("cvd_divergence")
-        if cvd and cvd.get("strength", 0) > 0.40:
-            side = pos.get("side", "")
-            cvd_type = cvd.get("type", "")
-            opp = (
-                (side == "buy"  and cvd_type in ("EXHAUSTION_SELL", "CONTINUATION_SELL")) or
-                (side == "sell" and cvd_type in ("EXHAUSTION_BUY",  "CONTINUATION_BUY"))
-            )
-            if opp:
-                logger.warning(
-                    f"[Executor] Opposing CVD divergence ({cvd_type}, strength={cvd.get('strength', 0):.2f}). "
-                    "Moving SL to BE."
-                )
-                await self.move_sl_to_breakeven(pos["symbol"], pos["entry_price"])
-                pos["_be_locked"] = True
-
-    async def check_breakeven_and_partials(self, current_price: float, atr: float) -> None:
+    async def check_breakeven_and_partials(self, current_price: float, atr: float, metrics: dict = None) -> None:
         """Check if breakeven stop should be locked, based on be_lock_trigger threshold."""
         if not self.active_position:
             return
@@ -1230,6 +1215,24 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             return
         entry_price = pos["entry_price"]
         side = pos["side"]
+        
+        # C-3 FIX: Check opposing CVD divergence — move SL to breakeven if flow flips
+        if metrics:
+            cvd = metrics.get("cvd_divergence")
+            if cvd and cvd.get("strength", 0) > 0.40:
+                cvd_type = cvd.get("type", "")
+                opp = (
+                    (side == "buy"  and cvd_type in ("EXHAUSTION_SELL", "CONTINUATION_SELL")) or
+                    (side == "sell" and cvd_type in ("EXHAUSTION_BUY",  "CONTINUATION_BUY"))
+                )
+                if opp and not pos.get("_be_locked", False):
+                    logger.warning(
+                        f"[Executor] Opposing CVD divergence ({cvd_type}, strength={cvd.get('strength', 0):.2f}). "
+                        "Moving SL to BE."
+                    )
+                    await self.move_sl_to_breakeven(pos["symbol"], entry_price)
+                    pos["_be_locked"] = True
+
         profit_target = be_lock_trigger * atr_at_entry
         if side == "buy":
             unrealized_pnl = current_price - entry_price

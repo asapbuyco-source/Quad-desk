@@ -68,6 +68,8 @@ from bot.signal_config import (
     MAX_DRAWDOWN_PCT as CFG_MAX_DRAWDOWN_PCT,
     MIN_CONFIDENCE_GLOBAL as CFG_MIN_BAYESIAN,
     EQUITY_HARD_BLOCK, EQUITY_SMALL_ACCOUNT, EQUITY_RECOMMENDED,  # P17 FIX
+    BAYES_OVERRIDE_THRESHOLD, CVD_VETO_STRENGTH, CVD_VETO_VOL_SPIKE, # P1 FIX
+    FUNDING_LONG_BLOCK, FUNDING_SHORT_BLOCK, # P1 FIX
 )
 
 # ──────────────────────────────────────────────────────────────────────
@@ -168,6 +170,7 @@ BOT_STATS: Dict[str, Any] = {
     "session_pnl":    0.0,  # PHASE-3.1: Initialized for daily drawdown reset
     "cumulative_pnl": 0.0,  # FIX-R1: never resets — lifetime PnL since first boot
     "daily_loss_halt": False,
+    "drawdown_halt": False,
     "consecutive_losses": 0,
     "cooldown_until":     0.0,
     "gate_stats": {
@@ -200,6 +203,10 @@ BOT_STATS: Dict[str, Any] = {
         "rsi_extreme_suppressed":    0,  # P3 AUDIT: RSI extreme gate suppressed (TREND regime)
     },
     "equity_peak": ACCOUNT_SIZE,
+    # P2-2 FIX: Confidence calibration tracker.
+    # Buckets confidence into 0.1-wide intervals (0.5→0.6, 0.6→0.7, etc.).
+    # Tracks (wins, total) per bucket so Kelly can be gated until calibrated.
+    "confidence_calibration": {},  # { "0.6": {"wins": int, "total": int}, ... }
 }
 
 # P10 FIX: Risk ledger persistence to Firestore.
@@ -237,7 +244,7 @@ def _load_risk_ledger(stats: Dict[str, Any]) -> None:
         stats["consecutive_losses"] = data.get("consecutive_losses", 0)
         stats["cooldown_until"] = data.get("cooldown_until", 0.0)
         stats["loss_times"] = data.get("loss_times", [])
-        stats["gate_stats"]["drawdown_halt"] = data.get("drawdown_halt", 0)
+        stats["drawdown_halt"] = data.get("drawdown_halt", False)
         logger.info(
             f"[RiskLedger] Loaded from Firestore — "
             f"daily={stats['daily_pnl']:+.2f} session={stats['session_pnl']:+.2f} "
@@ -261,7 +268,7 @@ def _save_risk_ledger(stats: Dict[str, Any]) -> None:
         "consecutive_losses":   stats.get("consecutive_losses", 0),
         "cooldown_until":       stats.get("cooldown_until", 0.0),
         "loss_times":           stats.get("loss_times", []),
-        "drawdown_halt":        stats["gate_stats"].get("drawdown_halt", 0),
+        "drawdown_halt":        stats.get("drawdown_halt", False),
         "last_session_reset_date": _dt.date.today().isoformat(),
     }
 
@@ -300,7 +307,12 @@ _LAST_FIRED_SWEEP_CANDLE_TS: float = 0.0
 # FIX-7.1: Derivatives context cache — updated by background task, read synchronously in signal pipeline
 _CACHED_DERIV_CONTEXT: dict = {}
 _DERIV_CONTEXT_LAST_UPDATE: float = 0.0
+_DERIV_CONTEXT_WARMING: bool = True
 
+
+def _clamp_confidence(value: float) -> float:
+    """Helper to clamp confidence values between 0.0 and 1.0."""
+    return max(0.0, min(1.0, value))
 
 def _gate_stats_summary(reason: str, confidence: float = 0.0) -> None:
     """
@@ -1427,7 +1439,6 @@ def _apply_ulis_gate(
     ulis_bullish = verdict_str in ("STRONG_LONG", "LONG")
     ulis_bearish = verdict_str in ("STRONG_SHORT", "SHORT")
 
-    BAYES_OVERRIDE_THRESHOLD = 0.78
     # Compare raw Bayesian posterior, not pipeline-accumulated confidence
     _raw_bayes = metrics.get("bayesianPosterior", 0.5)
     _bayes_long = _raw_bayes if is_long else (1.0 - _raw_bayes)
@@ -1565,8 +1576,6 @@ def _apply_cvd_divergence_gate(
     """
     MIN_VALID_SNAPS = 2
     VETO_MIN_SNAPS  = 3   # Veto only fires when we have 3+ snapshots (1 prior pair + current)
-    VETO_STRENGTH   = 0.62
-    VETO_VOL_SPIKE  = 1.40
 
     div = metrics.get("cvd_divergence", {})
     div_type    = div.get("type",              "NONE")
@@ -1629,9 +1638,9 @@ def _apply_cvd_divergence_gate(
         return adjusted, None
 
     if opposing:
-        if (div_str    >= VETO_STRENGTH and
+        if (div_str    >= CVD_VETO_STRENGTH and
                 confirms   >= 1            and
-                vol_spike  >= VETO_VOL_SPIKE and
+                vol_spike  >= CVD_VETO_VOL_SPIKE and
                 n_snaps    >= VETO_MIN_SNAPS):
 
             veto_msg = (
@@ -1849,14 +1858,15 @@ async def _derivatives_refresh_loop():
     Stores result in _CACHED_DERIV_CONTEXT so _compute_signal() can read
     it synchronously without blocking the signal hot path.
     """
-    global _CACHED_DERIV_CONTEXT, _DERIV_CONTEXT_LAST_UPDATE
-    await asyncio.sleep(10)  # Initial delay: let feed warm up first
+    global _CACHED_DERIV_CONTEXT, _DERIV_CONTEXT_LAST_UPDATE, _DERIV_CONTEXT_WARMING
+    await asyncio.sleep(2)  # Initial delay: let feed warm up first, quicker than 10s
     while True:
         try:
             ctx = await _derivatives_ctx.get_full_context()
             if ctx:
                 _CACHED_DERIV_CONTEXT = ctx
                 _DERIV_CONTEXT_LAST_UPDATE = time.time()
+                _DERIV_CONTEXT_WARMING = False
                 logger.debug(
                     f"[DerivRefresh] Context updated: crowd={ctx.get('top_traders',{}).get('crowd_signal','?')} "
                     f"oi_collapsing={ctx.get('open_interest',{}).get('oi_collapsing','?')}"
@@ -2159,8 +2169,6 @@ async def _compute_signal(
                 # P1-6 FIX: Old threshold (0.015%) was 5-10x below normal BTC contango
                 # (typically 0.03-0.10% per 8h). It silently blocked ~70% of long entries
                 # in any bullish session. New thresholds reflect genuinely crowded positions.
-                FUNDING_LONG_BLOCK  =  0.0008   # 0.08% per 8h — clearly crowded longs
-                FUNDING_SHORT_BLOCK = -0.0005   # -0.05% per 8h — clearly crowded shorts
                 if is_long_dir and fr > FUNDING_LONG_BLOCK:
                     logger.warning(f"[Anti-Squeeze] Blocking LONG: extreme funding rate {fr:.4%} > {FUNDING_LONG_BLOCK:.4%}")
                     _gate_stats_summary("funding_blocks_long")
@@ -2199,7 +2207,10 @@ async def _compute_signal(
     # Read from pre-fetched cache — zero latency in signal hot path
     _deriv_ctx = _CACHED_DERIV_CONTEXT
     _age_s = time.time() - _DERIV_CONTEXT_LAST_UPDATE
-    if _age_s > 900:  # 15 minutes: cache is too stale to trust
+    if _DERIV_CONTEXT_WARMING:
+        logger.info(f"[DerivGate] Cache warming — skipping derivatives gate without warnings")
+        _deriv_ok, _deriv_reason = True, "WARMING_BYPASSED"
+    elif _age_s > 900:  # 15 minutes: cache is too stale to trust
         logger.warning(f"[DerivGate] Cache stale ({_age_s:.0f}s) — skipping derivatives gate")
         _deriv_ok, _deriv_reason = True, "STALE_CACHE_BYPASSED"
     else:
@@ -2360,6 +2371,7 @@ async def _compute_signal(
     logger.info(f"[Signal] >> {verdict} | conf={confidence:.0%} | SL={stop_loss} TP={take_profit} | ULIS={ulis_verdict_str}")
 
     BOT_STATS["gate_stats"]["total_passed"] += 1
+    confidence = _clamp_confidence(confidence)
 
     return {
         "verdict":        verdict,
@@ -2395,6 +2407,21 @@ async def _process_exit(
     Called from both the main exit path and the 30s heartbeat poll path."""
     global LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_TRADE_WAS_SL
 
+    # P0-5 FIX: Idempotency guard
+    if "closed_trade_ids" not in stats:
+        stats["closed_trade_ids"] = set()
+        
+    pos = executor.active_position or {}
+    doc_id = pos.get("trade_doc_id", "")
+    if doc_id:
+        if doc_id in stats["closed_trade_ids"]:
+            logger.info(f"[_process_exit] Duplicate exit call for trade {doc_id} ignored.")
+            return
+        stats["closed_trade_ids"].add(doc_id)
+        # Bounded set to prevent memory leak
+        if len(stats["closed_trade_ids"]) > 1000:
+            stats["closed_trade_ids"] = set(list(stats["closed_trade_ids"])[-500:])
+
     LAST_ANY_TRADE_CLOSE_TIME = time.time()
     LAST_TRADE_WAS_SL = (pnl < 0)
 
@@ -2409,6 +2436,24 @@ async def _process_exit(
     # we have enough live observations to trust the regime statistics.
     if hasattr(_hmm_classifier, "_n_trades_since_update"):
         _hmm_classifier._n_trades_since_update += 1
+
+    # P2-2 FIX: Confidence calibration logging.
+    # Track realized win rate per confidence bucket so we can validate
+    # that our confidence score actually approximates P(win).
+    _entry_conf = float(pos.get("entry_confidence", 0.0))
+    if _entry_conf > 0:
+        _bucket = str(round(int(_entry_conf * 10) / 10, 1))  # e.g. 0.67 -> "0.7"
+        _cal = stats.setdefault("confidence_calibration", {})
+        _b = _cal.setdefault(_bucket, {"wins": 0, "total": 0})
+        _b["total"] += 1
+        if pnl >= 0:
+            _b["wins"] += 1
+        _wr = _b["wins"] / max(_b["total"], 1)
+        logger.info(
+            f"[Calibration] conf_bucket={_bucket} "
+            f"realized_wr={_wr:.0%} ({_b['wins']}/{_b['total']}) | "
+            f"entry_conf={_entry_conf:.2%} pnl=${pnl:.2f}"
+        )
 
     if pnl < 0:
         LAST_CASCADE_TIME = time.time()
@@ -3141,8 +3186,19 @@ async def main():
     )
 
     # NEW: Real-time fill detection via user data stream
-    async def _on_ws_fill(pnl: float):
+    async def _on_ws_fill(pnl: float, fill_id: str):
         """Called immediately when exchange confirms position close."""
+        if "processed_ws_fills" not in BOT_STATS:
+            BOT_STATS["processed_ws_fills"] = set()
+            
+        if fill_id in BOT_STATS["processed_ws_fills"]:
+            logger.info(f"[WsFill] Duplicate WS fill ignored: {fill_id}")
+            return
+            
+        BOT_STATS["processed_ws_fills"].add(fill_id)
+        if len(BOT_STATS["processed_ws_fills"]) > 1000:
+            BOT_STATS["processed_ws_fills"] = set(list(BOT_STATS["processed_ws_fills"])[-500:])
+
         async with executor._position_lock:
             if executor.active_position:
                 pos_regime = executor.active_position.get("regime", "NEUTRAL")
@@ -3151,6 +3207,28 @@ async def main():
                 executor.active_position = None  # P2 FIX: clear so REST/poll path doesn't double-count
                 executor.pending_order = None
                 BOT_STATS["active_position"] = None
+
+    def _task_death_callback(task: asyncio.Task):
+        """Log and alert if any critical task dies unexpectedly."""
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            exc = None  # Normal shutdown
+        except Exception:
+            exc = None
+        if exc is not None:
+            logger.critical(
+                f"[Main] CRITICAL — task '{task.get_name()}' died with "
+                f"{type(exc).__name__}: {exc}",
+                exc_info=exc
+            )
+            if getattr(executor, 'notifier', None):
+                asyncio.create_task(
+                    executor.notifier.send_error_alert(
+                        f"💀 Task '{task.get_name()}' crashed: {type(exc).__name__}: {str(exc)[:200]}\n"
+                        "Bot may need restart."
+                    )
+                )
 
     if not DRY_RUN and BINANCE_API_KEY:
         feed._uds_task = asyncio.create_task(
@@ -3191,11 +3269,18 @@ async def main():
             # obs buffer so live forward passes start from scratch, not 480 seed candles
             # that may represent different market conditions.
             if len(rest_candles) >= 5:
+                _raw_regimes = []
                 for _rc in rest_candles[-5:]:
                     _live_atr = (_rc["high"] - _rc["low"]) / max(_rc["close"], 1.0)
                     _hmm_classifier.classify(_live_atr, 0.0, "NORMAL", atr_pct_rank=0.5)
+                    _raw_regimes.append(_hmm_classifier._candidate_regime)
+                from collections import Counter
+                _modal_regime = Counter(_raw_regimes).most_common(1)[0][0] if _raw_regimes else _hmm_classifier._candidate_regime
+                _hmm_classifier._committed_regime = _modal_regime
+                _hmm_classifier._candidate_regime = _modal_regime
+            else:
+                _hmm_classifier._committed_regime = _hmm_classifier._candidate_regime
 
-            _hmm_classifier._committed_regime = _hmm_classifier._candidate_regime
             _hmm_classifier._candidate_streak = _hmm_classifier.HYSTERESIS_CANDLES
             _hmm_classifier._obs_buf.clear()
             logger.info(
@@ -3257,28 +3342,6 @@ async def main():
             loop.add_signal_handler(sig, _handle_signal)
         except NotImplementedError:
             pass
-
-    def _task_death_callback(task: asyncio.Task):
-        """Log and alert if any critical task dies unexpectedly."""
-        try:
-            exc = task.exception()
-        except asyncio.CancelledError:
-            exc = None  # Normal shutdown
-        except Exception:
-            exc = None
-        if exc is not None:
-            logger.critical(
-                f"[Main] CRITICAL — task '{task.get_name()}' died with "
-                f"{type(exc).__name__}: {exc}",
-                exc_info=exc
-            )
-            if executor.notifier:
-                asyncio.create_task(
-                    executor.notifier.send_error_alert(
-                        f"💀 Task '{task.get_name()}' crashed: {type(exc).__name__}: {str(exc)[:200]}\n"
-                        "Bot may need restart."
-                    )
-                )
 
     _exec_task = asyncio.create_task(
         execution_loop(feed, quant, executor, BOT_STATS), name="exec_loop"

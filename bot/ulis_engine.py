@@ -19,6 +19,7 @@ Verdict types:
 import logging
 import math
 from typing import Dict, Any, List, Optional, Tuple
+from bot.signal_config import MIN_SWEEP_CONFIRMS
 
 logger = logging.getLogger(__name__)
 
@@ -211,8 +212,6 @@ def _book_to_levels(book_dict: Dict[float, float]) -> List[Dict[str, float]]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Main ULIS Verdict Function
 # ──────────────────────────────────────────────────────────────────────────────
-
-MIN_SWEEP_CONFIRMS = 2
 
 def _sweep_micro_confirms(metrics: dict, sweep_direction: str) -> int:
     """FIX NEW-H1: 3rd signal now orthogonal funding rate."""
