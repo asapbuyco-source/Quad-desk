@@ -274,6 +274,9 @@ export interface BotSettingsState {
   lastSignal?: string;      // e.g. 'BUY' | 'SELL' | 'WAIT'
   lastUlis?: string;        // e.g. 'STRONG_LONG' | 'AVOID'
   totalTrades?: number;
+  operatorPaused?: boolean;
+  operatorLastCommand?: string | null;
+  operatorLastCommandStatus?: string | null;
 }
 
 export interface LiquidityState {

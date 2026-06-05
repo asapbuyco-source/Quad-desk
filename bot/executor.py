@@ -278,10 +278,25 @@ class TradingExecutor:
                             logger.warning(f"[Executor] {warn_msg}")
                             if self.notifier:
                                 await self.notifier.send_message(warn_msg)
+                    if open_found and not self.dry_run:
+                        import os as _os
+                        policy = _os.environ.get("BOT_BOOT_OPEN_POSITION_POLICY", "halt").strip().lower()
+                        if policy == "halt":
+                            msg = (
+                                "[Executor] Open exchange position found on boot. "
+                                "Live entries blocked by BOT_BOOT_OPEN_POSITION_POLICY=halt. "
+                                "Close the position manually or restart with policy=warn/rehydrate."
+                            )
+                            logger.critical(msg)
+                            if self.notifier:
+                                await self.notifier.send_error_alert(msg)
+                            raise RuntimeError(msg)
                     if not open_found:
                         logger.info("[Executor] Boot clean — no open positions found on exchange.")
 
                 except Exception as e:
+                    if "BOT_BOOT_OPEN_POSITION_POLICY=halt" in str(e):
+                        raise
                     logger.warning(f"[Executor] Could not check positions on boot: {e}")
 
                 # Send startup status notification
@@ -312,6 +327,19 @@ class TradingExecutor:
             f"[Executor] Could not load {exch} markets after 3 attempts ({last_exc}). "
             "Injecting minimal market fallback — bot will attempt to continue."
         )
+        if not self.dry_run:
+            msg = (
+                f"[Executor] Could not load {exch} markets after 3 attempts ({last_exc}). "
+                "Live trading blocked because exchange precision/limits are unavailable."
+            )
+            logger.critical(msg)
+            if self.notifier:
+                try:
+                    await self.notifier.send_error_alert(msg)
+                except Exception:
+                    pass
+            raise RuntimeError(msg)
+
         self._inject_fallback_markets()
 
     def _inject_fallback_markets(self):
@@ -854,6 +882,12 @@ class TradingExecutor:
                     logger.warning(f"[Executor] Market order failed: {e}. Retrying {attempt+1}/3...")
                     await asyncio.sleep(0.5)
             logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
+            fill_price = float(order.get("average") or order.get("price") or current_price)
+            logger.info(
+                f"[Executor] Fill price: {fill_price:.2f} "
+                f"(signal was {current_price:.2f}, diff={fill_price-current_price:+.2f})"
+            )
+            trade_doc_id = None
             
             # Track this order as pending until it fills or is cancelled
             # MED-5 FIX: Add TTL so a stale pending_order can't lock the bot forever.
@@ -878,6 +912,31 @@ class TradingExecutor:
             tp_order_id = None
             sl_placed = False   # track independently for recovery logic
             tp_placed = False
+
+            def _activate_position(current_tp_order_id=None, current_tp_placed=False):
+                nonlocal trade_doc_id
+                if trade_doc_id is None:
+                    trade_doc_id = self._log_trade(
+                        ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict
+                    )
+                self.active_position = {
+                    "symbol":           ex_symbol,
+                    "side":             side,
+                    "size":             fmt_size,
+                    "entry_price":      fill_price,
+                    "stop_loss":        stop_loss,
+                    "take_profit":      take_profit,
+                    "order_id":         order.get("id"),
+                    "sl_order_id":      sl_order_id,
+                    "tp_order_id":      current_tp_order_id,
+                    "sl_placed":        sl_placed,
+                    "tp_placed":        current_tp_placed,
+                    "dry_run":          False,
+                    "trade_doc_id":     trade_doc_id,
+                    "be_lock_trigger":  signal.get("be_lock_trigger", 1.0),
+                    "time_exit_sec":    signal.get("time_exit_sec", 600),
+                    "atr_at_entry":     signal.get("atr_at_entry", 0.0),
+                }
 
             if self.is_futures:
                 # ── FUTURES: STOP (stop-limit) + TAKE_PROFIT_MARKET ──────────
@@ -938,6 +997,7 @@ class TradingExecutor:
                             f"SL placement failed: STOP ({_sl_last_err}) and STOP_MARKET ({e2}) both rejected"
                         )
                 sl_order_id = sl_order.get("id")
+                _activate_position()
 
                 tp_order = None
                 _tp_last_err = None
@@ -1023,6 +1083,7 @@ class TradingExecutor:
                 if not sl_placed:
                     raise RuntimeError(f"SL placement failed after 3 attempts: {_sl_last_err}")
                 sl_order_id = sl_order.get("id")
+                _activate_position()
                 logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id}) ✓")
 
                 # Take-profit limit order
@@ -1061,29 +1122,11 @@ class TradingExecutor:
             # BUG-1 FIX: Use actual exchange fill price, not signal price.
             # Market orders fill at the ask (for buys) — using current_price
             # corrupts every downstream calculation (PnL, BE stop, daily limit).
-            fill_price = float(order.get("average") or order.get("price") or current_price)
-            logger.info(f"[Executor] Fill price: {fill_price:.2f} (signal was {current_price:.2f}, diff={fill_price-current_price:+.2f})")
-
-            doc_id = self._log_trade(ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict)
-            self.active_position = {
-                "symbol":           ex_symbol,
-                "side":             side,
-                "size":             fmt_size,
-                "entry_price":      fill_price,
-                "stop_loss":        stop_loss,
-                "take_profit":      take_profit,
-                "order_id":         order.get("id"),
-                "sl_order_id":      sl_order_id,
-                "tp_order_id":      tp_order_id,
-                "sl_placed":        sl_placed,
-                "tp_placed":        tp_placed,
-                "dry_run":          False,
-                "trade_doc_id":     doc_id,
-                "be_lock_trigger":  signal.get("be_lock_trigger", 1.0),
-                "time_exit_sec":    signal.get("time_exit_sec", 600),
-                "atr_at_entry":     signal.get("atr_at_entry", 0.0),
-            }
-
+            if self.active_position is None:
+                _activate_position(tp_order_id, tp_placed)
+            else:
+                self.active_position["tp_order_id"] = tp_order_id
+                self.active_position["tp_placed"] = tp_placed
             # Clear pending order since we now have an active position
             self.pending_order = None
 

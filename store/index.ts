@@ -6,7 +6,8 @@ import {
     BiasType, SweepEvent, BreakOfStructure, FairValueGap, MacroStrategyState, BotSettingsState,
     DarkPoolState, BotTrade
 } from '../types';
-import { MOCK_METRICS, API_BASE_URL, DARK_POOL_THRESHOLDS } from '../constants';
+import { MOCK_METRICS, DARK_POOL_THRESHOLDS } from '../constants';
+import { apiFetch } from '../utils/apiClient';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
 import { auth, googleProvider, db } from '../lib/firebase';
 import {
@@ -669,9 +670,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     refreshHeatmap: async () => {
         try {
-            const res = await fetch(`${API_BASE_URL}/heatmap`, {
-                headers: { 'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || '' }
-            });
+            const res = await apiFetch('/heatmap');
             if (res.ok) {
                 const heatmap = await res.json();
                 set(state => ({ market: { ...state.market, metrics: { ...state.market.metrics, heatmap } } }));
@@ -1364,9 +1363,7 @@ export const useStore = create<AppState>((set, get) => ({
 
         try {
             // Call the backend proxy — keeps WHALE_ALERT_API_KEY server-side
-            const res = await fetch(`${API_BASE_URL}/whale-alerts`, {
-                headers: { 'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || '' }
-            });
+            const res = await apiFetch('/whale-alerts');
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -1501,10 +1498,13 @@ export const useStore = create<AppState>((set, get) => ({
             let lastHeartbeat = 0;
             let lastSignal = 'WAIT';
             let lastUlis = '—';
-            let exchange = '';
+            let exchange: BotSettingsState['exchange'] = 'binance';
             let tradingPair = '';
             let botMode = '';
-            let environment = '';
+            let environment: BotSettingsState['environment'] = 'testnet';
+            let operatorPaused = false;
+            let operatorLastCommand: string | null = null;
+            let operatorLastCommandStatus: string | null = null;
 
             snap.docs.forEach(d => {
                 const data = d.data();
@@ -1523,10 +1523,18 @@ export const useStore = create<AppState>((set, get) => ({
                     lastHeartbeat = hb;
                     lastSignal = data.lastSignal || 'WAIT';
                     lastUlis = data.lastUlis || '—';
-                    exchange = data.exchange || '';
+                    const rawExchange = String(data.exchange || '').toLowerCase();
+                    exchange = rawExchange.includes('coinbase')
+                        ? 'coinbase'
+                        : rawExchange.includes('bybit')
+                            ? 'bybit'
+                            : 'binance';
                     tradingPair = data.symbol || '';
                     botMode = data.mode;
-                    environment = data.environment;
+                    environment = String(data.environment || '').toLowerCase().includes('live') ? 'live' : 'testnet';
+                    operatorPaused = Boolean(data.operatorPaused);
+                    operatorLastCommand = data.operatorLastCommand || null;
+                    operatorLastCommandStatus = data.operatorLastCommandStatus || null;
                 }
             });
 
@@ -1543,6 +1551,9 @@ export const useStore = create<AppState>((set, get) => ({
                     totalTrades,
                     lastSignal,
                     lastUlis,
+                    operatorPaused,
+                    operatorLastCommand,
+                    operatorLastCommandStatus,
                     // Global aggregated PnL stored as extra fields for dashboard
                     globalSessionPnl: totalSessionPnl,
                     globalDailyPnl: totalDailyPnl,

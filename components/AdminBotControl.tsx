@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../store';
 import { BotSettingsState, BotTrade, BacktestResult } from '../types';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
-
-const API_BASE = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../utils/apiClient';
+import { db } from '../lib/firebase';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 // ── Design Tokens ────────────────────────────────────────────────────────────
 
@@ -203,6 +204,7 @@ const AdminBotControl: React.FC = () => {
   const [btError, setBtError] = useState('');
   const [btPage, setBtPage] = useState(0);
   const BT_PAGE_SIZE = 15;
+  const [commandMsg, setCommandMsg] = useState('');
 
   const [hbAge, setHbAge] = useState<string>('—');
 
@@ -227,6 +229,23 @@ const AdminBotControl: React.FC = () => {
 
   const update = useCallback((patch: Partial<BotSettingsState>) => setBotSettings(patch), [setBotSettings]);
 
+  const commandDocId = (botSettings.tradingPair || 'BTCUSDT').replace(/[\/:\-]/g, '').toUpperCase();
+  const sendOperatorCommand = async (command: string) => {
+    setCommandMsg('Sending command...');
+    try {
+      await setDoc(doc(db, 'botCommands', `live_${commandDocId}`), {
+        command,
+        command_id: `${command}_${Date.now()}`,
+        status: 'pending',
+        created_at: serverTimestamp(),
+        created_ts_ms: Date.now(),
+      }, { merge: true });
+      setCommandMsg(`${command.replace(/_/g, ' ')} queued`);
+    } catch (e: any) {
+      setCommandMsg(e?.message || 'Command failed');
+    }
+  };
+
   const saveSettings = () => {
     setSaving(true);
     setTimeout(() => { setSaving(false); setSaveMsg('Configuration Synchronized ✓'); setTimeout(() => setSaveMsg(''), 3000); }, 800);
@@ -235,7 +254,7 @@ const AdminBotControl: React.FC = () => {
   const runBacktest = async () => {
     setBtRunning(true); setBtError(''); setBtResult(null); setBtPage(0);
     try {
-      const resp = await fetch(`${API_BASE}/backtest`, {
+      const resp = await apiFetch('/backtest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol: btSymbol.toUpperCase(), from_date: btFrom, to_date: btTo, risk_pct: botSettings.maxRiskPerTradePct, min_confidence: botSettings.minConfidence, account_size: botSettings.accountSize, interval: btInterval }),
@@ -350,6 +369,8 @@ const AdminBotControl: React.FC = () => {
                   { label: 'Exchange', value: (botSettings.exchange ?? 'Binance').toUpperCase() },
                   { label: 'Last Signal', value: botSettings.lastSignal ?? 'WAIT', color: verdictColor(botSettings.lastSignal) },
                   { label: 'ULIS Verdict', value: botSettings.lastUlis ?? '—', color: ulisColor(botSettings.lastUlis) },
+                  { label: 'Operator Pause', value: botSettings.operatorPaused ? 'PAUSED' : 'READY', color: botSettings.operatorPaused ? C.warning : C.success },
+                  { label: 'Last Command', value: botSettings.operatorLastCommand ?? 'none', color: C.muted },
                   { label: 'Active Positions', value: String(botSettings.activePositions ?? 0), color: botSettings.activePositions ? C.warning : C.muted },
                   { label: 'Total Trades', value: String(botSettings.totalTrades ?? 0) },
                   { label: 'Heartbeat Age', value: hbAge, color: isOnline ? C.success : C.danger },
@@ -364,6 +385,30 @@ const AdminBotControl: React.FC = () => {
 
             <GlassCard>
               <h3 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 700 }}>⚡ Session Summary</h3>
+              <div style={{ marginBottom: 20, padding: 14, background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: C.muted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2 }}>Operator Controls</div>
+                    <div style={{ color: botSettings.operatorPaused ? C.warning : C.success, fontSize: 12, fontWeight: 700, marginTop: 4 }}>
+                      {botSettings.operatorPaused ? 'Entries paused' : 'Entries enabled'}
+                    </div>
+                  </div>
+                  <div style={{ color: C.muted, fontSize: 11, fontFamily: "'Fira Code', monospace" }}>{commandMsg || botSettings.operatorLastCommandStatus || 'idle'}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                  {[
+                    ['pause_entries', 'Pause Entries', C.warning],
+                    ['resume_entries', 'Resume Entries', C.success],
+                    ['panic_lock', 'Panic Lock', C.danger],
+                    ['flatten_now', 'Flatten Now', C.danger],
+                    ['cancel_orders', 'Cancel Orders', C.warning],
+                  ].map(([cmd, label, color]) => (
+                    <button key={cmd} onClick={() => sendOperatorCommand(cmd)} style={{ background: `${color}18`, border: `1px solid ${color}44`, color: color as string, borderRadius: 8, padding: '10px 8px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 {[
                   { label: 'Total Trades', value: String(closedTrades.length), color: C.cyan },

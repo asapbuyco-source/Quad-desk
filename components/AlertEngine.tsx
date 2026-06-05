@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { API_BASE_URL } from '../constants';
+import { apiFetch } from '../utils/apiClient';
 import { Zap, Clock, ShieldCheck, Server } from 'lucide-react';
 import { motion as m, AnimatePresence } from 'framer-motion';
 
@@ -31,9 +31,7 @@ const AlertEngine: React.FC = () => {
     useEffect(() => {
         const checkBackend = async () => {
             try {
-                const res = await fetch(`${API_BASE_URL}/alerts/status`, {
-                    headers: { 'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || '' }
-                });
+                const res = await apiFetch('/alerts/status');
                 if (res.ok) {
                     const data = await res.json();
                     if (data.autonomous_mode) {
@@ -104,12 +102,9 @@ const AlertEngine: React.FC = () => {
                     model: aiModel
                 };
 
-                const res = await fetch(`${API_BASE_URL}/alerts/evaluate`, {
+                const res = await apiFetch('/alerts/evaluate', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-API-Key': (import.meta as any).env.VITE_BACKEND_API_KEY || ''
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(snapshot)
                 });
 
@@ -134,7 +129,7 @@ const AlertEngine: React.FC = () => {
                         chatId: telegramChatId
                     };
 
-                    const sendRes = await fetch(`${API_BASE_URL}/alerts/send-telegram`, {
+                    const sendRes = await apiFetch('/alerts/send-telegram', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)

@@ -348,6 +348,9 @@ async def run_heartbeat(stats: dict) -> None:
                 "sessionPnl":      stats.get("session_pnl",   0.0),
                 "dailyPnl":        stats.get("daily_pnl",     0.0),
                 "gateStats":       stats.get("gate_stats",    {}),
+                "operatorPaused":  bool(stats.get("operator_paused", False)),
+                "operatorLastCommand": stats.get("operator_last_command"),
+                "operatorLastCommandStatus": stats.get("operator_last_command_status"),
             }
 
             if _use_local_fallback:

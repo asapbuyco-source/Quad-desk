@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { Newspaper, ExternalLink, Clock, RefreshCw, Zap, TrendingUp, TrendingDown, Minus, Anchor, BrainCircuit, AlertTriangle, Database } from 'lucide-react';
-import { API_BASE_URL } from '../constants';
+import { apiFetch } from '../utils/apiClient';
 import { useStore } from '../store';
 
 const motion = m as any;
@@ -73,7 +73,7 @@ const IntelView: React.FC = () => {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-            const res = await fetch(`${API_BASE_URL}/market-intelligence?model=${aiModel}`, {
+            const res = await apiFetch(`/market-intelligence?model=${aiModel}`, {
                 signal: controller.signal
             });
             clearTimeout(timeoutId);

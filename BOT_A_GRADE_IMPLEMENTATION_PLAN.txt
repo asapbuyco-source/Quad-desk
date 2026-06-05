@@ -1,0 +1,491 @@
+A-GRADE IMPLEMENTATION PLAN FOR QUAD-DESK BOT
+
+Goal
+Move Quad-Desk from C+ / B- to A-grade live-capital readiness by fixing live execution hazards, hardening auth/security, proving strategy behavior, and raising observability/test coverage.
+
+Target Standard
+- No live market order can remain untracked.
+- No live position can remain without an active stop loss unless emergency flatten is attempted and the operator is alerted.
+- Every backend endpoint used by the UI either authenticates correctly or is intentionally public.
+- Every live-order failure path has a unit or integration test.
+- Bot can restart without bypassing daily/drawdown halts.
+- Dashboard status, trades, logs, and backtests work in production.
+
+
+PHASE 0: FREEZE AND BASELINE
+
+1. Create a dedicated branch:
+   codex/bot-a-grade-hardening
+
+2. Define the readiness checklist:
+   - Live execution safety.
+   - Risk limits.
+   - Backend/frontend auth.
+   - Firestore rules.
+   - Strategy calibration.
+   - Test coverage.
+   - Deployment runbook.
+   - Operator controls.
+
+3. Add A_GRADE_READINESS.md:
+   - Documents the required standard for future changes.
+   - Lists all P0/P1 acceptance criteria.
+   - Keeps the bot from drifting back into unsafe live behavior.
+
+
+PHASE 1: FIX P0 LIVE EXECUTION RISKS
+
+1. Fix TP requeue crash
+
+File:
+bot/executor.py
+
+Current issue:
+The TP failure branch writes to self.active_position before that dict exists. If market entry and SL placement succeed but TP placement fails, the code can throw instead of tracking a protected SL-only position.
+
+Implementation:
+- Build the position dict immediately after market order fill and SL placement.
+- Set self.active_position = position before attaching TP requeue metadata.
+- If TP placement fails but SL is active:
+  - Keep active_position.
+  - Set sl_placed = True.
+  - Set tp_placed = False.
+  - Store requeue_tp_attempts.
+  - Store requeue_tp_side.
+  - Store requeue_tp_size.
+  - Store requeue_tp_price.
+  - Store requeue_tp_symbol.
+  - Alert operator.
+  - Continue monitoring.
+- If SL placement fails:
+  - Immediately emergency flatten.
+  - Set _flatten_failed = True if flatten fails.
+  - Halt future entries.
+
+Acceptance tests:
+- Market entry succeeds, SL succeeds, TP fails: bot keeps active position with SL active and TP retry metadata.
+- TP requeue succeeds later: tp_order_id is set and requeue metadata is cleared.
+- TP requeue exhausts attempts: bot alerts and leaves SL-only position clearly marked.
+- Market entry succeeds, SL fails: emergency flatten is called.
+
+2. Disable fallback market injection for live trading
+
+File:
+bot/executor.py
+
+Current issue:
+After load_markets() fails, the bot injects minimal fallback market metadata. This is acceptable for dry-run, but dangerous for live trading because precision, limits, and symbol metadata are safety-critical.
+
+Implementation:
+- If load_markets() fails and dry_run is False:
+  - Do not inject fallback market data.
+  - Raise a startup-blocking error.
+  - Send Telegram alert: Exchange metadata unavailable. Live trading blocked.
+- Keep fallback market injection only for dry-run/simulation.
+
+Acceptance tests:
+- Live mode + failed load_markets() raises and does not trade.
+- Dry-run + failed load_markets() can still simulate.
+
+3. Reconcile boot behavior
+
+Current issue:
+If an exchange position exists at boot, the bot warns but continues normally.
+
+Implementation:
+- Add BOT_BOOT_OPEN_POSITION_POLICY:
+  - halt: default for live mode.
+  - warn: manual override.
+  - rehydrate: only if Firestore trade record has full valid metadata.
+- In live mode, if an open exchange position exists and policy is halt:
+  - Prevent new entries.
+  - Alert operator.
+  - Require manual resolution.
+
+Acceptance tests:
+- Boot with existing exchange position halts by default.
+- Boot with no position proceeds.
+- Boot with rehydrate and valid Firestore record restores position state.
+
+
+PHASE 2: BACKEND AND DASHBOARD AUTH CONTRACT
+
+1. Centralize API headers in frontend
+
+Create:
+utils/apiClient.ts
+
+Responsibilities:
+- Attach X-API-Key for normal backend calls.
+- Attach X-Admin-Key for admin backend calls.
+- Handle JSON parsing.
+- Detect HTML misconfiguration responses.
+- Handle 401/403 clearly.
+- Support timeout/abort.
+
+Functions:
+- apiFetch(path, options)
+- adminFetch(path, options)
+
+Update direct backend fetches in:
+- App.tsx
+- components/AdminControl.tsx
+- components/AdminBotControl.tsx
+- components/IntelView.tsx
+- components/ChartingView.tsx
+- components/ProfileOverlay.tsx
+- components/AlertEngine.tsx
+- store/index.ts
+
+Acceptance tests:
+- Build passes.
+- Backend calls include expected headers.
+- Missing API key displays clear UI error.
+- Missing admin key displays clear admin error.
+
+2. Separate public and private backend endpoints
+
+File:
+backend/main.py
+
+Implementation:
+- Keep /health, /docs, and /openapi.json public.
+- Decide whether /history is public or protected.
+- If /history is protected, frontend must send X-API-Key.
+- Admin endpoints must require X-Admin-Key.
+- Error responses should consistently return JSON:
+  { "detail": "message" }
+
+Acceptance tests:
+- /health returns 200 without key.
+- Protected endpoint rejects missing key.
+- Protected endpoint accepts valid key.
+- /admin/system-status rejects missing admin key.
+- /admin/system-status accepts valid admin key.
+
+
+PHASE 3: FIRESTORE SECURITY AND DASHBOARD DATA GOVERNANCE
+
+1. Add Firestore rules to repo
+
+Create:
+firestore.rules
+
+Collections to protect:
+- botTrades
+- botLogs
+- botStatus
+- equityCurve
+- botState
+- users
+
+Recommended policy:
+- Authenticated users can read bot collections only if they are admin.
+- Admin should be enforced through Firebase custom claims or a secure allowlist.
+- Browser clients cannot write bot-owned collections.
+- Users can read/write only their own users/{uid} document.
+- Bot service account writes via Admin SDK, which bypasses rules.
+
+Acceptance tests:
+- Non-admin user cannot read botTrades.
+- Non-admin user cannot read botLogs.
+- Non-admin user cannot read botStatus.
+- User can read/write own user document.
+- User cannot read/write another user document.
+
+2. Replace client-side-only admin trust
+
+Current issue:
+Admin UI is gated by VITE_ADMIN_EMAILS in the browser. This is useful for display, but not real authorization.
+
+Implementation:
+- Keep VITE_ADMIN_EMAILS only for UI visibility.
+- Enforce real admin access through:
+  - X-Admin-Key for backend admin endpoints, or
+  - Firebase custom claims for Firestore access.
+- Prefer Firebase custom claims for long-term production.
+
+Acceptance criteria:
+- Non-admin users cannot read bot logs/trades directly from Firestore.
+- Non-admin users cannot access backend admin endpoints.
+
+
+PHASE 4: STRATEGY CALIBRATION AND PROOF
+
+1. Calibrate HMM properly
+
+Current issue:
+signal_config.py says HMM emissions and regime parameters are hand-tuned placeholders.
+
+Implementation:
+- Pull at least 6-12 months of 15m Binance USDM candles for every traded symbol.
+- Run bot/hmm_calibrate.py.
+- Store calibrated emissions in hmm_params.json.
+- Make _HMMRegimeClassifier load params from file instead of silently relying on hardcoded fallback.
+- Log loaded HMM params version/hash on startup.
+
+Validation report:
+- Regime stability.
+- Transition matrix.
+- Trade count by regime.
+- PnL by regime.
+- Win rate by regime.
+- Drawdown by regime.
+
+Acceptance criteria:
+- Calibration report exists per symbol.
+- Live bot logs calibrated HMM parameter source.
+- No live run uses placeholder HMM silently.
+
+2. Backtest live-equivalent logic
+
+Implementation:
+- Confirm backtester imports thresholds from signal_config.py.
+- Build replay tests comparing live _compute_signal() against backtest signal decisions.
+- Include:
+  - RANGE mean reversion.
+  - TREND continuation.
+  - LIQUIDITY sweep.
+  - ULIS veto.
+  - CVD veto.
+  - Funding-rate block.
+  - ATR panic block.
+  - Fee-unprofitable block.
+
+Acceptance criteria:
+- Same input produces same decision in live and replay/backtest paths.
+- Backtest includes fees, slippage, min notional, leverage assumptions, and realistic fill rules.
+
+3. Add walk-forward validation
+
+Implementation:
+- Split historical data into:
+  - Train/calibration window.
+  - Validation window.
+  - Out-of-sample test window.
+- Report:
+  - Win rate.
+  - Profit factor.
+  - Max drawdown.
+  - Average R.
+  - Trade frequency.
+  - Slippage sensitivity.
+  - Fee sensitivity.
+  - Worst 10-trade sequence.
+  - Per-regime performance.
+
+A-grade target:
+- Positive expectancy out of sample.
+- Profit factor above 1.2 after fees/slippage.
+- Drawdown compatible with configured risk.
+- No single regime dominates losses unchecked.
+
+
+PHASE 5: TEST COVERAGE EXPANSION
+
+Executor tests to add:
+- test_live_entry_tp_failure_keeps_sl_only_position
+- test_live_entry_sl_failure_flattens
+- test_live_entry_flatten_failure_sets_halt_flag
+- test_tp_requeue_success_clears_metadata
+- test_tp_requeue_exhaustion_alerts
+- test_load_markets_failure_blocks_live
+- test_load_markets_failure_allows_dry_run
+- test_boot_open_position_halts_by_default
+- test_panic_mode_sets_lock_and_flattens
+- test_failed_order_cooldown_blocks_retries
+
+Data feed tests to add:
+- Stale kline sets reconnect event.
+- Dead aggTrade stream sets reconnect event.
+- CVD reset suppresses ghost divergence.
+- Feed reconnect does not reuse stale candles as fresh signals.
+
+Signal tests to add:
+- ULIS AVOID veto.
+- ULIS direction conflict blocks unless Bayesian override.
+- RSI gate blocks only in correct regimes.
+- Fee check blocks nonviable TP.
+- ATR panic blocks high volatility.
+- Small-account risk cap applies.
+
+Backend tests to add:
+- Missing BACKEND_API_KEY fails startup.
+- Protected endpoint rejects missing key.
+- Protected endpoint accepts valid key.
+- Admin endpoint requires admin key.
+- Backtest rejects invalid dates/ranges.
+
+A-grade target:
+- Minimum 80% meaningful coverage on executor/risk modules.
+- Every P0/P1 bug gets a regression test.
+- Full focused suite runs without external exchange credentials.
+
+
+PHASE 6: OBSERVABILITY AND OPERATOR CONTROL
+
+1. Add structured event log
+
+Create event types:
+- BOT_STARTED
+- SIGNAL_COMPUTED
+- ENTRY_BLOCKED
+- ORDER_PLACED
+- SL_ATTACHED
+- TP_ATTACHED
+- TP_REQUEUE_PENDING
+- POSITION_CLOSED
+- PANIC_MODE
+- FLATTEN_FAILED
+- DAILY_HALT
+- DRAWDOWN_HALT
+- FEED_STALE
+
+Every event should include:
+- Timestamp.
+- Symbol.
+- Mode.
+- Severity.
+- Reason.
+- Active position summary.
+- Correlation ID per trade.
+
+2. Add operator state dashboard fields
+
+Heartbeat should expose:
+- flattenFailed
+- panicLockedUntil
+- pendingOrder
+- slPlaced
+- tpPlaced
+- tpRequeueAttempts
+- feedAgeSeconds
+- aggTradeMsgsPerMin
+- lastExchangePoll
+- lastError
+
+Acceptance criteria:
+- Dashboard clearly shows whether the bot is trading safely, halted, stale, or requiring manual action.
+
+3. Add explicit kill switch
+
+Implementation options:
+- Firestore botCommands/{symbol} document.
+- Backend admin endpoint /admin/bot-command.
+
+Supported commands:
+- pause_entries
+- resume_entries
+- flatten_now
+- cancel_orders
+- panic_lock
+
+Requirements:
+- Commands must require admin authorization.
+- Bot must acknowledge command execution in Firestore.
+- Failed command execution must alert operator.
+
+
+PHASE 7: MULTI-COIN RISK ISOLATION
+
+Current issue:
+launcher.py starts one process per symbol, but all processes share exchange credentials and account equity.
+
+Implementation:
+- Add global account risk coordinator.
+- Enforce:
+  - Max total active positions.
+  - Max aggregate notional.
+  - Max aggregate daily loss.
+  - Per-symbol risk cap.
+  - Correlation-aware caps for similar assets.
+- Prevent BTC, ETH, and SOL bots from each risking 1% simultaneously unless explicitly configured.
+- Add symbol-specific state documents and trade IDs.
+- Add launcher health summary.
+
+Acceptance criteria:
+- Multi-symbol mode cannot exceed configured global exposure.
+- One symbol crash does not hide global risk.
+- Dashboard shows per-symbol and global PnL separately.
+
+
+PHASE 8: DEPLOYMENT HARDENING
+
+1. Environment validation on startup
+
+Add:
+validate_config()
+
+Check:
+- Live mode requires exchange credentials.
+- Mainnet requires BOT_TESTNET=false and BOT_CONFIRM_LIVE=true.
+- Leverage is within allowed range.
+- Risk percent is sane.
+- Symbol is valid.
+- Firebase credentials are valid if dashboard sync is required.
+- Telegram is configured if live mode.
+
+Acceptance criteria:
+- Misconfigured live mode fails fast.
+- Testnet/dry-run remains easy.
+- Mainnet cannot be enabled accidentally.
+
+2. Add deployment runbook
+
+Create:
+DEPLOYMENT_RUNBOOK.md
+
+Include:
+- How to deploy testnet.
+- How to confirm dashboard sync.
+- How to run focused tests.
+- How to check exchange open positions before startup.
+- How to switch to mainnet.
+- How to pause/flatten.
+- What alerts mean.
+- Recovery steps for orphan positions.
+
+3. Add release checklist
+
+Before mainnet:
+- python -m pytest tests/test_executor.py
+- Backend auth tests.
+- Frontend build.
+- 24h dry-run.
+- 24h testnet.
+- Manual dashboard verification.
+- Confirm no open exchange positions.
+- Confirm Firestore rules deployed.
+- Confirm Telegram alert delivery.
+
+
+PHASE 9: FINAL A-GRADE CRITERIA
+
+The bot reaches A-grade when all are true:
+
+- P0 execution bugs fixed.
+- Live mode never uses fake market metadata.
+- TP failure path leaves a tracked SL-only position and retries TP.
+- SL failure path immediately flattens or halts with critical alert.
+- Backend/frontend auth is consistent.
+- Firestore rules are present and restrictive.
+- HMM/regime params are calibrated and documented.
+- Focused executor/risk tests cover all dangerous branches.
+- Dashboard accurately reports live safety state.
+- Multi-coin exposure is globally capped.
+- Mainnet startup requires explicit confirmation.
+- Testnet soak run completes without orphaned positions, stale feed, or dashboard auth failures.
+
+
+RECOMMENDED EXECUTION ORDER
+
+1. Fix executor TP requeue and live fallback-market behavior.
+2. Add regression tests for those two issues.
+3. Fix frontend API headers and backend auth tests.
+4. Add Firestore rules.
+5. Add config validation and mainnet confirmation.
+6. Expand live-order failure tests.
+7. Calibrate HMM and produce strategy validation report.
+8. Add operator kill switch and richer heartbeat state.
+9. Run dry-run/testnet soak.
+10. Only then consider small-capital mainnet.

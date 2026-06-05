@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { motion as m } from 'framer-motion';
 import { User, LogOut, X, BrainCircuit, Cpu, MessageSquare, Save, Lock, History, Send, Loader } from 'lucide-react';
 import { useStore } from '../store';
-import { API_BASE_URL } from '../constants';
+import { apiFetch } from '../utils/apiClient';
 
 const motion = m as any;
 
@@ -54,9 +54,7 @@ const ProfileOverlay: React.FC = () => {
         setIsTestingAI(true);
         setAiTestResult('idle');
         try {
-            const res = await fetch(
-                `${API_BASE_URL}/analyze?symbol=BTCUSDT&model=${encodeURIComponent(aiModel)}`
-            );
+            const res = await apiFetch(`/analyze?symbol=BTCUSDT&model=${encodeURIComponent(aiModel)}`);
             if (res.ok) {
                 setAiTestResult('ok');
                 addNotification({ id: Date.now().toString(), type: 'success', title: 'AI Test Passed', message: `${aiModel} responded correctly.` });
@@ -81,7 +79,7 @@ const ProfileOverlay: React.FC = () => {
             });
 
             // Push to Backend for Autonomous Mode
-            await fetch(`${API_BASE_URL}/alerts/configure`, {
+            await apiFetch('/alerts/configure', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -107,7 +105,7 @@ const ProfileOverlay: React.FC = () => {
     const handleTestAlert = async () => {
         setIsSendingTest(true);
         try {
-            const res = await fetch(`${API_BASE_URL}/alerts/test`, {
+            const res = await apiFetch('/alerts/test', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

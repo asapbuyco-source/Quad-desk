@@ -14,9 +14,26 @@ Output:
 
 import argparse
 import json
+import os
+from datetime import datetime, timezone
 import numpy as np
 
-def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: int = 1):
+def _load_cached_candles(symbol: str, interval: str):
+    path = os.path.join("data", f"{symbol.upper()}_{interval}_cached.pkl")
+    if not os.path.exists(path):
+        return None, path
+    import pandas as pd
+    df = pd.read_pickle(path)
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return None, path
+    required = {"open", "high", "low", "close", "volume"}
+    if not required.issubset(set(df.columns)):
+        raise ValueError(f"Cached file {path} missing required columns: {sorted(required - set(df.columns))}")
+    return df.copy(), path
+
+
+def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: int = 1,
+                    use_cache: bool = True):
     try:
         from hmmlearn import hmm as hmmlearn_hmm
     except ImportError:
@@ -26,8 +43,17 @@ def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: 
     from bot.backtest_hybrid import fetch_binance_candles, calc_atr, calc_vwap_zscore
     import pandas as pd
 
-    print(f"Fetching {symbol} {interval} data ({years_back} years)...")
-    df = fetch_binance_candles(symbol, interval=interval, years_back=years_back)
+    source = "binance_rest"
+    cache_path = None
+    df = None
+    if use_cache:
+        df, cache_path = _load_cached_candles(symbol, interval)
+        if df is not None:
+            source = cache_path
+            print(f"Loaded cached {symbol} {interval} data from {cache_path} ({len(df)} rows).")
+    if df is None:
+        print(f"Fetching {symbol} {interval} data ({years_back} years)...")
+        df = fetch_binance_candles(symbol, interval=interval, years_back=years_back)
     if df.empty:
         print("No data fetched. Aborting.")
         return
@@ -82,6 +108,16 @@ def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: 
     covars_diag = model.covars_[order]  # shape: (3, 4, 4)
     n_f = covars_diag.shape[1]
     sigma_ordered = np.sqrt(covars_diag[:, range(n_f), range(n_f)]).astype(float)
+    if (not np.all(np.isfinite(mu_ordered)) or
+            not np.all(np.isfinite(sigma_ordered)) or
+            np.any(sigma_ordered <= 0) or
+            np.any(sigma_ordered[:, 0] > 0.05) or
+            np.any(sigma_ordered[:, 1] > 5.0) or
+            np.any(sigma_ordered[:, 2:] > 2.0)):
+        raise RuntimeError(
+            "Degenerate HMM calibration detected; refusing to overwrite bot/hmm_params.json. "
+            "Use a longer data window (>=6 months), review features, or adjust n_components."
+        )
 
     print("\n--- Calibrated parameters ---")
     print("_MU = np.array([")
@@ -99,15 +135,51 @@ def run_calibration(symbol: str = "BTCUSDT", interval: str = "15m", years_back: 
     print("\nTransition matrix:")
     print(np.array2string(model.transmat_[order][:, order], precision=4))
 
+    start_ts = str(df.index.min()) if hasattr(df, "index") and len(df.index) else None
+    end_ts = str(df.index.max()) if hasattr(df, "index") and len(df.index) else None
     output = {
         "mu":    mu_ordered.tolist(),
         "sigma": sigma_ordered.tolist(),
         "transmat": model.transmat_[order][:, order].tolist(),
         "labels": labels,
+        "meta": {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "years_back": years_back,
+            "source": source,
+            "observations": int(len(X)),
+            "rows": int(len(df)),
+            "start": start_ts,
+            "end": end_ts,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        },
     }
     with open("bot/hmm_params.json", "w") as f:
         json.dump(output, f, indent=2)
     print("\nSaved to bot/hmm_params.json")
+    report_path = f"bot/hmm_calibration_report_{symbol.upper()}_{interval}.txt"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("HMM CALIBRATION REPORT\n")
+        f.write(f"Generated: {output['meta']['generated_at']}\n")
+        f.write(f"Symbol: {symbol.upper()}\n")
+        f.write(f"Interval: {interval}\n")
+        f.write(f"Source: {source}\n")
+        f.write(f"Rows: {len(df)}\n")
+        f.write(f"Observations: {len(X)}\n")
+        f.write(f"Start: {start_ts}\n")
+        f.write(f"End: {end_ts}\n\n")
+        f.write("Labels:\n")
+        for label in labels:
+            f.write(f"- {label}\n")
+        f.write("\nMu:\n")
+        f.write(np.array2string(mu_ordered, precision=6))
+        f.write("\n\nSigma:\n")
+        f.write(np.array2string(sigma_ordered, precision=6))
+        f.write("\n\nTransition Matrix:\n")
+        f.write(np.array2string(model.transmat_[order][:, order], precision=6))
+        f.write("\n\nReadiness Note:\n")
+        f.write("Use >=6 months of symbol-specific 15m data before mainnet sizing decisions.\n")
+    print(f"Saved report to {report_path}")
     return output
 
 
@@ -116,5 +188,6 @@ if __name__ == "__main__":
     parser.add_argument("--symbol",   default="BTCUSDT")
     parser.add_argument("--interval", default="15m")
     parser.add_argument("--years",    type=int, default=1)
+    parser.add_argument("--no-cache", action="store_true", help="Fetch from Binance instead of using data/*_cached.pkl")
     args = parser.parse_args()
-    run_calibration(args.symbol, args.interval, args.years)
+    run_calibration(args.symbol, args.interval, args.years, use_cache=not args.no_cache)

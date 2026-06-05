@@ -28,6 +28,7 @@ import time
 
 from dotenv import load_dotenv
 load_dotenv()
+from bot.global_risk import validate_symbols_against_global_risk
 
 # ── Resolve which symbols to run ─────────────────────────────────────────────
 _multi   = os.environ.get("BOT_SYMBOLS", "").strip()
@@ -40,6 +41,12 @@ else:
 
 if not SYMBOLS:
     print("[Launcher] ERROR: No symbols configured. Set BOT_SYMBOLS or BOT_SYMBOL.", flush=True)
+    sys.exit(1)
+
+try:
+    validate_symbols_against_global_risk(SYMBOLS)
+except ValueError as exc:
+    print(f"[Launcher] GLOBAL RISK BLOCK: {exc}", flush=True)
     sys.exit(1)
 
 print(f"[Launcher] Starting {len(SYMBOLS)} bot instance(s): {', '.join(SYMBOLS)}", flush=True)

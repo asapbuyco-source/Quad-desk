@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { ShieldAlert, ToggleLeft, ToggleRight, X, Activity, Server, Cpu, Terminal, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useStore } from '../store';
-import { API_BASE_URL } from '../constants';
+import { adminFetch } from '../utils/apiClient';
 import { SystemHealth } from '../types';
 
 const motion = m as any;
@@ -20,7 +20,7 @@ const SystemMonitor: React.FC = () => {
     const fetchStatus = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(`${API_BASE_URL}/admin/system-status`);
+            const res = await adminFetch('/admin/system-status');
             
             const contentType = res.headers.get("content-type");
             if (contentType && contentType.includes("text/html")) {

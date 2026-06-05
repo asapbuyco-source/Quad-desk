@@ -143,6 +143,31 @@ else:
     # For Binance: either HMAC secret OR Ed25519 private key is sufficient
     DRY_RUN = ENV_DRY_RUN or not (BINANCE_API_KEY and (BINANCE_API_SECRET or BINANCE_ED25519_PRIVKEY))
 
+
+def validate_config() -> None:
+    """Fail fast on unsafe live/mainnet configuration."""
+    errors = []
+    if EXCHANGE not in ("binanceusdm", "binance", "coinbase"):
+        errors.append(f"Unsupported BOT_EXCHANGE={EXCHANGE!r}.")
+    if LEVERAGE < 1 or LEVERAGE > 20:
+        errors.append("BOT_LEVERAGE must be between 1 and 20.")
+    if MAX_RISK_PCT <= 0 or MAX_RISK_PCT > 5:
+        errors.append("BOT_MAX_RISK_PCT must be > 0 and <= 5.")
+    if MAX_DAILY_LOSS_PCT <= 0 or MAX_DAILY_LOSS_PCT > 20:
+        errors.append("BOT_MAX_DAILY_LOSS_PCT must be > 0 and <= 20.")
+    if not SYMBOL.strip():
+        errors.append("BOT_SYMBOL cannot be empty.")
+    if not DRY_RUN and not TESTNET:
+        confirm_live = os.environ.get("BOT_CONFIRM_LIVE", "").strip().lower()
+        if confirm_live not in ("true", "1", "yes", "i-understand"):
+            errors.append("Mainnet live mode requires BOT_CONFIRM_LIVE=true.")
+    if not DRY_RUN and not TG_BOT_TOKEN:
+        logger.warning("[Config] TELEGRAM_BOT_TOKEN missing in live mode; critical alerts may be invisible.")
+    if errors:
+        for err in errors:
+            logger.critical(f"[Config] {err}")
+        raise RuntimeError("Unsafe bot configuration: " + " ".join(errors))
+
 # Data feed always uses Binance public WS; normalise symbol to BTCUSDT style
 if EXCHANGE == "coinbase":
     base = SYMBOL.replace("/", "-").split("-")[0]
@@ -171,6 +196,9 @@ BOT_STATS: Dict[str, Any] = {
     "cumulative_pnl": 0.0,  # FIX-R1: never resets — lifetime PnL since first boot
     "daily_loss_halt": False,
     "drawdown_halt": False,
+    "operator_paused": False,
+    "operator_last_command": None,
+    "operator_last_command_status": None,
     "consecutive_losses": 0,
     "cooldown_until":     0.0,
     "gate_stats": {
@@ -606,6 +634,9 @@ class _HMMRegimeClassifier:
         # Mutable copies so online-update can adjust them
         self._mu    = self._MU.copy()
         self._sigma = self._SIGMA.copy()
+        self._A     = self._A.copy()
+        self._param_source = "hardcoded defaults"
+        self._load_calibrated_params()
         self._online_update_enabled = True   # Calibrated via hmm_calibrate (Fix 4)
         self._n_trades_since_update = 0      # P1-3: count live trades; delay online HMM update until enough data
         self._min_trades_before_update = 10  # require ≥10 live trades before first online update
@@ -622,6 +653,52 @@ class _HMMRegimeClassifier:
         self._fs_doc_id = f"hmmEngine_{_safe_sym}"  # e.g. hmmEngine_BTCUSDT
         self._load_state()
 
+    def _load_calibrated_params(self):
+        """Load production HMM emissions/transition matrix from bot/hmm_params.json."""
+        import json
+        from pathlib import Path
+
+        path = Path(os.environ.get(
+            "HMM_PARAMS_PATH",
+            str(Path(__file__).with_name("hmm_params.json"))
+        ))
+        if not path.exists():
+            logger.warning(f"[HMM] Calibrated params not found at {path}; using hardcoded defaults.")
+            return
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            mu = np.array(data.get("mu"), dtype=float)
+            sigma = np.array(data.get("sigma"), dtype=float)
+            transmat = np.array(data.get("transmat", self._A), dtype=float)
+            labels = data.get("labels", self._LABELS)
+            if mu.shape != self._MU.shape:
+                raise ValueError(f"mu shape {mu.shape} != expected {self._MU.shape}")
+            if sigma.shape != self._SIGMA.shape:
+                raise ValueError(f"sigma shape {sigma.shape} != expected {self._SIGMA.shape}")
+            if transmat.shape != self._A.shape:
+                raise ValueError(f"transmat shape {transmat.shape} != expected {self._A.shape}")
+            if list(labels) != list(self._LABELS):
+                raise ValueError(f"labels {labels} != expected {self._LABELS}")
+            row_sums = transmat.sum(axis=1, keepdims=True)
+            if np.any(row_sums <= 0) or not np.all(np.isfinite(transmat)):
+                raise ValueError("transition matrix must be finite with positive row sums")
+            self._mu = mu
+            self._sigma = np.maximum(sigma, 1e-6)
+            self._A = transmat / row_sums
+            meta = data.get("meta", {})
+            source_bits = [str(path)]
+            if meta.get("symbol"):
+                source_bits.append(f"symbol={meta['symbol']}")
+            if meta.get("interval"):
+                source_bits.append(f"interval={meta['interval']}")
+            if meta.get("observations"):
+                source_bits.append(f"n={meta['observations']}")
+            self._param_source = " | ".join(source_bits)
+            logger.info(f"[HMM] Calibrated params loaded: {self._param_source}")
+        except Exception as e:
+            logger.error(f"[HMM] Failed to load calibrated params from {path}: {e}. Using hardcoded defaults.")
+
     def _save_state(self):
         import threading
         import json
@@ -629,6 +706,8 @@ class _HMMRegimeClassifier:
         data = {
             "mu": self._mu.tolist(),
             "sigma": self._sigma.tolist(),
+            "transmat": self._A.tolist(),
+            "param_source": self._param_source,
             "saved_at": time.time(),
         }
         existing = getattr(self, "_fs_write_thread", None)
@@ -642,6 +721,7 @@ class _HMMRegimeClassifier:
                 fs_payload = payload.copy()
                 fs_payload["mu"] = _json.dumps(fs_payload.get("mu", []))
                 fs_payload["sigma"] = _json.dumps(fs_payload.get("sigma", []))
+                fs_payload["transmat"] = _json.dumps(fs_payload.get("transmat", []))
                 from bot.heartbeat import get_db
                 db = get_db()
                 if db is not None:
@@ -2502,6 +2582,111 @@ async def _process_exit(
     _save_risk_ledger(stats)
 
 
+def _operator_command_doc_id(symbol: str) -> str:
+    return f"live_{heartbeat._symbol_doc_id(symbol)}"
+
+
+async def _operator_command_loop(executor: TradingExecutor, stats: Dict[str, Any]) -> None:
+    """
+    Poll Firestore for admin-issued bot commands.
+
+    Supported command values in botCommands/live_SYMBOL:
+      pause_entries, resume_entries, panic_lock, flatten_now, cancel_orders
+    """
+    from firebase_admin import firestore as fs
+
+    poll_seconds = float(os.environ.get("BOT_OPERATOR_COMMAND_POLL_SECONDS", "15"))
+    doc_id = _operator_command_doc_id(stats.get("symbol", SYMBOL))
+    last_seen_id = None
+
+    while True:
+        try:
+            db = heartbeat.get_db()
+            if db is None:
+                await asyncio.sleep(poll_seconds)
+                continue
+
+            doc_ref = db.collection("botCommands").document(doc_id)
+            snap = doc_ref.get()
+            if not snap.exists:
+                await asyncio.sleep(poll_seconds)
+                continue
+
+            data = snap.to_dict() or {}
+            command = str(data.get("command") or "").strip().lower()
+            command_id = str(data.get("command_id") or data.get("id") or "")
+            processed = str(data.get("status") or "").lower() in ("processed", "failed", "ignored")
+            fingerprint = command_id or f"{command}:{data.get('created_ts_ms') or data.get('created_at') or ''}"
+
+            if not command or processed or fingerprint == last_seen_id:
+                await asyncio.sleep(poll_seconds)
+                continue
+
+            last_seen_id = fingerprint
+            status = "processed"
+            note = ""
+            logger.warning(f"[Operator] Processing command {command!r} for {doc_id}")
+
+            try:
+                if command == "pause_entries":
+                    stats["operator_paused"] = True
+                    note = "New entries paused. Existing positions remain managed."
+                elif command == "resume_entries":
+                    stats["operator_paused"] = False
+                    note = "New entries resumed."
+                elif command == "panic_lock":
+                    stats["operator_paused"] = True
+                    await executor.engage_panic_mode("Operator command: panic_lock", lock_seconds=PANIC_LOCK_SECONDS)
+                    stats["active_position"] = executor.active_position
+                    note = f"Panic lock engaged for {PANIC_LOCK_SECONDS}s."
+                elif command == "flatten_now":
+                    stats["operator_paused"] = True
+                    await executor.emergency_flatten("Operator command: flatten_now")
+                    stats["active_position"] = executor.active_position
+                    note = "Emergency flatten attempted and entries paused."
+                elif command == "cancel_orders":
+                    stats["operator_paused"] = True
+                    if executor.dry_run:
+                        note = "Dry-run mode: no live exchange orders to cancel."
+                    else:
+                        ccxt_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
+                        await executor.exchange.cancel_all_orders(ccxt_symbol)
+                        note = f"Cancelled all open orders for {ccxt_symbol}; entries paused."
+                else:
+                    status = "ignored"
+                    note = f"Unknown command: {command}"
+            except Exception as cmd_err:
+                status = "failed"
+                note = str(cmd_err)
+                logger.error(f"[Operator] Command {command!r} failed: {cmd_err}", exc_info=True)
+
+            stats["operator_last_command"] = command
+            stats["operator_last_command_status"] = status
+
+            doc_ref.set(
+                {
+                    "status": status,
+                    "result": note,
+                    "processed_at": fs.SERVER_TIMESTAMP,
+                    "processed_ts_ms": int(time.time() * 1000),
+                    "operator_paused": bool(stats.get("operator_paused")),
+                },
+                merge=True,
+            )
+
+            if executor.notifier:
+                try:
+                    await executor.notifier.send_message(f"Operator command {command}: {status}. {note}")
+                except Exception:
+                    pass
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"[Operator] Command poll failed: {e}")
+
+        await asyncio.sleep(poll_seconds)
+
+
 async def execution_loop(
     feed,
     quant: QuantEngine,
@@ -2988,6 +3173,13 @@ async def execution_loop(
                 )
 
             # Stages 2–7: Full signal engine
+            if stats.get("operator_paused"):
+                stats["last_signal"] = "WAIT"
+                _queued_signal = None
+                _queued_signal_price = 0.0
+                logger.warning("[Operator] Entries paused by operator command. Existing exits remain managed.")
+                continue
+
             # HIGH-4 FIX: Reset consecutive_losses when a cooldown expires so the
             # bot gets a clean slate after its penalty period. Without this reset,
             # two losses immediately after the cooldown trigger another 2-hour pause.
@@ -3166,6 +3358,7 @@ async def execution_loop(
 # ══════════════════════════════════════════════════════════════════════
 
 async def main():
+    validate_config()
     # 1. Initialise Firebase connection early so FirestoreLogHandler can sync startup logs
     heartbeat.init_firebase()
 
@@ -3355,6 +3548,7 @@ async def main():
         asyncio.create_task(_derivatives_refresh_loop(),  name="deriv_refresh"),  # FIX-7.1: background derivatives
         asyncio.create_task(macro_shield.run_calendar_loop(), name="macro_calendar"),
         asyncio.create_task(macro_shield.run_dxy_loop(),      name="macro_dxy"),
+        asyncio.create_task(_operator_command_loop(executor, BOT_STATS), name="operator_commands"),
         _exec_task,
         asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS), name="heartbeat"),
         # P0-2 FIX: Feed health monitor — detects frozen WebSocket and forces reconnect

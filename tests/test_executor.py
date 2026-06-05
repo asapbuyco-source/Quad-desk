@@ -226,3 +226,80 @@ class TestMinNotionalFloor:
         executor.exchange.create_market_order.assert_not_awaited()
         # Error alert should have been sent
         executor.notifier.send_message.assert_awaited()
+
+
+class TestLiveSafetyHardening:
+
+    @pytest.mark.asyncio
+    async def test_tp_failure_after_sl_keeps_tracked_sl_only_position(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.is_futures = True
+        executor.exchange_id = "binanceusdm"
+        executor.active_position = None
+        executor.pending_order = None
+        executor.failed_order_ts = 0.0
+        executor.get_usdt_balance = AsyncMock(return_value=10_000.0)
+        executor.exchange.amount_to_precision = MagicMock(return_value="0.01")
+        executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+        executor.exchange.create_market_order = AsyncMock(return_value={
+            "id": "entry-1",
+            "status": "closed",
+            "average": 1000.0,
+        })
+        executor.exchange.create_order = AsyncMock(side_effect=[
+            {"id": "sl-1"},
+            Exception("tp reject 1"),
+            Exception("tp reject 2"),
+            Exception("tp reject 3"),
+        ])
+        executor._log_trade = MagicMock(return_value="trade-1")
+
+        result = await executor.execute_signal(
+            symbol="BTCUSDT",
+            current_price=1000.0,
+            signal={
+                "verdict": "BUY",
+                "confidence": 0.8,
+                "stop_loss": 990.0,
+                "take_profit": 1030.0,
+                "atr_at_entry": 10.0,
+            },
+            max_risk_pct=1.0,
+            account_size=10_000.0,
+        )
+
+        assert result is True
+        assert executor.active_position is not None
+        assert executor.active_position["sl_placed"] is True
+        assert executor.active_position["tp_placed"] is False
+        assert executor.active_position["sl_order_id"] == "sl-1"
+        assert executor.active_position["tp_order_id"] is None
+        assert executor.active_position["requeue_tp_attempts"] == 1
+        assert executor.active_position["requeue_tp_symbol"] == "BTC/USDT:USDT"
+        executor.notifier.send_error_alert.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_live_market_load_failure_blocks_trading(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.exchange.load_markets = AsyncMock(side_effect=Exception("network down"))
+
+        with pytest.raises(RuntimeError, match="Live trading blocked"):
+            await executor.initialize()
+
+        executor.notifier.send_error_alert.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_dry_run_market_load_failure_uses_fallback_markets(self):
+        executor = _make_executor(dry_run=True)
+        executor.dry_run = True
+        executor.exchange.apiKey = "test"
+        executor.exchange.markets = None
+        executor.exchange.symbols = None
+        executor.exchange.load_markets = AsyncMock(side_effect=Exception("network down"))
+
+        await executor.initialize()
+
+        assert executor.exchange.markets
+        assert executor.exchange.symbols

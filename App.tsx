@@ -21,7 +21,7 @@ import DarkPoolDiscovery from './components/DarkPoolDiscovery';
 import SentinelEdgePage from './components/SentinelEdgePage';
 import ULISView from './components/ULISView';
 import { ToastContainer } from './components/Toast';
-import { API_BASE_URL } from './constants';
+import { apiFetch } from './utils/apiClient';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
@@ -118,7 +118,7 @@ const App: React.FC = () => {
         let retryTimer: ReturnType<typeof setTimeout>;
         const fetchHistory = async () => {
             try {
-                const res = await fetch(`${API_BASE_URL}/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
+                const res = await apiFetch(`/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
                 if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
                 const data = await res.json();
                 if (!Array.isArray(data)) throw new Error("Invalid history data format");

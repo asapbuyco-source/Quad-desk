@@ -5,7 +5,7 @@ import VolumeProfile from './VolumeProfile';
 import PeriodSelector from './PeriodSelector';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
-import { API_BASE_URL } from '../constants';
+import { apiFetch } from '../utils/apiClient';
 import { PeriodType } from '../types';
 
 const motion = m as any;
@@ -112,7 +112,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentP
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 60000);
           
-          const response = await fetch(`${API_BASE_URL}/analyze?symbol=${activeSymbol}&model=${aiModel}`, { signal: controller.signal });
+          const response = await apiFetch(`/analyze?symbol=${activeSymbol}&model=${aiModel}`, { signal: controller.signal });
           clearTimeout(timeoutId);
           
           if (!response.ok) {
