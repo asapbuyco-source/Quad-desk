@@ -323,6 +323,11 @@ _LAST_CYCLE_ERROR = ""  # PHASE-3.1: Last error string for escalation
 LAST_CASCADE_TIME = 0.0
 ATR_PANIC_CONSECUTIVE = 0
 ATR_PANIC_COOLDOWN_UNTIL = 0.0
+ATR_PANIC_LAST_WARN_TS = 0.0
+ATR_PANIC_WARN_RANK = float(os.environ.get("BOT_ATR_PANIC_WARN_RANK", "0.90"))
+ATR_PANIC_HARD_RANK = float(os.environ.get("BOT_ATR_PANIC_HARD_RANK", "0.995"))
+ATR_PANIC_HARD_ATR_PCT = float(os.environ.get("BOT_ATR_PANIC_HARD_ATR_PCT", "0.02"))
+ATR_PANIC_SOFT_RISK_MULT = float(os.environ.get("BOT_ATR_PANIC_SOFT_RISK_MULT", "0.50"))
 BOT_START_TIME = time.time()  # used for boot-grace period on throughput gate
 LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can compute delta
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
@@ -685,7 +690,23 @@ class _HMMRegimeClassifier:
                 raise ValueError("transition matrix must be finite with positive row sums")
             self._mu = mu
             self._sigma = np.maximum(sigma, 1e-6)
-            self._A = transmat / row_sums
+            transmat = transmat / row_sums
+            max_persistence = float(np.clip(
+                float(os.environ.get("HMM_MAX_STATE_PERSISTENCE", "0.90")),
+                0.50,
+                0.99,
+            ))
+            for i in range(transmat.shape[0]):
+                if transmat[i, i] > max_persistence:
+                    excess = transmat[i, i] - max_persistence
+                    transmat[i, i] = max_persistence
+                    off_idx = [j for j in range(transmat.shape[1]) if j != i]
+                    off_sum = float(transmat[i, off_idx].sum())
+                    if off_sum > 0:
+                        transmat[i, off_idx] += excess * (transmat[i, off_idx] / off_sum)
+                    else:
+                        transmat[i, off_idx] += excess / len(off_idx)
+            self._A = transmat / transmat.sum(axis=1, keepdims=True)
             meta = data.get("meta", {})
             source_bits = [str(path)]
             if meta.get("symbol"):
@@ -747,6 +768,13 @@ class _HMMRegimeClassifier:
     def _load_state(self):
         import json
         import time
+        load_persisted = os.environ.get("HMM_LOAD_PERSISTED_PARAMS", "false").strip().lower()
+        if load_persisted not in {"1", "true", "yes", "on"}:
+            logger.info(
+                "[HMM] Persisted online params disabled; using calibrated params only "
+                "(set HMM_LOAD_PERSISTED_PARAMS=true to restore Firestore/tmp state)."
+            )
+            return
         try:
             from bot.heartbeat import get_db
             db = get_db()
@@ -962,6 +990,10 @@ class _HMMRegimeClassifier:
 
         # ── Forward algorithm: posterior probability vector ────────────
         posterior = self._forward(seq)
+        posterior_temp = float(os.environ.get("HMM_POSTERIOR_TEMPERATURE", "1.35"))
+        if posterior_temp > 1.0:
+            posterior = np.power(np.maximum(posterior, 1e-6), 1.0 / posterior_temp)
+            posterior = posterior / np.maximum(posterior.sum(), 1e-12)
         best_state = int(np.argmax(posterior))
         raw_label  = self._LABELS[best_state]
         raw_conf   = float(posterior[best_state])
@@ -2019,29 +2051,47 @@ async def _compute_signal(
         return {**WAIT, "analysis": "Session warmup: Z-Score not yet valid (<10 bars)."}
 
     # --- AUDIT FIX 1: ATR PANIC GATE ---
-    global ATR_PANIC_CONSECUTIVE, ATR_PANIC_COOLDOWN_UNTIL
+    global ATR_PANIC_CONSECUTIVE, ATR_PANIC_COOLDOWN_UNTIL, ATR_PANIC_LAST_WARN_TS
     import time
     now_ts = time.time()
     
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
     atr_pct      = metrics.get("atr_pct", 0.0)
-    
-    # Only panic if ATR is actually meaningfully large (>0.15% of price),
-    # preventing bot lockups after recovering from zero-volatility/stale data.
-    if atr_pct_rank >= 0.90 and atr_pct > 0.0015:
+
+    metrics["volatility_risk_multiplier"] = 1.0
+    soft_atr = atr_pct_rank >= ATR_PANIC_WARN_RANK and atr_pct > 0.0015
+    hard_atr = atr_pct_rank >= ATR_PANIC_HARD_RANK and atr_pct >= ATR_PANIC_HARD_ATR_PCT
+
+    # High percentile ATR is normal in crypto clusters. Treat it as a sizing
+    # problem unless the absolute ATR is also extreme enough to make SL geometry
+    # unreliable. This prevents the 90th-percentile deadlock seen in the log.
+    if hard_atr:
         if now_ts < ATR_PANIC_COOLDOWN_UNTIL:
             logger.debug(f"[RiskEngine] ATR panic ignored (grace period: {int(ATR_PANIC_COOLDOWN_UNTIL - now_ts)}s remain)")
             ATR_PANIC_CONSECUTIVE = 0
         else:
             ATR_PANIC_CONSECUTIVE += 1
-            if ATR_PANIC_CONSECUTIVE >= 10:  # e.g., 10 cycles (~2.5 mins) of constant panic
-                logger.warning("[RiskEngine] Persistent ATR panic detected. Activating grace period for 15 mins.")
-                ATR_PANIC_COOLDOWN_UNTIL = now_ts + 900  # 15 min grace period
+            if ATR_PANIC_CONSECUTIVE >= 3:
+                logger.warning("[RiskEngine] Persistent hard ATR panic detected. Activating 15m observation cooldown.")
+                ATR_PANIC_COOLDOWN_UNTIL = now_ts + 900
                 ATR_PANIC_CONSECUTIVE = 0
             else:
-                logger.warning(f"[RiskEngine] 🛑 ATR PANIC HALT — ATR rank={atr_pct_rank:.0%} >= 90%. Volatility too extreme to trade. Blocking entry.")
+                logger.warning(
+                    f"[RiskEngine] ATR PANIC HALT - ATR rank={atr_pct_rank:.1%}, "
+                    f"ATR%={atr_pct:.3%}. Blocking entry."
+                )
                 _gate_stats_summary("atr_panic_halt")
-                return {**WAIT, "analysis": f"ATR PANIC HALT (rank={atr_pct_rank:.0%}). Volatility too extreme."}
+                return {**WAIT, "analysis": f"ATR PANIC HALT (rank={atr_pct_rank:.1%}, ATR={atr_pct:.3%})."}
+    elif soft_atr:
+        ATR_PANIC_CONSECUTIVE = 0
+        risk_mult = float(np.clip(ATR_PANIC_SOFT_RISK_MULT, 0.10, 1.0))
+        metrics["volatility_risk_multiplier"] = risk_mult
+        if now_ts - ATR_PANIC_LAST_WARN_TS >= 300:
+            logger.info(
+                f"[RiskEngine] ATR soft throttle - rank={atr_pct_rank:.1%}, "
+                f"ATR%={atr_pct:.3%}; risk multiplier={risk_mult:.2f}."
+            )
+            ATR_PANIC_LAST_WARN_TS = now_ts
     else:
         ATR_PANIC_CONSECUTIVE = 0
 
@@ -2169,6 +2219,28 @@ async def _compute_signal(
         strategy_type = "TREND"
         raw_direction = _strategy_trend(metrics)
         logger.info("[MetaModel] → TREND strategy")
+    elif regime == "VOLATILE":
+        strategy_type = "TREND"
+        raw_direction = _strategy_trend(metrics)
+        if raw_direction is None:
+            z_current = metrics.get("zScore", 0.0)
+            rsi = metrics.get("rsi", 50.0)
+            vol_z_thr = regime_p.get("z_threshold", 1.75)
+            if abs(z_current) >= vol_z_thr and metrics.get("tapeSpeed") != "SCREAMING":
+                raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
+                strategy_type = "MEAN_REVERSION"
+            if raw_direction:
+                logger.info(
+                    f"[MetaModel] VOLATILE -> {strategy_type} ({raw_direction}) "
+                    f"z={z_current:.2f} rsi={rsi:.1f}"
+                )
+            else:
+                logger.debug(
+                    f"[MetaModel] VOLATILE: no setup "
+                    f"(z={z_current:.2f}, rsi={rsi:.1f}, tape={metrics.get('tapeSpeed')})"
+                )
+        else:
+            logger.info("[MetaModel] VOLATILE -> TREND strategy")
     elif regime == "RANGE":
         strategy_type = "MEAN_REVERSION"
         raw_direction = _strategy_mean_reversion(
@@ -2467,6 +2539,7 @@ async def _compute_signal(
         "atr_pct":        atr_pct,
         "atr_pct_rank":   atr_pct_rank,
         "adaptive_mult":  adaptive_mult,
+        "risk_multiplier": round(float(metrics.get("volatility_risk_multiplier", 1.0)), 4),
         "sweep_wick":     sweep_wick if sweep else 0.0,
         "strategy_type":  strategy_type,
     }
@@ -2874,7 +2947,27 @@ async def execution_loop(
                     feed._reseed_task = asyncio.create_task(
                         feed._fetch_historical_candles_rest(), name="rest_reseed"
                     )
-                    feed._reseed_task.add_done_callback(_task_death_callback)
+                    def _reseed_done_callback(task: asyncio.Task):
+                        try:
+                            exc = task.exception()
+                        except asyncio.CancelledError:
+                            exc = None
+                        except Exception:
+                            exc = None
+                        if exc is not None:
+                            logger.critical(
+                                f"[Main] CRITICAL - task '{task.get_name()}' died with "
+                                f"{type(exc).__name__}: {exc}",
+                                exc_info=exc
+                            )
+                            if getattr(executor, "notifier", None):
+                                asyncio.create_task(
+                                    executor.notifier.send_error_alert(
+                                        f"Task '{task.get_name()}' crashed: {type(exc).__name__}: {str(exc)[:200]}"
+                                    )
+                                )
+
+                    feed._reseed_task.add_done_callback(_reseed_done_callback)
                 continue  # skip — data is stale
 
             # ── Live-position heartbeat poll (every 30s, independent of main loop) ──
@@ -3310,6 +3403,13 @@ async def execution_loop(
                         _peak_equity = _cur_equity
                     _risk_base = min(MAX_RISK_PCT, 0.75) if _cur_equity < 150.0 else MAX_RISK_PCT
                     _effective_risk = _drawdown_adjusted_risk(_cur_equity, _peak_equity, _risk_base)
+                    _signal_risk_mult = float(np.clip(float(_exec_signal.get("risk_multiplier", 1.0)), 0.10, 1.0))
+                    if _signal_risk_mult < 1.0:
+                        _effective_risk *= _signal_risk_mult
+                        logger.info(
+                            f"[RiskEngine] Signal risk multiplier applied: "
+                            f"{_signal_risk_mult:.2f} -> risk={_effective_risk:.3f}%"
+                        )
                     _fr = float(metrics.get("funding_rate", 0.0))
                     await executor.execute_signal(
                         SYMBOL, _exec_price, _exec_signal, _effective_risk,

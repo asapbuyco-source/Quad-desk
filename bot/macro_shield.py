@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 import numpy as np
 from collections import deque
@@ -22,6 +23,13 @@ class MacroShield:
         self.is_running = False
         
         self.target_events = ["CPI", "FOMC", "Non-Farm Employment", "NFP", "Federal Funds Rate"]
+        self._calendar_events = []
+        self._calendar_last_success = 0.0
+        self._calendar_backoff_until = 0.0
+        self._calendar_backoff_s = 600.0
+        self._calendar_cache_ttl_s = float(os.environ.get("MACRO_CALENDAR_CACHE_TTL_S", "10800"))
+        self._calendar_last_error_log = 0.0
+        self._calendar_initial_delay_done = False
         
         self._dxy_ticks = deque(maxlen=200)
         self._btc_ticks = deque(maxlen=200)
@@ -35,6 +43,60 @@ class MacroShield:
         self._te_value: float = 0.0
         self._last_candle_ts: float = 0.0
 
+    def _evaluate_calendar_events(self, events) -> None:
+        now = datetime.now(timezone.utc)
+        upcoming_usd_events = []
+
+        for ev in events:
+            if ev.get("country") != "USD" or ev.get("impact") != "High":
+                continue
+            title = ev.get("title", "")
+            if not any(t.lower() in title.lower() for t in self.target_events):
+                continue
+            date_str = ev.get("date")
+            try:
+                ev_time = datetime.fromisoformat(date_str)
+                if ev_time.tzinfo is None:
+                    ev_time = ev_time.replace(tzinfo=timezone.utc)
+                upcoming_usd_events.append((ev_time, title))
+            except Exception:
+                pass
+
+        upcoming_usd_events.sort(key=lambda x: x[0])
+
+        in_blackout = False
+        next_event_name = ""
+        next_event_time = None
+        for ev_time, title in upcoming_usd_events:
+            time_diff = (ev_time - now).total_seconds()
+
+            if -900 <= time_diff <= 900:
+                if not self.is_calendar_blackout:
+                    logger.warning(f"[MacroShield] ENTERING CALENDAR BLACKOUT: {title}")
+                in_blackout = True
+                next_event_name = title
+                next_event_time = ev_time
+                break
+
+            if time_diff > 900 and (next_event_time is None or ev_time < next_event_time):
+                next_event_name = title
+                next_event_time = ev_time
+
+        if self.is_calendar_blackout and not in_blackout:
+            logger.info("[MacroShield] CALENDAR BLACKOUT LIFTED. Resuming normal trading.")
+
+        self.is_calendar_blackout = in_blackout
+        self.next_event_name = next_event_name
+        self.next_event_time = next_event_time
+
+        if self.next_event_time:
+            diff_hours = (self.next_event_time - now).total_seconds() / 3600
+            if 0 < diff_hours < 2:
+                logger.info(
+                    f"[MacroShield] Upcoming High-Impact USD Event: "
+                    f"{self.next_event_name} in {diff_hours:.1f}h"
+                )
+
     async def run_calendar_loop(self):
         """
         Polls Forex Factory calendar every hour.
@@ -44,13 +106,42 @@ class MacroShield:
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         
         while self.is_running:
+            if not self._calendar_initial_delay_done:
+                symbol = os.environ.get("BOT_SYMBOL", "")
+                jitter_s = sum(ord(ch) for ch in symbol) % 90
+                if jitter_s:
+                    await asyncio.sleep(jitter_s)
+                self._calendar_initial_delay_done = True
+
             try:
+                now_ts = time.time()
+                if now_ts < self._calendar_backoff_until:
+                    if self._calendar_events:
+                        self._evaluate_calendar_events(self._calendar_events)
+                    await asyncio.sleep(min(600, max(60, self._calendar_backoff_until - now_ts)))
+                    continue
+
+                if (
+                    self._calendar_events
+                    and now_ts - self._calendar_last_success < self._calendar_cache_ttl_s
+                ):
+                    self._evaluate_calendar_events(self._calendar_events)
+                    cache_remaining = self._calendar_cache_ttl_s - (now_ts - self._calendar_last_success)
+                    await asyncio.sleep(min(600, max(60, cache_remaining)))
+                    continue
+
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.get(url)
                     resp.raise_for_status()
                     events = resp.json()
+                self._calendar_events = events
+                self._calendar_last_success = time.time()
+                self._calendar_backoff_s = 600.0
+                self._calendar_backoff_until = 0.0
                     
                 now = datetime.now(timezone.utc)
+                self.next_event_time = None
+                self.next_event_name = ""
                 upcoming_usd_events = []
                 
                 for ev in events:
@@ -103,9 +194,25 @@ class MacroShield:
                         logger.info(f"[MacroShield] Upcoming High-Impact USD Event: {self.next_event_name} in {diff_hours:.1f}h")
 
             except Exception as e:
-                logger.warning(f"[MacroShield] Failed to fetch ForexFactory calendar: {e}")
-                # Fail-open: do not block trading if API is down
-                self.is_calendar_blackout = False
+                status_code = getattr(getattr(e, "response", None), "status_code", None)
+                if status_code == 429:
+                    self._calendar_backoff_s = min(max(self._calendar_backoff_s * 2, 1800.0), 21600.0)
+                else:
+                    self._calendar_backoff_s = min(max(self._calendar_backoff_s * 2, 600.0), 3600.0)
+                self._calendar_backoff_until = time.time() + self._calendar_backoff_s
+
+                if self._calendar_events and time.time() - self._calendar_last_success < 86400:
+                    self._evaluate_calendar_events(self._calendar_events)
+                else:
+                    # Fail-open only when no usable calendar cache exists.
+                    self.is_calendar_blackout = False
+
+                if time.time() - self._calendar_last_error_log >= 1800:
+                    logger.warning(
+                        f"[MacroShield] Failed to fetch ForexFactory calendar: {e}. "
+                        f"Backing off for {self._calendar_backoff_s / 60:.0f}m."
+                    )
+                    self._calendar_last_error_log = time.time()
                 
             # Sleep 10 minutes between checks
             await asyncio.sleep(600)

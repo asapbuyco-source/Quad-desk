@@ -99,6 +99,21 @@ REGIME_PARAMS = {
         "htf_block":          True,  
         "cascade_cooldown_s": 240,   # STRATEGY-B: 4min (trend may still be valid)
     },
+    "VOLATILE": {
+        # Elevated ATR but no clean sweep. Prefer trend continuation; allow
+        # stricter mean reversion only when tape is not screaming.
+        "z_threshold":        1.75,
+        "atr_multiplier_sl":  2.25,
+        "ofi_bound":          0.20,
+        "min_confidence":     0.65,
+        "rr_target":          2.3,
+        "be_lock_trigger":    2.0,
+        "time_exit_sec":      720,
+        "panic_threshold":    10.0,
+        "candle_gate_sec":    60,
+        "htf_block":          True,
+        "cascade_cooldown_s": 240,
+    },
     "LIQUIDITY": {
         # Wall-proximity sweeps
         "z_threshold":        1.50,  # B3: raised from 1.22 (Student-t adj no longer applied)

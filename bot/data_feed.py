@@ -358,10 +358,10 @@ class BinanceDataFeed:
                     import asyncio as _asyncio
                     while self.is_running and not self.state._reconnect_event.is_set():
                         try:
-                            msg = await _asyncio.wait_for(ws.recv(), timeout=120)
+                            msg = await _asyncio.wait_for(ws.recv(), timeout=60)
                             await self._handle_message(msg)
                         except _asyncio.TimeoutError:
-                            logger.warning("[DataFeed] recv() timeout (120s) — connection may be frozen. Reconnecting...")
+                            logger.warning("[DataFeed] recv() timeout (60s) — connection may be frozen. Reconnecting...")
                             break
                         except websockets.exceptions.ConnectionClosedOK:
                             break
@@ -415,7 +415,7 @@ class BinanceDataFeed:
                     import asyncio as _asyncio
                     while self.is_running:
                         try:
-                            msg = await _asyncio.wait_for(ws.recv(), timeout=120)
+                            msg = await _asyncio.wait_for(ws.recv(), timeout=60)
                             await self._handle_message(msg)
                         except _asyncio.TimeoutError:
                             logger.warning("[DataFeed/aggTrade] recv() timeout — reconnecting...")
