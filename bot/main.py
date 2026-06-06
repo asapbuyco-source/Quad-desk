@@ -766,6 +766,7 @@ class _HMMRegimeClassifier:
             logger.warning(f"[HMM] /tmp/ state cache write failed: {e}")
 
     def _load_state(self):
+        import os
         import json
         import time
         load_persisted = os.environ.get("HMM_LOAD_PERSISTED_PARAMS", "false").strip().lower()
@@ -794,7 +795,6 @@ class _HMMRegimeClassifier:
             logger.warning(f"[HMM] Firestore state load failed: {e} — falling back to /tmp/")
 
         try:
-            import os
             if os.path.exists(self._persist_path):
                 with open(self._persist_path) as f:
                     data = json.load(f)
