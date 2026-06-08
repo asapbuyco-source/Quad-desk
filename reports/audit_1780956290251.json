@@ -1,0 +1,132 @@
+{
+  "by_symbol": {
+    "BTCUSDT": {
+      "avg_mae_pct": null,
+      "avg_mfe_pct": null,
+      "closed": 0,
+      "gate_counts": {
+        "bayes_floor_veto": 12,
+        "confidence_below_threshold": 6,
+        "signal_none": 1605,
+        "stale_feed": 15
+      },
+      "gaveback_loss_count": 0,
+      "losses": 0,
+      "net_pnl": null,
+      "trades": 0,
+      "win_rate": null,
+      "wins": 0
+    },
+    "ETHUSDT": {
+      "avg_mae_pct": null,
+      "avg_mfe_pct": null,
+      "closed": 0,
+      "gate_counts": {
+        "bayes_floor_veto": 14,
+        "confidence_below_threshold": 8,
+        "htf_counter_trend": 15,
+        "signal_none": 1636,
+        "stale_feed": 14
+      },
+      "gaveback_loss_count": 0,
+      "losses": 0,
+      "net_pnl": null,
+      "trades": 0,
+      "win_rate": null,
+      "wins": 0
+    },
+    "SOLUSDT": {
+      "avg_mae_pct": 0.0,
+      "avg_mfe_pct": 0.0,
+      "closed": 1,
+      "gate_counts": {
+        "bayes_floor_veto": 133,
+        "confidence_below_threshold": 106,
+        "htf_counter_trend": 81,
+        "signal_none": 1168,
+        "stale_feed": 15,
+        "time_exit": 1
+      },
+      "gaveback_loss_count": 0,
+      "losses": 0,
+      "net_pnl": 0.56,
+      "trades": 1,
+      "win_rate": 1.0,
+      "wins": 1
+    }
+  },
+  "gate_counts": {
+    "BTCUSDT": {
+      "bayes_floor_veto": 12,
+      "confidence_below_threshold": 6,
+      "signal_none": 1605,
+      "stale_feed": 15
+    },
+    "ETHUSDT": {
+      "bayes_floor_veto": 14,
+      "confidence_below_threshold": 8,
+      "htf_counter_trend": 15,
+      "signal_none": 1636,
+      "stale_feed": 14
+    },
+    "SOLUSDT": {
+      "bayes_floor_veto": 133,
+      "confidence_below_threshold": 106,
+      "htf_counter_trend": 81,
+      "signal_none": 1168,
+      "stale_feed": 15,
+      "time_exit": 1
+    }
+  },
+  "generated_at": "2026-06-08T22:39:09Z",
+  "global_gate_counts": {
+    "bayes_floor_veto": 159,
+    "confidence_below_threshold": 120,
+    "htf_counter_trend": 96,
+    "signal_none": 4409,
+    "stale_feed": 44,
+    "time_exit": 1
+  },
+  "input_lines": 25000,
+  "recommendations": [
+    "BTCUSDT: Bayes floor is the dominant blocker; calibrate symbol-specific Bayes priors/posteriors before lowering the global floor.",
+    "ETHUSDT: Bayes floor is the dominant blocker; calibrate symbol-specific Bayes priors/posteriors before lowering the global floor.",
+    "ETHUSDT: HTF counter-trend filter is frequently blocking; report supports symbol/regime-specific HTF tuning.",
+    "SOLUSDT: Bayes floor is the dominant blocker; calibrate symbol-specific Bayes priors/posteriors before lowering the global floor.",
+    "SOLUSDT: HTF counter-trend filter is frequently blocking; report supports symbol/regime-specific HTF tuning."
+  ],
+  "trades": [
+    {
+      "atr": null,
+      "atr_pct": 0.005889999999999999,
+      "bayes": 0.3099,
+      "confidence": 0.28,
+      "cvd": null,
+      "entry_price": 67.95,
+      "exit_price": 67.8,
+      "exit_ts": "21:21:48",
+      "htf": "BULL",
+      "id": 1,
+      "mae_pct": 0.0,
+      "mae_r": null,
+      "mfe_pct": 0.0,
+      "mfe_r": null,
+      "min_conf": 0.62,
+      "ofi": null,
+      "outcome": "TIME_EXIT",
+      "partials": [],
+      "pnl": 0.56,
+      "regime": "RANGE",
+      "rr": 1.8,
+      "side": "sell",
+      "signal_ts": "21:16:39",
+      "size": 3.76,
+      "stop_loss": 68.42,
+      "strategy": "",
+      "symbol": "SOLUSDT",
+      "take_profit": 67.1,
+      "verdict": "MEAN_REVERSAL_SHORT",
+      "z_score": 1.44
+    }
+  ]
+}

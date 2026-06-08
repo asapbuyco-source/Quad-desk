@@ -1,0 +1,2 @@
+id,symbol,verdict,side,signal_ts,entry_price,size,confidence,regime,strategy,htf,z_score,bayes,cvd,ofi,atr,atr_pct,stop_loss,take_profit,mfe_pct,mae_pct,mfe_r,mae_r,exit_ts,exit_price,pnl,outcome
+1,SOLUSDT,MEAN_REVERSAL_SHORT,sell,21:16:39,67.95,3.76,0.28,RANGE,,BULL,1.44,0.3099,,,,0.005889999999999999,68.42,67.1,0.0,0.0,,,21:21:48,67.8,0.56,TIME_EXIT

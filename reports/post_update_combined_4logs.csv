@@ -1,0 +1,3 @@
+id,symbol,verdict,side,signal_ts,entry_price,size,confidence,regime,strategy,htf,z_score,bayes,cvd,ofi,atr,atr_pct,stop_loss,take_profit,mfe_pct,mae_pct,mfe_r,mae_r,exit_ts,exit_price,pnl,outcome
+1,BTCUSDT,MEAN_REVERSAL_SHORT,sell,10:12:27,63374.0,0.005,0.37,RANGE,,BULL,1.11,0.4073,,,,0.00377,63677.13,63101.08,0.0,0.0,,,10:17:25,63320.6,0.27,TIME_EXIT
+2,SOLUSDT,MEAN_REVERSAL_SHORT,sell,21:16:39,67.95,3.76,0.28,RANGE,MEAN_REVERSION,BULL,1.44,0.3099,-21921.0,-0.1,239.6,0.005889999999999999,68.42,67.1,0.0,0.0,,,21:21:48,67.8,0.56,TIME_EXIT

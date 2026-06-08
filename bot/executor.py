@@ -1504,6 +1504,17 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         raw_pnl = (current_price - entry) * size if side == "buy" else (entry - current_price) * size
         est_pnl = raw_pnl - (entry + current_price) * size * self.TAKER_FEE
         est_pnl += float(pos.get("realized_partial_pnl") or 0.0)
+        hard_time_exit_sec = time_exit_sec * 2.0
+        if est_pnl <= 0.0 and age < hard_time_exit_sec:
+            if not pos.get("_time_exit_deferred_logged"):
+                logger.info(
+                    f"[Executor] Time exit deferred: age={age:.0f}s >= {time_exit_sec:.0f}s "
+                    f"but estimated net PnL=${est_pnl:.2f}. Waiting for SL/TP or hard max "
+                    f"{hard_time_exit_sec:.0f}s."
+                )
+                pos["_time_exit_deferred_logged"] = True
+            return False, 0.0
+
         logger.warning(
             f"[Executor] TIME EXIT: age={age:.0f}s >= {time_exit_sec:.0f}s "
             f"for {pos.get('symbol')} | estimated PnL=${est_pnl:.2f}"

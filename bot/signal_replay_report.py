@@ -55,6 +55,10 @@ EXIT_RE = re.compile(
     r".*?PnL=\$?(?P<pnl>[-+]?\d+(?:\.\d+)?)|pnl=\$?(?P<pnl2>[-+]?\d+(?:\.\d+)?)"
 )
 FILL_EXIT_RE = re.compile(r"fill=(?P<fill>[-+]?\d+(?:\.\d+)?)")
+EXCHANGE_PNL_RE = re.compile(
+    r"Exchange PnL:\s*\$?(?P<pnl>[-+]?\d+(?:\.\d+)?)\s+fill=(?P<fill>[-+]?\d+(?:\.\d+)?)",
+    re.I,
+)
 PARTIAL_RE = re.compile(r"Partial TP logged: size=(?P<size>[-+]?\d+(?:\.\d+)?) @ (?P<price>[-+]?\d+(?:\.\d+)?) PnL=(?P<pnl>[-+]?\d+(?:\.\d+)?)")
 PRICE_RE = re.compile(r"(?:price|mark|last|current_price)[=:]\s*(?P<price>[-+]?\d+(?:\.\d+)?)", re.I)
 HIGH_RE = re.compile(r"(?:high|candle_high)[=:]\s*(?P<high>[-+]?\d+(?:\.\d+)?)", re.I)
@@ -292,6 +296,7 @@ def replay(entries: list[dict[str, Any]]) -> dict[str, Any]:
     trades: list[Trade] = []
     open_by_symbol: dict[str, Trade] = {}
     pending_by_symbol: dict[str, Trade] = {}
+    recently_closed_by_symbol: dict[str, Trade] = {}
     gate_counts: dict[str, Counter] = defaultdict(Counter)
     global_counts = Counter()
 
@@ -381,6 +386,21 @@ def replay(entries: list[dict[str, Any]]) -> dict[str, Any]:
                 })
             continue
 
+        if m := EXCHANGE_PNL_RE.search(msg):
+            trade = recently_closed_by_symbol.get(symbol) or open_by_symbol.get(symbol)
+            if trade:
+                pnl = _to_float(m.group("pnl"))
+                fill = _to_float(m.group("fill"))
+                trade.exit_ts = _line_ts(row)
+                trade.exit_price = fill
+                trade.pnl = pnl
+                if trade.outcome in ("OPEN", "CLOSED"):
+                    trade.outcome = "WIN" if pnl > 0 else "LOSS"
+                trade.update_price(fill, fill, fill)
+                open_by_symbol.pop(trade.symbol, None)
+                recently_closed_by_symbol[trade.symbol] = trade
+            continue
+
         if "Position flat on exchange" in msg or " SL HIT" in msg or " TP HIT" in msg or "TIME EXIT" in msg:
             fill = None
             if m := FILL_EXIT_RE.search(msg):
@@ -416,6 +436,7 @@ def replay(entries: list[dict[str, Any]]) -> dict[str, Any]:
                 trade.outcome = "CLOSED"
             trade.update_price(fill, fill, fill)
             open_by_symbol.pop(trade.symbol, None)
+            recently_closed_by_symbol[trade.symbol] = trade
 
     trade_rows = [t.as_dict() for t in trades]
     by_symbol = _summarize_by_symbol(trade_rows, gate_counts)

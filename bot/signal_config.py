@@ -67,7 +67,7 @@ REGIME_PARAMS = {
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
         "partial_take_r":     0.75,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      300,   # A2: 5 min max hold in range-bound markets
+        "time_exit_sec":      900,   # Hold at least one 15m candle before regime time exit
         "panic_threshold":    10.0,  # FIX-R4: was 2.5 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    30,    # Was 45s. Faster entry
         "htf_block":          False, # Counter-HTF is the strategy in RANGE
@@ -83,7 +83,7 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "partial_take_r":     0.75,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      600,   # A2: 10 min max hold in neutral markets
+        "time_exit_sec":      1200,  # 20 min max hold; avoids premature churn on 15m signals
         "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          True,
@@ -99,7 +99,7 @@ REGIME_PARAMS = {
         "be_lock_trigger":    2.0,  # widened: let trend breathe — do not lock BE until 2×ATR profit
         "partial_take_r":     1.00,
         "partial_take_pct":   0.33,
-        "time_exit_sec":      900,   # A2: 15 min max hold in trend markets
+        "time_exit_sec":      1800,  # 30 min max hold; trend setups need room to resolve
         "panic_threshold":    10.0,  # FIX-R4: was 8.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    60,    # Was 90s
         "htf_block":          True,  
@@ -116,7 +116,7 @@ REGIME_PARAMS = {
         "be_lock_trigger":    2.0,
         "partial_take_r":     1.00,
         "partial_take_pct":   0.33,
-        "time_exit_sec":      720,
+        "time_exit_sec":      1200,
         "panic_threshold":    10.0,
         "candle_gate_sec":    60,
         "htf_block":          True,
@@ -132,7 +132,7 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "partial_take_r":     0.75,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      480,   # A2: 8 min max hold for liquidity sweeps
+        "time_exit_sec":      900,   # Hold at least one 15m candle for liquidity sweeps
         "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    45,    # Was 60s
         "htf_block":          False,
@@ -150,7 +150,7 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.0,   # Lock BE faster — squeeze resolves in 3-8 candles
         "partial_take_r":     0.75,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      300,   # 5 min max — don't hold through vacuum resolution
+        "time_exit_sec":      600,   # 10 min max for vacuum resolution without instant churn
         "panic_threshold":    5.0,   # Tighter panic — squeeze moves fast
         "candle_gate_sec":    30,
         "htf_block":          False,

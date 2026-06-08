@@ -1659,10 +1659,7 @@ def _apply_ulis_gate(
             boost = +0.01   # Aligned: momentum building in our direction
         else:
             boost = -0.02   # Conflicting: momentum building against us
-    if is_long:
-        adjusted = min(1.0, confidence + boost)
-    else:
-        adjusted = max(0.0, confidence - boost)
+    adjusted = float(np.clip(confidence + boost, 0.0, 1.0))
     logger.info(
         f"[ULIS] PASS — {verdict_str} | "
         f"vector={ulis['liquidity_vector']:.3f} | "
@@ -2435,21 +2432,11 @@ async def _compute_signal(
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
 
-    # --- AUDIT FIX 7: DIRECTIONAL BAYES FLOOR ---
-    # The 50% floor must be applied to the DIRECTIONAL probability:
-    #   LONG  → confidence = P(bull)  → require confidence >= 0.50
-    #   SHORT → confidence = P(bear) → require (1 - confidence) >= 0.50
-    # The old uniform check confidence < 0.50 blocked valid SHORT signals where
-    # P(bear) = 57% but P(bull) = 43% (confidence = 0.43 < 0.50 wrongly vetoed).
-    _is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
-    if _is_long_dir:
-        _directional_pass = confidence >= 0.50
-    else:
-        _directional_pass = (1.0 - confidence) >= 0.50
-    if not _directional_pass:
+    # _bayesian_fusion returns probability in the target signal direction.
+    # Do not invert shorts here; doing so lets weak short signals pass.
+    if confidence < 0.50:
         logger.warning(
-            f"[RiskEngine] 🛑 BAYES FLOOR HALT — "
-            f"{'P(bull)' if _is_long_dir else 'P(bear)'}={confidence:.2%} < 50%. "
+            f"[RiskEngine] 🛑 BAYES FLOOR HALT — P(direction)={confidence:.2%} < 50%. "
             f"Edge is worse than a coin flip."
         )
         _gate_stats_summary("bayes_floor_veto")
@@ -2495,13 +2482,11 @@ async def _compute_signal(
             f"[RiskEngine] Probation mode active ({probation_trades} trades remaining): "
             f"min_conf={regime_min_conf:.0%}, risk multiplier=0.50"
         )
-    _is_long_for_conf = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
-    _directional_conf = confidence if _is_long_for_conf else (1.0 - confidence)
-    if _directional_conf < regime_min_conf:
+    if confidence < regime_min_conf:
         _gate_stats_summary("confidence_below_threshold")
         return {**WAIT, "analysis": (
             f"Regime={regime} strategy={strategy_type} signal={raw_direction} "
-            f"but directional_P={_directional_conf:.2%} < regime threshold={regime_min_conf:.0%}"
+            f"but directional_P={confidence:.2%} < regime threshold={regime_min_conf:.0%}"
         )}
 
     # Stage 7: Risk engine — P0: adaptive ATR multipliers from regime params
@@ -2538,7 +2523,7 @@ async def _compute_signal(
     # We do NOT multiply by LEVERAGE here, because leverage magnifies both profit and fees equally.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
     round_trip_fee_rate = _EXCHANGE_FEE_RATE * 2            # entry + exit on notional
-    min_viable_tp_pct = round_trip_fee_rate * 1.2           # TP must cover 1.2× fees
+    min_viable_tp_pct = round_trip_fee_rate * 3.0           # TP must comfortably cover fees/slippage
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
