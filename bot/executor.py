@@ -61,6 +61,11 @@ class TradingExecutor:
         self.lock_expiry: float = 0.0
         self.last_panic_reason: str = ""
         self.failed_order_ts: float = 0.0  # Cooldown after live order failure (prevents -2015 spam)
+        self._live_exit_last_poll_ts: float = 0.0
+        self._live_exit_poll_interval_s: float = 20.0
+        self._live_exit_backoff_until: float = 0.0
+        self._live_exit_backoff_s: float = 30.0
+        self._live_exit_last_error_log: float = 0.0
         # P0-3 FIX: Dedicated flag set when emergency_flatten fails.
         # A boolean survives the heartbeat poll clearing active_position; a sentinel dict does not.
         self._flatten_failed: bool = False
@@ -402,7 +407,8 @@ class TradingExecutor:
                    entry: float, stop_loss: float, take_profit: float,
                    ulis_verdict: str = "",
                    metrics: dict = None,
-                   signal: dict = None):
+                   signal: dict = None,
+                   size: float = 0.0):
         """Write a trade record to Firestore `botTrades` collection.
         
         5.6: Includes full signal attribution chain so post-trade analysis can
@@ -421,6 +427,7 @@ class TradingExecutor:
                 "side":           side,
                 "verdict":        verdict,
                 "entry_price":    entry,
+                "size":           float(size or 0.0),
                 "stop_loss":      stop_loss,
                 "take_profit":    take_profit,
                 "timestamp":      fs.SERVER_TIMESTAMP,
@@ -436,6 +443,8 @@ class TradingExecutor:
                 "ofi_tanh":       round(m.get("ofi",          0.0), 4),  # tanh (-1,+1)
                 "bayesian":       round(m.get("bayesianPosterior", 0.5), 4),
                 "confidence":     round(float(s.get("confidence", 0.0)), 4),
+                "partial_take_r":  round(float(s.get("partial_take_r", 0.0) or 0.0), 4),
+                "partial_take_pct": round(float(s.get("partial_take_pct", 0.0) or 0.0), 4),
                 "atr_pct":        round(m.get("atr_pct",      0.0), 6),
                 "skewness":       round(m.get("skewness",     0.0), 4),
             }
@@ -810,19 +819,30 @@ class TradingExecutor:
                 f"| equity=${equity:.2f} risk={max_risk_pct}% "
                 f"| ULIS={ulis_verdict}"
             )
-            doc_id = self._log_trade(ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict)
+            doc_id = self._log_trade(
+                ex_symbol, side, verdict, fill_price, stop_loss, take_profit,
+                ulis_verdict, signal=signal, size=raw_size
+            )
+            initial_risk_dist = abs(fill_price - stop_loss)
             self.active_position = {
                 "symbol":           ex_symbol,
                 "side":             side,
                 "size":             raw_size,
                 "entry_price":      fill_price,
                 "stop_loss":        stop_loss,
+                "initial_stop_loss": stop_loss,
+                "initial_risk_dist": initial_risk_dist,
                 "take_profit":      take_profit,
                 "dry_run":          True,
                 "trade_doc_id":     doc_id,
                 "be_lock_trigger":  signal.get("be_lock_trigger", 1.0),
+                "partial_take_r":   signal.get("partial_take_r", 0.75),
+                "partial_take_pct": signal.get("partial_take_pct", 0.50),
+                "_partial_taken":   False,
+                "realized_partial_pnl": 0.0,
                 "time_exit_sec":    signal.get("time_exit_sec", 600),
                 "atr_at_entry":     signal.get("atr_at_entry", 0.0),
+                "entry_ts":         time.time(),
             }
             # Lock released here — Telegram call is outside the critical section
             await self.notifier.send_trade_alert(
@@ -917,14 +937,18 @@ class TradingExecutor:
                 nonlocal trade_doc_id
                 if trade_doc_id is None:
                     trade_doc_id = self._log_trade(
-                        ex_symbol, side, verdict, fill_price, stop_loss, take_profit, ulis_verdict
+                        ex_symbol, side, verdict, fill_price, stop_loss, take_profit,
+                        ulis_verdict, signal=signal, size=fmt_size
                     )
+                initial_risk_dist = abs(fill_price - stop_loss)
                 self.active_position = {
                     "symbol":           ex_symbol,
                     "side":             side,
                     "size":             fmt_size,
                     "entry_price":      fill_price,
                     "stop_loss":        stop_loss,
+                    "initial_stop_loss": stop_loss,
+                    "initial_risk_dist": initial_risk_dist,
                     "take_profit":      take_profit,
                     "order_id":         order.get("id"),
                     "sl_order_id":      sl_order_id,
@@ -934,8 +958,13 @@ class TradingExecutor:
                     "dry_run":          False,
                     "trade_doc_id":     trade_doc_id,
                     "be_lock_trigger":  signal.get("be_lock_trigger", 1.0),
+                    "partial_take_r":   signal.get("partial_take_r", 0.75),
+                    "partial_take_pct": signal.get("partial_take_pct", 0.50),
+                    "_partial_taken":   False,
+                    "realized_partial_pnl": 0.0,
                     "time_exit_sec":    signal.get("time_exit_sec", 600),
                     "atr_at_entry":     signal.get("atr_at_entry", 0.0),
+                    "entry_ts":         time.time(),
                 }
 
             if self.is_futures:
@@ -1189,6 +1218,8 @@ class TradingExecutor:
         """Moves the current Stop Loss to the entry price (Breakeven)."""
         if self.dry_run:
             logger.info("[Executor] DRY-RUN: Simulated moving SL to breakeven.")
+            if self.active_position:
+                self.active_position["stop_loss"] = entry_price
             return
 
         logger.info(f"[Executor] Moving Stop Loss to Breakeven @ {entry_price:.2f}")
@@ -1213,6 +1244,9 @@ class TradingExecutor:
                 }
             )
             logger.info("[Executor] Phase 1 Success: New Breakeven SL safely placed on exchange.")
+            self.active_position["stop_loss"] = entry_price
+            self.active_position["sl_order_id"] = new_order.get("id")
+            self.active_position["sl_placed"] = True
             
             # Phase 2: Now that new SL is secure, cancel the OLD Stop Loss
             open_orders = await self.exchange.fetch_open_orders(symbol)
@@ -1237,8 +1271,160 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
 {err_msg}\
 *Note: Original Stop Loss is still active.*")
 
+    def _estimate_partial_pnl(self, pos: dict, exit_price: float, partial_size: float) -> float:
+        entry = float(pos.get("entry_price") or exit_price)
+        side = pos.get("side", "buy")
+        raw = (exit_price - entry) * partial_size if side == "buy" else (entry - exit_price) * partial_size
+        fees = (entry + exit_price) * partial_size * self.TAKER_FEE
+        return raw - fees
+
+    async def _restore_reduced_exit_orders(self, pos: dict, remaining_size: float) -> bool:
+        """Rebuild futures SL/TP orders after a live partial close."""
+        if not self.is_futures:
+            return False
+
+        symbol = pos["symbol"]
+        close_side = "sell" if pos.get("side") == "buy" else "buy"
+        stop_loss = float(pos.get("stop_loss") or 0.0)
+        take_profit = float(pos.get("take_profit") or 0.0)
+        fmt_remaining = float(self.exchange.amount_to_precision(symbol, remaining_size))
+        if fmt_remaining <= 0.0 or stop_loss <= 0.0:
+            return False
+
+        try:
+            await self.exchange.cancel_all_orders(symbol)
+        except Exception as e:
+            logger.warning(f"[Executor] Partial TP: cancel_all_orders failed before resize: {e}")
+
+        sl_order = await self.exchange.create_order(
+            symbol=symbol,
+            type="STOP_MARKET",
+            side=close_side,
+            amount=fmt_remaining,
+            params={
+                "stopPrice": float(self.exchange.price_to_precision(symbol, stop_loss)),
+                "reduceOnly": True,
+                "workingType": "MARK_PRICE",
+            },
+        )
+
+        tp_order = None
+        if take_profit > 0.0:
+            tp_order = await self.exchange.create_order(
+                symbol=symbol,
+                type="TAKE_PROFIT_MARKET",
+                side=close_side,
+                amount=fmt_remaining,
+                params={
+                    "stopPrice": float(self.exchange.price_to_precision(symbol, take_profit)),
+                    "reduceOnly": True,
+                    "workingType": "MARK_PRICE",
+                },
+            )
+
+        pos["size"] = fmt_remaining
+        pos["sl_order_id"] = sl_order.get("id")
+        pos["tp_order_id"] = tp_order.get("id") if tp_order else None
+        pos["sl_placed"] = True
+        pos["tp_placed"] = bool(tp_order)
+        if pos.get("requeue_tp_size"):
+            pos["requeue_tp_size"] = fmt_remaining
+        return True
+
+    async def _maybe_take_partial_profit(self, current_price: float) -> None:
+        pos = self.active_position
+        if not pos or pos.get("_partial_taken", False):
+            return
+
+        partial_take_r = float(pos.get("partial_take_r") or 0.0)
+        partial_take_pct = float(pos.get("partial_take_pct") or 0.0)
+        if partial_take_r <= 0.0 or partial_take_pct <= 0.0:
+            return
+
+        entry = float(pos.get("entry_price") or 0.0)
+        size = float(pos.get("size") or 0.0)
+        initial_stop = float(pos.get("initial_stop_loss") or 0.0)
+        risk_dist = float(pos.get("initial_risk_dist") or abs(entry - initial_stop))
+        if entry <= 0.0 or size <= 0.0 or risk_dist <= 0.0:
+            return
+
+        side = pos.get("side", "buy")
+        favorable_move = current_price - entry if side == "buy" else entry - current_price
+        trigger = partial_take_r * risk_dist
+        if favorable_move < trigger:
+            return
+
+        partial_size = size * min(max(partial_take_pct, 0.0), 0.95)
+        remaining_size = size - partial_size
+        if partial_size <= 0.0 or remaining_size <= 0.0:
+            return
+
+        partial_pnl = self._estimate_partial_pnl(pos, current_price, partial_size)
+        logger.info(
+            f"[Executor] PARTIAL TP trigger hit: move={favorable_move:.2f} "
+            f">= {partial_take_r:.2f}R ({trigger:.2f}). Closing {partial_take_pct:.0%}."
+        )
+
+        if self.dry_run:
+            pos["size"] = remaining_size
+            pos["_partial_taken"] = True
+            pos["realized_partial_pnl"] = float(pos.get("realized_partial_pnl") or 0.0) + partial_pnl
+            self._log_partial_take(pos.get("trade_doc_id"), partial_size, current_price, partial_pnl, side)
+            if not pos.get("_be_locked", False):
+                await self.move_sl_to_breakeven(pos["symbol"], entry)
+                pos["_be_locked"] = True
+            return
+
+        if not self.is_futures:
+            logger.warning("[Executor] Partial TP skipped: live partial resizing is only enabled for futures.")
+            return
+
+        close_side = "sell" if side == "buy" else "buy"
+        symbol = pos["symbol"]
+        fmt_partial = float(self.exchange.amount_to_precision(symbol, partial_size))
+        fmt_remaining = float(self.exchange.amount_to_precision(symbol, remaining_size))
+        if fmt_partial <= 0.0 or fmt_remaining <= 0.0:
+            return
+
+        try:
+            await self.exchange.create_market_order(
+                symbol,
+                close_side,
+                fmt_partial,
+                params={"reduceOnly": True},
+            )
+            pos["size"] = fmt_remaining
+            pos["_partial_taken"] = True
+            pos["realized_partial_pnl"] = float(pos.get("realized_partial_pnl") or 0.0) + partial_pnl
+            self._log_partial_take(pos.get("trade_doc_id"), fmt_partial, current_price, partial_pnl, side)
+
+            if not pos.get("_be_locked", False):
+                pos["stop_loss"] = entry
+                pos["_be_locked"] = True
+
+            restored = await self._restore_reduced_exit_orders(pos, fmt_remaining)
+            if restored:
+                logger.info(
+                    f"[Executor] Partial TP complete. Remaining size={pos['size']} "
+                    "with resized SL/TP protection."
+                )
+            else:
+                logger.error("[Executor] Partial TP executed but exit-order resize failed. Monitor manually.")
+                if self.notifier:
+                    await self.notifier.send_error_alert(
+                        f"Partial TP executed for {symbol}, but resized SL/TP placement failed. Monitor manually."
+                    )
+        except Exception as e:
+            logger.error(f"[Executor] Partial TP failed: {e}", exc_info=True)
+            if self.notifier:
+                await self.notifier.send_error_alert(f"Partial TP failed for {symbol}: {e}")
+
     async def check_breakeven_and_partials(self, current_price: float, atr: float, metrics: dict = None) -> None:
         """Check if breakeven stop should be locked, based on be_lock_trigger threshold."""
+        if not self.active_position:
+            return
+        pos = self.active_position
+        await self._maybe_take_partial_profit(current_price)
         if not self.active_position:
             return
         pos = self.active_position
@@ -1290,6 +1476,48 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             )
             await self.move_sl_to_breakeven(pos["symbol"], entry_price)
             pos["_be_locked"] = True
+
+    async def check_time_exit(self, current_price: float) -> tuple:
+        """Close positions that exceed their regime max-hold window."""
+        if not self.active_position:
+            return False, 0.0
+
+        pos = self.active_position
+        time_exit_sec = float(pos.get("time_exit_sec") or 0.0)
+        entry_ts = float(pos.get("entry_ts") or 0.0)
+        if time_exit_sec <= 0.0 or entry_ts <= 0.0:
+            return False, 0.0
+
+        age = time.time() - entry_ts
+        if age < time_exit_sec:
+            return False, 0.0
+
+        side = pos.get("side", "buy")
+        size = float(pos.get("size") or 0.0)
+        entry = float(pos.get("entry_price") or current_price)
+        if size <= 0.0:
+            logger.warning("[Executor] Time exit found zero-size position. Clearing stale state.")
+            self.active_position = None
+            self.pending_order = None
+            return False, 0.0
+
+        raw_pnl = (current_price - entry) * size if side == "buy" else (entry - current_price) * size
+        est_pnl = raw_pnl - (entry + current_price) * size * self.TAKER_FEE
+        est_pnl += float(pos.get("realized_partial_pnl") or 0.0)
+        logger.warning(
+            f"[Executor] TIME EXIT: age={age:.0f}s >= {time_exit_sec:.0f}s "
+            f"for {pos.get('symbol')} | estimated PnL=${est_pnl:.2f}"
+        )
+
+        if self.dry_run:
+            self._update_trade_exit(pos.get("trade_doc_id"), current_price, est_pnl)
+            self.active_position = None
+            self.pending_order = None
+            return True, est_pnl
+
+        self._last_panic_pnl = est_pnl
+        realized_pnl = await self.emergency_flatten("Regime time exit")
+        return True, float(realized_pnl if realized_pnl is not None else getattr(self, "_last_panic_pnl", est_pnl))
 
     async def check_position_exit(self, current_price: float,
                                    candle_high: float = None,
@@ -1357,6 +1585,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
 
                 raw_pnl = (exit_price - pos["entry_price"]) * size if side == "buy" else (pos["entry_price"] - exit_price) * size
                 net_pnl = raw_pnl - (entry_fee + exit_fee)
+                net_pnl += float(pos.get("realized_partial_pnl") or 0.0)
                 logger.info(f"[Executor] {exit_type} HIT{' (SHORT)' if side == 'sell' else ''}. Net PnL=${net_pnl:.2f} (Fees: ${entry_fee+exit_fee:.2f})")
 
                 if hasattr(self, "notifier") and self.notifier:
@@ -1403,6 +1632,12 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             return False, 0.0
 
         symbol = pos.get("symbol", "")
+        now = time.time()
+        if now < self._live_exit_backoff_until:
+            return False, 0.0
+        if self._live_exit_last_poll_ts and (now - self._live_exit_last_poll_ts) < self._live_exit_poll_interval_s:
+            return False, 0.0
+        self._live_exit_last_poll_ts = now
         logger.debug(f"[LiveExit] Polling exchange for {symbol}…")
 
         try:
@@ -1456,6 +1691,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                                else (entry - fill_price) * size)
                     fees = (entry + fill_price) * size * self.TAKER_FEE
                     net_pnl = raw_pnl - fees
+                net_pnl += float(pos.get("realized_partial_pnl") or 0.0)
 
                 exit_type = "TP" if net_pnl > 0 else "SL"
                 logger.info(
@@ -1473,10 +1709,19 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                 return True, net_pnl
 
             # Symbol still present in open_syms → position still live
+            self._live_exit_backoff_s = 30.0
+            self._live_exit_backoff_until = 0.0
             return False, 0.0
 
         except Exception as e:
-            logger.warning(f"[LiveExit] poll error: {e}")
+            msg = str(e)
+            if "429" in msg or "Too Many Requests" in msg or "-1003" in msg:
+                self._live_exit_backoff_until = time.time() + self._live_exit_backoff_s
+                self._live_exit_backoff_s = min(self._live_exit_backoff_s * 2, 900.0)
+            now = time.time()
+            if now - self._live_exit_last_error_log >= 60:
+                logger.warning(f"[LiveExit] poll error: {e}")
+                self._live_exit_last_error_log = now
             return False, 0.0
 
 
@@ -1563,7 +1808,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                     pass
 
                 # 2. Market close
-                await self.exchange.create_market_order(ex_symbol, close_side, size)
+                await self.exchange.create_market_order(ex_symbol, close_side, size, params={"reduceOnly": True})
 
             logger.info(f"[Executor] Flattened {ex_symbol} ✅")
 
@@ -1592,10 +1837,12 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                         est_pnl = raw - (entry + fill_price) * size * self.TAKER_FEE
                 except Exception as fe:
                     logger.warning(f"[Flatten] Could not fetch fill: {fe}")
+            est_pnl += float(pos.get("realized_partial_pnl") or 0.0)
             # HIGH-1 FIX: pass real fill_price (not 0.0) to Firestore
             self._last_panic_pnl = est_pnl  # BUG-3: expose for main.py daily_pnl update
             self._update_trade_exit(pos.get("trade_doc_id"), fill_price, est_pnl)
             self.active_position = None
+            return est_pnl
         except Exception as e:
             # 3.4 FIX: Critical failure requires immediate human action.
             # Fire Telegram and log at CRITICAL level regardless of any other state.
@@ -1619,6 +1866,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             # A separate boolean survives the poll clearing active_position.
             self._flatten_failed = True
             self.active_position = None  # Clear position — halt is enforced via _flatten_failed flag
+            return None
 
     async def attempt_tp_requeue(self) -> bool:
         """

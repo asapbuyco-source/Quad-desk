@@ -158,6 +158,10 @@ class BinanceDataFeed:
         self.is_running = False
         self._rest_fetch_lock = asyncio.Lock()
         self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
+        self._funding_backoff_until: float = 0.0
+        self._funding_backoff_s: float = 60.0
+        self._funding_last_error_log: float = 0.0
+        self._funding_poll_interval_s: float = 300.0
         self._last_kline_frame_ts: float = time.time()  # epoch-seconds of last kline WS frame received
         # H1 FIX: Persistent httpx client for REST API calls — reused across
         # _fetch_funding_rate and _fetch_historical_candles_rest.  Eliminates
@@ -213,6 +217,12 @@ class BinanceDataFeed:
         Endpoint: GET /fapi/v1/premiumIndex?symbol=BTCUSDT
         Runs every 60 s; independent signal used by ULIS engine.
         """
+        now = time.time()
+        if now < self._funding_backoff_until:
+            return
+        if self._last_funding_fetch and (now - self._last_funding_fetch) < self._funding_poll_interval_s:
+            return
+
         url = f"{self.rest_url}/fapi/v1/premiumIndex"
         params = {"symbol": self.symbol.upper()}
         import os
@@ -225,6 +235,9 @@ class BinanceDataFeed:
             data = resp.json()
             rate = float(data.get("lastFundingRate", 0.0))
             self.state.funding_rate = rate
+            self._last_funding_fetch = time.time()
+            self._funding_backoff_s = 60.0
+            self._funding_backoff_until = 0.0
             # NEW: Track Futures-Spot basis for SL/TP price correction
             mark_price = float(data.get("markPrice", 0.0))
             index_price = float(data.get("indexPrice", 0.0))
@@ -240,7 +253,14 @@ class BinanceDataFeed:
                 f"Basis: {getattr(self.state, 'basis', 0.0):+.2f}"
             )
         except Exception as e:
-            logger.warning(f"[DataFeed] Failed to fetch funding rate: {e}")
+            msg = str(e)
+            if "429" in msg or "Too Many Requests" in msg:
+                self._funding_backoff_until = time.time() + self._funding_backoff_s
+                self._funding_backoff_s = min(self._funding_backoff_s * 2, 1800.0)
+            now = time.time()
+            if now - self._funding_last_error_log >= 300:
+                logger.warning(f"[DataFeed] Failed to fetch funding rate: {e}")
+                self._funding_last_error_log = now
 
     async def funding_rate_loop(self):
         """
@@ -249,11 +269,12 @@ class BinanceDataFeed:
         Removes the funding fetch from inside the WS handler (which was
         silently dropped on reconnect without retry).
         """
-        await asyncio.sleep(5)
+        # Stagger multi-symbol deployments so BTC/ETH/SOL do not hit REST together.
+        await asyncio.sleep(5 + (abs(hash(self.symbol)) % 20))
         while self.is_running:
             await self._fetch_funding_rate()
             try:
-                await asyncio.sleep(60)
+                await asyncio.sleep(self._funding_poll_interval_s)
             except asyncio.CancelledError:
                 break
 

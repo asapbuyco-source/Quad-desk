@@ -176,6 +176,41 @@ else:
     # BTC/USDT  → BTCUSDT  |  BTCUSDT → BTCUSDT
     FEED_SYMBOL = SYMBOL.replace("/", "").split(":")[0]
 
+def _normalise_symbol_id(value: str) -> str:
+    return (value or "").upper().replace("/", "").replace(":USDT", "").replace("-", "")
+
+def _position_symbol_id(position: Dict[str, Any]) -> str:
+    info = position.get("info") or {}
+    return _normalise_symbol_id(
+        position.get("symbol")
+        or info.get("symbol")
+        or info.get("pair")
+        or ""
+    )
+
+def _position_contracts(position: Dict[str, Any]) -> float:
+    info = position.get("info") or {}
+    raw = (
+        position.get("contracts")
+        or position.get("positionAmt")
+        or info.get("positionAmt")
+        or 0
+    )
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+def _position_matches_feed_symbol(position: Dict[str, Any]) -> bool:
+    pos_id = _position_symbol_id(position)
+    feed_id = _normalise_symbol_id(FEED_SYMBOL)
+    symbol_id = _normalise_symbol_id(SYMBOL)
+    return bool(pos_id and pos_id in {feed_id, symbol_id})
+
+def _trade_matches_feed_symbol(trade: Dict[str, Any]) -> bool:
+    trade_symbol = _normalise_symbol_id(trade.get("symbol") or trade.get("feed_symbol") or "")
+    return trade_symbol in {_normalise_symbol_id(FEED_SYMBOL), _normalise_symbol_id(SYMBOL)}
+
 # P10 FIX: Firestore document ID for risk ledger persistence
 _RISK_LEDGER_DOC_ID = "riskLedger"
 
@@ -2449,6 +2484,17 @@ async def _compute_signal(
         regime_p["min_confidence"] - cold_start_discount,
         MIN_CONFIDENCE   # P12 FIX: was hardcoded 0.50, now uses the env-bridged floor
     )
+    probation_trades = int(getattr(quant, "_risk_probation_trades_remaining", 0) or 0) if quant else 0
+    if probation_trades > 0:
+        regime_min_conf = min(0.85, regime_min_conf + 0.05)
+        metrics["volatility_risk_multiplier"] = min(
+            float(metrics.get("volatility_risk_multiplier", 1.0)),
+            0.50,
+        )
+        logger.info(
+            f"[RiskEngine] Probation mode active ({probation_trades} trades remaining): "
+            f"min_conf={regime_min_conf:.0%}, risk multiplier=0.50"
+        )
     _is_long_for_conf = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
     _directional_conf = confidence if _is_long_for_conf else (1.0 - confidence)
     if _directional_conf < regime_min_conf:
@@ -2534,6 +2580,8 @@ async def _compute_signal(
         "ulis_verdict":   ulis_verdict_str,
         "regime":         regime,
         "be_lock_trigger": regime_p.get("be_lock_trigger", 1.0),
+        "partial_take_r": regime_p.get("partial_take_r", 0.75),
+        "partial_take_pct": regime_p.get("partial_take_pct", 0.50),
         "time_exit_sec":  regime_p.get("time_exit_sec", 600),
         "atr_at_entry":   atr,
         "atr_pct":        atr_pct,
@@ -2617,6 +2665,10 @@ async def _process_exit(
         if len(loss_times) >= 3:
             stats["cooldown_until"] = now_t + 1800
             stats["loss_times"] = []
+            if hasattr(quant, "_risk_probation_trades_remaining"):
+                quant._risk_probation_trades_remaining = max(quant._risk_probation_trades_remaining, 2)
+            else:
+                quant._risk_probation_trades_remaining = 2
             logger.error("[RiskManager] 3 SL exits within 30 min — 30-min cooldown active.")
             if executor.notifier:
                 await executor.notifier.send_message(
@@ -2932,10 +2984,10 @@ async def execution_loop(
                 "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
             }.get(CANDLE_INTERVAL, 900)
             _last_candle_age = time.time() - float(feed.state.candles[-1]["time"])
-            if _last_candle_age > _interval_secs * 1.5:  # FIX-STALE: tightened from 2.5x to 1.5x
+            if _last_candle_age > _interval_secs * 1.1:
                 logger.warning(
                     f"[Main] ⚠️ Candle feed STALE ({_last_candle_age:.0f}s old, "
-                    f">{_interval_secs * 1.5:.0f}s threshold). "
+                    f">{_interval_secs * 1.1:.0f}s threshold). "
                     f"Triggering REST prefetch and skipping cycle."
                 )
                 # FIX-STALE: Force WS reconnect so dead socket is replaced.
@@ -3097,10 +3149,11 @@ async def execution_loop(
                     if _cached_positions is None:
                         _cached_positions = await executor.exchange.fetch_positions()
                     positions = _cached_positions
-                    exchange_has_pos = any(
-                        abs(float(p.get("contracts", 0) or p.get("positionAmt", 0))) > 0.0001
-                        for p in positions
-                    )
+                    relevant_positions = [
+                        p for p in positions
+                        if _position_matches_feed_symbol(p) and abs(_position_contracts(p)) > 0.0001
+                    ]
+                    exchange_has_pos = bool(relevant_positions)
                     bot_has_pos = executor.active_position is not None
                     if exchange_has_pos and not bot_has_pos:
                         _now_ts = time.time()
@@ -3115,20 +3168,35 @@ async def execution_loop(
                                     trades_ref = db.collection("botTrades") \
                                         .where("mode", "==", "LIVE") \
                                         .where("exit_price", "==", None) \
-                                        .order_by("ts_ms", direction="DESCENDING") \
-                                        .limit(1)
-                                    open_trades = list(trades_ref.stream())
+                                        .limit(50)
+                                    open_trades = [
+                                        doc for doc in trades_ref.stream()
+                                        if _trade_matches_feed_symbol(doc.to_dict())
+                                    ]
+                                    open_trades.sort(
+                                        key=lambda doc: int((doc.to_dict() or {}).get("ts_ms") or 0),
+                                        reverse=True,
+                                    )
                                     if open_trades:
                                         t = open_trades[0].to_dict()
+                                        _entry = float(t.get("entry_price", 0.0))
+                                        _stop = float(t.get("stop_loss", 0.0))
                                         executor.active_position = {
                                             "symbol":      t.get("symbol", FEED_SYMBOL),
                                             "side":        t.get("side", "buy"),
                                             "size":        float(t.get("size", 0.0)),
-                                            "entry_price": float(t.get("entry_price", 0.0)),
-                                            "stop_loss":   float(t.get("stop_loss", 0.0)),
+                                            "entry_price": _entry,
+                                            "stop_loss":   _stop,
+                                            "initial_stop_loss": _stop,
+                                            "initial_risk_dist": abs(_entry - _stop),
                                             "take_profit": float(t.get("take_profit", 0.0)),
                                             "dry_run":     False,
                                             "trade_doc_id": open_trades[0].id,
+                                            "partial_take_r": float(t.get("partial_take_r", 0.75) or 0.75),
+                                            "partial_take_pct": float(t.get("partial_take_pct", 0.50) or 0.50),
+                                            "_partial_taken": bool(t.get("_partial_taken", False)),
+                                            "realized_partial_pnl": float(t.get("realized_partial_pnl", 0.0) or 0.0),
+                                            "entry_ts":     float(t.get("ts_ms", 0) or 0) / 1000.0 or time.time(),
                                         }
                                         logger.warning(
                                             f"[Reconciliation] Re-hydrated position from Firestore: "
@@ -3139,9 +3207,46 @@ async def execution_loop(
                                 logger.warning(f"[Reconciliation] Re-hydration failed: {rehydrate_err}")
 
                             if not _rehydrated:
+                                raw_position = relevant_positions[0]
+                                raw_contracts = _position_contracts(raw_position)
+                                raw_info = raw_position.get("info") or {}
+                                raw_side = str(raw_position.get("side") or raw_info.get("positionSide") or "").lower()
+                                synthetic_side = "sell" if raw_side in ("short", "sell") or raw_contracts < 0 else "buy"
+                                try:
+                                    synthetic_symbol = executor._get_ccxt_symbol(FEED_SYMBOL)
+                                except Exception:
+                                    synthetic_symbol = raw_position.get("symbol") or SYMBOL
+                                try:
+                                    synthetic_entry = float(
+                                        raw_position.get("entryPrice")
+                                        or raw_position.get("entry_price")
+                                        or raw_info.get("entryPrice")
+                                        or metrics.get("price")
+                                        or 0.0
+                                    )
+                                except (TypeError, ValueError):
+                                    synthetic_entry = float(metrics.get("price") or 0.0)
+                                executor.active_position = {
+                                    "symbol": synthetic_symbol,
+                                    "side": synthetic_side,
+                                    "size": abs(raw_contracts),
+                                    "entry_price": synthetic_entry,
+                                    "stop_loss": 0.0,
+                                    "initial_stop_loss": 0.0,
+                                    "initial_risk_dist": 0.0,
+                                    "take_profit": 0.0,
+                                    "dry_run": False,
+                                    "trade_doc_id": None,
+                                    "partial_take_r": 0.0,
+                                    "partial_take_pct": 0.0,
+                                    "_partial_taken": False,
+                                    "realized_partial_pnl": 0.0,
+                                    "source": "exchange_reconciliation",
+                                    "entry_ts": time.time(),
+                                }
                                 logger.critical(
                                     f"[Reconciliation] Orphan position detected (attempt #{_orphan_flatten_attempts}) — "
-                                    "exchange has open position but bot has no tracking. "
+                                    f"exchange has open {FEED_SYMBOL} position but bot has no tracking. "
                                     "Emergency flatten initiated."
                                 )
                                 try:
@@ -3231,6 +3336,10 @@ async def execution_loop(
                         f" | now={current_price:.2f} | PnL={pnl_pct:+.2f}%"
                         f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
                     )
+                    _time_exited, _time_pnl = await executor.check_time_exit(current_price)
+                    if _time_exited:
+                        await _process_exit(_time_pnl, pos.get("regime", "NEUTRAL"), stats, quant, executor)
+                        continue
                     await executor.check_breakeven_and_partials(
                         current_price, metrics.get("atr", 0.0), metrics
                     )
@@ -3278,6 +3387,8 @@ async def execution_loop(
             # two losses immediately after the cooldown trigger another 2-hour pause.
             if time.time() >= stats.get("cooldown_until", 0.0) and stats.get("_was_in_cooldown", False):
                 stats["consecutive_losses"] = 0
+                if hasattr(quant, "_consecutive_losses"):
+                    quant._consecutive_losses = 0
                 stats["_was_in_cooldown"] = False
                 logger.info("[RiskManager] Consecutive-loss cooldown expired. Counter reset.")
 
@@ -3420,6 +3531,12 @@ async def execution_loop(
                     stats["total_trades"] += 1
                     if executor.active_position:
                         executor.active_position["regime"] = verdict_json.get("regime", "NEUTRAL")
+                    if int(getattr(quant, "_risk_probation_trades_remaining", 0) or 0) > 0:
+                        quant._risk_probation_trades_remaining -= 1
+                        logger.info(
+                            f"[RiskEngine] Probation trade consumed; "
+                            f"{quant._risk_probation_trades_remaining} remaining."
+                        )
             else:
                 logger.info(f"[Main] WAIT — {analysis[:120]}")
 

@@ -303,3 +303,82 @@ class TestLiveSafetyHardening:
 
         assert executor.exchange.markets
         assert executor.exchange.symbols
+
+
+class TestPartialProfitTaking:
+
+    @pytest.mark.asyncio
+    async def test_dry_run_partial_reduces_size_and_moves_sl_to_entry(self):
+        executor = _make_executor(dry_run=True)
+        executor.dry_run = True
+        executor._log_partial_take = MagicMock()
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 1.0,
+            "entry_price": 100.0,
+            "stop_loss": 90.0,
+            "initial_stop_loss": 90.0,
+            "initial_risk_dist": 10.0,
+            "take_profit": 130.0,
+            "partial_take_r": 0.75,
+            "partial_take_pct": 0.50,
+            "_partial_taken": False,
+            "realized_partial_pnl": 0.0,
+            "be_lock_trigger": 2.0,
+            "atr_at_entry": 10.0,
+            "trade_doc_id": "trade-1",
+        }
+
+        await executor.check_breakeven_and_partials(current_price=108.0, atr=10.0)
+
+        assert executor.active_position["size"] == pytest.approx(0.5)
+        assert executor.active_position["stop_loss"] == 100.0
+        assert executor.active_position["_partial_taken"] is True
+        assert executor.active_position["_be_locked"] is True
+        assert executor.active_position["realized_partial_pnl"] > 0
+        executor._log_partial_take.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_live_futures_partial_rebuilds_reduced_sl_tp_orders(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.is_futures = True
+        executor.exchange.amount_to_precision = MagicMock(side_effect=lambda _symbol, amount: str(round(float(amount), 6)))
+        executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+        executor.exchange.create_market_order = AsyncMock(return_value={"id": "partial-close"})
+        executor.exchange.cancel_all_orders = AsyncMock()
+        executor.exchange.create_order = AsyncMock(side_effect=[
+            {"id": "sl-reduced"},
+            {"id": "tp-reduced"},
+        ])
+        executor._log_partial_take = MagicMock()
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 1.0,
+            "entry_price": 100.0,
+            "stop_loss": 90.0,
+            "initial_stop_loss": 90.0,
+            "initial_risk_dist": 10.0,
+            "take_profit": 130.0,
+            "partial_take_r": 0.75,
+            "partial_take_pct": 0.50,
+            "_partial_taken": False,
+            "realized_partial_pnl": 0.0,
+            "be_lock_trigger": 2.0,
+            "atr_at_entry": 10.0,
+            "trade_doc_id": "trade-1",
+        }
+
+        await executor.check_breakeven_and_partials(current_price=108.0, atr=10.0)
+
+        pos = executor.active_position
+        assert pos["size"] == pytest.approx(0.5)
+        assert pos["stop_loss"] == 100.0
+        assert pos["sl_order_id"] == "sl-reduced"
+        assert pos["tp_order_id"] == "tp-reduced"
+        assert pos["_partial_taken"] is True
+        executor.exchange.create_market_order.assert_awaited_once()
+        executor.exchange.cancel_all_orders.assert_awaited_once_with("BTC/USDT:USDT")
+        assert executor.exchange.create_order.await_count == 2
