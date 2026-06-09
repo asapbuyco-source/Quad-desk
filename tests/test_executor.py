@@ -197,6 +197,42 @@ class TestGhostPositionFix:
         assert pnl < 0, f"Expected negative PnL for SL exit, got {pnl}"
 
     @pytest.mark.asyncio
+    async def test_live_exit_type_uses_tp_geometry_not_net_pnl_sign(self):
+        executor = _make_executor()
+        executor.active_position = self._make_active_position()
+        executor.exchange.fetch_positions = AsyncMock(return_value=[])
+        executor.exchange.fetch_my_trades = AsyncMock(return_value=[{
+            "side": "sell",
+            "price": "79600.00",
+            "info": {"realizedPnl": "-1.00"},
+        }])
+        executor._update_trade_exit = MagicMock()
+
+        exited, pnl = await executor._check_live_position_exit(current_price=79600.00)
+
+        assert exited is True
+        assert pnl < 0
+        assert executor.notifier.send_close_alert.await_args.kwargs["type"] == "TP"
+
+    @pytest.mark.asyncio
+    async def test_live_exit_type_marks_between_levels_as_manual(self):
+        executor = _make_executor()
+        executor.active_position = self._make_active_position()
+        executor.exchange.fetch_positions = AsyncMock(return_value=[])
+        executor.exchange.fetch_my_trades = AsyncMock(return_value=[{
+            "side": "sell",
+            "price": "79000.00",
+            "info": {"realizedPnl": "0.50"},
+        }])
+        executor._update_trade_exit = MagicMock()
+
+        exited, pnl = await executor._check_live_position_exit(current_price=79000.00)
+
+        assert exited is True
+        assert pnl > 0
+        assert executor.notifier.send_close_alert.await_args.kwargs["type"] == "MANUAL"
+
+    @pytest.mark.asyncio
     async def test_no_active_position_returns_early(self):
         """If active_position is None, poll must return (False, 0.0) immediately."""
         executor = _make_executor()
@@ -386,6 +422,8 @@ class TestLiveSafetyHardening:
         assert executor.active_position["tp_order_id"] is None
         assert executor.active_position["requeue_tp_attempts"] == 1
         assert executor.active_position["requeue_tp_symbol"] == "BTC/USDT:USDT"
+        executor.exchange.create_market_order.assert_awaited_once()
+        assert executor.exchange.create_market_order.await_args.kwargs["params"] == {}
         executor.notifier.send_error_alert.assert_awaited()
 
     @pytest.mark.asyncio

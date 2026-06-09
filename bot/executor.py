@@ -301,6 +301,34 @@ class TradingExecutor:
                 pass
         return True
 
+    @staticmethod
+    def _classify_live_exit_type(pos: dict, fill_price: float) -> str:
+        """Classify a live flat position from fill geometry, not realized PnL sign."""
+        side = str((pos or {}).get("side") or "buy").lower()
+        entry = TradingExecutor._float_or_zero((pos or {}).get("entry_price"))
+        stop_loss = TradingExecutor._float_or_zero((pos or {}).get("stop_loss"))
+        take_profit = TradingExecutor._float_or_zero((pos or {}).get("take_profit"))
+        fill = TradingExecutor._float_or_zero(fill_price)
+        if fill <= 0.0:
+            return "MANUAL"
+
+        risk_dist = TradingExecutor._float_or_zero((pos or {}).get("initial_risk_dist"))
+        if risk_dist <= 0.0 and entry > 0.0 and stop_loss > 0.0:
+            risk_dist = abs(entry - stop_loss)
+        tolerance = max(abs(fill) * 0.0005, risk_dist * 0.10, 1e-9)
+
+        if side == "buy":
+            if stop_loss > 0.0 and fill <= stop_loss + tolerance:
+                return "SL"
+            if take_profit > 0.0 and fill >= take_profit - tolerance:
+                return "TP"
+        else:
+            if stop_loss > 0.0 and fill >= stop_loss - tolerance:
+                return "SL"
+            if take_profit > 0.0 and fill <= take_profit + tolerance:
+                return "TP"
+        return "MANUAL"
+
     # ------------------------------------------------------------------
     # Static helpers
     # ------------------------------------------------------------------
@@ -1060,8 +1088,11 @@ class TradingExecutor:
                     )
                 return
 
-            # H-3 FIX: Hard notional cap (max 2.0x equity)
-            max_notional = equity * 2.0
+            # H-3 FIX: Hard notional cap. Keep default conservative; allow an
+            # intentional override instead of blindly matching exchange leverage.
+            max_notional_mult = float(os.environ.get("BOT_MAX_NOTIONAL_MULT", "2.0"))
+            max_notional_mult = max(1.0, min(max_notional_mult, 10.0))
+            max_notional = equity * max_notional_mult
             if raw_size * current_price > max_notional:
                 raw_size = max_notional / current_price
                 logger.info(f"[Executor] Position capped to max notional (${max_notional:.2f})")
@@ -1212,7 +1243,7 @@ class TradingExecutor:
             for attempt in range(3):
                 try:
                     order = await self.exchange.create_market_order(
-                        ex_symbol, side, order_amount, params=order_params or None
+                        ex_symbol, side, order_amount, params=order_params
                     )
                     break
                 except Exception as e:
@@ -2069,7 +2100,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                     net_pnl = raw_pnl - fees
                 net_pnl += float(pos.get("realized_partial_pnl") or 0.0)
 
-                exit_type = "TP" if net_pnl > 0 else "SL"
+                exit_type = self._classify_live_exit_type(pos, fill_price)
                 logger.info(
                     f"[LiveExit] Position flat on exchange — type={exit_type} "
                     f"pnl=${net_pnl:.2f} fill={fill_price:.2f}"

@@ -229,6 +229,7 @@ BOT_STATS: Dict[str, Any] = {
     "daily_pnl":       0.0,
     "session_pnl":    0.0,  # PHASE-3.1: Initialized for daily drawdown reset
     "cumulative_pnl": 0.0,  # FIX-R1: never resets — lifetime PnL since first boot
+    "day_start_equity": 0.0,
     "daily_loss_halt": False,
     "drawdown_halt": False,
     "operator_paused": False,
@@ -298,10 +299,12 @@ def _load_risk_ledger(stats: Dict[str, Any]) -> None:
             logger.info(f"[RiskLedger] Midnight reset detected ({last_date} → {today}). Resetting daily/session PnL.")
             stats["daily_pnl"] = 0.0
             stats["session_pnl"] = 0.0
+            stats["day_start_equity"] = 0.0
             # halts are NOT reset — they carry across midnight
         else:
             stats["daily_pnl"] = data.get("daily_pnl", 0.0)
             stats["session_pnl"] = data.get("session_pnl", 0.0)
+            stats["day_start_equity"] = float(data.get("day_start_equity") or 0.0)
         stats["cumulative_pnl"] = data.get("cumulative_pnl", 0.0)
         stats["daily_loss_halt"] = data.get("daily_loss_halt", False)
         stats["consecutive_losses"] = data.get("consecutive_losses", 0)
@@ -311,7 +314,9 @@ def _load_risk_ledger(stats: Dict[str, Any]) -> None:
         logger.info(
             f"[RiskLedger] Loaded from Firestore — "
             f"daily={stats['daily_pnl']:+.2f} session={stats['session_pnl']:+.2f} "
-            f"cumulative={stats['cumulative_pnl']:+.2f} halt={stats['daily_loss_halt']}"
+            f"cumulative={stats['cumulative_pnl']:+.2f} "
+            f"day_start=${stats.get('day_start_equity', 0.0):.2f} "
+            f"halt={stats['daily_loss_halt']}"
         )
     except Exception as e:
         logger.warning(f"[RiskLedger] Failed to load from Firestore: {e} — starting fresh.")
@@ -327,6 +332,7 @@ def _save_risk_ledger(stats: Dict[str, Any]) -> None:
         "daily_pnl":            stats.get("daily_pnl", 0.0),
         "session_pnl":          stats.get("session_pnl", 0.0),
         "cumulative_pnl":       stats.get("cumulative_pnl", 0.0),
+        "day_start_equity":     stats.get("day_start_equity", ACCOUNT_SIZE),
         "daily_loss_halt":      stats.get("daily_loss_halt", False),
         "consecutive_losses":   stats.get("consecutive_losses", 0),
         "cooldown_until":       stats.get("cooldown_until", 0.0),
@@ -351,6 +357,20 @@ def _save_risk_ledger(stats: Dict[str, Any]) -> None:
     _risk_write_thread = threading.Thread(target=_write, daemon=True, name="RiskLedger-FSWrite")
     _risk_write_thread.start()
 
+
+def _day_start_equity(stats: Dict[str, Any]) -> float:
+    """Return the fixed daily-loss baseline, initializing it if needed."""
+    baseline = float(stats.get("day_start_equity") or 0.0)
+    if baseline <= 0.0:
+        baseline = float(ACCOUNT_SIZE)
+        stats["day_start_equity"] = baseline
+    return baseline
+
+
+def _daily_loss_limit_usd(stats: Dict[str, Any]) -> float:
+    return _day_start_equity(stats) * MAX_DAILY_LOSS_PCT / 100.0
+
+
 GATE_STATS_LAST_LOG = 0.0  # timestamp of last 30-min gate summary
 _CYCLE_ERROR_COUNT = 0  # PHASE-3.1: Consecutive cycle errors for escalation
 _LAST_CYCLE_ERROR = ""  # PHASE-3.1: Last error string for escalation
@@ -368,9 +388,6 @@ LAST_CVD: float   = 0.0  # Track previous CVD value so execution loop can comput
 LAST_CANDLE_TS: float = 0.0  # Track last confirmed 15m candle open-time for candle-close gate
 LAST_ANY_TRADE_CLOSE_TIME = 0.0  # Track any trade exit for post-trade cooldown
 LAST_TRADE_WAS_SL: bool = False  # Track if last exit was SL for split cooldown logic
-# FIX-P5: Sweep deduplication — track the candle-open-time of the last fired sweep.
-# The same stale wick fires as a "new" sweep every 15s cycle without this guard.
-_LAST_FIRED_SWEEP_CANDLE_TS: float = 0.0
 
 # FIX-7.1: Derivatives context cache — updated by background task, read synchronously in signal pipeline
 _CACHED_DERIV_CONTEXT: dict = {}
@@ -678,6 +695,13 @@ class _HMMRegimeClassifier:
         self._A     = self._A.copy()
         self._param_source = "hardcoded defaults"
         self._load_calibrated_params()
+        self._calibrated_mu_anchor = self._mu.copy()
+        self._calibrated_sigma_anchor = self._sigma.copy()
+        self._online_blend_alpha = float(np.clip(
+            float(os.environ.get("HMM_ONLINE_BLEND_ALPHA", "0.05")),
+            0.0,
+            0.25,
+        ))
         self._online_update_enabled = True   # Calibrated via hmm_calibrate (Fix 4)
         self._n_trades_since_update = 0      # P1-3: count live trades; delay online HMM update until enough data
         self._min_trades_before_update = 10  # require ≥10 live trades before first online update
@@ -953,16 +977,31 @@ class _HMMRegimeClassifier:
             return
         obs = np.array(list(self._obs_buf)[-self._window:], dtype=float)
         states = self._viterbi(obs)
+        updated = False
         for s in range(3):
             mask = states == s
             if mask.sum() >= 3:
-                self._mu[s]    = obs[mask].mean(axis=0)
-                self._sigma[s] = obs[mask].std(axis=0)
+                live_mu = obs[mask].mean(axis=0)
+                live_sigma = np.maximum(obs[mask].std(axis=0), 1e-4)
+                alpha = self._online_blend_alpha
+                self._mu[s] = (
+                    (1.0 - alpha) * self._calibrated_mu_anchor[s]
+                    + alpha * live_mu
+                )
+                self._sigma[s] = (
+                    (1.0 - alpha) * self._calibrated_sigma_anchor[s]
+                    + alpha * live_sigma
+                )
                 self._sigma[s] = np.maximum(self._sigma[s], 1e-4)
-                self._n_trades_since_update = 0
-                logger.info(f"[HMM] Online update complete — μ={self._mu[s]}, σ={self._sigma[s]}")
-                
-        self._save_state()
+                updated = True
+                logger.info(
+                    f"[HMM] Online blend update s={s} alpha={alpha:.3f} "
+                    f"μ={self._mu[s]}, σ={self._sigma[s]}"
+                )
+
+        if updated:
+            self._n_trades_since_update = 0
+            self._save_state()
 
     # ------------------------------------------------------------------
     def classify(self, atr_pct: float, z_score: float, tape: str,
@@ -2842,16 +2881,13 @@ async def _process_exit(
                     f"3 SL exits within 30 minutes. Paused 30 min."
                 , critical=True)
 
-    # P0-2 FIX: Use live equity (not static boot ACCOUNT_SIZE) for risk calcs.
-    # After gains/losses, the absolute dollar limits must scale with real equity.
-    current_equity = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
-
-    max_loss_usd = current_equity * MAX_DAILY_LOSS_PCT / 100.0
+    day_start_equity = _day_start_equity(stats)
+    max_loss_usd = _daily_loss_limit_usd(stats)
     if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
         stats["daily_loss_halt"] = True
         logger.warning(
             f"[RiskEngine] ⛔ Daily loss limit: ${stats['daily_pnl']:.2f} "
-            f"(limit=-${max_loss_usd:.2f} on equity=${current_equity:.2f}). Halted until tomorrow."
+            f"(limit=-${max_loss_usd:.2f} on day_start=${day_start_equity:.2f}). Halted until tomorrow."
         )
 
     max_drawdown_usd = ACCOUNT_SIZE * MAX_DRAWDOWN_PCT / 100.0
@@ -3012,6 +3048,10 @@ async def execution_loop(
         except Exception as e:
             logger.warning(f"[Main] Could not dynamically fetch account balance at startup: {e}")
 
+    if float(stats.get("day_start_equity") or 0.0) <= 0.0:
+        stats["day_start_equity"] = ACCOUNT_SIZE
+        logger.info(f"[RiskLedger] Day-start equity baseline set to ${ACCOUNT_SIZE:.2f}")
+
     stats["account_equity"] = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
 
     EQUITY_MIN_TRADEABLE = EQUITY_RECOMMENDED  # P17 FIX: was 200.0, now centralized
@@ -3089,7 +3129,9 @@ async def execution_loop(
             if stats.get("_last_trade_day") != today:
                 stats["_last_trade_day"] = today
                 stats["daily_pnl"]       = 0.0
+                stats["session_pnl"]     = 0.0
                 stats["daily_loss_halt"] = False
+                stats["day_start_equity"] = 0.0
                 # FIX-R1: drawdown_halt and cumulative_pnl are NOT reset at midnight.
                 # cumulative_pnl is lifetime and drawdown_halt can only be cleared by manual restart.
                 # 3.6 FIX: Reset CVD anchor daily to prevent multi-day drift
@@ -3115,6 +3157,7 @@ async def execution_loop(
                     except Exception as _bal_err:
                         logger.warning(f"[RiskEngine] Could not refresh ACCOUNT_SIZE: {_bal_err}")
 
+                    stats["day_start_equity"] = ACCOUNT_SIZE
                     stats["account_equity"] = ACCOUNT_SIZE + stats.get("session_pnl", 0.0)
 
                 # PHASE-6.3: Daily performance telemetry
@@ -3239,7 +3282,7 @@ async def execution_loop(
                         _panic_pnl = getattr(executor, "_last_panic_pnl", 0.0)
                         if _panic_pnl != 0.0:
                             stats["daily_pnl"] = stats.get("daily_pnl", 0.0) + _panic_pnl
-                            max_loss_usd = ACCOUNT_SIZE * MAX_DAILY_LOSS_PCT / 100.0
+                            max_loss_usd = _daily_loss_limit_usd(stats)
                             if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
                                 stats["daily_loss_halt"] = True
                                 logger.warning("[RiskEngine] Daily loss limit hit via flash-crash panic exit. Halted.")

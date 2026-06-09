@@ -1,0 +1,55 @@
+from collections import deque
+from unittest.mock import MagicMock
+
+import numpy as np
+import pytest
+
+from bot.main import _HMMRegimeClassifier
+
+
+def test_hmm_forward_returns_normalized_posterior():
+    hmm = _HMMRegimeClassifier(window=10, update_every=500)
+    obs = np.array([
+        [0.0020, 0.8, 0.0, 0.20],
+        [0.0024, 1.0, 0.0, 0.25],
+        [0.0030, 1.2, 0.0, 0.35],
+    ], dtype=float)
+
+    posterior = hmm._forward(obs)
+
+    assert posterior.shape == (3,)
+    assert np.all(posterior >= 0.0)
+    assert posterior.sum() == pytest.approx(1.0)
+
+
+def test_hmm_online_update_blends_against_calibrated_anchor():
+    hmm = _HMMRegimeClassifier(window=20, update_every=500)
+    hmm._save_state = MagicMock()
+    hmm._min_trades_before_update = 1
+    hmm._n_trades_since_update = 1
+    hmm._online_blend_alpha = 0.05
+
+    anchor_mu = np.array([
+        [1.0, 1.0, 1.0, 1.0],
+        [2.0, 2.0, 2.0, 2.0],
+        [3.0, 3.0, 3.0, 3.0],
+    ])
+    anchor_sigma = np.full((3, 4), 2.0)
+    hmm._calibrated_mu_anchor = anchor_mu.copy()
+    hmm._calibrated_sigma_anchor = anchor_sigma.copy()
+    hmm._mu = anchor_mu.copy()
+    hmm._sigma = anchor_sigma.copy()
+
+    live_obs = np.full((20, 4), 10.0)
+    hmm._obs_buf = deque(live_obs, maxlen=200)
+    hmm._viterbi = MagicMock(return_value=np.zeros(20, dtype=int))
+
+    hmm._online_update()
+
+    expected_mu = 0.95 * anchor_mu[0] + 0.05 * live_obs.mean(axis=0)
+    expected_sigma = 0.95 * anchor_sigma[0] + 0.05 * np.full(4, 1e-4)
+    assert hmm._mu[0] == pytest.approx(expected_mu)
+    assert hmm._sigma[0] == pytest.approx(expected_sigma)
+    assert not np.allclose(hmm._mu[0], live_obs.mean(axis=0))
+    assert hmm._n_trades_since_update == 0
+    hmm._save_state.assert_called_once()
