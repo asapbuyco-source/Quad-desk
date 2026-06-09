@@ -537,6 +537,7 @@ async def _derivatives_gate(direction: str, deriv_context: dict) -> tuple[bool, 
     oi_collapsing  = oi.get("oi_collapsing", False)
     taker_imbalance = flow.get("taker_imbalance", 0.0)
     gex_signal     = opts.get("gex_signal", "NEUTRAL")
+    gex_is_signed  = bool(opts.get("gex_is_signed", False))
     oi_div_signal  = oi_v.get("signal", "INCONCLUSIVE")
     oi_div_accel   = oi_v.get("acceleration", 0.0)
 
@@ -562,7 +563,7 @@ async def _derivatives_gate(direction: str, deriv_context: dict) -> tuple[bool, 
     # VETO 4: GEX PIN zone — dealer hedging will dampen price movement
     # Fade the sweep in PIN zones (positive gamma = mean-reversion expected)
     # This is the GEX upgrade: OI-only sweep detection misclassified 30-40% of zones
-    if gex_signal == "PIN":
+    if gex_signal == "PIN" and gex_is_signed:
         total_gex = opts.get("total_gex", 0.0)
         veto_reasons.append(
             f"GEX PIN zone (total_gex={total_gex:.1f}) — dealer hedging active, "
@@ -1832,6 +1833,145 @@ def _apply_cvd_divergence_gate(
     return current_confidence, None
 
 
+def _build_cvd_directional_adjustment(
+    raw_direction: str,
+    metrics: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """
+    Build a CVD divergence adjustment without mutating bayesianPosterior.
+
+    bayesianPosterior is P-bull. A SELL signal inverts it later, so writing
+    CVD-adjusted directional confidence back into that field can accidentally
+    strengthen shorts when bullish divergence is present. This helper returns
+    a direction-relative delta/cap to apply after Bayesian fusion.
+    """
+    MIN_VALID_SNAPS = 2
+    VETO_MIN_SNAPS = 3
+
+    def _adj(kind: str, delta: float = 0.0, cap: float | None = None, reason: str = "") -> Dict[str, Any]:
+        return {
+            "kind": kind,
+            "delta": float(delta),
+            "cap": cap,
+            "reason": reason,
+        }
+
+    div = metrics.get("cvd_divergence", {}) or {}
+    div_type = div.get("type", "NONE")
+    div_str = float(div.get("strength", 0.0) or 0.0)
+    confirms = int(div.get("candles_confirmed", 0) or 0)
+    vol_spike = float(div.get("vol_spike", 1.0) or 1.0)
+    method = div.get("detection_method", "none")
+    n_snaps = int(div.get("n_snaps", 0) or 0)
+
+    is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
+    is_short = raw_direction in ("SELL", "MEAN_REVERSAL_SHORT")
+
+    if div_type == "NONE" or div_str < 0.28:
+        if n_snaps >= MIN_VALID_SNAPS:
+            return _adj("none"), None
+        penalty = 0.02 if n_snaps == 1 else 0.04
+        logger.debug(
+            f"[CVDGate] CVD history thin (n={n_snaps}); "
+            f"directional penalty={penalty:.2%}"
+        )
+        return _adj("thin_history", delta=-penalty, reason="thin CVD history"), None
+
+    confirming = (
+        (is_long and div_type == "BULLISH")
+        or (is_short and div_type == "BEARISH")
+    )
+    opposing = (
+        (is_long and div_type == "BEARISH")
+        or (is_short and div_type == "BULLISH")
+    )
+
+    if confirming:
+        if div_str >= 0.65:
+            boost = 0.07
+        elif div_str >= 0.45:
+            boost = 0.05
+        else:
+            boost = 0.03
+        boost += 0.01 if vol_spike >= 1.40 else 0.0
+        boost += 0.01 if method == "swing_extrema" else 0.0
+        logger.info(
+            f"[CVDGate] CONFIRMING {div_type} | strength={div_str:.3f} "
+            f"method={method} confirms={confirms} vol={vol_spike:.2f}x | "
+            f"directional boost={boost:.2%}"
+        )
+        return _adj("confirming", delta=boost, reason=f"confirming {div_type} divergence"), None
+
+    if opposing:
+        high_confirms_no_vol = div_str >= 0.75 and confirms >= 2 and n_snaps >= VETO_MIN_SNAPS
+        volume_confirmed_veto = (
+            div_str >= CVD_VETO_STRENGTH
+            and confirms >= 1
+            and vol_spike >= CVD_VETO_VOL_SPIKE
+            and n_snaps >= VETO_MIN_SNAPS
+        )
+        if high_confirms_no_vol or volume_confirmed_veto:
+            veto_msg = (
+                f"CVD DIVERGENCE VETO: {div_type} divergence opposes {raw_direction} | "
+                f"strength={div_str:.3f} method={method} confirms={confirms} "
+                f"vol={vol_spike:.2f}x"
+            )
+            logger.warning(f"[CVDGate] {veto_msg}")
+            return _adj("opposing_veto"), veto_msg
+
+        if div_str >= 0.50:
+            penalty = 0.12
+        elif div_str >= 0.40:
+            penalty = 0.08
+        else:
+            penalty = 0.04
+        if vol_spike >= 1.40:
+            penalty = min(penalty + 0.02, 0.14)
+
+        cap = 0.60 if div_str >= 0.50 and confirms >= 2 else None
+        logger.info(
+            f"[CVDGate] OPPOSING {div_type} | strength={div_str:.3f} "
+            f"method={method} confirms={confirms} vol={vol_spike:.2f}x | "
+            f"directional penalty={penalty:.2%}"
+            + (f" cap={cap:.0%}" if cap is not None else "")
+        )
+        return _adj("opposing", delta=-penalty, cap=cap, reason=f"opposing {div_type} divergence"), None
+
+    return _adj("none"), None
+
+
+def _apply_cvd_confidence_adjustment(confidence: float, adjustment: Dict[str, Any]) -> float:
+    """Apply CVD delta after confidence is already direction-relative."""
+    delta = float(adjustment.get("delta", 0.0) or 0.0)
+    if abs(delta) < 1e-9:
+        return confidence
+    adjusted = float(np.clip(confidence + delta, 0.0, 1.0))
+    logger.info(
+        f"[CVDGate] Directional adjustment {delta:+.2%}: "
+        f"{confidence:.2%} -> {adjusted:.2%}"
+    )
+    return adjusted
+
+
+def _enforce_cvd_confidence_cap(
+    confidence: float,
+    adjustment: Dict[str, Any],
+    stage: str,
+) -> float:
+    """Keep later VPOC/ULIS boosts from overriding opposing CVD evidence."""
+    cap = adjustment.get("cap")
+    if cap is None:
+        return confidence
+    cap = float(cap)
+    if confidence <= cap:
+        return confidence
+    logger.warning(
+        f"[CVDGate] Opposing divergence cap after {stage}: "
+        f"{confidence:.2%} -> {cap:.2%}"
+    )
+    return cap
+
+
 # ══════════════════════════════════════════════════════════════════════
 # ── STAGE 7 — RISK ENGINE ─────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
@@ -2331,6 +2471,43 @@ async def _compute_signal(
         _gate_stats_summary("rsi_oversold")
         return {**WAIT, "analysis": f"RSI={rsi:.1f} < 30.0 blocks {raw_direction} entry."}
 
+    if is_trend_strat:
+        z_current = float(metrics.get("zScore", 0.0) or 0.0)
+        z_ret = float(metrics.get("zScore_ret", 0.0) or 0.0)
+        ofi_now = float(metrics.get("ofi", 0.0) or 0.0)
+        cvd_delta = float(metrics.get("cvd_delta", 0.0) or 0.0)
+        dominant_now = str(metrics.get("tapeDominant", "BALANCED"))
+        if not is_long_dir and (rsi < 30.0 or z_current <= -1.20):
+            continuation_ok = (
+                z_ret <= -0.80
+                and ofi_now <= -0.15
+                and cvd_delta <= 0.0
+                and "SELL" in dominant_now
+            )
+            if not continuation_ok:
+                _gate_stats_summary("rsi_extreme_suppressed")
+                logger.warning(
+                    f"[ExhaustionGate] Blocking late SHORT: RSI={rsi:.1f} "
+                    f"Z={z_current:.2f} z_ret={z_ret:.2f} OFI={ofi_now:.2f} "
+                    f"CVDd={cvd_delta:.0f} tape={dominant_now}"
+                )
+                return {**WAIT, "analysis": "Late-short exhaustion risk: continuation evidence not strong enough."}
+        if is_long_dir and (rsi > 70.0 or z_current >= 1.20):
+            continuation_ok = (
+                z_ret >= 0.80
+                and ofi_now >= 0.15
+                and cvd_delta >= 0.0
+                and "BUY" in dominant_now
+            )
+            if not continuation_ok:
+                _gate_stats_summary("rsi_extreme_suppressed")
+                logger.warning(
+                    f"[ExhaustionGate] Blocking late LONG: RSI={rsi:.1f} "
+                    f"Z={z_current:.2f} z_ret={z_ret:.2f} OFI={ofi_now:.2f} "
+                    f"CVDd={cvd_delta:.0f} tape={dominant_now}"
+                )
+                return {**WAIT, "analysis": "Late-long exhaustion risk: continuation evidence not strong enough."}
+
     # Stage 4b: HTF Counter-Trend Block
     # P0: htf_block is regime-conditional. In RANGE, mean-reversion against HTF is the strategy.
     is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
@@ -2406,14 +2583,13 @@ async def _compute_signal(
     if _deriv_reason:
         logger.info(f"[DerivGate] PASS ({_deriv_reason})")
 
-    # FIXED: CVD gate BEFORE Bayes fusion (was after)
-    _pre_div_conf = metrics.get("bayesianPosterior", 0.5)
-    _div_conf, _div_veto = _apply_cvd_divergence_gate(raw_direction, metrics, _pre_div_conf)
+    # Build CVD adjustment before Bayes, but apply it only after Bayes has
+    # converted P-bull into P(signal direction). Mutating bayesianPosterior here
+    # can invert the intended penalty for shorts.
+    _cvd_adj, _div_veto = _build_cvd_directional_adjustment(raw_direction, metrics)
     if _div_veto:
         _gate_stats_summary("cvd_divergence_veto")
         return {**WAIT, "analysis": f"CVD divergence veto: {_div_veto}"}
-    if abs(_div_conf - _pre_div_conf) > 0.001:
-        metrics = {**metrics, "bayesianPosterior": _div_conf}
 
     # FIX: Throughput gate — was 300/min (too high for BTC, blocked normal 200-250 tape).
     # Lowered to 150/min to catch truly dead markets while letting normal BTC through.
@@ -2431,6 +2607,7 @@ async def _compute_signal(
 
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
+    confidence = _apply_cvd_confidence_adjustment(confidence, _cvd_adj)
 
     # _bayesian_fusion returns probability in the target signal direction.
     # Do not invert shorts here; doing so lets weak short signals pass.
@@ -2448,6 +2625,8 @@ async def _compute_signal(
         confidence = min(1.0, confidence + vpoc_boost)
         logger.info(f"[VPOC] Near VPOC ({vpoc:.0f}). Confidence boosted by +{vpoc_boost:.2%} → {confidence:.2%}")
 
+    confidence = _enforce_cvd_confidence_cap(confidence, _cvd_adj, "VPOC")
+
     logger.info(f"[BayesFusion] direction={raw_direction} | P={confidence:.2%}")
 
     # Stage 6 ★ ULIS/ALDE gate FIRST (applies confidence boost)
@@ -2458,6 +2637,8 @@ async def _compute_signal(
     if not should_trade:
         _gate_stats_summary("ulis_veto")
         return {**WAIT, "analysis": f"ULIS veto: {ulis_verdict_str}", "ulis_verdict": ulis_verdict_str}
+
+    confidence = _enforce_cvd_confidence_cap(confidence, _cvd_adj, "ULIS")
 
     # FIX: Check threshold AFTER ULIS gate using boosted confidence
     # P0: Use regime-adaptive min_confidence instead of global MIN_CONFIDENCE

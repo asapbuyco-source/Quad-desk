@@ -224,7 +224,6 @@ class FirestoreLogHandler(logging.Handler):
                         self.log_queue.put_nowait(record)
                     except queue.Full:
                         pass
-                    self.log_queue.task_done()
                     continue
 
                 from firebase_admin import firestore as fs

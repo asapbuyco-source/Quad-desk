@@ -56,13 +56,19 @@ EXIT_RE = re.compile(
 )
 FILL_EXIT_RE = re.compile(r"fill=(?P<fill>[-+]?\d+(?:\.\d+)?)")
 EXCHANGE_PNL_RE = re.compile(
-    r"Exchange PnL:\s*\$?(?P<pnl>[-+]?\d+(?:\.\d+)?)\s+fill=(?P<fill>[-+]?\d+(?:\.\d+)?)",
+    r"Exchange PnL:\s*(?:gross=\$?(?P<gross>[-+]?\d+(?:\.\d+)?)\s+fees=\$?(?P<fees>[-+]?\d+(?:\.\d+)?)\s+net=\$?(?P<net>[-+]?\d+(?:\.\d+)?)|\$?(?P<pnl>[-+]?\d+(?:\.\d+)?))\s+fill=(?P<fill>[-+]?\d+(?:\.\d+)?)",
     re.I,
 )
 PARTIAL_RE = re.compile(r"Partial TP logged: size=(?P<size>[-+]?\d+(?:\.\d+)?) @ (?P<price>[-+]?\d+(?:\.\d+)?) PnL=(?P<pnl>[-+]?\d+(?:\.\d+)?)")
 PRICE_RE = re.compile(r"(?:price|mark|last|current_price)[=:]\s*(?P<price>[-+]?\d+(?:\.\d+)?)", re.I)
 HIGH_RE = re.compile(r"(?:high|candle_high)[=:]\s*(?P<high>[-+]?\d+(?:\.\d+)?)", re.I)
 LOW_RE = re.compile(r"(?:low|candle_low)[=:]\s*(?P<low>[-+]?\d+(?:\.\d+)?)", re.I)
+HOLDING_RE = re.compile(
+    r"HOLDING\s+(?P<side>BUY|SELL)\s+@\s*(?P<entry>[-+]?\d+(?:\.\d+)?)"
+    r"\s*\|\s*now=(?P<now>[-+]?\d+(?:\.\d+)?)"
+    r"\s*\|\s*PnL=(?P<pnl_pct>[-+]?\d+(?:\.\d+)?)%",
+    re.I,
+)
 
 
 GATE_PATTERNS = {
@@ -386,10 +392,18 @@ def replay(entries: list[dict[str, Any]]) -> dict[str, Any]:
                 })
             continue
 
+        if m := HOLDING_RE.search(msg):
+            trade = open_by_symbol.get(symbol)
+            if trade:
+                if trade.entry_price is None:
+                    trade.entry_price = _to_float(m.group("entry"))
+                trade.update_price(_to_float(m.group("now")))
+            continue
+
         if m := EXCHANGE_PNL_RE.search(msg):
             trade = recently_closed_by_symbol.get(symbol) or open_by_symbol.get(symbol)
             if trade:
-                pnl = _to_float(m.group("pnl"))
+                pnl = _to_float(m.group("net") or m.group("pnl"))
                 fill = _to_float(m.group("fill"))
                 trade.exit_ts = _line_ts(row)
                 trade.exit_price = fill

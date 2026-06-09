@@ -1,43 +1,38 @@
 import os
-import asyncio
 from dotenv import load_dotenv
 
-# Test google.generativeai (used in backend)
-async def test_generativeai():
-    print("Testing google.generativeai (backend)...")
-    try:
-        import google.generativeai as genai_old
-        load_dotenv("backend/.env")
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            print("No API key found in backend/.env")
-            return
-        genai_old.configure(api_key=api_key)
-        model = genai_old.GenerativeModel("gemini-2.0-flash")
-        response = await model.generate_content_async("Hello")
-        print("google.generativeai test SUCCESS:", response.text)
-    except Exception as e:
-        print("google.generativeai test FAILED:", repr(e))
 
-# Test google.genai (used in bot)
-def test_genai():
-    print("\nTesting google.genai (bot)...")
+def _run_genai_smoke(env_path: str, label: str):
+    from google import genai
+
+    print(f"Testing google.genai ({label})...")
+    load_dotenv(env_path)
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print(f"No API key found in {env_path}")
+        return
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents="Hello",
+    )
+    print(f"google.genai {label} test SUCCESS:", response.text)
+
+
+def test_backend_genai():
     try:
-        from google import genai
-        load_dotenv(".env")
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            print("No API key found in .env")
-            return
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents="Hello"
-        )
-        print("google.genai test SUCCESS:", response.text)
+        _run_genai_smoke("backend/.env", "backend")
     except Exception as e:
-        print("google.genai test FAILED:", repr(e))
+        print("google.genai backend test FAILED:", repr(e))
+
+
+def test_bot_genai():
+    try:
+        _run_genai_smoke(".env", "bot")
+    except Exception as e:
+        print("google.genai bot test FAILED:", repr(e))
 
 if __name__ == "__main__":
-    asyncio.run(test_generativeai())
-    test_genai()
+    test_backend_genai()
+    test_bot_genai()

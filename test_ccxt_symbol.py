@@ -1,9 +1,21 @@
-import asyncio
-import ccxt.async_support as ccxt
-async def main():
+import os
+
+import pytest
+
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_NETWORK_TESTS") != "1",
+    reason="set RUN_NETWORK_TESTS=1 to call Binance during this test",
+)
+
+
+@pytest.mark.asyncio
+async def test_binanceusdm_symbol_mapping():
+    import ccxt.async_support as ccxt
+
     ex = ccxt.binanceusdm()
-    await ex.load_markets()
-    print("BTC/USDT in markets?", 'BTC/USDT' in ex.markets)
-    print("BTC/USDT:USDT in markets?", 'BTC/USDT:USDT' in ex.markets)
-    await ex.close()
-asyncio.run(main())
+    try:
+        await ex.load_markets()
+        assert "BTC/USDT:USDT" in ex.markets
+    finally:
+        await ex.close()

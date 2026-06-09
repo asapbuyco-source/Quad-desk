@@ -1,0 +1,209 @@
+Deep Strategy Audit - 2026-06-09
+================================
+
+Scope
+-----
+Inputs audited:
+- C:\Users\pc\Downloads\log today 1.txt
+- C:\Users\pc\Downloads\today log 2.log
+- C:\Users\pc\Downloads\today log 3.txt
+- C:\Users\pc\Downloads\log 4.log
+- reports\audit_latest_combined_strategy.json
+- reports\audit_latest_combined_strategy.csv
+- Core strategy/execution code in bot\main.py, bot\signal_config.py, bot\executor.py, bot\derivatives_context.py
+
+Important audit-tool correction
+-------------------------------
+The replay report was previously blind to unrealized movement because it did not parse:
+  [Main] HOLDING ... now=... PnL=...
+
+I added HOLDING line parsing to bot\signal_replay_report.py so MFE/MAE are now populated from live holding updates.
+That changed the quality of this audit: we can now tell whether trades had profit available before closing.
+
+Current grade by area
+---------------------
+Execution/accounting: B+ to A-
+- The bot now places entries, stop losses, and exchange closes in a much healthier way than before.
+- No orphan position alerts, no auto-flatten orphan loop, no traceback, and no execution-loop crash were found in these latest logs.
+- The recent executor fix aggregates Binance closing fills and subtracts commissions better.
+- Remaining issue: actual expectancy must be measured using exchange commission/realizedPnl, not only bot estimates.
+
+Data freshness: B
+- The stale threshold deployed as 990s, which confirms the old 1350s threshold is gone.
+- However, there were 165 stale candle feed warnings across the combined logs.
+- Because this is a 15m candle feed, some stale messages near 990s can be expected, but it is still noisy and should be tracked.
+
+Signal quality: C+ to B-
+- There are signs of directional selection, especially on the later BUY side sample, but edge is not proven.
+- Combined replay: 18 closed trades.
+- Net gross bot PnL was close to flat, not meaningfully positive.
+- BTC: 4 trades, 3 wins, 1 loss, net -0.27.
+- ETH: 8 trades, 6 wins, 2 losses, net -0.14.
+- SOL: 6 trades, 4 wins, 2 losses, net +0.35.
+- SELL side: 13 trades, 8 wins, 5 losses, net -1.04.
+- BUY side: 5 trades, 5 wins, 0 losses, net +0.98.
+- This sample hints that long continuation/mean-reversion recovery may be working better than short continuation in this window.
+
+Exit quality: C
+- The bot is mostly not reaching its designed R targets.
+- MFE-R distribution across 18 trades:
+  - >= 0.25R: 5 trades
+  - >= 0.33R: 2 trades
+  - >= 0.50R: 0 trades
+  - >= 0.75R: 0 trades
+  - >= 1.00R: 0 trades
+- Current partial-profit settings are 0.75R or 1.00R, so partials never triggered in this sample.
+- TREND/VOLATILE targets of 2.3R to 2.5R are not aligned with observed movement under current hold times.
+- Many exits are time exits or hard max time exits, so the bot is trading like a scalper but configured like a larger-R trend system.
+
+Regime model: B-
+- HMM regime selection works and adapts, but the fast transition logic can flip into TREND on one strong tape cycle.
+- The ETH loser at 04:25 entered after RANGE -> TREND fast transition at 100% confidence, despite only moderate Z-score and an opposing bullish CVD divergence.
+- Require more confirmation before allowing fast-track trend entries to create real exposure.
+
+Portfolio/risk coordination: B-
+- Symbol-level risk controls are much better now.
+- Remaining issue: there is no strong runtime cross-symbol exposure allocator.
+- BTC, ETH, and SOL often share the same crypto beta direction. Multiple same-direction positions can stack correlated risk even if each single trade looks safe.
+
+Derivatives/GEX edge: C
+- The Deribit/BTC derivatives context is useful as a broad market proxy.
+- But compute_gex_for_strikes currently sums gamma * open interest without signed dealer gamma or put/call side assumptions.
+- Black-Scholes gamma is positive for both calls and puts, so sweep_zones are unlikely to work as intended.
+- Also, the options context is BTC-centered even when the live bot is trading ETH or SOL.
+- Treat this as a weak BTC macro feature until it is made symbol-aware and signed/calibrated.
+
+Main edge leaks found
+---------------------
+1. CVD divergence confidence semantics are wrong for short signals.
+
+In bot\main.py, _apply_cvd_divergence_gate adjusts metrics["bayesianPosterior"] before _bayesian_fusion.
+But bayesianPosterior is used as P(bull). For SELL signals, _bayesian_fusion inverts it as 1 - P(bull).
+
+This means an opposing bullish divergence can lower P(bull), then the SELL fusion can become stronger after inversion.
+
+Example:
+- BTC loser at 00:57:
+  - Opposing BULLISH divergence, strength=0.789, confirms=2.
+  - CVDGate: 33.92% -> 29.42%.
+  - BayesFusion SELL then became 73.35%.
+  - The trade entered short and lost.
+
+This is the biggest strategy bug found in the audit.
+
+2. Opposing CVD divergence can be overpowered by later boosts.
+
+Example:
+- ETH loser at 04:25:
+  - BULLISH CVD divergence, strength=0.513, confirms=3, vol_spike=2.37x.
+  - Bot still entered SELL after VPOC and Bayes/ULIS stack.
+  - Trade stopped out for -2.05.
+
+Opposing divergence should cap or veto final confidence, not merely subtract a few percent before other boosts.
+
+3. Short entries are allowed too late into downside extension.
+
+Example:
+- SOL short at 00:54:
+  - RSI=28.0, Z=-0.91, OFI=+0.1, but bot entered SELL due to bearish CVD/ULIS.
+  - This is late-short risk. In volatile markets, continuation shorts need stronger fresh confirmation when RSI is already oversold.
+
+4. Absolute/session CVD can dominate fresh flow.
+
+Trend logic uses CVD level, OFI, tape, Bayes, and Z. A large accumulated CVD value can keep bias alive even when fresh OFI/tape are weakening.
+The strategy should use fresh CVD delta and divergence state more strongly than absolute session CVD.
+
+5. Partial profits exist in code but are too far away for current behavior.
+
+The executor has partial profit logic, but no partials occurred in the logs.
+This is not because partial execution is missing now; it is because the configured partial trigger was never reached.
+
+6. Time exits are doing too much work.
+
+The bot frequently exits by regime time or hard max time instead of SL/TP or designed partial/runners.
+This suggests the entry horizon, SL distance, target RR, and hold timer are not calibrated to the same market behavior.
+
+7. GEX sweep logic is probably not real yet.
+
+Because gamma is summed without sign, GEX is biased toward positive/pin behavior. Negative gamma sweep zones need signed dealer exposure or the feature should be downgraded to informational only.
+
+Highest-value improvements
+--------------------------
+P0 - Must fix before scaling size:
+
+1. Fix CVD divergence/Bayes semantics.
+- Do not overwrite bayesianPosterior with direction-adjusted confidence.
+- Store CVD divergence as explicit directional features, for example:
+  - cvd_divergence_direction
+  - cvd_divergence_strength
+  - cvd_opposes_signal
+  - cvd_signal_cap
+- Apply penalty/cap after directional confidence is computed.
+- Suggested rule:
+  - Opposing divergence strength >= 0.50 with confirms >= 2 caps final confidence below entry threshold.
+  - Opposing divergence strength >= 0.75 vetoes, even without volume spike.
+  - Confirming divergence can boost, but only if fresh OFI/tape are not opposite.
+
+2. Add continuation-quality gates for trend entries.
+- For SELL in VOLATILE/TREND:
+  - Avoid shorting RSI < 30 unless there is real breakout continuation:
+    z_ret aligned, OFI <= -0.15, tape SELL/SCREAMING, and structure break.
+  - Require fresh CVD delta, not just negative accumulated CVD.
+- Mirror this for LONG when RSI > 70.
+
+3. Recalibrate exits around observed MFE.
+- Current sample never reached 0.50R.
+- Test partials at 0.25R, 0.33R, and 0.40R.
+- Keep a runner only when the trade has strong continuation evidence.
+- If the bot is meant to capture 2R+ moves, then hold-time and trend confirmation need to be much stronger.
+
+4. Add runtime cross-symbol exposure control.
+- BTC/ETH/SOL should not all open same-direction crypto beta exposure without a portfolio risk budget.
+- Example:
+  - max 1 full-risk same-direction trade at a time
+  - second correlated trade at half risk only if confidence is higher
+  - third correlated trade blocked
+
+P1 - High priority:
+
+5. Build per-symbol calibration.
+- BTC, ETH, and SOL are behaving differently:
+  - BTC is trading but slightly losing.
+  - ETH has many Bayes/confidence/HTF blocks but still had the largest loss.
+  - SOL is throughput-blocked heavily and slightly positive gross.
+- Calibrate Bayes floor, HTF strictness, throughput baseline, partial R, and time exits per symbol.
+
+6. Fix GEX model or disable GEX as a decision gate.
+- Compute signed dealer gamma or downgrade GEX to log-only.
+- Do not treat BTC options as symbol-specific edge for ETH/SOL unless explicitly configured as BTC macro proxy.
+
+7. Improve replay reports.
+- The replay report now parses holding MFE/MAE, but still needs:
+  - strict per-symbol context association
+  - close reason classification
+  - fees/commission/net PnL
+  - time in trade
+  - per-feature win/loss buckets
+  - out-of-sample walk-forward split
+
+8. Add an edge dashboard.
+- Track expectancy by:
+  - symbol
+  - side
+  - regime
+  - strategy
+  - HTF alignment
+  - CVD divergence state
+  - ULIS verdict
+  - OFI bucket
+  - RSI/Z bucket
+  - time of day
+
+Bottom line
+-----------
+The bot is safer and more mechanically reliable than before, but it is not A-grade in strategy edge yet.
+The biggest leak is not order placement anymore. It is signal math and exit calibration.
+
+The strongest immediate edge improvement is to fix the CVD divergence/Bayes inversion/capping problem, then recalibrate partials and time exits using the replay report.
+
+Until those are fixed and validated over a larger sample, keep size small. The current sample shows possible directional edge, but not enough net expectancy proof to scale.

@@ -32,12 +32,17 @@ def test_lob_metrics():
     }
     
     engine = QuantEngine(state)
-    ofi, wall_context, all_walls = engine._lob_metrics(current_price)
+    ofi, wall_context, all_walls, *_ = engine._lob_metrics(current_price)
     
     print("=== Anti-Spoofing Verification ===")
     print(f"OFI (Should only count near orders, skipping 100s/500s spoof size): {ofi}")
     print(f"Wall Context: {wall_context}")
     print(f"All Walls: {all_walls}")
+
+    assert "57500" not in all_walls
+    assert "57000" not in all_walls
+    assert "62000" not in all_walls
+    assert "63000" not in all_walls
 
 if __name__ == "__main__":
     test_lob_metrics()

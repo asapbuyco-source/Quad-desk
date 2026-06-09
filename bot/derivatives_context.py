@@ -94,7 +94,12 @@ def compute_gex_for_strikes(
             if gamma <= 0:
                 continue
 
-            gex_per_strike[strike] = gex_per_strike.get(strike, 0.0) + gamma * oi
+            # Black-Scholes gamma is positive for both calls and puts. For a
+            # usable dealer-gamma proxy, signed GEX must apply option-side
+            # direction; otherwise sweep_zones can never be negative.
+            option_type = parts[-1]
+            side_sign = 1.0 if option_type == "C" else -1.0
+            gex_per_strike[strike] = gex_per_strike.get(strike, 0.0) + side_sign * gamma * oi
 
         except Exception:
             continue
@@ -106,6 +111,7 @@ def compute_gex_for_strikes(
             "pin_zones": [],
             "sweep_zones": [],
             "dominant_signal": "NEUTRAL",
+            "gex_is_signed": True,
         }
 
     total_gex = sum(gex_per_strike.values())
@@ -113,9 +119,9 @@ def compute_gex_for_strikes(
     pin_zones   = sorted([k for k, v in gex_per_strike.items() if v > 0])
     sweep_zones = sorted([k for k, v in gex_per_strike.items() if v < 0])
 
-    if total_gex > 5.0:
+    if total_gex > gex_threshold_btc:
         dominant_signal = "PIN"
-    elif total_gex < -5.0:
+    elif total_gex < -gex_threshold_btc:
         dominant_signal = "SWEEP"
     else:
         dominant_signal = "NEUTRAL"
@@ -131,6 +137,7 @@ def compute_gex_for_strikes(
         "pin_zones": pin_zones,
         "sweep_zones": sweep_zones,
         "dominant_signal": dominant_signal,
+        "gex_is_signed": True,
     }
 
 
@@ -278,6 +285,7 @@ class DerivativesContext:
                     "options_signal": "NEUTRAL",
                     "gex_signal": "NEUTRAL",
                     "total_gex": 0.0,
+                    "gex_is_signed": False,
                 }
 
             total_put_oi = sum(
@@ -310,6 +318,7 @@ class DerivativesContext:
                 "options_signal": options_signal,
                 "total_gex": round(gex_data["total_gex"], 3),
                 "gex_signal": gex_signal,
+                "gex_is_signed": bool(gex_data.get("gex_is_signed", False)),
                 "pin_zones": gex_data["pin_zones"],
                 "sweep_zones": gex_data["sweep_zones"],
                 "gex_per_strike": gex_data["gex_per_strike"],
@@ -320,6 +329,7 @@ class DerivativesContext:
                 "options_signal": "NEUTRAL",
                 "gex_signal": "NEUTRAL",
                 "total_gex": 0.0,
+                "gex_is_signed": False,
                 "error": str(e),
             }
 

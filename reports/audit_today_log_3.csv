@@ -1,0 +1,2 @@
+id,symbol,verdict,side,signal_ts,entry_price,size,confidence,regime,strategy,htf,z_score,bayes,cvd,ofi,atr,atr_pct,stop_loss,take_profit,mfe_pct,mae_pct,mfe_r,mae_r,exit_ts,exit_price,pnl,outcome
+1,BTCUSDT,MEAN_REVERSAL_LONG,buy,09:31:34,62716.3,0.005,0.66,RANGE,,BEAR,-1.73,0.6584,,,,0.0032500000000000003,62540.25,63015.83,0.0,0.0,,,10:01:50,62724.0,0.02,TIME_EXIT

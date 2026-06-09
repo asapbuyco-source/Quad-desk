@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import os
 import time
 from typing import Dict, Any, Optional
 import ccxt.async_support as ccxt
@@ -91,6 +93,214 @@ class TradingExecutor:
         self.MAKER_FEE = _fees["maker"]
         logger.info(f"[Executor] Fee rates for {self.exchange_id}: taker={self.TAKER_FEE:.4%} maker={self.MAKER_FEE:.4%}")
 
+    def _extract_trade_fee(self, trade: dict) -> float:
+        """Best-effort fee extraction from ccxt-normalized and raw exchange trade payloads."""
+        if not trade:
+            return 0.0
+        total = 0.0
+        fee = trade.get("fee") or {}
+        if isinstance(fee, dict):
+            try:
+                total += abs(float(fee.get("cost") or 0.0))
+            except (TypeError, ValueError):
+                pass
+        fees = trade.get("fees") or []
+        if isinstance(fees, list):
+            for item in fees:
+                if isinstance(item, dict):
+                    try:
+                        total += abs(float(item.get("cost") or 0.0))
+                    except (TypeError, ValueError):
+                        pass
+        info = trade.get("info") or {}
+        for key in ("commission", "fee", "realizedCommission"):
+            try:
+                total += abs(float(info.get(key) or 0.0))
+            except (TypeError, ValueError):
+                pass
+        return total
+
+    @staticmethod
+    def _float_or_zero(value) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _extract_trade_amount(self, trade: dict) -> float:
+        """Best-effort filled amount extraction from ccxt-normalized/raw trades."""
+        if not trade:
+            return 0.0
+        for key in ("amount", "qty", "filled"):
+            amount = self._float_or_zero(trade.get(key))
+            if amount > 0.0:
+                return abs(amount)
+        info = trade.get("info") or {}
+        for key in ("qty", "lastQty", "executedQty", "amount"):
+            amount = self._float_or_zero(info.get(key))
+            if amount > 0.0:
+                return abs(amount)
+        return 0.0
+
+    def _extract_trade_price(self, trade: dict) -> float:
+        if not trade:
+            return 0.0
+        for key in ("price", "average"):
+            price = self._float_or_zero(trade.get(key))
+            if price > 0.0:
+                return price
+        info = trade.get("info") or {}
+        for key in ("price", "avgPrice"):
+            price = self._float_or_zero(info.get(key))
+            if price > 0.0:
+                return price
+        return 0.0
+
+    def _extract_trade_realized_pnl(self, trade: dict) -> float:
+        info = (trade or {}).get("info") or {}
+        for key in ("realizedPnl", "realizedProfit", "rp"):
+            value = self._float_or_zero(info.get(key))
+            if value != 0.0:
+                return value
+        return 0.0
+
+    def _trade_timestamp_ms(self, trade: dict) -> float:
+        info = (trade or {}).get("info") or {}
+        trade = trade or {}
+        for value in (trade.get("timestamp"), info.get("time"), info.get("T"), info.get("transactTime")):
+            ts = self._float_or_zero(value)
+            if ts > 0.0:
+                return ts * 1000.0 if ts < 10_000_000_000 else ts
+        return 0.0
+
+    def _aggregate_closing_trades(self, trades: list, close_side: str, pos: dict) -> dict | None:
+        """Aggregate the latest closing fills for the current remaining position.
+
+        Binance can split one SL/TP close into several trade fills. Accounting only
+        the last fill understates losses/wins and distorts cooldowns. We walk trades
+        newest-first until the current remaining size is covered, which also avoids
+        double-counting earlier partial-profit closes.
+        """
+        entry_ts = self._float_or_zero(pos.get("entry_ts"))
+        target_size = abs(self._float_or_zero(pos.get("size") or pos.get("qty")))
+        candidates = [
+            trade for trade in (trades or [])
+            if self._is_probable_closing_trade(trade, close_side, entry_ts)
+        ]
+        if not candidates:
+            return None
+
+        indexed = list(enumerate(candidates))
+        indexed.sort(
+            key=lambda item: (self._trade_timestamp_ms(item[1]), item[0]),
+            reverse=True,
+        )
+
+        selected_reversed = []
+        selected_amount = 0.0
+        tolerance = max(target_size * 0.001, 1e-12)
+        for _, trade in indexed:
+            selected_reversed.append(trade)
+            amount = self._extract_trade_amount(trade)
+            if amount > 0.0:
+                selected_amount += amount
+            if target_size > 0.0 and selected_amount >= target_size - tolerance:
+                break
+
+        if target_size > 0.0 and selected_amount <= 0.0:
+            selected_reversed = [indexed[0][1]]
+
+        selected = list(reversed(selected_reversed))
+        total_amount = 0.0
+        total_quote = 0.0
+        gross_pnl = 0.0
+        close_fee = 0.0
+        has_exchange_pnl = False
+        last_price = 0.0
+
+        for trade in selected:
+            amount = self._extract_trade_amount(trade)
+            price = self._extract_trade_price(trade)
+            pnl = self._extract_trade_realized_pnl(trade)
+            fee = self._extract_trade_fee(trade)
+
+            if price > 0.0:
+                last_price = price
+            if amount > 0.0 and price > 0.0:
+                total_amount += amount
+                total_quote += amount * price
+            if pnl != 0.0:
+                has_exchange_pnl = True
+            gross_pnl += pnl
+            close_fee += fee
+
+        fill_price = (total_quote / total_amount) if total_amount > 0.0 else last_price
+        if fill_price <= 0.0:
+            return None
+
+        if not has_exchange_pnl:
+            effective_size = total_amount if total_amount > 0.0 else target_size
+            entry = self._float_or_zero(pos.get("entry_price")) or fill_price
+            side = str(pos.get("side") or "buy").lower()
+            gross_pnl = (
+                (fill_price - entry) * effective_size
+                if side == "buy"
+                else (entry - fill_price) * effective_size
+            )
+
+        return {
+            "fill_price": fill_price,
+            "gross_pnl": gross_pnl,
+            "close_fee": close_fee,
+            "amount": total_amount,
+            "trade_count": len(selected),
+            "has_exchange_pnl": has_exchange_pnl,
+        }
+
+    def _net_exchange_realized_pnl(
+        self,
+        gross_pnl: float,
+        pos: dict,
+        exit_price: float,
+        closing_trade: dict | None = None,
+        closing_fee: float | None = None,
+    ) -> tuple[float, float]:
+        """Convert exchange realizedPnl to account-impact PnL by subtracting commissions.
+
+        Binance futures reports realizedPnl separately from commissions. Without this
+        adjustment, tiny fee-negative exits look like wins and distort cooldowns,
+        calibration, and daily PnL.
+        """
+        entry = float(pos.get("entry_price") or exit_price or 0.0)
+        size = float(pos.get("size") or 0.0)
+        entry_fee = float(
+            pos.get("entry_fee")
+            or pos.get("entry_fee_est")
+            or abs(entry * size * self.TAKER_FEE)
+        )
+        close_fee = float(closing_fee) if closing_fee is not None else self._extract_trade_fee(closing_trade or {})
+        if close_fee <= 0.0:
+            close_fee = abs(float(exit_price or entry) * size * self.TAKER_FEE)
+        total_fees = entry_fee + close_fee
+        return float(gross_pnl) - total_fees, total_fees
+
+    @staticmethod
+    def _is_probable_closing_trade(trade: dict, close_side: str, entry_ts: float = 0.0) -> bool:
+        trade_side = str(trade.get("side") or "").lower()
+        if trade_side and trade_side != close_side.lower():
+            return False
+        trade_ts = trade.get("timestamp") or (trade.get("info") or {}).get("time")
+        if trade_ts and entry_ts:
+            try:
+                trade_ts_f = float(trade_ts)
+                if trade_ts_f < 10_000_000_000:
+                    trade_ts_f *= 1000.0
+                if trade_ts_f < (float(entry_ts) * 1000.0) - 5_000.0:
+                    return False
+            except (TypeError, ValueError):
+                pass
+        return True
+
     # ------------------------------------------------------------------
     # Static helpers
     # ------------------------------------------------------------------
@@ -156,6 +366,9 @@ class TradingExecutor:
         if testnet:
             exchange.set_sandbox_mode(True)
         
+        if not hasattr(exchange, "options") or exchange.options is None:
+            exchange.options = {}
+
         # Prevent CCXT from trying to load margin info during load_markets
         exchange.has['fetchMarginAllPairs'] = False
         exchange.has['fetchFundingHistory'] = False
@@ -432,6 +645,8 @@ class TradingExecutor:
                 "take_profit":    take_profit,
                 "timestamp":      fs.SERVER_TIMESTAMP,
                 "mode":           "DRY-RUN" if self.dry_run else "LIVE",
+                "status":         "OPEN",
+                "portfolio_side": "long" if side == "buy" else "short",
                 "exchange":       self.exchange_id,
                 "ulis_verdict":   ulis_verdict,
                 "ts_ms":          int(time.time() * 1000),
@@ -471,7 +686,8 @@ class TradingExecutor:
                 "pnl":        pnl,
                 "result":     result,
                 "exit_ts":    fs.SERVER_TIMESTAMP,
-                "exit_ts_ms": int(time.time() * 1000)
+                "exit_ts_ms": int(time.time() * 1000),
+                "status":     "CLOSED",
             })
             logger.info(f"[Executor] Trade {doc_id} exit updated in Firestore ✓")
         except Exception as e:
@@ -560,11 +776,15 @@ class TradingExecutor:
     # Position sizing
     # ------------------------------------------------------------------
     def _kelly_scale(self, p: float, rr: float, fraction: float = 0.25) -> float:
-        """Fractional Kelly multiplier bounded [0.5, 1.5]"""
+        """Fractional Kelly multiplier bounded [0.5, 1.0].
+
+        `max_risk_pct` is a hard ceiling; Kelly may reduce size when edge is
+        weak, but it must not increase account risk above the configured cap.
+        """
         if rr <= 0 or p <= 0.50 or p >= 1.0:
             return 1.0
         f_star = (p * rr - (1.0 - p)) / rr
-        return max(0.5, min(1.5, 1.0 + f_star * fraction))
+        return max(0.5, min(1.0, 1.0 + f_star * fraction))
 
     def calculate_position_size(
         self,
@@ -584,14 +804,85 @@ class TradingExecutor:
         """
         risk_usd = equity * (max_risk_pct / 100.0)
         vol_distance = atr_pct * current_price * adaptive_mult
+        stop_distance = abs(current_price - stop_loss)
         if vol_distance <= 0 or current_price <= 0:
             return 0.0
+        risk_distance = max(vol_distance, stop_distance)
+        fee_distance = (abs(current_price) + abs(stop_loss)) * self.TAKER_FEE
         vol_scale = 1.0 - 0.4 * max(0.0, atr_pct_rank - 0.5)
-        return (risk_usd * vol_scale) / vol_distance
+        return (risk_usd * vol_scale) / max(risk_distance + fee_distance, 1e-9)
 
     # ------------------------------------------------------------------
     # Signal execution
     # ------------------------------------------------------------------
+    def _same_crypto_beta(self, symbol: str) -> bool:
+        sym = str(symbol or "").upper()
+        return any(base in sym for base in ("BTC", "ETH", "SOL"))
+
+    async def _portfolio_risk_multiplier(self, symbol: str, side: str) -> float:
+        """
+        Best-effort runtime cross-symbol exposure guard.
+
+        Firestore is the shared state across separate bot processes. When it is
+        available, allow one same-direction crypto-beta trade at full risk,
+        reduce the second, and block the third. If Firestore is unavailable we
+        fail open rather than crashing the executor.
+        """
+        if self.dry_run:
+            return 1.0
+        if os.environ.get("BOT_PORTFOLIO_RISK_GUARD", "true").lower() == "false":
+            return 1.0
+        if not self._same_crypto_beta(symbol):
+            return 1.0
+
+        max_same_side = int(os.environ.get("BOT_PORTFOLIO_MAX_SAME_SIDE", "2"))
+        full_risk_slots = int(os.environ.get("BOT_PORTFOLIO_FULL_RISK_SLOTS", "1"))
+        reduced_mult = float(os.environ.get("BOT_PORTFOLIO_REDUCED_RISK_MULT", "0.50"))
+        side_key = "long" if side == "buy" else "short"
+        db = heartbeat.get_db()
+        if db is None:
+            return 1.0
+
+        def _count_open_same_side() -> int:
+            cutoff_ms = int((time.time() - 6 * 3600) * 1000)
+            try:
+                docs = db.collection("botTrades").where("status", "==", "OPEN").stream()
+            except Exception:
+                return 0
+            count = 0
+            for doc in docs:
+                data = doc.to_dict() or {}
+                if data.get("mode") != "LIVE":
+                    continue
+                if int(data.get("ts_ms") or 0) < cutoff_ms:
+                    continue
+                if data.get("portfolio_side") != side_key:
+                    continue
+                if not self._same_crypto_beta(str(data.get("symbol") or "")):
+                    continue
+                count += 1
+            return count
+
+        try:
+            open_same_side = await asyncio.to_thread(_count_open_same_side)
+        except Exception as exc:
+            logger.warning(f"[PortfolioRisk] Guard unavailable, failing open: {exc}")
+            return 1.0
+
+        if open_same_side >= max_same_side:
+            logger.warning(
+                f"[PortfolioRisk] Blocking {side_key.upper()} {symbol}: "
+                f"{open_same_side} same-direction crypto-beta trades already open."
+            )
+            return 0.0
+        if open_same_side >= full_risk_slots:
+            logger.info(
+                f"[PortfolioRisk] Reduced-risk slot for {side_key.upper()} {symbol}: "
+                f"{open_same_side} same-direction trade open, risk x{reduced_mult:.2f}."
+            )
+            return max(0.0, min(1.0, reduced_mult))
+        return 1.0
+
     async def execute_signal(
         self,
         symbol: str,
@@ -655,6 +946,12 @@ class TradingExecutor:
                 logger.warning(f"[Executor] SL {stop_loss} ≤ est. fill {fill_price_est:.2f} for SELL. Aborting.")
                 return
 
+            portfolio_mult = await self._portfolio_risk_multiplier(symbol, side)
+            if portfolio_mult <= 0.0:
+                return
+            if portfolio_mult < 1.0:
+                max_risk_pct *= portfolio_mult
+
             # 1. Calculate Available Equity for accurate risk sizing.
             # Futures: Use only available margin (Cash) to prevent oversized rejected orders.
             # Spot: Use Total Equity (Cash + BTC) to size based on full portfolio.
@@ -708,7 +1005,19 @@ class TradingExecutor:
             # PEPE = 1  | DOGE = 1  | WIF = 0.1  | Default (unknown) = 5 USDT notional
             # The actual exchange precision is handled by amount_to_precision() below;
             # this check only prevents zero-size rejections before that call.
-            _sym_upper = symbol.upper().replace("/", "").replace(":", "").split("USDT")[0]
+            _raw_symbol = symbol.upper().replace(":USDT", "").replace(":USDC", "")
+            if "/" in _raw_symbol:
+                _sym_upper = _raw_symbol.split("/")[0]
+            elif "-" in _raw_symbol:
+                _sym_upper = _raw_symbol.split("-")[0]
+            elif "USDT" in _raw_symbol:
+                _sym_upper = _raw_symbol.split("USDT")[0]
+            elif "USDC" in _raw_symbol:
+                _sym_upper = _raw_symbol.split("USDC")[0]
+            elif "USD" in _raw_symbol:
+                _sym_upper = _raw_symbol.split("USD")[0]
+            else:
+                _sym_upper = _raw_symbol
             _MIN_QTY_MAP = {
                 "BTC":  0.001,
                 "ETH":  0.001,
@@ -885,13 +1194,26 @@ class TradingExecutor:
                 fmt_size = float(
                     self.exchange.amount_to_precision(ex_symbol, equity * 0.95 / current_price)
                 )
+                cost = fmt_size * current_price
 
-            logger.info(f"[Executor] Placing MARKET {side.upper()} {fmt_size} {ex_symbol} @ ~{current_price}")
+            order_amount = fmt_size
+            order_params = {}
+            if self.exchange_id == "coinbase" and not self.is_futures and side == "buy":
+                # Coinbase spot market buys spend quote currency when this CCXT
+                # option is disabled; keep fmt_size as BTC size for SL/TP state.
+                order_amount = float(self.exchange.price_to_precision(ex_symbol, cost))
+                order_params["createMarketBuyOrderRequiresPrice"] = False
+
+            logger.info(
+                f"[Executor] Placing MARKET {side.upper()} {order_amount} {ex_symbol} @ ~{current_price}"
+            )
             import asyncio
             order = None
             for attempt in range(3):
                 try:
-                    order = await self.exchange.create_market_order(ex_symbol, side, fmt_size)
+                    order = await self.exchange.create_market_order(
+                        ex_symbol, side, order_amount, params=order_params or None
+                    )
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -903,6 +1225,8 @@ class TradingExecutor:
                     await asyncio.sleep(0.5)
             logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
             fill_price = float(order.get("average") or order.get("price") or current_price)
+            entry_fee_actual = self._extract_trade_fee(order)
+            entry_fee_est = abs(fill_price * fmt_size * self.TAKER_FEE)
             logger.info(
                 f"[Executor] Fill price: {fill_price:.2f} "
                 f"(signal was {current_price:.2f}, diff={fill_price-current_price:+.2f})"
@@ -946,6 +1270,8 @@ class TradingExecutor:
                     "side":             side,
                     "size":             fmt_size,
                     "entry_price":      fill_price,
+                    "entry_fee":        entry_fee_actual or entry_fee_est,
+                    "entry_fee_est":    entry_fee_est,
                     "stop_loss":        stop_loss,
                     "initial_stop_loss": stop_loss,
                     "initial_risk_dist": initial_risk_dist,
@@ -1278,6 +1604,14 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         fees = (entry + exit_price) * partial_size * self.TAKER_FEE
         return raw - fees
 
+    def _scale_entry_fees_for_partial(self, pos: dict, original_size: float, remaining_size: float) -> None:
+        if original_size <= 0.0:
+            return
+        remaining_ratio = max(0.0, remaining_size) / original_size
+        for key in ("entry_fee", "entry_fee_est"):
+            if pos.get(key) is not None:
+                pos[key] = self._float_or_zero(pos.get(key)) * remaining_ratio
+
     async def _restore_reduced_exit_orders(self, pos: dict, remaining_size: float) -> bool:
         """Rebuild futures SL/TP orders after a live partial close."""
         if not self.is_futures:
@@ -1367,6 +1701,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
 
         if self.dry_run:
             pos["size"] = remaining_size
+            self._scale_entry_fees_for_partial(pos, size, remaining_size)
             pos["_partial_taken"] = True
             pos["realized_partial_pnl"] = float(pos.get("realized_partial_pnl") or 0.0) + partial_pnl
             self._log_partial_take(pos.get("trade_doc_id"), partial_size, current_price, partial_pnl, side)
@@ -1394,6 +1729,7 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                 params={"reduceOnly": True},
             )
             pos["size"] = fmt_remaining
+            self._scale_entry_fees_for_partial(pos, size, fmt_remaining)
             pos["_partial_taken"] = True
             pos["realized_partial_pnl"] = float(pos.get("realized_partial_pnl") or 0.0) + partial_pnl
             self._log_partial_take(pos.get("trade_doc_id"), fmt_partial, current_price, partial_pnl, side)
@@ -1505,14 +1841,34 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         est_pnl = raw_pnl - (entry + current_price) * size * self.TAKER_FEE
         est_pnl += float(pos.get("realized_partial_pnl") or 0.0)
         hard_time_exit_sec = time_exit_sec * 2.0
-        if est_pnl <= 0.0 and age < hard_time_exit_sec:
+        risk_dist = abs(float(pos.get("initial_risk_dist") or abs(entry - float(pos.get("stop_loss") or entry))))
+        min_time_exit_profit = max(0.0, risk_dist * size * 0.10)
+        if est_pnl < min_time_exit_profit and age < hard_time_exit_sec:
             if not pos.get("_time_exit_deferred_logged"):
                 logger.info(
                     f"[Executor] Time exit deferred: age={age:.0f}s >= {time_exit_sec:.0f}s "
-                    f"but estimated net PnL=${est_pnl:.2f}. Waiting for SL/TP or hard max "
-                    f"{hard_time_exit_sec:.0f}s."
+                    f"but estimated net PnL=${est_pnl:.2f} < min ${min_time_exit_profit:.2f}. "
+                    f"Waiting for SL/TP or hard max {hard_time_exit_sec:.0f}s."
                 )
                 pos["_time_exit_deferred_logged"] = True
+            return False, 0.0
+
+        max_fee_drift_exit_sec = time_exit_sec * 4.0
+        max_tolerable_time_loss = -(risk_dist * size * 0.75)
+        if (
+            est_pnl < min_time_exit_profit
+            and est_pnl > max_tolerable_time_loss
+            and age < max_fee_drift_exit_sec
+        ):
+            if not pos.get("_hard_time_exit_deferred_logged"):
+                logger.info(
+                    f"[Executor] Hard time exit deferred: age={age:.0f}s >= "
+                    f"{hard_time_exit_sec:.0f}s but estimated net PnL=${est_pnl:.2f} "
+                    f"is not below loss-cut ${max_tolerable_time_loss:.2f}. "
+                    f"Keeping SL/TP protection until profit threshold or max "
+                    f"{max_fee_drift_exit_sec:.0f}s."
+                )
+                pos["_hard_time_exit_deferred_logged"] = True
             return False, 0.0
 
         logger.warning(
@@ -1668,35 +2024,44 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                 entry = pos["entry_price"]
                 size  = pos["size"]
                 side  = pos["side"]
+                close_side = "sell" if side == "buy" else "buy"
 
                 # Fetch actual fill price + exchange-reported realized PnL
                 fill_price = current_price  # fallback
                 actual_pnl = None
+                closing_summary = None
                 try:
-                    recent_trades = await self.exchange.fetch_my_trades(symbol, limit=10)
-                    # Closing trades have side opposite to our entry side
-                    closing = [
-                        t for t in recent_trades
-                        if t.get("side", "").lower() != side.lower()
-                    ]
-                    if closing:
-                        fill_price = float(closing[-1]["price"])
-                        actual_pnl = float(
-                            closing[-1].get("info", {}).get("realizedPnl", 0)
+                    recent_trades = await self.exchange.fetch_my_trades(symbol, limit=50)
+                    closing_summary = self._aggregate_closing_trades(recent_trades, close_side, pos)
+                    if closing_summary:
+                        fill_price = float(closing_summary["fill_price"])
+                        actual_pnl = float(closing_summary["gross_pnl"])
+                        fill_count = int(closing_summary.get("trade_count") or 1)
+                        amount = float(closing_summary.get("amount") or 0.0)
+                        logger.info(
+                            f"[LiveExit] Exchange close aggregated: fills={fill_count} "
+                            f"amount={amount:.8f} fill={fill_price:.2f} "
+                            f"grossPnl=${actual_pnl:.2f}"
                         )
-                        if actual_pnl != 0:
-                            logger.info(
-                                f"[LiveExit] Exchange-reported fill={fill_price:.2f} "
-                                f"realizedPnl=${actual_pnl:.2f}"
-                            )
-                        else:
-                            logger.info(f"[LiveExit] Exchange-reported fill={fill_price:.2f}")
                 except Exception as e:
                     logger.warning(f"[LiveExit] fill-price fetch failed: {e}")
 
                 # Use exchange PnL if available, otherwise estimate from geometry
-                if actual_pnl is not None and actual_pnl != 0:
-                    net_pnl = actual_pnl
+                if actual_pnl is not None:
+                    net_pnl, fees = self._net_exchange_realized_pnl(
+                        actual_pnl,
+                        pos,
+                        fill_price,
+                        closing_fee=(
+                            float(closing_summary.get("close_fee") or 0.0)
+                            if closing_summary
+                            else None
+                        ),
+                    )
+                    logger.info(
+                        f"[LiveExit] Fee-adjusted PnL: gross=${actual_pnl:.2f} "
+                        f"fees=${fees:.2f} net=${net_pnl:.2f}"
+                    )
                 else:
                     raw_pnl = ((fill_price - entry) * size if side == "buy"
                                else (entry - fill_price) * size)
@@ -1833,15 +2198,22 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             est_pnl    = 0.0
             if not self.dry_run:
                 try:
-                    recent = await self.exchange.fetch_my_trades(ex_symbol, limit=5)
-                    closing = [
-                        t for t in recent
-                        if float(t.get("info", {}).get("realizedPnl", 0)) != 0
-                    ]
-                    if closing:
-                        fill_price = float(closing[-1]["price"])
-                        est_pnl    = float(closing[-1].get("info", {}).get("realizedPnl", 0))
-                        logger.info(f"[Flatten] Exchange PnL: ${est_pnl:.2f} fill={fill_price:.2f}")
+                    recent = await self.exchange.fetch_my_trades(ex_symbol, limit=50)
+                    closing_summary = self._aggregate_closing_trades(recent, close_side, pos)
+                    if closing_summary:
+                        fill_price = float(closing_summary["fill_price"])
+                        gross_pnl = float(closing_summary["gross_pnl"])
+                        est_pnl, fees = self._net_exchange_realized_pnl(
+                            gross_pnl,
+                            pos,
+                            fill_price,
+                            closing_fee=float(closing_summary.get("close_fee") or 0.0),
+                        )
+                        logger.info(
+                            f"[Flatten] Exchange PnL: gross=${gross_pnl:.2f} "
+                            f"fees=${fees:.2f} net=${est_pnl:.2f} "
+                            f"fill={fill_price:.2f} fills={int(closing_summary.get('trade_count') or 1)}"
+                        )
                     else:
                         # Estimate from entry vs current candle close
                         raw = (fill_price - entry) * size if side == "buy" else (entry - fill_price) * size

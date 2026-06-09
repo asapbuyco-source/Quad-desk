@@ -1,0 +1,92 @@
+{
+  "by_symbol": {
+    "BTCUSDT": {
+      "avg_mae_pct": null,
+      "avg_mfe_pct": null,
+      "closed": 0,
+      "gate_counts": {
+        "bayes_floor_veto": 48,
+        "signal_none": 204,
+        "stale_feed": 4,
+        "time_exit": 1
+      },
+      "gaveback_loss_count": 0,
+      "losses": 0,
+      "net_pnl": null,
+      "trades": 0,
+      "win_rate": null,
+      "wins": 0
+    },
+    "ETHUSDT": {
+      "avg_mae_pct": null,
+      "avg_mfe_pct": null,
+      "closed": 0,
+      "gate_counts": {
+        "bayes_floor_veto": 33,
+        "confidence_below_threshold": 52,
+        "signal_none": 332,
+        "stale_feed": 4
+      },
+      "gaveback_loss_count": 0,
+      "losses": 0,
+      "net_pnl": null,
+      "trades": 0,
+      "win_rate": null,
+      "wins": 0
+    },
+    "SOLUSDT": {
+      "avg_mae_pct": null,
+      "avg_mfe_pct": null,
+      "closed": 0,
+      "gate_counts": {
+        "bayes_floor_veto": 25,
+        "signal_none": 194,
+        "stale_feed": 4,
+        "throughput_thin": 73
+      },
+      "gaveback_loss_count": 0,
+      "losses": 0,
+      "net_pnl": null,
+      "trades": 0,
+      "win_rate": null,
+      "wins": 0
+    }
+  },
+  "gate_counts": {
+    "BTCUSDT": {
+      "bayes_floor_veto": 48,
+      "signal_none": 204,
+      "stale_feed": 4,
+      "time_exit": 1
+    },
+    "ETHUSDT": {
+      "bayes_floor_veto": 33,
+      "confidence_below_threshold": 52,
+      "signal_none": 332,
+      "stale_feed": 4
+    },
+    "SOLUSDT": {
+      "bayes_floor_veto": 25,
+      "signal_none": 194,
+      "stale_feed": 4,
+      "throughput_thin": 73
+    }
+  },
+  "generated_at": "2026-06-09T11:06:24Z",
+  "global_gate_counts": {
+    "bayes_floor_veto": 106,
+    "confidence_below_threshold": 52,
+    "signal_none": 730,
+    "stale_feed": 12,
+    "throughput_thin": 73,
+    "time_exit": 1
+  },
+  "input_lines": 7010,
+  "recommendations": [
+    "BTCUSDT: Bayes floor is the dominant blocker; calibrate symbol-specific Bayes priors/posteriors before lowering the global floor.",
+    "ETHUSDT: Bayes floor is the dominant blocker; calibrate symbol-specific Bayes priors/posteriors before lowering the global floor.",
+    "SOLUSDT: Bayes floor is the dominant blocker; calibrate symbol-specific Bayes priors/posteriors before lowering the global floor.",
+    "SOLUSDT: throughput gate is frequently blocking; validate feed health and symbol-specific msg/min baseline."
+  ],
+  "trades": []
+}

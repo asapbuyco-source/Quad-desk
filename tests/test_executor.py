@@ -13,6 +13,7 @@ Run with:
 """
 
 import asyncio
+import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -91,10 +92,65 @@ class TestGhostPositionFix:
 
         assert exited is True, "Position should be detected as closed"
         assert executor.active_position is None, "active_position must be cleared"
-        assert abs(pnl - (-0.60)) < 0.01, f"PnL should be ~-0.60, got {pnl}"
+        expected_fee = (78439.90 + 77841.10) * 0.001 * executor.TAKER_FEE
+        expected_pnl = -0.60 - expected_fee
+        assert pnl == pytest.approx(expected_pnl, abs=0.01)
         executor.notifier.send_close_alert.assert_awaited_once()
         executor._update_trade_exit.assert_called_once_with(
-            "test_doc_123", 77841.10, -0.60
+            "test_doc_123", 77841.10, pytest.approx(expected_pnl, abs=0.01)
+        )
+
+    @pytest.mark.asyncio
+    async def test_exchange_split_close_fills_are_aggregated(self):
+        """
+        Binance may split one SL/TP close into several trade fills. The bot must
+        account for the whole close, not only the latest tiny fill.
+        """
+        executor = _make_executor()
+        entry = 62588.00
+        close = 62407.90
+        size = 0.005
+        entry_ts = time.time() - 60
+        entry_fee = entry * size * executor.TAKER_FEE
+        close_fee_per_fill = close * 0.001 * executor.TAKER_FEE
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": size,
+            "entry_price": entry,
+            "entry_fee": entry_fee,
+            "stop_loss": 62256.11,
+            "take_profit": 63071.16,
+            "dry_run": False,
+            "trade_doc_id": "split_doc_123",
+            "entry_ts": entry_ts,
+        }
+        executor.exchange.fetch_positions = AsyncMock(return_value=[])
+        executor.exchange.fetch_my_trades = AsyncMock(return_value=[
+            {
+                "side": "sell",
+                "amount": "0.001",
+                "price": str(close),
+                "timestamp": int((entry_ts + 10 + i) * 1000),
+                "info": {
+                    "realizedPnl": "-0.1801",
+                    "commission": str(close_fee_per_fill),
+                },
+            }
+            for i in range(5)
+        ])
+        executor._update_trade_exit = MagicMock()
+
+        exited, pnl = await executor._check_live_position_exit(current_price=close)
+
+        expected_gross = -0.1801 * 5
+        expected_fees = entry_fee + (close_fee_per_fill * 5)
+        expected_pnl = expected_gross - expected_fees
+        assert exited is True
+        assert pnl == pytest.approx(expected_pnl, abs=1e-6)
+        executor.exchange.fetch_my_trades.assert_awaited_once_with("BTC/USDT:USDT", limit=50)
+        executor._update_trade_exit.assert_called_once_with(
+            "split_doc_123", pytest.approx(close, abs=1e-9), pytest.approx(expected_pnl, abs=1e-6)
         )
 
     @pytest.mark.asyncio
@@ -167,6 +223,59 @@ class TestGhostPositionFix:
         assert pnl == 0.0
         # active_position must NOT be cleared on a poll error
         assert executor.active_position is not None
+
+
+class TestFlattenAccounting:
+
+    @pytest.mark.asyncio
+    async def test_emergency_flatten_aggregates_split_close_fills(self):
+        executor = _make_executor()
+        entry = 62588.00
+        close = 62407.90
+        size = 0.005
+        entry_ts = time.time() - 60
+        entry_fee = entry * size * executor.TAKER_FEE
+        close_fee_per_fill = close * 0.001 * executor.TAKER_FEE
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": size,
+            "entry_price": entry,
+            "entry_fee": entry_fee,
+            "trade_doc_id": "panic_split_doc",
+            "entry_ts": entry_ts,
+        }
+        executor.exchange.cancel_all_orders = AsyncMock()
+        executor.exchange.create_market_order = AsyncMock(return_value={"id": "flatten-1"})
+        executor.exchange.fetch_my_trades = AsyncMock(return_value=[
+            {
+                "side": "sell",
+                "amount": "0.001",
+                "price": str(close),
+                "timestamp": int((entry_ts + 10 + i) * 1000),
+                "info": {
+                    "realizedPnl": "-0.1801",
+                    "commission": str(close_fee_per_fill),
+                },
+            }
+            for i in range(5)
+        ])
+        executor._update_trade_exit = MagicMock()
+
+        pnl = await executor.emergency_flatten("test split close")
+
+        expected_gross = -0.1801 * 5
+        expected_fees = entry_fee + (close_fee_per_fill * 5)
+        expected_pnl = expected_gross - expected_fees
+        assert pnl == pytest.approx(expected_pnl, abs=1e-6)
+        executor.exchange.create_market_order.assert_awaited_once_with(
+            "BTC/USDT:USDT", "sell", size, params={"reduceOnly": True}
+        )
+        executor.exchange.fetch_my_trades.assert_awaited_once_with("BTC/USDT:USDT", limit=50)
+        executor._update_trade_exit.assert_called_once_with(
+            "panic_split_doc", pytest.approx(close, abs=1e-9), pytest.approx(expected_pnl, abs=1e-6)
+        )
+        assert executor.active_position is None
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +491,81 @@ class TestPartialProfitTaking:
         executor.exchange.create_market_order.assert_awaited_once()
         executor.exchange.cancel_all_orders.assert_awaited_once_with("BTC/USDT:USDT")
         assert executor.exchange.create_order.await_count == 2
+
+
+class TestTimeExitBleedGuard:
+
+    @pytest.mark.asyncio
+    async def test_time_exit_defers_tiny_positive_net_pnl(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.emergency_flatten = AsyncMock()
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 1.0,
+            "entry_price": 100.0,
+            "stop_loss": 90.0,
+            "initial_risk_dist": 10.0,
+            "take_profit": 130.0,
+            "time_exit_sec": 60,
+            "entry_ts": time.time() - 61,
+            "realized_partial_pnl": 0.0,
+        }
+
+        exited, pnl = await executor.check_time_exit(current_price=100.5)
+
+        assert exited is False
+        assert pnl == 0.0
+        assert executor.active_position["_time_exit_deferred_logged"] is True
+        executor.emergency_flatten.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_hard_time_exit_defers_small_fee_negative_drift(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.emergency_flatten = AsyncMock()
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 1.0,
+            "entry_price": 100.0,
+            "stop_loss": 90.0,
+            "initial_risk_dist": 10.0,
+            "take_profit": 130.0,
+            "time_exit_sec": 60,
+            "entry_ts": time.time() - 121,
+            "realized_partial_pnl": 0.0,
+        }
+
+        exited, pnl = await executor.check_time_exit(current_price=99.0)
+
+        assert exited is False
+        assert pnl == 0.0
+        assert executor.active_position["_hard_time_exit_deferred_logged"] is True
+        executor.emergency_flatten.assert_not_awaited()
+
+
+class TestRiskSizing:
+
+    def test_kelly_never_exceeds_configured_risk_ceiling(self):
+        executor = _make_executor(dry_run=False)
+
+        assert executor._kelly_scale(0.80, 2.5) <= 1.0
+
+    def test_position_size_includes_stop_distance_and_fee_buffer(self):
+        executor = _make_executor(dry_run=False)
+        executor.TAKER_FEE = 0.0005
+
+        size = executor.calculate_position_size(
+            current_price=100.0,
+            stop_loss=90.0,
+            equity=1000.0,
+            max_risk_pct=1.0,
+            atr_pct=0.01,
+            atr_pct_rank=0.5,
+            adaptive_mult=1.0,
+        )
+
+        # Gross risk-only size would be 1.0. Fee-aware sizing should be smaller.
+        assert size == pytest.approx(10.0 / (10.0 + 0.095))
