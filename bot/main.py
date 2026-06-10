@@ -117,6 +117,9 @@ PANIC_LOOKBACK     = int(os.environ.get("BOT_PANIC_LOOKBACK",     "5"))   # cand
 PANIC_LOCK_SECONDS = int(os.environ.get("BOT_PANIC_LOCK_SECONDS", "300")) # 5 min default
 # Max drawdown: halt ALL trading if cumulative session PnL exceeds this % of ACCOUNT_SIZE
 MAX_DRAWDOWN_PCT   = float(os.environ.get("BOT_MAX_DRAWDOWN_PCT",  str(CFG_MAX_DRAWDOWN_PCT)))
+DERIVATIVES_REFRESH_SEC = max(300, int(os.environ.get("BOT_DERIVATIVES_REFRESH_SEC", "900")))
+DERIVATIVES_REFRESH_JITTER_SEC = max(0, int(os.environ.get("BOT_DERIVATIVES_REFRESH_JITTER_SEC", "45")))
+DERIVATIVES_STALE_SEC = max(900, DERIVATIVES_REFRESH_SEC + DERIVATIVES_REFRESH_JITTER_SEC + 60)
 
 
 # Coinbase credentials
@@ -369,6 +372,14 @@ def _day_start_equity(stats: Dict[str, Any]) -> float:
 
 def _daily_loss_limit_usd(stats: Dict[str, Any]) -> float:
     return _day_start_equity(stats) * MAX_DAILY_LOSS_PCT / 100.0
+
+
+def _is_exchange_rate_limit_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in ("429", "418", "too many requests", "-1003", "teapot", "banned until")
+    )
 
 
 GATE_STATS_LAST_LOG = 0.0  # timestamp of last 30-min gate summary
@@ -2177,12 +2188,16 @@ def _risk_engine(
 
 async def _derivatives_refresh_loop():
     """
-    Background task: refreshes institutional context every 5 minutes.
+    Background task: refreshes institutional context on a conservative cadence.
     Stores result in _CACHED_DERIV_CONTEXT so _compute_signal() can read
     it synchronously without blocking the signal hot path.
     """
     global _CACHED_DERIV_CONTEXT, _DERIV_CONTEXT_LAST_UPDATE, _DERIV_CONTEXT_WARMING
-    await asyncio.sleep(2)  # Initial delay: let feed warm up first, quicker than 10s
+    symbol_jitter = (
+        sum(ord(ch) for ch in FEED_SYMBOL) % DERIVATIVES_REFRESH_JITTER_SEC
+        if DERIVATIVES_REFRESH_JITTER_SEC > 0 else 0
+    )
+    await asyncio.sleep(2 + symbol_jitter)
     while True:
         try:
             ctx = await _derivatives_ctx.get_full_context()
@@ -2197,7 +2212,7 @@ async def _derivatives_refresh_loop():
         except Exception as e:
             logger.warning(f"[DerivRefresh] Background fetch failed: {e}")
         try:
-            await asyncio.sleep(300)  # 5 minute refresh cycle
+            await asyncio.sleep(DERIVATIVES_REFRESH_SEC + symbol_jitter)
         except asyncio.CancelledError:
             break
 
@@ -2610,7 +2625,7 @@ async def _compute_signal(
     if _DERIV_CONTEXT_WARMING:
         logger.info(f"[DerivGate] Cache warming — skipping derivatives gate without warnings")
         _deriv_ok, _deriv_reason = True, "WARMING_BYPASSED"
-    elif _age_s > 900:  # 15 minutes: cache is too stale to trust
+    elif _age_s > DERIVATIVES_STALE_SEC:
         logger.warning(f"[DerivGate] Cache stale ({_age_s:.0f}s) — skipping derivatives gate")
         _deriv_ok, _deriv_reason = True, "STALE_CACHE_BYPASSED"
     else:
@@ -3082,6 +3097,9 @@ async def execution_loop(
     )
 
     _last_recon_ts = 0.0
+    _recon_backoff_until = 0.0
+    _recon_backoff_s = 300.0
+    _last_recon_backoff_log = 0.0
     _orphan_flatten_attempts: int = 0          # how many times we've tried to flatten an orphan
     _last_orphan_flatten_ts: float = 0.0       # timestamp of last flatten attempt
     _queued_signal: dict = None                 # FIX-M5: best signal during lockout, queued for post-lockout execution
@@ -3353,7 +3371,11 @@ async def execution_loop(
 
             # PHASE-7.1: Periodic exchange position reconciliation (every 300s)
             current_time = time.time()
-            if not executor.dry_run and (current_time - _last_recon_ts) >= 300:
+            if (
+                not executor.dry_run
+                and current_time >= _recon_backoff_until
+                and (current_time - _last_recon_ts) >= 300
+            ):
                 _last_recon_ts = current_time
                 try:
                     if _cached_positions is None:
@@ -3497,8 +3519,28 @@ async def execution_loop(
                             logger.warning(f"[Reconciliation] Could not cancel orphaned orders: {cancel_err}")
                         executor.active_position = None
                         executor.pending_order = None
+                    _recon_backoff_s = 300.0
+                    _recon_backoff_until = 0.0
                 except Exception as e:
-                    logger.warning(f"[Reconciliation] Check failed: {e}")
+                    if _is_exchange_rate_limit_error(e):
+                        _recon_backoff_until = time.time() + _recon_backoff_s
+                        logger.warning(
+                            f"[Reconciliation] Exchange rate-limited ({e}); "
+                            f"cooling down {_recon_backoff_s:.0f}s."
+                        )
+                        _recon_backoff_s = min(_recon_backoff_s * 2.0, 1800.0)
+                    else:
+                        logger.warning(f"[Reconciliation] Check failed: {e}")
+            elif (
+                not executor.dry_run
+                and current_time < _recon_backoff_until
+                and current_time - _last_recon_backoff_log >= 300
+            ):
+                _last_recon_backoff_log = current_time
+                logger.warning(
+                    f"[Reconciliation] Skipping exchange poll during rate-limit cooldown "
+                    f"({_recon_backoff_until - current_time:.0f}s remaining)."
+                )
 
             # Inject CVD delta (rate-of-change) for Bayesian fusion.
             # A recovering CVD (e.g. -1450 → -950) is a bullish signal even when absolute CVD < 0.

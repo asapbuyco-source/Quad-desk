@@ -370,7 +370,51 @@ class TestMinNotionalFloor:
         # No market order should have been placed
         executor.exchange.create_market_order.assert_not_awaited()
         # Error alert should have been sent
-        executor.notifier.send_message.assert_awaited()
+        executor.notifier.send_error_alert.assert_awaited()
+
+
+    @pytest.mark.asyncio
+    async def test_binance_usdm_uses_twenty_dollar_min_notional(self):
+        """Binance USDM rejects orders below $20 notional; block before retries."""
+        from bot.executor import TradingExecutor
+
+        with patch("bot.executor.ccxt"):
+            executor = TradingExecutor(
+                api_key="k", api_secret="s",
+                testnet=True, dry_run=False,
+                exchange_id="binanceusdm",
+            )
+
+        executor.dry_run = False
+        executor.active_position = None
+        executor.pending_order = None
+        executor.lock_expiry = 0.0
+        executor.failed_order_ts = 0.0
+        executor.TAKER_FEE = 0.0005
+        executor.MAKER_FEE = 0.0002
+        executor.is_futures = True
+        executor.exchange_id = "binanceusdm"
+        executor.notifier = AsyncMock()
+        executor.exchange = AsyncMock()
+        executor.get_usdt_balance = AsyncMock(return_value=100.0)
+        executor._portfolio_risk_multiplier = AsyncMock(return_value=1.0)
+        executor.calculate_position_size = MagicMock(return_value=0.012)
+
+        await executor.execute_signal(
+            symbol="ETHUSDT",
+            current_price=1650.0,
+            signal={
+                "verdict": "BUY",
+                "confidence": 0.90,
+                "stop_loss": 1600.0,
+                "take_profit": 1700.0,
+            },
+            max_risk_pct=1.0,
+            account_size=100.0,
+        )
+
+        executor.exchange.create_market_order.assert_not_awaited()
+        executor.notifier.send_error_alert.assert_awaited()
 
 
 class TestLiveSafetyHardening:

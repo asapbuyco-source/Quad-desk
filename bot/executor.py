@@ -1060,7 +1060,12 @@ class TradingExecutor:
                 "OP":   0.1,
             }
             MIN_QTY = _MIN_QTY_MAP.get(_sym_upper, 0.01)  # safe default for unknown alts
-            min_notional = 5.5  # Binance USDM global minimum notional = $5
+            default_min_notional = 20.5 if (self.is_futures and self.exchange_id == "binanceusdm") else 5.5
+            try:
+                min_notional = float(os.environ.get("BOT_MIN_NOTIONAL_USD", str(default_min_notional)))
+            except (TypeError, ValueError):
+                min_notional = default_min_notional
+            min_notional = max(0.0, min_notional)
 
             if raw_size < MIN_QTY:
                 sl_dist_pct = abs(current_price - stop_loss) / current_price
@@ -1072,7 +1077,7 @@ class TradingExecutor:
                 )
                 logger.error(msg)
                 if self.notifier:
-                    await self.notifier.send_message(msg)
+                    await self.notifier.send_error_alert(msg)
                 return
 
             if raw_size * current_price < min_notional:
@@ -1083,7 +1088,7 @@ class TradingExecutor:
                     f"Needs ~${needed_acct:.0f} account. ABORTING order."
                 )
                 if self.notifier:
-                    await self.notifier.send_message(
+                    await self.notifier.send_error_alert(
                         f"⚠️ Account too small: ${equity:.0f} < required ~${needed_acct:.0f}."
                     )
                 return

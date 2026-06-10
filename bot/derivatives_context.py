@@ -1,6 +1,7 @@
 import httpx
 import asyncio
 import logging
+import os
 import time
 import math
 
@@ -155,8 +156,13 @@ class DerivativesContext:
         self.symbol = symbol
         self._cache: dict = {}
         self._cache_ts: dict = {}
-        self.CACHE_TTL = 300  # 5 minutes
+        self.CACHE_TTL = int(os.environ.get("BOT_DERIVATIVES_CACHE_TTL_SEC", "300"))
         self._client: httpx.AsyncClient = None  # H1: lazy-initialized persistent client
+        self._rate_limited_until: float = 0.0
+        self._rate_limit_initial_backoff_s = float(os.environ.get("BOT_DERIVATIVES_RATE_LIMIT_BACKOFF_SEC", "900"))
+        self._rate_limit_backoff_s = self._rate_limit_initial_backoff_s
+        self._rate_limit_max_backoff_s = float(os.environ.get("BOT_DERIVATIVES_RATE_LIMIT_MAX_BACKOFF_SEC", "3600"))
+        self._last_rate_limit_log: float = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -168,10 +174,34 @@ class DerivativesContext:
             await self._client.aclose()
             self._client = None
 
+    def _is_rate_limit_error(self, exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return any(
+            token in msg
+            for token in ("429", "418", "too many requests", "-1003", "teapot", "banned until")
+        )
+
+    def _stale_or_empty(self, key: str, now: float) -> dict:
+        if key in self._cache:
+            logger.info(
+                f"[Derivatives] Returning stale cache for {key} "
+                f"(age={(now - self._cache_ts.get(key, now)):.0f}s)"
+            )
+            return self._cache[key]
+        return {}
+
     async def _fetch(self, key: str, url: str, params: dict = None) -> dict:
         now = time.time()
         if key in self._cache and (now - self._cache_ts.get(key, 0)) < self.CACHE_TTL:
             return self._cache[key]
+        if now < self._rate_limited_until:
+            if now - self._last_rate_limit_log >= 60:
+                logger.warning(
+                    f"[Derivatives] Rate-limit cooldown active for "
+                    f"{self._rate_limited_until - now:.0f}s; using stale/neutral {key}."
+                )
+                self._last_rate_limit_log = now
+            return self._stale_or_empty(key, now)
         try:
             client = await self._get_client()
             resp = await client.get(url, params=params)
@@ -183,17 +213,27 @@ class DerivativesContext:
             if data:
                 self._cache[key] = data
                 self._cache_ts[key] = now
+                self._rate_limited_until = 0.0
+                self._rate_limit_backoff_s = self._rate_limit_initial_backoff_s
             elif key in self._cache:
                 # Return stale cache rather than overwriting with empty
                 logger.info(f"[Derivatives] Empty response for {key} — returning stale cache (age={(now - self._cache_ts.get(key, now)):.0f}s)")
                 return self._cache[key]
             return data
         except Exception as e:
+            if self._is_rate_limit_error(e):
+                self._rate_limited_until = now + self._rate_limit_backoff_s
+                logger.warning(
+                    f"[Derivatives] {key} hit exchange rate limit ({e}); "
+                    f"cooling down {self._rate_limit_backoff_s:.0f}s."
+                )
+                self._rate_limit_backoff_s = min(
+                    self._rate_limit_backoff_s * 2.0,
+                    self._rate_limit_max_backoff_s,
+                )
+                return self._stale_or_empty(key, now)
             logger.warning(f"[Derivatives] {key} fetch failed: {e}")
-            if key in self._cache:
-                logger.info(f"[Derivatives] Returning stale cache for {key} (age={(now - self._cache_ts.get(key, now)):.0f}s)")
-                return self._cache[key]
-            return {}
+            return self._stale_or_empty(key, now)
 
     async def get_open_interest(self) -> dict:
         """

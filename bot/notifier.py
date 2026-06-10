@@ -1,6 +1,7 @@
 import logging
 import httpx
 import asyncio
+import html
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class TelegramNotifier:
 
     async def send_error_alert(self, error_msg: str):
         """Send an urgent error notification."""
+        error_msg = html.escape(str(error_msg), quote=False)
         msg = f"⚠️ <b>BOT ERROR</b>\n━━━━━━━━━━━━━━━\n<code>{error_msg}</code>"
         await self.send_message(msg)
 
