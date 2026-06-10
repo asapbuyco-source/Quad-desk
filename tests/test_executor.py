@@ -659,6 +659,31 @@ class TestTimeExitBleedGuard:
         executor.emergency_flatten.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_time_exit_defers_profit_below_fee_slippage_buffer(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.emergency_flatten = AsyncMock()
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 1.0,
+            "entry_price": 100.0,
+            "stop_loss": 99.5,
+            "initial_risk_dist": 0.5,
+            "take_profit": 101.5,
+            "time_exit_sec": 60,
+            "entry_ts": time.time() - 61,
+            "realized_partial_pnl": 0.0,
+        }
+
+        exited, pnl = await executor.check_time_exit(current_price=100.25)
+
+        assert exited is False
+        assert pnl == 0.0
+        assert executor.active_position["_time_exit_deferred_logged"] is True
+        executor.emergency_flatten.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_hard_time_exit_defers_small_fee_negative_drift(self):
         executor = _make_executor(dry_run=False)
         executor.dry_run = False

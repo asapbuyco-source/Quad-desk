@@ -1966,7 +1966,8 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         est_pnl += float(pos.get("realized_partial_pnl") or 0.0)
         hard_time_exit_sec = time_exit_sec * 2.0
         risk_dist = abs(float(pos.get("initial_risk_dist") or abs(entry - float(pos.get("stop_loss") or entry))))
-        min_time_exit_profit = max(0.0, risk_dist * size * 0.10)
+        fee_slippage_buffer = (entry + current_price) * size * self.TAKER_FEE * 2.0
+        min_time_exit_profit = max(0.0, risk_dist * size * 0.10, fee_slippage_buffer)
         if est_pnl < min_time_exit_profit and age < hard_time_exit_sec:
             if not pos.get("_time_exit_deferred_logged"):
                 logger.info(
