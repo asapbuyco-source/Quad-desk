@@ -65,7 +65,7 @@ REGIME_PARAMS = {
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
         "rr_target":          1.8,   # 1.8:1 minimum R:R
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
-        "partial_take_r":     0.33,
+        "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
         "time_exit_sec":      900,   # Hold at least one 15m candle before regime time exit
         "panic_threshold":    10.0,  # FIX-R4: was 2.5 — unify with ATR panic gate at 0.90
@@ -81,7 +81,7 @@ REGIME_PARAMS = {
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
-        "partial_take_r":     0.33,
+        "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
         "time_exit_sec":      1200,  # 20 min max hold; avoids premature churn on 15m signals
         "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
@@ -97,7 +97,7 @@ REGIME_PARAMS = {
         "min_confidence":     0.65,  # Was 0.72. Massive increase in trend trades
         "rr_target":          2.5,
         "be_lock_trigger":    2.0,  # widened: let trend breathe — do not lock BE until 2×ATR profit
-        "partial_take_r":     0.33,
+        "partial_take_r":     0.75,
         "partial_take_pct":   0.40,
         "time_exit_sec":      1800,  # 30 min max hold; trend setups need room to resolve
         "panic_threshold":    10.0,  # FIX-R4: was 8.0 — unify with ATR panic gate at 0.90
@@ -114,7 +114,7 @@ REGIME_PARAMS = {
         "min_confidence":     0.65,
         "rr_target":          2.3,
         "be_lock_trigger":    2.0,
-        "partial_take_r":     0.33,
+        "partial_take_r":     0.75,
         "partial_take_pct":   0.40,
         "time_exit_sec":      1200,
         "panic_threshold":    10.0,
@@ -130,7 +130,7 @@ REGIME_PARAMS = {
         "min_confidence":     0.62,  # FIX-P10: was 0.55 which == sweep neutralizer floor (no-op); raised to 0.62 so threshold is meaningful
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
-        "partial_take_r":     0.33,
+        "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
         "time_exit_sec":      900,   # Hold at least one 15m candle for liquidity sweeps
         "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
@@ -148,7 +148,7 @@ REGIME_PARAMS = {
         "min_confidence":     0.65,   # Higher bar — squeeze entries are risky
         "rr_target":          3.0,   # WIDER TP: squeeze snaps back violently
         "be_lock_trigger":    1.0,   # Lock BE faster — squeeze resolves in 3-8 candles
-        "partial_take_r":     0.33,
+        "partial_take_r":     0.50,
         "partial_take_pct":   0.50,
         "time_exit_sec":      600,   # 10 min max for vacuum resolution without instant churn
         "panic_threshold":    5.0,   # Tighter panic — squeeze moves fast

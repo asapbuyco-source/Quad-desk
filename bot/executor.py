@@ -1235,6 +1235,17 @@ class TradingExecutor:
                 order_amount = float(self.exchange.price_to_precision(ex_symbol, cost))
                 order_params["createMarketBuyOrderRequiresPrice"] = False
 
+            min_live_rr = self._min_live_entry_rr()
+            prefill_rr = self._effective_reward_risk(side, current_price, stop_loss, take_profit)
+            if prefill_rr < min_live_rr:
+                logger.warning(
+                    f"[Executor] Live entry skipped: effective RR={prefill_rr:.2f} "
+                    f"< min {min_live_rr:.2f} after price drift "
+                    f"(entry~{current_price}, SL={stop_loss}, TP={take_profit})."
+                )
+                self.pending_order = None
+                return False
+
             logger.info(
                 f"[Executor] Placing MARKET {side.upper()} {order_amount} {ex_symbol} @ ~{current_price}"
             )
@@ -1262,6 +1273,29 @@ class TradingExecutor:
                 f"[Executor] Fill price: {fill_price:.2f} "
                 f"(signal was {current_price:.2f}, diff={fill_price-current_price:+.2f})"
             )
+            fill_rr = self._effective_reward_risk(side, fill_price, stop_loss, take_profit)
+            if fill_rr < min_live_rr:
+                logger.warning(
+                    f"[Executor] Fill degraded RR to {fill_rr:.2f} < min {min_live_rr:.2f}. "
+                    "Flattening immediately instead of holding bad geometry."
+                )
+                close_side = "sell" if side == "buy" else "buy"
+                flatten_params = {"reduceOnly": True} if self.is_futures else {}
+                try:
+                    await self.exchange.create_market_order(ex_symbol, close_side, fmt_size, params=flatten_params)
+                    logger.info("[Executor] Low-RR fill flattened successfully.")
+                except Exception as flatten_err:
+                    logger.critical(
+                        f"[Executor] Low-RR fill flatten FAILED for {ex_symbol}: {flatten_err}. "
+                        "Manual intervention required."
+                    )
+                    self._flatten_failed = True
+                    if self.notifier:
+                        await self.notifier.send_error_alert(
+                            f"Low-RR fill flatten failed for {ex_symbol}: {flatten_err}"
+                        )
+                self.pending_order = None
+                return False
             trade_doc_id = None
             
             # Track this order as pending until it fills or is cancelled
@@ -1635,6 +1669,19 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         fees = (entry + exit_price) * partial_size * self.TAKER_FEE
         return raw - fees
 
+    def _effective_reward_risk(self, side: str, entry_price: float, stop_loss: float, take_profit: float) -> float:
+        risk = entry_price - stop_loss if side == "buy" else stop_loss - entry_price
+        reward = take_profit - entry_price if side == "buy" else entry_price - take_profit
+        if risk <= 0.0 or reward <= 0.0:
+            return 0.0
+        return reward / risk
+
+    def _min_live_entry_rr(self) -> float:
+        try:
+            return max(1.0, float(os.environ.get("BOT_MIN_LIVE_ENTRY_RR", "1.35")))
+        except (TypeError, ValueError):
+            return 1.35
+
     def _scale_entry_fees_for_partial(self, pos: dict, original_size: float, remaining_size: float) -> None:
         if original_size <= 0.0:
             return
@@ -1643,51 +1690,82 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             if pos.get(key) is not None:
                 pos[key] = self._float_or_zero(pos.get(key)) * remaining_ratio
 
-    async def _restore_reduced_exit_orders(self, pos: dict, remaining_size: float) -> bool:
+    async def _restore_reduced_exit_orders(
+        self,
+        pos: dict,
+        remaining_size: float,
+        desired_stop_loss: float | None = None,
+    ) -> bool:
         """Rebuild futures SL/TP orders after a live partial close."""
         if not self.is_futures:
             return False
 
         symbol = pos["symbol"]
         close_side = "sell" if pos.get("side") == "buy" else "buy"
-        stop_loss = float(pos.get("stop_loss") or 0.0)
+        stop_loss = float(desired_stop_loss if desired_stop_loss is not None else (pos.get("stop_loss") or 0.0))
         take_profit = float(pos.get("take_profit") or 0.0)
         fmt_remaining = float(self.exchange.amount_to_precision(symbol, remaining_size))
         if fmt_remaining <= 0.0 or stop_loss <= 0.0:
             return False
 
+        old_sl_order_id = pos.get("sl_order_id")
+        old_tp_order_id = pos.get("tp_order_id")
+
         try:
-            await self.exchange.cancel_all_orders(symbol)
-        except Exception as e:
-            logger.warning(f"[Executor] Partial TP: cancel_all_orders failed before resize: {e}")
-
-        sl_order = await self.exchange.create_order(
-            symbol=symbol,
-            type="STOP_MARKET",
-            side=close_side,
-            amount=fmt_remaining,
-            params={
-                "stopPrice": float(self.exchange.price_to_precision(symbol, stop_loss)),
-                "reduceOnly": True,
-                "workingType": "MARK_PRICE",
-            },
-        )
-
-        tp_order = None
-        if take_profit > 0.0:
-            tp_order = await self.exchange.create_order(
+            sl_order = await self.exchange.create_order(
                 symbol=symbol,
-                type="TAKE_PROFIT_MARKET",
+                type="STOP_MARKET",
                 side=close_side,
                 amount=fmt_remaining,
                 params={
-                    "stopPrice": float(self.exchange.price_to_precision(symbol, take_profit)),
+                    "stopPrice": float(self.exchange.price_to_precision(symbol, stop_loss)),
                     "reduceOnly": True,
                     "workingType": "MARK_PRICE",
                 },
             )
+        except Exception as e:
+            logger.error(
+                f"[Executor] Partial TP: replacement SL rejected at {stop_loss}: {e}. "
+                "Leaving existing exchange protection in place."
+            )
+            return False
+
+        if old_sl_order_id:
+            try:
+                await self.exchange.cancel_order(old_sl_order_id, symbol)
+            except Exception as e:
+                logger.warning(f"[Executor] Partial TP: old SL cancel failed ({old_sl_order_id}): {e}")
+
+        tp_order = None
+        if take_profit > 0.0:
+            try:
+                tp_order = await self.exchange.create_order(
+                    symbol=symbol,
+                    type="TAKE_PROFIT_MARKET",
+                    side=close_side,
+                    amount=fmt_remaining,
+                    params={
+                        "stopPrice": float(self.exchange.price_to_precision(symbol, take_profit)),
+                        "reduceOnly": True,
+                        "workingType": "MARK_PRICE",
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"[Executor] Partial TP: replacement TP rejected at {take_profit}: {e}")
+                pos["requeue_tp_attempts"] = 1
+                pos["requeue_tp_side"] = close_side
+                pos["requeue_tp_size"] = fmt_remaining
+                pos["requeue_tp_price"] = float(self.exchange.price_to_precision(symbol, take_profit))
+                pos["requeue_tp_symbol"] = symbol
+
+        if tp_order and old_tp_order_id:
+            try:
+                await self.exchange.cancel_order(old_tp_order_id, symbol)
+            except Exception as e:
+                logger.warning(f"[Executor] Partial TP: old TP cancel failed ({old_tp_order_id}): {e}")
 
         pos["size"] = fmt_remaining
+        pos["stop_loss"] = stop_loss
         pos["sl_order_id"] = sl_order.get("id")
         pos["tp_order_id"] = tp_order.get("id") if tp_order else None
         pos["sl_placed"] = True
@@ -1765,22 +1843,33 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             pos["realized_partial_pnl"] = float(pos.get("realized_partial_pnl") or 0.0) + partial_pnl
             self._log_partial_take(pos.get("trade_doc_id"), fmt_partial, current_price, partial_pnl, side)
 
-            if not pos.get("_be_locked", False):
-                pos["stop_loss"] = entry
-                pos["_be_locked"] = True
+            desired_stop_loss = entry if not pos.get("_be_locked", False) else float(pos.get("stop_loss") or entry)
+            restored = await self._restore_reduced_exit_orders(pos, fmt_remaining, desired_stop_loss)
 
-            restored = await self._restore_reduced_exit_orders(pos, fmt_remaining)
             if restored:
+                pos["_be_locked"] = desired_stop_loss == entry
                 logger.info(
                     f"[Executor] Partial TP complete. Remaining size={pos['size']} "
                     "with resized SL/TP protection."
                 )
             else:
-                logger.error("[Executor] Partial TP executed but exit-order resize failed. Monitor manually.")
+                logger.error(
+                    "[Executor] Partial TP executed but replacement protection failed. "
+                    "Flattening remaining size to avoid unmanaged bleed."
+                )
                 if self.notifier:
                     await self.notifier.send_error_alert(
-                        f"Partial TP executed for {symbol}, but resized SL/TP placement failed. Monitor manually."
+                        f"Partial TP executed for {symbol}, but resized SL/TP placement failed. "
+                        "Flattening remaining position."
                     )
+                pos_snapshot = dict(pos)
+                pnl = await self.emergency_flatten("Partial TP protection rebuild failed")
+                self._pending_forced_exit = {
+                    "pnl": float(pnl if pnl is not None else 0.0),
+                    "regime": pos_snapshot.get("regime", "NEUTRAL"),
+                    "position": pos_snapshot,
+                    "reason": "partial_protection_rebuild_failed",
+                }
         except Exception as e:
             logger.error(f"[Executor] Partial TP failed: {e}", exc_info=True)
             if self.notifier:

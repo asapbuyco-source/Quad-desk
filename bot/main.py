@@ -2808,6 +2808,7 @@ async def _process_exit(
     stats: dict,
     quant,
     executor,
+    pos_snapshot: dict | None = None,
 ):
     """Single source of truth for all post-trade state updates.
     Called from both the main exit path and the 30s heartbeat poll path."""
@@ -2817,7 +2818,7 @@ async def _process_exit(
     if "closed_trade_ids" not in stats:
         stats["closed_trade_ids"] = set()
         
-    pos = executor.active_position or {}
+    pos = pos_snapshot or executor.active_position or {}
     doc_id = pos.get("trade_doc_id", "")
     if doc_id:
         if doc_id in stats["closed_trade_ids"]:
@@ -3250,7 +3251,7 @@ async def execution_loop(
                     _cached_positions = None
                     pos_regime = (_hb_pos_snapshot or {}).get("regime", "NEUTRAL")
                     logger.info(f"[Heartbeat] Position closed via 30s poll. PnL=${_hb_pnl:.2f}")
-                    await _process_exit(_hb_pnl, pos_regime, stats, quant, executor)
+                    await _process_exit(_hb_pnl, pos_regime, stats, quant, executor, pos_snapshot=_hb_pos_snapshot)
                     stats["active_position"] = None
 
             # ── System lock check (Panic Mode cooldown) ─────────────────────
@@ -3317,7 +3318,7 @@ async def execution_loop(
                 )
                 if exited:
                     _cached_positions = None
-                    await _process_exit(pnl, pos_snapshot.get("regime", "NEUTRAL"), stats, quant, executor)
+                    await _process_exit(pnl, pos_snapshot.get("regime", "NEUTRAL"), stats, quant, executor, pos_snapshot=pos_snapshot)
 
                     if pnl < 0:
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
@@ -3547,11 +3548,24 @@ async def execution_loop(
                     )
                     _time_exited, _time_pnl = await executor.check_time_exit(current_price)
                     if _time_exited:
-                        await _process_exit(_time_pnl, pos.get("regime", "NEUTRAL"), stats, quant, executor)
+                        await _process_exit(_time_pnl, pos.get("regime", "NEUTRAL"), stats, quant, executor, pos_snapshot=dict(pos))
                         continue
                     await executor.check_breakeven_and_partials(
                         current_price, metrics.get("atr", 0.0), metrics
                     )
+                    forced_exit = getattr(executor, "_pending_forced_exit", None)
+                    if forced_exit:
+                        executor._pending_forced_exit = None
+                        forced_pos = forced_exit.get("position") or dict(pos)
+                        await _process_exit(
+                            float(forced_exit.get("pnl") or 0.0),
+                            forced_exit.get("regime") or forced_pos.get("regime", "NEUTRAL"),
+                            stats,
+                            quant,
+                            executor,
+                            pos_snapshot=forced_pos,
+                        )
+                        continue
 
                 continue
 
@@ -3822,7 +3836,7 @@ async def main():
             if executor.active_position:
                 pos_regime = executor.active_position.get("regime", "NEUTRAL")
                 logger.info(f"[WsFill] Position closed via ORDER_TRADE_UPDATE PnL=${pnl:.2f}")
-                await _process_exit(pnl, pos_regime, BOT_STATS, quant, executor)
+                await _process_exit(pnl, pos_regime, BOT_STATS, quant, executor, pos_snapshot=dict(executor.active_position))
                 executor.active_position = None  # P2 FIX: clear so REST/poll path doesn't double-count
                 executor.pending_order = None
                 BOT_STATS["active_position"] = None

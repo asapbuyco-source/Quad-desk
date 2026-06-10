@@ -441,7 +441,7 @@ async def test_coinbase_sell_sends_btc_amount():
         "verdict":     "SELL",
         "confidence":  0.65,
         "stop_loss":   70500.0,
-        "take_profit": 68000.0,
+        "take_profit": 66000.0,
         "ulis_verdict": "SHORT",
     }
 
