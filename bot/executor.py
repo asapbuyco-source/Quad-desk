@@ -1060,7 +1060,7 @@ class TradingExecutor:
                 "OP":   0.1,
             }
             MIN_QTY = _MIN_QTY_MAP.get(_sym_upper, 0.01)  # safe default for unknown alts
-            default_min_notional = 20.5 if (self.is_futures and self.exchange_id == "binanceusdm") else 5.5
+            default_min_notional = 50.5 if (self.is_futures and self.exchange_id == "binanceusdm") else 5.5
             try:
                 min_notional = float(os.environ.get("BOT_MIN_NOTIONAL_USD", str(default_min_notional)))
             except (TypeError, ValueError):
@@ -1101,6 +1101,17 @@ class TradingExecutor:
             if raw_size * current_price > max_notional:
                 raw_size = max_notional / current_price
                 logger.info(f"[Executor] Position capped to max notional (${max_notional:.2f})")
+                if raw_size * current_price < min_notional:
+                    logger.error(
+                        f"[Executor] Capped notional=${raw_size*current_price:.2f} "
+                        f"< min ${min_notional:.2f}. ABORTING order."
+                    )
+                    if self.notifier:
+                        await self.notifier.send_error_alert(
+                            f"Account too small after notional cap: "
+                            f"${raw_size*current_price:.2f} < min ${min_notional:.2f}."
+                        )
+                    return
 
             # Translate symbol to exchange format (unified CCXT symbol)
             if self.exchange_id == "coinbase":
