@@ -1825,8 +1825,12 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
 
         close_side = "sell" if side == "buy" else "buy"
         symbol = pos["symbol"]
+        fmt_size = float(self.exchange.amount_to_precision(symbol, size))
         fmt_partial = float(self.exchange.amount_to_precision(symbol, partial_size))
-        fmt_remaining = float(self.exchange.amount_to_precision(symbol, remaining_size))
+        # Use the exchange-rounded close size to compute the residual. Computing
+        # fmt_remaining from raw floats can leave dust: 0.049 - fmt(40%) 0.019
+        # is 0.030, while fmt(raw 0.0294) can become 0.029 on Binance.
+        fmt_remaining = float(self.exchange.amount_to_precision(symbol, max(0.0, fmt_size - fmt_partial)))
         if fmt_partial <= 0.0 or fmt_remaining <= 0.0:
             return
 

@@ -585,6 +585,51 @@ class TestPartialProfitTaking:
 
         assert rr == pytest.approx(1.21, rel=0.02)
 
+    @pytest.mark.asyncio
+    async def test_live_futures_partial_remaining_uses_rounded_close_size(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.is_futures = True
+
+        def truncate_3dp(_symbol, amount):
+            return f"{int(float(amount) * 1000) / 1000:.3f}"
+
+        executor.exchange.amount_to_precision = MagicMock(side_effect=truncate_3dp)
+        executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+        executor.exchange.create_market_order = AsyncMock(return_value={"id": "partial-close"})
+        executor.exchange.cancel_order = AsyncMock()
+        executor.exchange.create_order = AsyncMock(side_effect=[
+            {"id": "sl-reduced"},
+            {"id": "tp-reduced"},
+        ])
+        executor._log_partial_take = MagicMock()
+        executor.active_position = {
+            "symbol": "ETH/USDT:USDT",
+            "side": "sell",
+            "size": 0.049,
+            "entry_price": 1640.20,
+            "stop_loss": 1655.60,
+            "initial_stop_loss": 1655.60,
+            "initial_risk_dist": 15.40,
+            "take_profit": 1602.92,
+            "sl_order_id": "sl-old",
+            "tp_order_id": "tp-old",
+            "partial_take_r": 0.33,
+            "partial_take_pct": 0.40,
+            "_partial_taken": False,
+            "realized_partial_pnl": 0.0,
+            "be_lock_trigger": 2.0,
+            "atr_at_entry": 7.90,
+            "trade_doc_id": "trade-eth",
+        }
+
+        await executor.check_breakeven_and_partials(current_price=1633.30, atr=7.90)
+
+        pos = executor.active_position
+        assert executor.exchange.create_market_order.await_args.args[2] == pytest.approx(0.019)
+        assert pos["size"] == pytest.approx(0.030)
+        assert executor.exchange.create_order.await_args_list[0].kwargs["amount"] == pytest.approx(0.030)
+
 
 class TestTimeExitBleedGuard:
 
