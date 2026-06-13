@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from collections import deque
 from typing import Dict, Any, Optional
+from bot.signal_config import OFI_WARMUP_CYCLES
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class QuantEngine:
         self._ofi_ewma_mu:  float = 0.0
         self._ofi_ewma_var: float = 1.0
         self._ofi_smooth:   float = 0.0
+        self._ofi_cycle_count: int = 0  # Warm-up guard: OFI is unreliable for first N cycles after restart
 
         # ── ATR Percentile Rank (P2 — HMM Spec Apr 2026) ─────────────────
         # Rolling 30-day window (4 candles/hr × 24hr × 30d = 2880 candles)
@@ -823,6 +825,16 @@ class QuantEngine:
         ofi_norm   = (ofi_filtered - self._ofi_ewma_mu) / sigma
         self._ofi_smooth = ALPHA_SMOOTH * ofi_norm + (1 - ALPHA_SMOOTH) * self._ofi_smooth
         ofi = math.tanh(self._ofi_smooth / 2.0)  # output: (-1, +1)
+
+        # OFI Warm-Up Guard (Fix B): EWMA is seeded at arbitrary values (mu=0, var=1).
+        # Until the filter has processed enough samples to be meaningful, emit 0.0.
+        self._ofi_cycle_count += 1
+        if self._ofi_cycle_count <= OFI_WARMUP_CYCLES:
+            logger.debug(
+                f"[OFI-WarmUp] Cycle {self._ofi_cycle_count}/{OFI_WARMUP_CYCLES} — "
+                f"emitting neutral OFI=0.0 (EWMA not settled yet, raw={ofi:.4f})"
+            )
+            ofi = 0.0
 
         logger.debug(
             f"[OFI-Pipeline] raw={ofi_raw:.2f} filtered={ofi_filtered:.2f} "

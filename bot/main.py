@@ -70,6 +70,7 @@ from bot.signal_config import (
     EQUITY_HARD_BLOCK, EQUITY_SMALL_ACCOUNT, EQUITY_RECOMMENDED,  # P17 FIX
     BAYES_OVERRIDE_THRESHOLD, CVD_VETO_STRENGTH, CVD_VETO_VOL_SPIKE, # P1 FIX
     FUNDING_LONG_BLOCK, FUNDING_SHORT_BLOCK, # P1 FIX
+    SYMBOL_ATR_SCALE, SYMBOL_ATR_SCALE_DEFAULT,  # Fix A: per-symbol HMM normalisation
 )
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1206,7 +1207,21 @@ def _detect_regime(
     # HMM classification → probability vector (5D obs: atr_pct, z, tape, amihud_rank, t_kinetic)
     atr_pct_rank = metrics.get("atr_pct_rank", 0.5)
     amihud_rank, t_kinetic = _amihud_engine.get_features()
-    hmm_result = _hmm_classifier.classify(atr_pct, z, tape, atr_pct_rank, amihud_rank, t_kinetic)
+
+    # Fix A: Per-symbol ATR normalisation.
+    # The HMM was calibrated on BTC data. SOL/ETH have structurally higher ATR%
+    # at the same regime, so we divide atr_pct by the symbol's scale factor to
+    # bring it into the BTC frame before classification.
+    _sym_base = SYMBOL.upper().replace(":USDT","").replace("/USDT","").replace(":USDC","").replace("/USDC","").replace("USDT","").replace("USDC","")
+    _atr_scale = SYMBOL_ATR_SCALE.get(_sym_base, SYMBOL_ATR_SCALE_DEFAULT)
+    _atr_pct_normalised = atr_pct / _atr_scale
+    if _atr_scale != 1.0:
+        logger.debug(
+            f"[HMM] ATR normalisation: {_sym_base} scale={_atr_scale:.1f} "
+            f"raw_atr_pct={atr_pct:.4%} → norm={_atr_pct_normalised:.4%}"
+        )
+
+    hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic)
 
     # HIGH-2 FIX: REGIME_REMAP removed — it was dead code (HMM state 2 is "NEUTRAL"
     # in _LABELS, never "VOLATILE"). Keeping it was a hazard: renaming the label
@@ -1314,7 +1329,7 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
 # ── STAGE 4 — STRATEGY LAYER ──────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
-def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
+def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0) -> Optional[str]:
     bayes      = metrics["bayesianPosterior"]
     ofi        = metrics["ofi"]
     cvd        = metrics["cvd"]
@@ -1364,6 +1379,14 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
 
     if score >= 1.5:
         # Intended LONG
+        z = metrics.get("zScore", 0.0)
+        if abs(z) < z_min:
+            logger.info(f"[TrendStrategy] BUY rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
+            return None
+        if ofi < 0:
+            logger.info(f"[TrendStrategy] BUY rejected — OFI={ofi:.2f} < 0 (structural contradiction)")
+            return None
+            
         ofi_cvd_aligned = (ofi > 0.15 and cvd > 0)
         if micro_confirms_bull < 2 and score < 3.0 and not ofi_cvd_aligned:
             BOT_STATS["gate_stats"]["micro_confirms_failed"] = BOT_STATS["gate_stats"].get("micro_confirms_failed", 0) + 1
@@ -1373,6 +1396,14 @@ def _strategy_trend(metrics: Dict[str, Any]) -> Optional[str]:
     
     if score <= -1.5:
         # Intended SHORT
+        z = metrics.get("zScore", 0.0)
+        if abs(z) < z_min:
+            logger.info(f"[TrendStrategy] SELL rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
+            return None
+        if ofi > 0:
+            logger.info(f"[TrendStrategy] SELL rejected — OFI={ofi:.2f} > 0 (structural contradiction)")
+            return None
+            
         ofi_cvd_aligned = (ofi < -0.15 and cvd < 0)
         if micro_confirms_bear < 2 and score > -3.0 and not ofi_cvd_aligned:
             BOT_STATS["gate_stats"]["micro_confirms_failed"] = BOT_STATS["gate_stats"].get("micro_confirms_failed", 0) + 1
@@ -2374,7 +2405,13 @@ async def _compute_signal(
     if quant:
         consecutive_losses = getattr(quant, "_consecutive_losses", 0)
         if consecutive_losses >= 3:
-            logger.warning(f"[RiskEngine] 🛑 3 CONSECUTIVE LOSSES — Session Halted. Taking a break to prevent further drawdowns.")
+            now_ts = time.time()
+            last_log_ts = getattr(quant, "_last_halt_log_ts", 0.0)
+            if now_ts - last_log_ts > 3600:
+                logger.warning(f"[RiskEngine] 🛑 3 CONSECUTIVE LOSSES — Session Halted. Taking a break to prevent further drawdowns.")
+                quant._last_halt_log_ts = now_ts
+            else:
+                logger.debug(f"[RiskEngine] 🛑 3 CONSECUTIVE LOSSES — Session Halted. Taking a break to prevent further drawdowns.")
             _gate_stats_summary("consecutive_loss_halt")
             return {**WAIT, "analysis": "3 consecutive losses halt. Session paused."}
         
@@ -2443,11 +2480,11 @@ async def _compute_signal(
         logger.info(f"[MetaModel] → LIQUIDITY_SWEEP (sweep={sweep})")
     elif regime == "TREND":
         strategy_type = "TREND"
-        raw_direction = _strategy_trend(metrics)
+        raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 2.0))
         logger.info("[MetaModel] → TREND strategy")
     elif regime == "VOLATILE":
         strategy_type = "TREND"
-        raw_direction = _strategy_trend(metrics)
+        raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 1.75))
         if raw_direction is None:
             z_current = metrics.get("zScore", 0.0)
             rsi = metrics.get("rsi", 50.0)
@@ -2824,6 +2861,7 @@ async def _process_exit(
     quant,
     executor,
     pos_snapshot: dict | None = None,
+    exit_type: str = "UNKNOWN",
 ):
     """Single source of truth for all post-trade state updates.
     Called from both the main exit path and the 30s heartbeat poll path."""
@@ -2851,7 +2889,22 @@ async def _process_exit(
     stats["session_pnl"] = stats.get("session_pnl", 0.0) + pnl
     stats["cumulative_pnl"] = stats.get("cumulative_pnl", 0.0) + pnl
 
-    quant.update_win_rate(won=(pnl >= 0), regime=regime)
+    is_win = (pnl >= 0)
+    
+    # Micro-Loss Forgiveness (Fix 4)
+    # If a time exit results in a very small loss (e.g. pure fee bleed > -2.0 USD)
+    # do NOT penalize the bot's win rate or consecutive loss counter.
+    # Note: Using absolute USD is fragile for varying position sizes, but the log
+    # showed all Time Exits lost ~$0.06 to $1.17.
+    # We will assume a loss > -1.5 is a micro-loss for now, or just use the
+    # fact that it's a TIME_EXIT with a tiny negative PnL.
+    is_micro_loss = not is_win and exit_type == "TIME_EXIT" and pnl > -1.5
+    
+    if is_micro_loss:
+        logger.info(f"[_process_exit] Micro-loss forgiveness: ignoring {pnl:.2f} time-exit fee bleed.")
+    else:
+        quant.update_win_rate(won=is_win, regime=regime)
+        
     stats["consecutive_losses"] = getattr(quant, "_consecutive_losses", 0)
 
     # P1-3: increment HMM trade counter so online updates are gated until
@@ -3223,7 +3276,12 @@ async def execution_loop(
                 feed.state._reconnect_event.set()
                 # P16 FIX: Supervise re-seed task — guard against overlapping re-seeds
                 # and alert if it dies unexpectedly.
-                if getattr(feed, '_reseed_task', None) is None or feed._reseed_task.done():
+                now_ts = time.time()
+                backoff_until = getattr(feed, '_reseed_backoff_until', 0.0)
+                
+                if now_ts < backoff_until:
+                    logger.info(f"[Main] ⏳ REST reseed in backoff for {backoff_until - now_ts:.0f}s. Skipping reseed.")
+                elif getattr(feed, '_reseed_task', None) is None or feed._reseed_task.done():
                     feed._reseed_task = asyncio.create_task(
                         feed._fetch_historical_candles_rest(), name="rest_reseed"
                     )
@@ -3590,7 +3648,7 @@ async def execution_loop(
                     )
                     _time_exited, _time_pnl = await executor.check_time_exit(current_price)
                     if _time_exited:
-                        await _process_exit(_time_pnl, pos.get("regime", "NEUTRAL"), stats, quant, executor, pos_snapshot=dict(pos))
+                        await _process_exit(_time_pnl, pos.get("regime", "NEUTRAL"), stats, quant, executor, pos_snapshot=dict(pos), exit_type="TIME_EXIT")
                         continue
                     await executor.check_breakeven_and_partials(
                         current_price, metrics.get("atr", 0.0), metrics

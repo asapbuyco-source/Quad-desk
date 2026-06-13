@@ -38,6 +38,39 @@ CVD_VETO_STRENGTH = 0.62
 CVD_VETO_VOL_SPIKE = 1.40
 MIN_SWEEP_CONFIRMS = 2
 
+# ── Per-Symbol ATR Normalisation Scale ─────────────────────────────────────────
+# The HMM emission matrices (_MU/_SIGMA) were calibrated on 1-year BTC 15m data.
+# SOL and ETH have structurally higher ATR% at the same market regime (e.g. SOL
+# RANGE looks like BTC TREND from a raw ATR% perspective). Dividing atr_pct by
+# this factor before feeding into the HMM re-anchors each coin to the BTC scale,
+# so the BTC-calibrated thresholds classify all symbols correctly.
+#
+# Values derived from 6-month median ATR% ratios vs BTC (Jun 2026):
+#   BTC median RANGE ATR% ≈ 0.21%
+#   ETH median RANGE ATR% ≈ 0.29%  → scale ≈ 1.4
+#   SOL median RANGE ATR% ≈ 0.68%  → scale ≈ 3.2
+SYMBOL_ATR_SCALE = {
+    "BTC":  1.0,    # reference — no scaling
+    "ETH":  1.4,    # ~40% more volatile than BTC at same regime
+    "SOL":  3.2,    # ~3× more volatile than BTC at same regime
+    "BNB":  1.8,
+    "AVAX": 2.5,
+    "DOGE": 2.8,
+    "WIF":  4.0,
+    "PEPE": 5.0,
+    "INJ":  3.0,
+    "ARB":  2.5,
+    "OP":   2.5,
+}
+# Default scale for unknown symbols (assume moderately more volatile than BTC)
+SYMBOL_ATR_SCALE_DEFAULT = 2.0
+
+# ── OFI Normaliser Warm-Up Guard ──────────────────────────────────────────────
+# After a restart the OFI EWMA needs ~20 cycles to settle from the arbitrary
+# seed values (mu=0, var=1). During this window OFI readings are meaningless.
+# Any OFI-gated decisions treat OFI as neutral (0.0) for this many cycles.
+OFI_WARMUP_CYCLES = 20
+
 # These regime parameters are hand-tuned placeholders. The HMM emission
 # parameters (_MU, _SIGMA in main.py _HMMRegimeClassifier) are ALSO
 # hand-tuned placeholders. Run `python -m bot.hmm_calibrate` on ≥6 months

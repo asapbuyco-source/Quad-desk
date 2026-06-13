@@ -158,6 +158,8 @@ class BinanceDataFeed:
         self.is_running = False
         self._rest_fetch_lock = asyncio.Lock()
         self._last_funding_fetch: float = 0.0   # epoch-seconds of last funding rate REST call
+        self._reseed_backoff_until: float = 0.0
+        self._reseed_backoff_base: float = 60.0
         self._funding_backoff_until: float = 0.0
         self._funding_backoff_s: float = 60.0
         self._funding_last_error_log: float = 0.0
@@ -333,7 +335,18 @@ class BinanceDataFeed:
                 self.candles_seeded = True
                 self.state._seeding_complete = True
                 self.state._live_candle_count = 0
+                self._reseed_backoff_base = 60.0  # Reset backoff on success
                 return parsed_candles
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                if status in (429, 418):
+                    backoff = self._reseed_backoff_base
+                    self._reseed_backoff_until = time.time() + backoff
+                    self._reseed_backoff_base = min(backoff * 2, 900.0)
+                    logger.error(f"[DataFeed] HTTP {status} on REST feed. Backing off re-seed for {backoff}s.")
+                else:
+                    logger.warning(f"[DataFeed] Failed to prefetch historical candles ({e}).")
+                self.state.cvd = prev_cvd
             except Exception as e:
                 logger.warning(
                     f"[DataFeed] Failed to prefetch historical candles ({e}). "
