@@ -1197,6 +1197,8 @@ class TradingExecutor:
                 "_partial_taken":   False,
                 "realized_partial_pnl": 0.0,
                 "time_exit_sec":    signal.get("time_exit_sec", 600),
+                "time_exit_hard_cap_s": signal.get("time_exit_hard_cap_s", 1200),
+                "regime":           signal.get("regime", "NEUTRAL"),
                 "atr_at_entry":     signal.get("atr_at_entry", 0.0),
                 "entry_ts":         time.time(),
             }
@@ -1370,6 +1372,8 @@ class TradingExecutor:
                     "_partial_taken":   False,
                     "realized_partial_pnl": 0.0,
                     "time_exit_sec":    signal.get("time_exit_sec", 600),
+                    "time_exit_hard_cap_s": signal.get("time_exit_hard_cap_s", 1200),
+                    "regime":           signal.get("regime", "NEUTRAL"),
                     "atr_at_entry":     signal.get("atr_at_entry", 0.0),
                     "entry_ts":         time.time(),
                 }
@@ -1980,7 +1984,11 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
         raw_pnl = (current_price - entry) * size if side == "buy" else (entry - current_price) * size
         est_pnl = raw_pnl - (entry + current_price) * size * self.TAKER_FEE
         est_pnl += float(pos.get("realized_partial_pnl") or 0.0)
-        hard_time_exit_sec = time_exit_sec * 2.0
+        
+        # PHASE 4: Enforce strict time exit hard cap explicitly from the position parameters
+        is_volatile = pos.get("regime") == "VOLATILE"
+        hard_time_exit_sec = pos.get("time_exit_hard_cap_s") or (time_exit_sec * (1.0 if is_volatile else 2.0))
+        
         risk_dist = abs(float(pos.get("initial_risk_dist") or abs(entry - float(pos.get("stop_loss") or entry))))
         fee_slippage_buffer = (entry + current_price) * size * self.TAKER_FEE * 2.0
         min_time_exit_profit = max(0.0, risk_dist * size * 0.10, fee_slippage_buffer)
@@ -1994,10 +2002,11 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                 pos["_time_exit_deferred_logged"] = True
             return False, 0.0
 
-        max_fee_drift_exit_sec = time_exit_sec * 4.0
+        max_fee_drift_exit_sec = time_exit_sec * (1.0 if is_volatile else 4.0)
         max_tolerable_time_loss = -(risk_dist * size * 0.75)
         if (
-            est_pnl < min_time_exit_profit
+            not is_volatile
+            and est_pnl < min_time_exit_profit
             and est_pnl > max_tolerable_time_loss
             and age < max_fee_drift_exit_sec
         ):

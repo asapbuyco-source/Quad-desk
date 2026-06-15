@@ -128,6 +128,46 @@ class QuantEngine:
         self._firestore_doc_id = f"quantEngine_{_safe_sym}"  # e.g. quantEngine_BTCUSDT
         self._load_state()
 
+    @staticmethod
+    def _rv_iv_discriminant(
+        trades,
+        closes: np.ndarray,
+        atr: float,
+        current_price: float,
+        now_ms: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Classify live realized volatility versus candle-implied volatility."""
+        now_ms = time.time() * 1000 if now_ms is None else now_ms
+        recent_prices = [
+            float(t.get("price"))
+            for t in trades
+            if (now_ms - float(t.get("time", now_ms)) < 30_000) and t.get("price")
+        ]
+
+        rv_data_stale = len(recent_prices) < 5
+        if not rv_data_stale:
+            tick_returns = np.diff(np.log(recent_prices))
+            rv = float(np.std(tick_returns)) * math.sqrt(max(len(tick_returns), 1))
+        elif len(closes) >= 2:
+            log_returns = np.diff(np.log(closes))
+            rv = float(np.std(log_returns))
+        else:
+            rv = 0.001
+
+        iv_proxy = atr / current_price if current_price > 0 else 0.001
+        rv_iv_ratio = rv / iv_proxy if iv_proxy > 0 else 1.0
+        vol_state = (
+            "COMPRESSION"
+            if rv_iv_ratio < 0.8
+            else ("EXPANSION" if rv_iv_ratio > 1.2 else "NORMAL")
+        )
+        return {
+            "rv": rv,
+            "rv_iv_ratio": rv_iv_ratio,
+            "vol_state": vol_state,
+            "rv_data_stale": rv_data_stale,
+        }
+
 
     # ------------------------------------------------------------------
     # Public: update win-rate tracker after each trade
@@ -360,6 +400,17 @@ class QuantEngine:
         arr = np.array(list(self._atr_history))
         atr_pct_rank = float(np.mean(arr <= atr))
         self._atr_pct_rank = atr_pct_rank  # make available to _cvd_divergence
+        
+        # PHASE 3: RV/IV Real-Time Discriminant
+        # Calculate 30-second aggTrade realized variance for true micro-volatility.
+        rv_iv = self._rv_iv_discriminant(
+            list(self.state.recent_trades),
+            closes,
+            atr,
+            current_price,
+        )
+        rv_iv_ratio = rv_iv["rv_iv_ratio"]
+        vol_state = rv_iv["vol_state"]
 
         skewness       = self._skewness(closes)
         z_score        = self._session_vwap_z(highs, lows, closes, vols, current_price, atr_pct_rank)
@@ -419,7 +470,7 @@ class QuantEngine:
             )
 
         # ── CVD Divergence Detection ──────────────────────────────────────────
-        cvd_divergence = self._cvd_divergence(current_price, atr)
+        cvd_divergence = self._cvd_divergence(current_price, atr, z_score)
 
         return {
             "symbol":            self.state.symbol,
@@ -448,6 +499,11 @@ class QuantEngine:
             "z_score_valid":     len(closes) >= 10,
             # Z-06: Log-Return Z-Score — reuse value computed for _bayesian() above
             "zScore_ret":        z_ret,
+            # PHASE 3: RV/IV fields
+            "rv_iv_ratio":       rv_iv_ratio,
+            "vol_state":         vol_state,
+            "rv_data_stale":      rv_iv["rv_data_stale"],
+            "cvd_lambda":        cvd_divergence.get("lambda", 0.92),
             # PHASE-0.2: aggTrade stream health flag.
             "trade_buffer_healthy": trade_buffer_healthy,
             # PHASE-0.4: Order book mid-price for execution (not candle close).
@@ -786,8 +842,14 @@ class QuantEngine:
         self._ofi_history.append(ofi_raw)
         ofi_filtered = ofi_raw  # default: pass through
 
-        if len(self._ofi_history) >= 20:
-            arr = np.array(self._ofi_history)
+        # PHASE 1: Adaptive MAD Window
+        atr_rank = min(max(getattr(self, '_atr_pct_rank', 0.5), 0.1), 1.0)
+        target_window = max(32, min(100, round(100 * (1 - atr_rank ** 0.80))))
+        self._mad_window = int(0.70 * getattr(self, '_mad_window', 32) + 0.30 * target_window)
+
+        if len(self._ofi_history) >= self._mad_window:
+            # We only use the most recent `_mad_window` elements for the MAD calculation
+            arr = np.array(list(self._ofi_history)[-self._mad_window:])
             median_ofi = float(np.median(arr))
             mad = float(np.median(np.abs(arr - median_ofi)))
             mad_threshold = 3.5 * 1.4826 * mad  # 3.5σ robust boundary — NOT changed per plan
@@ -960,7 +1022,7 @@ class QuantEngine:
     # Fixes: #1 EMA-Z normalization | #2 True ATR | #3 Swing extrema
     #        #4 Volume confirmation  | #5 Uncertainty penalty data
     # ------------------------------------------------------------------
-    def _cvd_divergence(self, current_price: float, true_atr: float = 0.0) -> Dict[str, Any]:
+    def _cvd_divergence(self, current_price: float, true_atr: float = 0.0, z_score: float = 0.0) -> Dict[str, Any]:
         """
         Institutional-grade CVD divergence detector operating on per-candle
         close snapshots.  All six head-office criticisms addressed.
@@ -991,9 +1053,10 @@ class QuantEngine:
                 "vol_spike":         float,
                 "detection_method":  "swing_extrema" | "sequential" | "none",
                 "n_snaps":           int,
+                "lambda":            float,
             }
         """
-        λ = 0.92
+        λ = 0.72 + 0.20 / (1 + math.exp(1.8 * (abs(z_score) - 2.1)))
 
         NULL_RESULT = {
             "type": "NONE", "strength": 0.0,
@@ -1001,6 +1064,7 @@ class QuantEngine:
             "cvd_delta": 0.0, "lookback_k": 0,
             "vol_spike": 1.0, "detection_method": "none",
             "n_snaps": len(self._cvd_candle_snapshots),
+            "lambda": λ,
         }
 
         snaps = list(self._cvd_candle_snapshots)
@@ -1208,6 +1272,7 @@ class QuantEngine:
                     "vol_spike":         round(best_bull_vs, 3),
                     "detection_method":  best_bull_meth,
                     "n_snaps":           n_snaps,
+                    "lambda":            λ,
                 }
             else:
                 logger.info(
@@ -1225,6 +1290,7 @@ class QuantEngine:
                     "vol_spike":         round(best_bear_vs, 3),
                     "detection_method":  best_bear_meth,
                     "n_snaps":           n_snaps,
+                    "lambda":            λ,
                 }
         else:
             # Direction changed — reset streak

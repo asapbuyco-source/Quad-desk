@@ -795,6 +795,32 @@ class TestTimeExitBleedGuard:
         assert executor.active_position["_hard_time_exit_deferred_logged"] is True
         executor.emergency_flatten.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_volatile_time_exit_uses_explicit_hard_cap(self):
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.emergency_flatten = AsyncMock(return_value=-1.25)
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 1.0,
+            "entry_price": 100.0,
+            "stop_loss": 90.0,
+            "initial_risk_dist": 10.0,
+            "take_profit": 130.0,
+            "time_exit_sec": 60,
+            "time_exit_hard_cap_s": 60,
+            "regime": "VOLATILE",
+            "entry_ts": time.time() - 61,
+            "realized_partial_pnl": 0.0,
+        }
+
+        exited, pnl = await executor.check_time_exit(current_price=99.0)
+
+        assert exited is True
+        assert pnl == -1.25
+        executor.emergency_flatten.assert_awaited_once_with("Regime time exit")
+
 
 class TestRiskSizing:
 

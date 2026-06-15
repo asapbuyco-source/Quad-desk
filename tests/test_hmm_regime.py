@@ -53,3 +53,25 @@ def test_hmm_online_update_blends_against_calibrated_anchor():
     assert not np.allclose(hmm._mu[0], live_obs.mean(axis=0))
     assert hmm._n_trades_since_update == 0
     hmm._save_state.assert_called_once()
+
+
+def test_hmm_fast_track_does_not_enter_volatile_on_first_tick():
+    hmm = _HMMRegimeClassifier(window=10, update_every=500)
+    hmm._online_update_enabled = False
+    hmm._forward = MagicMock(return_value=np.array([0.01, 0.01, 0.98]))
+    hmm._obs_buf = deque([
+        np.array([0.0020, 0.8, 0.0, 0.20]),
+        np.array([0.0021, 0.9, 0.0, 0.25]),
+    ], maxlen=200)
+    hmm._committed_regime = "RANGE"
+    hmm._candidate_regime = "RANGE"
+    hmm._candidate_streak = 0
+
+    first = hmm.classify(0.0030, 1.8, "NORMAL", atr_pct_rank=0.8)
+    assert first["regime"] == "RANGE"
+    assert hmm._candidate_regime == "VOLATILE"
+    assert hmm._candidate_streak == 1
+
+    second = hmm.classify(0.0030, 1.8, "NORMAL", atr_pct_rank=0.8)
+    assert second["regime"] == "VOLATILE"
+    assert hmm._candidate_streak == 2

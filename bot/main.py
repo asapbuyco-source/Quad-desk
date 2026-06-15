@@ -1098,6 +1098,13 @@ class _HMMRegimeClassifier:
         # AND meets the confidence threshold
         _fast = (raw_conf >= self.FAST_TRACK_CONFIDENCE
                  and self._candidate_regime != self._committed_regime)
+
+        # Disable fast-track into VOLATILE or TREND (requires full 3-candle confirmation)
+        # (Fixes the "1-candle fakeout" issue where a single spike triggers a full transition)
+        if _fast and self._candidate_regime in ("VOLATILE", "TREND"):
+            logger.debug(f"[HMM] Fast-track disabled for {self._committed_regime} → {self._candidate_regime}")
+            _fast = False
+
         _normal = (self._candidate_streak >= self.HYSTERESIS_CANDLES
                    and raw_conf >= self.MIN_CONFIDENCE
                    and self._candidate_regime != self._committed_regime)
@@ -2090,6 +2097,7 @@ def _risk_engine(
     metrics: Optional[Dict[str, Any]] = None,  # BUG-4: needed for atr_pct_rank
     regime_p: Optional[Dict[str, Any]] = None,  # PHASE-3.2: needed for panic_threshold
     signal: Optional[Dict[str, Any]] = None,   # NEW: for sweep_wick access
+    regime: str = "NEUTRAL",  # PHASE 4: regime context
 ) -> Tuple[float, float, float]:
     """
     ATR-based SL/TP calculator with regime-adaptive multipliers (P0).
@@ -2157,13 +2165,31 @@ def _risk_engine(
 
     SL_MULT = adaptive_mult
 
+    TP_MULT = tp_mult_ratio  # P0: regime-adaptive (RR target from REGIME_PARAMS)
+
+    if metrics:
+        # Phase 4.1: Risk Engine Overrides
+        if "sl_mult_override" in metrics:
+            SL_MULT = float(metrics["sl_mult_override"])
+            logger.info(f"[RiskEngine] Using sl_mult_override = {SL_MULT:.2f}")
+        if "rr_override" in metrics:
+            TP_MULT = float(metrics["rr_override"])
+            logger.info(f"[RiskEngine] Using rr_override = {TP_MULT:.2f}")
+
+        # Phase 4.2: Bounded TP Expansion for VOLATILE
+        if regime == "VOLATILE":
+            z_vel = metrics.get("zScore_ret", 0.0)
+            kinetic_energy = 0.5 * (z_vel ** 2)
+            import math
+            volatile_tp_multiplier = 1.0 + 0.08 * math.tanh(0.60 * math.sqrt(kinetic_energy))
+            TP_MULT *= volatile_tp_multiplier
+            logger.info(f"[RiskEngine] VOLATILE TP expansion: {volatile_tp_multiplier:.3f}x (KE={kinetic_energy:.3f}) -> TP_MULT={TP_MULT:.3f}")
+
     logger.info(
         f"[RiskEngine] sl_mult={sl_mult:.2f} vol_ratio={vol_ratio:.3f} "
         f"atr_rank={atr_pct_rank:.0%} rank_scale={rank_scale:.3f} "
         f"adaptive_mult={SL_MULT:.3f} strategy={strategy_type}"
     )
-
-    TP_MULT = tp_mult_ratio  # P0: regime-adaptive (RR target from REGIME_PARAMS)
 
 
     def sl_tp(sl_dist: float) -> Tuple[float, float]:
@@ -2384,6 +2410,26 @@ async def _compute_signal(
 
     # Stage 2: Regime
     regime = _detect_regime(metrics, buy_walls, sell_walls, quant=quant, sweep=sweep, feed_state=feed_state)
+    
+    # PHASE 3: RV/IV Real-Time Discriminant Override
+    # Cross-check to prevent HMM from hallucinating VOLATILE in low-RV environments.
+    rv_iv_ratio = metrics.get("rv_iv_ratio", 1.0)
+    vol_state = metrics.get("vol_state", "NORMAL")
+    if regime == "VOLATILE":
+        if vol_state == "COMPRESSION" or rv_iv_ratio < 0.8:
+            logger.warning(
+                f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
+                f"({vol_state}). Overriding to NEUTRAL."
+            )
+            regime = "NEUTRAL"
+    elif regime == "RANGE":
+        if vol_state == "EXPANSION" or rv_iv_ratio > 1.2:
+            logger.warning(
+                f"[Regime Override] HMM lagging. RV/IV ratio={rv_iv_ratio:.2f} "
+                f"({vol_state}). Elevating RANGE to VOLATILE."
+            )
+            regime = "VOLATILE"
+
     logger.info(f"[Regime] {regime} | Z={metrics['zScore']:.2f} | "
                 f"ATR%={metrics.get('atr_pct', 0):.3%} | Tape={metrics['tapeSpeed']}")
 
@@ -2449,6 +2495,8 @@ async def _compute_signal(
         f"gate={regime_p['candle_gate_sec']}s "
         f"htf_block={regime_p['htf_block']}"
     )
+    if metrics is not None:
+        metrics["z_thr_regime"] = regime_p.get("z_threshold", 0.0)
 
     # Stage 3: Sweep detection (already computed in Stage 1b — reuse)
     # Stage 3b: Candle-Close Freshness Gate (LIQUIDITY_SWEEP only)
@@ -2483,8 +2531,16 @@ async def _compute_signal(
         raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 2.0))
         logger.info("[MetaModel] → TREND strategy")
     elif regime == "VOLATILE":
+        z_current = metrics.get("zScore", 0.0)
+        vol_z_thr = regime_p.get("z_threshold", 1.75)
+        
+        # Z-Drift Entry Pre-Filter
+        if abs(z_current) < 0.75 * vol_z_thr:
+            BOT_STATS["gate_stats"]["z_drift_blocked"] = BOT_STATS["gate_stats"].get("z_drift_blocked", 0) + 1
+            return {**WAIT, "analysis": f"Z-drift blocked: abs(z) {abs(z_current):.2f} < 0.75 * {vol_z_thr}"}
+            
         strategy_type = "TREND"
-        raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 1.75))
+        raw_direction = _strategy_trend(metrics, z_min=vol_z_thr)
         if raw_direction is None:
             z_current = metrics.get("zScore", 0.0)
             rsi = metrics.get("rsi", 50.0)
@@ -2739,10 +2795,22 @@ async def _compute_signal(
     cold_start_discount = COLD_START_CONFIDENCE_DISCOUNT if total_trades < COLD_START_TRADE_COUNT else 0.0
     # P12 FIX: Ensure global environment MIN_CONFIDENCE is used as the absolute safety floor
     # under the regime-adaptive threshold, preventing negative-expectation entries.
-    regime_min_conf = max(
+    _base_conf = max(
         regime_p["min_confidence"] - cold_start_discount,
         MIN_CONFIDENCE   # P12 FIX: was hardcoded 0.50, now uses the env-bridged floor
     )
+    
+    # PHASE 3: Adaptive Confidence Floor for VOLATILE
+    if regime == "VOLATILE" and quant:
+        import math
+        alpha = quant._regime_alpha.get(regime, 5.0)
+        beta = quant._regime_beta.get(regime, 5.0)
+        adaptive_floor = min(0.90, 0.60 + 0.12 * math.log1p(beta / max(alpha, 1e-6)))
+        if adaptive_floor > _base_conf:
+            logger.info(f"[RiskEngine] VOLATILE adaptive confidence floor active: {adaptive_floor:.0%} (α={alpha:.1f}, β={beta:.1f})")
+            _base_conf = adaptive_floor
+            
+    regime_min_conf = _base_conf
     probation_trades = int(getattr(quant, "_risk_probation_trades_remaining", 0) or 0) if quant else 0
     if probation_trades > 0:
         regime_min_conf = min(0.85, regime_min_conf + 0.05)
@@ -2772,6 +2840,7 @@ async def _compute_signal(
         metrics=metrics,  # BUG-4: pass for atr_pct_rank vol scaling
         regime_p=regime_p,  # PHASE-3.2: pass for panic_threshold
         signal={"sweep_wick": sweep_wick if sweep else 0.0, "strategy_type": strategy_type},  # NEW: pass for sweep_wick
+        regime=regime,
     )
 
     # Sanity check — geometry must be valid
@@ -2840,6 +2909,7 @@ async def _compute_signal(
         "partial_take_r": regime_p.get("partial_take_r", 0.75),
         "partial_take_pct": regime_p.get("partial_take_pct", 0.50),
         "time_exit_sec":  regime_p.get("time_exit_sec", 600),
+        "time_exit_hard_cap_s": regime_p.get("time_exit_sec", 600) * (1.0 if regime == "VOLATILE" else 2.0),
         "atr_at_entry":   atr,
         "atr_pct":        atr_pct,
         "atr_pct_rank":   atr_pct_rank,
