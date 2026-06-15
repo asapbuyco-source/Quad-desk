@@ -75,3 +75,30 @@ def test_hmm_fast_track_does_not_enter_volatile_on_first_tick():
     second = hmm.classify(0.0030, 1.8, "NORMAL", atr_pct_rank=0.8)
     assert second["regime"] == "VOLATILE"
     assert hmm._candidate_streak == 2
+
+
+def test_hmm_fast_track_does_not_exit_volatile_on_first_tick():
+    """FIX-1: A single high-confidence RANGE observation must NOT fast-track out of VOLATILE."""
+    hmm = _HMMRegimeClassifier(window=10, update_every=500)
+    hmm._online_update_enabled = False
+    # Simulate a RANGE spike posterior (state 0 = RANGE)
+    hmm._forward = MagicMock(return_value=np.array([0.98, 0.01, 0.01]))
+    hmm._obs_buf = deque([
+        np.array([0.0020, 0.8, 0.0, 0.20]),
+        np.array([0.0021, 0.9, 0.0, 0.25]),
+    ], maxlen=200)
+    # Bot is currently committed to VOLATILE
+    hmm._committed_regime = "VOLATILE"
+    hmm._candidate_regime = "VOLATILE"
+    hmm._candidate_streak = 0
+
+    # First tick: even at 0.98 confidence, must NOT fast-track out of VOLATILE
+    first = hmm.classify(0.0020, 0.8, "NORMAL", atr_pct_rank=0.2)
+    assert first["regime"] == "VOLATILE", "Must NOT exit VOLATILE on streak=1"
+    assert hmm._candidate_regime == "RANGE"
+    assert hmm._candidate_streak == 1
+
+    # Second tick: after 3-candle streak completes, can exit
+    second = hmm.classify(0.0020, 0.8, "NORMAL", atr_pct_rank=0.2)
+    assert second["regime"] == "RANGE"
+    assert hmm._candidate_streak == 2

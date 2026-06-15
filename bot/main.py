@@ -269,6 +269,7 @@ BOT_STATS: Dict[str, Any] = {
         "derivatives_veto":         0,
         "throughput_thin":           0,
         "rsi_extreme_suppressed":    0,  # P3 AUDIT: RSI extreme gate suppressed (TREND regime)
+        "z_drift_blocked":           0,  # FIX-4: VOLATILE entry blocked by Z-drift pre-filter
     },
     "equity_peak": ACCOUNT_SIZE,
     # P2-2 FIX: Confidence calibration tracker.
@@ -457,6 +458,7 @@ def _gate_stats_summary(reason: str, confidence: float = 0.0) -> None:
             f"  cvd_divergence_veto   : {g.get('cvd_divergence_veto', 0)}\n"
             f"  derivatives_veto      : {g.get('derivatives_veto', 0)}\n"
             f"  throughput_thin       : {g.get('throughput_thin', 0)}\n"
+            f"  z_drift_blocked       : {g.get('z_drift_blocked', 0)}\n"
             f"  ───────────────────────\n"
             f"  total rejections      : {total}\n"
             f"  total passed          : {passed}\n"
@@ -640,21 +642,21 @@ async def _derivatives_gate(direction: str, deriv_context: dict) -> tuple[bool, 
 
 class _HMMRegimeClassifier:
     """
-    4-state Gaussian Hidden Markov Model regime detector.
-    Upgraded from 3-state (Jun 2026, Dr. Klint spec):
-      - State 0 = RANGE     — low ATR, low |Z|, quiet tape, low Amihud
-      - State 1 = TREND     — medium ATR, high Z, SCREAMING, LOW Amihud (vol-supported)
-      - State 2 = SQUEEZE   — medium-high ATR, high Z, SCREAMING, HIGH Amihud+KE (vacuum)
-      - State 3 = VOLATILE  — high ATR, low Z, erratic, mixed Amihud
+    3-state Gaussian Hidden Markov Model regime detector.
+    States implemented in _MU / _SIGMA / _A / _PI / _LABELS:
+      - State 0 = RANGE     — low ATR, low |Z|, quiet tape
+      - State 1 = TREND     — medium ATR, high |Z|, SCREAMING tape
+      - State 2 = VOLATILE  — high ATR, erratic |Z|, mixed tape
 
-    Features (per observation, 5D):
+    NOTE: A 4th SQUEEZE state was considered (Jun 2026, Dr. Klint spec) but is
+    NOT currently implemented in the emission/transition matrices. To add it,
+    extend _MU, _SIGMA, _A, _PI to shape [4, ...] and re-run hmm_calibrate.
+
+    Features (per observation, 4D):
         f0 = atr_pct       (0 – 0.03)
         f1 = abs(z_score)  (0 – 4)
         f2 = tape_binary   (0 = NORMAL, 1 = SCREAMING)
-        f3 = amihud_rank   (0 – 1)  — log Amihud percentile rank (linear variant)
-        f4 = t_kinetic     (0 – 1)  — log KE percentile rank (squared variant)
-
-    The Amihud features (f3, f4) are what geometrically separate SQUEEZE from TREND.
+        f3 = atr_pct_rank  (0 – 1)
     """
 
     # --- Emission means (μ) per state × feature -----------------------
@@ -1099,9 +1101,12 @@ class _HMMRegimeClassifier:
         _fast = (raw_conf >= self.FAST_TRACK_CONFIDENCE
                  and self._candidate_regime != self._committed_regime)
 
-        # Disable fast-track into VOLATILE or TREND (requires full 3-candle confirmation)
-        # (Fixes the "1-candle fakeout" issue where a single spike triggers a full transition)
-        if _fast and self._candidate_regime in ("VOLATILE", "TREND"):
+        # Disable fast-track INTO or OUT OF VOLATILE/TREND (requires full 3-candle confirmation)
+        # Prevents both 1-candle fakeout entries AND premature streak-1 escapes from VOLATILE.
+        if _fast and (
+            self._candidate_regime in ("VOLATILE", "TREND")
+            or self._committed_regime in ("VOLATILE", "TREND")
+        ):
             logger.debug(f"[HMM] Fast-track disabled for {self._committed_regime} → {self._candidate_regime}")
             _fast = False
 
@@ -2531,20 +2536,12 @@ async def _compute_signal(
         raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 2.0))
         logger.info("[MetaModel] → TREND strategy")
     elif regime == "VOLATILE":
-        z_current = metrics.get("zScore", 0.0)
         vol_z_thr = regime_p.get("z_threshold", 1.75)
-        
-        # Z-Drift Entry Pre-Filter
-        if abs(z_current) < 0.75 * vol_z_thr:
-            BOT_STATS["gate_stats"]["z_drift_blocked"] = BOT_STATS["gate_stats"].get("z_drift_blocked", 0) + 1
-            return {**WAIT, "analysis": f"Z-drift blocked: abs(z) {abs(z_current):.2f} < 0.75 * {vol_z_thr}"}
-            
         strategy_type = "TREND"
         raw_direction = _strategy_trend(metrics, z_min=vol_z_thr)
         if raw_direction is None:
             z_current = metrics.get("zScore", 0.0)
             rsi = metrics.get("rsi", 50.0)
-            vol_z_thr = regime_p.get("z_threshold", 1.75)
             if abs(z_current) >= vol_z_thr and metrics.get("tapeSpeed") != "SCREAMING":
                 raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
                 strategy_type = "MEAN_REVERSION"
@@ -2598,6 +2595,16 @@ async def _compute_signal(
     if raw_direction is None:
         _gate_stats_summary("signal_none")
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
+
+    # FIX-5: Z-Drift Pre-Filter runs AFTER strategy has confirmed a direction.
+    # Only counts a real block (not a false positive from strategies that would reject anyway).
+    if regime == "VOLATILE":
+        z_current = metrics.get("zScore", 0.0)
+        vol_z_thr = regime_p.get("z_threshold", 1.75)
+        if abs(z_current) < 0.75 * vol_z_thr:
+            BOT_STATS["gate_stats"]["z_drift_blocked"] += 1
+            logger.info(f"[ZDrift] Blocked {raw_direction} — abs(z)={abs(z_current):.2f} < 0.75×{vol_z_thr:.2f}")
+            return {**WAIT, "analysis": f"Z-drift blocked: abs(z) {abs(z_current):.2f} < 0.75 * {vol_z_thr}"}
 
     # --- AUDIT FIX 3: RSI EXTREMES GATE (regime-conditional) ---
     # In TREND regime: suppress RSI block for direction-with-momentum.
@@ -2909,7 +2916,7 @@ async def _compute_signal(
         "partial_take_r": regime_p.get("partial_take_r", 0.75),
         "partial_take_pct": regime_p.get("partial_take_pct", 0.50),
         "time_exit_sec":  regime_p.get("time_exit_sec", 600),
-        "time_exit_hard_cap_s": regime_p.get("time_exit_sec", 600) * (1.0 if regime == "VOLATILE" else 2.0),
+        "time_exit_hard_cap_s": regime_p.get("time_exit_hard_cap_s", regime_p.get("time_exit_sec", 600) * 2.0),
         "atr_at_entry":   atr,
         "atr_pct":        atr_pct,
         "atr_pct_rank":   atr_pct_rank,

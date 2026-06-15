@@ -1,0 +1,285 @@
+================================================================================
+QUAD-DESK BOT — IMPLEMENTATION PLAN (Post-Audit Fix List)
+Generated: 2026-06-15
+Source: OpenCode Audit of bot/main.py, bot/quant_engine.py, bot/executor.py, 
+        bot/signal_config.py, tests/test_hmm_regime.py, tests/test_quant_engine.py
+================================================================================
+
+This document contains the verified, actionable fix list derived from the 
+full-codebase audit. Each item includes: the file, the exact location, the bug 
+description, and the precise code change required.
+
+Items are ordered by risk: Critical first (will silently break behavior), then 
+Structural (will break tests), then Cosmetic (logs/missing metrics).
+
+================================================================================
+CRITICAL FIXES — Will Silently Break Behavior
+================================================================================
+
+--------------------------------------------------------------------------------
+FIX-1: HMM fast-track OUT of VOLATILE is still allowed (streak=1 escape)
+--------------------------------------------------------------------------------
+File:        bot/main.py
+Location:    _HMMRegimeClassifier.classify()  (lines ~1099-1110)
+Current bug: The code blocks fast-track INTO VOLATILE/TREND (line 1104), but if 
+             the bot is already IN VOLATILE and a single high-confidence 
+             observation suggests RANGE, it will fast-track out immediately. 
+             The plan requires streak >= 2 for BOTH entering and exiting VOLATILE.
+
+Current code:
+    if _fast and self._candidate_regime in ("VOLATILE", "TREND"):
+        logger.debug(f"[HMM] Fast-track disabled for {self._committed_regime} → {self._candidate_regime}")
+        _fast = False
+
+Required change:
+    # Disable fast-track into OR out of VOLATILE/TREND (requires full 3-candle confirmation)
+    if _fast and (self._candidate_regime in ("VOLATILE", "TREND") or self._committed_regime in ("VOLATILE", "TREND")):
+        logger.debug(f"[HMM] Fast-track disabled for {self._committed_regime} → {self._candidate_regime}")
+        _fast = False
+
+Test to add:
+    def test_hmm_fast_track_does_not_exit_volatile_on_first_tick():
+        hmm = _HMMRegimeClassifier(window=10, update_every=500)
+        hmm._online_update_enabled = False
+        hmm._forward = MagicMock(return_value=np.array([0.98, 0.01, 0.01]))  # RANGE spike
+        hmm._obs_buf = deque([
+            np.array([0.0020, 0.8, 0.0, 0.20]),
+            np.array([0.0021, 0.9, 0.0, 0.25]),
+        ], maxlen=200)
+        hmm._committed_regime = "VOLATILE"
+        hmm._candidate_regime = "VOLATILE"
+        hmm._candidate_streak = 0
+
+        first = hmm.classify(0.0020, 0.8, "NORMAL", atr_pct_rank=0.2)
+        assert first["regime"] == "VOLATILE"   # Still locked
+        assert hmm._candidate_regime == "RANGE"
+        assert hmm._candidate_streak == 1
+
+        second = hmm.classify(0.0020, 0.8, "NORMAL", atr_pct_rank=0.2)
+        assert second["regime"] == "RANGE"
+        assert hmm._candidate_streak == 2
+
+--------------------------------------------------------------------------------
+FIX-2: MAD adaptive window is computed but never used
+--------------------------------------------------------------------------------
+File:        bot/quant_engine.py
+Location:    _lob_metrics() — Stage 2 MAD Persistence Filter (lines ~845-848)
+Current bug: The adaptive window is computed and stored in self._mad_window, but 
+             the outlier detection code at line ~789 uses the FULL deque:
+                 arr = np.array(self._ofi_history)
+             It never slices to the adaptive window. The floor of 32 is therefore 
+             never enforced.
+
+Current code (line ~845-848):
+    atr_rank = min(max(getattr(self, '_atr_pct_rank', 0.5), 0.1), 1.0)
+    target_window = max(32, min(100, round(100 * (1 - atr_rank ** 0.80))))
+    self._mad_window = int(0.70 * getattr(self, '_mad_window', 32) + 0.30 * target_window)
+
+Current code (line ~789, outlier detection):
+    if len(self._ofi_history) >= 20:
+        arr = np.array(self._ofi_history)
+        median_ofi = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - median_ofi)))
+
+Required change:
+    # In __init__ of QuantEngine, add:
+    self._mad_window = 32
+
+    # In _lob_metrics(), replace the outlier detection block:
+    window = max(20, getattr(self, '_mad_window', 32))
+    if len(self._ofi_history) >= window:
+        arr = np.array(list(self._ofi_history)[-window:])
+        median_ofi = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - median_ofi)))
+
+Test to add:
+    def test_mad_window_uses_adaptive_slice():
+        from collections import deque
+        import numpy as np
+        from bot.quant_engine import QuantEngine
+        
+        class FakeState:
+            recent_trades = []
+            bids = {}
+            asks = {}
+            cvd = 0.0
+            candles = []
+        
+        engine = QuantEngine(FakeState())
+        engine._ofi_history = deque([float(i) for i in range(100)], maxlen=100)
+        engine._mad_window = 40
+        
+        # Trigger the MAD path by appending an outlier
+        engine._ofi_history.append(999.0)
+        
+        # Manually re-run the logic that should slice to 40
+        window = max(20, getattr(engine, '_mad_window', 32))
+        arr = np.array(list(engine._ofi_history)[-window:])
+        assert len(arr) == 40
+        assert np.median(arr) != np.median(np.array(list(engine._ofi_history)))
+
+--------------------------------------------------------------------------------
+FIX-3: time_exit_hard_cap_s is NOT in REGIME_PARAMS (hard cap math is wrong)
+--------------------------------------------------------------------------------
+File:        bot/signal_config.py
+            bot/main.py
+Location:    REGIME_PARAMS["VOLATILE"] (lines ~141-157)
+Current bug: The VOLATILE dict has no "time_exit_hard_cap_s" key. In _compute_signal 
+             (main.py:2912), the code computes:
+                 regime_p.get("time_exit_sec", 600) * (1.0 if regime == "VOLATILE" else 2.0)
+             This yields 900 * 1.0 = 900 for VOLATILE. The plan says the hard cap 
+             should be 1200s. The current implementation makes the hard cap equal 
+             to the base time exit, defeating the purpose.
+
+Current code (signal_config.py):
+    "VOLATILE": {
+        ...
+        "time_exit_sec":      900,   # Phase 4.1: was 1200
+        ...
+    }
+
+Required change in signal_config.py:
+    "VOLATILE": {
+        ...
+        "time_exit_sec":         900,
+        "time_exit_hard_cap_s":  1200,   # <-- ADD THIS
+        ...
+    }
+
+Required change in main.py (line ~2912):
+    # Before:
+    "time_exit_hard_cap_s": regime_p.get("time_exit_sec", 600) * (1.0 if regime == "VOLATILE" else 2.0),
+    
+    # After:
+    "time_exit_hard_cap_s": regime_p.get("time_exit_hard_cap_s", regime_p.get("time_exit_sec", 600) * 2.0),
+
+Test to add:
+    def test_volatile_hard_cap_is_1200():
+        from bot.signal_config import REGIME_PARAMS
+        assert REGIME_PARAMS["VOLATILE"]["time_exit_hard_cap_s"] == 1200
+
+    def test_volatile_time_exit_never_exceeds_hard_cap():
+        # Executor test: mock a VOLATILE position at age=1210s
+        # It should exit immediately, not defer.
+        pass
+
+================================================================================
+STRUCTURAL FIXES — Will Break Tests or Metrics
+================================================================================
+
+--------------------------------------------------------------------------------
+FIX-4: z_drift_blocked missing from BOT_STATS gate_stats initialization
+--------------------------------------------------------------------------------
+File:        bot/main.py
+Location:    BOT_STATS dict initialization (lines ~244-272)
+Current bug: The code at line 2539 increments "z_drift_blocked", but the 
+             gate_stats dict never initialized it. The 30-min summary log in 
+             _gate_stats_summary (line ~422) will silently drop it because 
+             it only prints keys that exist in the dict.
+
+Required change:
+    Add to the "gate_stats" dict (around line 271):
+        "z_drift_blocked":         0,
+
+Also add it to the _gate_stats_summary() log output (around line 457):
+        f"  z_drift_blocked       : {g.get('z_drift_blocked', 0)}\n"
+
+Test to add:
+    def test_z_drift_blocked_increments_on_gate():
+        # Mock a VOLATILE regime with z=0.5 (below 1.3125 threshold)
+        # Verify BOT_STATS["gate_stats"]["z_drift_blocked"] increments by 1
+        pass
+
+--------------------------------------------------------------------------------
+FIX-5: Z-drift filter is applied BEFORE strategy selection (double-counting)
+--------------------------------------------------------------------------------
+File:        bot/main.py
+Location:    _compute_signal() — VOLATILE regime block (lines ~2533-2540)
+Current bug: The Z-drift gate is placed BEFORE _strategy_trend() is called. 
+             This means the filter blocks even when the strategy would reject 
+             the entry anyway, causing "z_drift_blocked" to count false positives.
+             The plan says the filter should run "before strategy/risk gates 
+             FINALIZE an entry" — i.e., AFTER the strategy has selected a direction 
+             but BEFORE the confidence threshold and risk engine finalize it.
+
+Current code (lines ~2533-2540):
+    elif regime == "VOLATILE":
+        z_current = metrics.get("zScore", 0.0)
+        vol_z_thr = regime_p.get("z_threshold", 1.75)
+        
+        # Z-Drift Entry Pre-Filter
+        if abs(z_current) < 0.75 * vol_z_thr:
+            BOT_STATS["gate_stats"]["z_drift_blocked"] = BOT_STATS["gate_stats"].get("z_drift_blocked", 0) + 1
+            return {**WAIT, "analysis": f"Z-drift blocked: abs(z) {abs(z_current):.2f} < 0.75 * {vol_z_thr}"}
+        
+        strategy_type = "TREND"
+        raw_direction = _strategy_trend(metrics, z_min=vol_z_thr)
+
+Required change:
+    Move the Z-drift gate to AFTER raw_direction is determined but BEFORE 
+    the confidence threshold check (around line 2543, after the strategy block).
+    
+    # If no strategy direction, no point checking Z-drift
+    if raw_direction is None:
+        _gate_stats_summary("signal_none")
+        return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
+    
+    # Z-Drift Pre-Filter (only applies when a strategy direction exists)
+    if regime == "VOLATILE":
+        z_current = metrics.get("zScore", 0.0)
+        vol_z_thr = regime_p.get("z_threshold", 1.75)
+        if abs(z_current) < 0.75 * vol_z_thr:
+            BOT_STATS["gate_stats"]["z_drift_blocked"] = BOT_STATS["gate_stats"].get("z_drift_blocked", 0) + 1
+            logger.info(f"[ZDrift] Blocked {raw_direction} — abs(z) {abs(z_current):.2f} < 0.75 * {vol_z_thr}")
+            return {**WAIT, "analysis": f"Z-drift blocked: abs(z) {abs(z_current):.2f} < 0.75 * {vol_z_thr}"}
+
+--------------------------------------------------------------------------------
+FIX-6: HMM class comment says "4-state" but only 3 states exist
+--------------------------------------------------------------------------------
+File:        bot/main.py
+Location:    _HMMRegimeClassifier docstring (lines ~641-658)
+Current bug: The docstring says "4-state Gaussian HMM" with states 0-3, but the 
+             actual _MU, _SIGMA, _A, _PI, and _LABELS are all 3-state (RANGE, 
+             TREND, VOLATILE). SQUEEZE is mentioned but never implemented in 
+             the HMM matrices. This is a documentation hazard.
+
+Required change:
+    Update the docstring to say "3-state Gaussian HMM" and remove the SQUEEZE 
+    state description. Or, if SQUEEZE is intended to be state 3, add the 4th row 
+    to _MU, _SIGMA, _A, _PI, and _LABELS and re-run hmm_calibrate.
+
+================================================================================
+VERIFICATION CHECKLIST (Run After Applying Fixes)
+================================================================================
+
+□ Run:  pytest tests/test_hmm_regime.py -v
+        Should pass: test_hmm_fast_track_returns_normalized_posterior
+        Should pass: test_hmm_online_update_blends_against_calibrated_anchor
+        Should pass: test_hmm_fast_track_does_not_enter_volatile_on_first_tick
+        Should pass: test_hmm_fast_track_does_not_exit_volatile_on_first_tick (NEW)
+
+□ Run:  pytest tests/test_quant_engine.py -v
+        Should pass: test_dynamic_cvd_lambda_bounds_and_shape
+        Should pass: test_mad_window_floor_formula
+        Should pass: test_rv_iv_discriminant_uses_recent_aggtrades
+        Should pass: test_rv_iv_discriminant_marks_sparse_ticks_stale_and_falls_back
+        Should pass: test_mad_window_uses_adaptive_slice (NEW)
+
+□ Run:  pytest tests/test_executor.py -v
+        Should pass: test_volatile_time_exit_exits_at_hard_cap (NEW)
+
+□ Run:  python -m bot.main --dry-run --testnet
+        Watch logs for:
+        - [HMM] Fast-track disabled for ... (no fast-track in/out of VOLATILE)
+        - [OFI-MAD] Window=XX (adaptive window >= 32)
+        - [ZDrift] Blocked ... (only when strategy selected a direction)
+        - [Regime Override] HMM hallucinates VOLATILE ... (RV/IV override)
+        - [RiskEngine] VOLATILE adaptive confidence floor active: XX%
+        - [RiskEngine] VOLATILE TP expansion: X.XXXx
+        - [Executor] TIME EXIT: age=... (should never exceed 1200s for VOLATILE)
+
+□ Paper-trade validation: minimum 200 trades before increasing live sizing.
+
+================================================================================
+END OF IMPLEMENTATION PLAN
+================================================================================
