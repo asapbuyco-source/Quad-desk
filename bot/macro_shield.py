@@ -43,6 +43,12 @@ class MacroShield:
         self._te_value: float = 0.0
         self._last_candle_ts: float = 0.0
 
+        # DIM 5 FIX: US10Y treasury yield tracking (gauge field injection)
+        self._us10y_ticks = deque(maxlen=200)
+        self._us10y_returns_5m = deque(maxlen=200)
+        self._us10y_momentum_mod: float = 0.0
+        self.us10y_last_update: float = 0.0
+
     def _evaluate_calendar_events(self, events) -> None:
         now = datetime.now(timezone.utc)
         upcoming_usd_events = []
@@ -265,6 +271,55 @@ class MacroShield:
                 
             await asyncio.sleep(60)
 
+    async def run_us10y_loop(self):
+        """
+        DIM 5 FIX: Polls Yahoo Finance for US10Y (10-Year Treasury Yield) every 60s.
+
+        Rising yields (tightening) → risk-off → bearish for crypto.
+        Falling yields (easing) → risk-on → bullish for crypto.
+        Momentum is calculated over 1-hour window and normalized to [0.85, 1.15] scalar.
+        """
+        self.is_running = True
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?interval=15m&range=2d"
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        while self.is_running:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(url, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                result = data.get("chart", {}).get("result", [])
+                if result:
+                    closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                    valid_closes = [c for c in closes if c is not None]
+
+                    if len(valid_closes) >= 5:
+                        current_us10y = valid_closes[-1]
+                        us10y_1h_ago = valid_closes[-5]
+                        ts = time.time()
+
+                        self._us10y_ticks.append((current_us10y, ts))
+
+                        momentum_pct = (current_us10y - us10y_1h_ago) / max(us10y_1h_ago, 0.01)
+                        # US10Y is inversely correlated with risk assets.
+                        # Rising yields → negative momentum for crypto → scalar < 1.0
+                        scalar_mod = -1.0 * (momentum_pct / 0.01) * 0.15  # 1% yield move = 15% scalar change
+                        scalar_mod = max(-0.10, min(0.10, scalar_mod))
+
+                        self._us10y_momentum_mod = scalar_mod
+                        self.us10y_last_update = time.time()
+
+                        logger.debug(
+                            f"[MacroShield] US10Y: {current_us10y:.2f}% | "
+                            f"1h Mom: {momentum_pct:+.2%} | scalar_mod={scalar_mod:+.3f}"
+                        )
+            except Exception as e:
+                logger.warning(f"[MacroShield] Failed to fetch US10Y from Yahoo Finance: {e}")
+
+            await asyncio.sleep(60)
+
     def on_btc_update(self, price: float, ts: float) -> None:
         self._btc_ticks.append((price, ts))
         if len(self._btc_ticks) >= 2:
@@ -392,8 +447,12 @@ class MacroShield:
             hy_adj = 0.03 if is_long else -0.03
         
         lag_adj = self._lead_lag_adj if not is_long else -self._lead_lag_adj
+
+        # DIM 5 FIX: Inject US10Y gauge-field scalar
+        us10y_scalar = self.get_us10y_scalar(direction)
+        us10y_adj = (us10y_scalar - 1.0) * 0.5  # scale [0.90,1.10] → [-0.05, 0.05] adjustment
         
-        return float(np.clip(hy_adj + lag_adj, -0.08, 0.08))
+        return float(np.clip(hy_adj + lag_adj + us10y_adj, -0.10, 0.10))
 
     def is_calendar_safe(self) -> bool:
         return not self.is_calendar_blackout
@@ -419,6 +478,28 @@ class MacroShield:
             
         # Ensure strict bounds
         return max(0.85, min(1.15, scalar))
+
+    def get_us10y_scalar(self, direction: str) -> float:
+        """
+        DIM 5 FIX: Returns confidence multiplier [0.90, 1.10] based on US10Y momentum.
+
+        Rising yields (tightening) → risk-off → bearish for crypto.
+        Falling yields (easing) → risk-on → bullish for crypto.
+
+        This is a gauge-field injection: treasury yields are the "spacetime curvature"
+        that macro-economically constrains all risk-asset trajectories.
+        """
+        if time.time() - self.us10y_last_update > 300:
+            return 1.0
+
+        base_mod = self._us10y_momentum_mod
+
+        if "BUY" in direction or "LONG" in direction:
+            scalar = 1.0 + base_mod
+        else:
+            scalar = 1.0 - base_mod
+
+        return max(0.90, min(1.10, scalar))
 
 # Global singleton
 macro_shield = MacroShield()

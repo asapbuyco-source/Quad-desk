@@ -128,6 +128,10 @@ class QuantEngine:
         self._firestore_doc_id = f"quantEngine_{_safe_sym}"  # e.g. quantEngine_BTCUSDT
         self._load_state()
 
+        # B2 FIX: Configurable RV/IV windows for normal vs high-vol conditions
+        self._rv_iv_window_normal = int(os.environ.get("BOT_RV_IV_WINDOW_MS_NORMAL", "30000"))
+        self._rv_iv_window_vol = int(os.environ.get("BOT_RV_IV_WINDOW_MS_VOL", "120000"))
+
     @staticmethod
     def _rv_iv_discriminant(
         trades,
@@ -135,16 +139,22 @@ class QuantEngine:
         atr: float,
         current_price: float,
         now_ms: Optional[float] = None,
+        window_ms: int = 30_000,
+        min_ticks: int = 5,
     ) -> Dict[str, Any]:
-        """Classify live realized volatility versus candle-implied volatility."""
+        """Classify live realized volatility versus candle-implied volatility.
+
+        B2 FIX: Added configurable window_ms and min_ticks parameters.
+        Uses 30s window for normal conditions, 120s for high-vol/sparse-tape.
+        """
         now_ms = time.time() * 1000 if now_ms is None else now_ms
         recent_prices = [
             float(t.get("price"))
             for t in trades
-            if (now_ms - float(t.get("time", now_ms)) < 30_000) and t.get("price")
+            if (now_ms - float(t.get("time", now_ms)) < window_ms) and t.get("price")
         ]
 
-        rv_data_stale = len(recent_prices) < 5
+        rv_data_stale = len(recent_prices) < min_ticks
         if not rv_data_stale:
             tick_returns = np.diff(np.log(recent_prices))
             rv = float(np.std(tick_returns)) * math.sqrt(max(len(tick_returns), 1))
@@ -166,6 +176,8 @@ class QuantEngine:
             "rv_iv_ratio": rv_iv_ratio,
             "vol_state": vol_state,
             "rv_data_stale": rv_data_stale,
+            "rv_window_ms": window_ms,
+            "rv_tick_count": len(recent_prices),
         }
 
 
@@ -400,14 +412,25 @@ class QuantEngine:
         arr = np.array(list(self._atr_history))
         atr_pct_rank = float(np.mean(arr <= atr))
         self._atr_pct_rank = atr_pct_rank  # make available to _cvd_divergence
-        
+
+        # B2 FIX: Select RV/IV window based on conditions
+        # Use 120s window for high ATR rank, sparse tape, or volatile regime candidate
+        last_trade_ts = getattr(self.state, '_last_trade_ts', 0.0)
+        tape_sparse = (
+            last_trade_ts > 0 and
+            (time.time() - last_trade_ts) > 30.0
+        ) or len(self.state.recent_trades) < 10
+        use_vol_window = atr_pct_rank >= 0.80 or tape_sparse
+        rv_window_ms = self._rv_iv_window_vol if use_vol_window else self._rv_iv_window_normal
+
         # PHASE 3: RV/IV Real-Time Discriminant
-        # Calculate 30-second aggTrade realized variance for true micro-volatility.
+        # Calculate aggTrade realized variance for true micro-volatility.
         rv_iv = self._rv_iv_discriminant(
             list(self.state.recent_trades),
             closes,
             atr,
             current_price,
+            window_ms=rv_window_ms,
         )
         rv_iv_ratio = rv_iv["rv_iv_ratio"]
         vol_state = rv_iv["vol_state"]
@@ -887,6 +910,21 @@ class QuantEngine:
         ofi_norm   = (ofi_filtered - self._ofi_ewma_mu) / sigma
         self._ofi_smooth = ALPHA_SMOOTH * ofi_norm + (1 - ALPHA_SMOOTH) * self._ofi_smooth
         ofi = math.tanh(self._ofi_smooth / 2.0)  # output: (-1, +1)
+
+        # C1 FIX: Neutralize OFI when nearest wall is flagged as ghost
+        # Ghost wall = wall that disappeared without being filled (spoofed size).
+        # If OFI shows buy pressure but the ask wall was ghosted, the pressure is fake.
+        # If OFI shows sell pressure but the bid wall was ghosted, the pressure is fake.
+        if getattr(self.state, "ghost_wall_active", False):
+            ghost_side = getattr(self.state, "ghost_wall_side", "")
+            ghost_cancel_rate = getattr(self.state, "ghost_cancel_rate", 0.0)
+            if ghost_cancel_rate > 0.5:  # Only neutralize if >50% of wall was cancelled
+                if (ofi > 0 and ghost_side == "BUY") or (ofi < 0 and ghost_side == "SELL"):
+                    logger.info(
+                        f"[OFI-GhostWall] Neutralizing OFI={ofi:.4f} — "
+                        f"ghost wall on {ghost_side} side (cancel_rate={ghost_cancel_rate:.1%})"
+                    )
+                    ofi = 0.0
 
         # OFI Warm-Up Guard (Fix B): EWMA is seeded at arbitrary values (mu=0, var=1).
         # Until the filter has processed enough samples to be meaningful, emit 0.0.

@@ -1,0 +1,643 @@
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 1
+ENGINEERING_VOL_FIX
+Full-Spectrum Diagnostic Audit
+Chief Scientific Co-Pilot · Quantitative Quantum & Thermodynamic Architecture
+Report ID
+EV-AUD-2026-R1
+Audit Scope
+20 Source Files · 607 KB
+Bot Arch.
+7-Stage Hybrid (BTC/USDT USDM)
+Exchange
+Binance USDM Futures
+Candle TF
+15m (primary) + sub-candle aggTrade
+Leverage
+3× (configurable 120×)
+HMM States
+RANGE / TREND / VOLATILE + LIQUIDITY (wall)
+Bayesian
+Beta(a,b) conjugate prior, per-regime
+Date
+June 15, 2026
+Classification
+CONFIDENTIAL / INTERNAL
+EXECUTIVE VERDICT MATRIX
+Market Condition
+Overall Assessment
+Alpha Quality
+Risk Grade
+Verdict
+Trending Market
+Functional  HMM TREND state active, Z-velgated
+Moderate
+B+
+CONDITIONAL PASS
+High Volatility
+VOLATILE regime partially functional;SQUEEZE params exist but not HMM-native
+Moderate
+B
+CONDITIONAL PASS
+Low Volatility
+RANGE regime well-tuned; dead-marketguard present
+Good
+A-
+PASS
+Consolidating
+NEUTRAL regime + CVD divergence gatefunctional
+Moderate
+B
+CONDITIONAL PASS
+High Liquidity
+Amihud SOLID label reduces illiquiditypremium correctly
+Moderate
+B+
+CONDITIONAL PASS
+Spoofing / Ghost Walls
+Wall threshold (5× median) present; NOcancel-velocity tracker
+Weak
+C+
+FAIL  ALPHA GAP
+Institutional Orders
+CVD divergence + GEX from Deribit; whaleratio from Coinglass
+Moderate-Good
+B
+PASS WITHCAVEATS
+Execution Jitter
+15s polling loop; event-driven only oncandle-close; no sub-candle limit orders
+Poor
+C
+FAIL  LATENCYGAP
+1. TRENDING MARKET  PERFORMANCE DIAGNOSIS
+The TREND regime is triggered when the HMM Gaussian emission P(TREND|obs) exceeds the MIN_CONFIDENCE gate (default50%) and the observation vector [ATR%, |Z|, tape_bin, ATR_rank] falls within the calibrated emission: mu=[0.003256, 1.858, 1.0,0.554], sigma=[0.005409, 0.923, 0.005, 0.269]. The transition matrix shows TREND is highly unstable P(TREND®VOLATILE)=0.480  meaning the HMM expects trend states to bleed rapidly into volatility expansion. This is empiricallycorrect for BTC but architecturally problematic: the TREND strategy may be committed exactly at momentum exhaustion.
+Component
+Implementation
+Status
+Finding
+HMM TREND Detection
+GaussianHMM, 4 features,Baum-Welch EM
+ACTIVE
+Calibrated on ~1yr BTC 15m. Transition P(T®V)=0.48  lowpersistence. Beware momentum commitment lag.
+Z-Velocity Gate
+_z_vel computed from log-returns,gated to TREND only (|z_ret|>0.5)
+ACTIVE
+Correct design. Prevents z-velocity from polluting RANGEmean-reversion.
+OFI Threshold (TREND)
+ofi_bound=0.20  higher thanRANGE (0.08) / NEUTRAL (0.10)
+ACTIVE
+Sound: TREND requires stronger order-flow confirmation.Tanh-normalized OFI pipeline correct.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 2
+SL Multiplier
+ATR x 2.09  widest across allregimes
+ACTIVE
+Appropriate for trend breathing room. Wilder ATR compensationnoted (5% reduction applied).
+BE Lock Trigger
+2.0x ATR profit before break-evenlock
+ACTIVE
+Correct. Prevents premature BE on volatile intraday trends.
+RSI Extreme Gate
+RSI extreme suppressed inTREND (rsi_extreme_suppressedcounter)
+ACTIVE
+CRITICAL DESIGN FLAW: suppressing RSI extremes in TRENDallows entries into terminal momentum  no fade protection atall.
+HTF Block
+htf_block=True for TREND
+ACTIVE
+Prevents counter-HTF entries  correct for trend-followingmandate.
+Partial Take
+0.40 of position at 0.75R
+ACTIVE
+Earlier partial in TREND vs RANGE  reasonable but may captrend capture on extended moves.
+Time Exit
+1800s (30min) max hold
+ACTIVE
+30-min cap on 15m candle system is 2 candles. Caps multi-hourtrend capture excessively.
+Confidence Floor
+0.65  highest among regimes
+ACTIVE
+Appropriate: trend entries are most susceptible to false breakout.
+KEY DEFECT T-01: TREND TIME-EXIT CAP = 2 CANDLES
+time_exit_sec=1800 on a 15m candle system equates to precisely 2 candles. BTC trending phases routinely persist 615 candles (1.53.75h).This cap virtually guarantees systematic early exit on all extended trend moves, converting trend trades into range scalps. Recommended: raise to5400s (6 candles / 1.5h) with trailing stop activation post-2R.
+KEY DEFECT T-02: RSI SUPPRESSION IN TREND = NO EXHAUSTION GUARD
+The rsi_extreme_suppressed gate disables RSI overbought/oversold filtering in TREND regime. While correct for not blocking early momentumentries, it leaves zero protection against terminal RSI divergence (RSI>80 on declining momentum = distribution). Recommend adding aDIVERGENCE check rather than full suppression: allow entry if RSI<75 OR if Z-vel is still accelerating. A Hawkes process self-excitation decayrate on trade intensity would provide a cleaner signal.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 3
+2. HIGH VOLATILITY MARKET  PERFORMANCE DIAGNOSIS
+The system implements a VOLATILE HMM state distinct from TREND, calibrated to [ATR%=0.003691, |Z|=1.020, tape=0.0,ATR_rank=0.652]  high ATR with moderate Z and LOW tape, correctly characterising whipsaw expansion. The VOLATILE transitionis extremely sticky: P(V®V)=0.944, meaning once volatile, the system expects sustained volatility clustering  consistent withnon-equilibrium thermodynamic autocorrelation in LOB microstructure.
+Component
+Status
+Severity
+Finding
+VOLATILE HMM State
+ACTIVE
+INFO
+Correctly modeled. ATR_rank=0.652 >> RANGE(0.199) confirmshigh-percentile vol detection.
+SQUEEZE Regime Params
+DEFINED butALIASED
+MEDIUM
+SQUEEZE params in signal_config.py (SL=0.5xATR, TP=3R) exist butSQUEEZE is aliased to LIQUIDITY in _LABELS. HMM never emits 'SQUEEZE'directly  these tighter params are unreachable via normal HMM classification.
+VOLATILE SL Multiplier
+1.65xATR(Phase 4.1adjusted)
+INFO
+Phase 4.1 reduced from 2.25 to 1.65. Risk of SL being too tight during high-volexpansion  consider adaptive multiplier based on ATR_rank percentile.
+Panic Mode
+ACTIVE  3%drop / 5 candles
+INFO
+Flash-crash guard locks for 300s. Correct thermodynamic response to phasetransition.
+ATR Percentile Rank
+Rolling2880-candlewindow (30d)
+INFO
+Strong design. Allows regime-relative volatility assessment, not absolute ATR.Critical for multi-symbol operation.
+RV/IV Discriminant
+_rv_iv_discriminant() active
+MEDIUM
+Uses 30s tick window for RV. In genuine high-vol events the 30s window is tooshort  RV computation degrades to candle fallback. Need 60120s windowfor vol events.
+Cascade Risk (ULIS)
+Sigmoidcascade indexcomputed
+INFO
+AVOID verdict fires when cascade_risk>0.65 AND reflexivity>0.50. Testedagainst both OFI and Bayes signals  correctly orthogonal.
+Funding Rate Veto (High Vol)
+FUNDING_LONG_BLOCK=0.0008, SHORT_BLOCK=-0.0005
+INFO
+Conservative. Avoids crowded positioning during funding spikes that precedevol events.
+MacroShield Blackout
++/-15min aroundCPI/FOMC/NFP
+INFO
+Correct. High-vol macro events are hard-gated. Calendar fetched fromForexFactory with TTL cache and exponential backoff.
+Vol-Spike CVD Veto
+CVD_VETO_VOL_SPIKE=1.40x
+INFO
+Vol spike confirmation for CVD divergence veto  prevents false institutionalreads during erratic tape.
+KEY DEFECT V-01: SQUEEZE PARAMS ARE UNREACHABLE
+REGIME_ALIAS={'SQUEEZE':'LIQUIDITY'} and _LABELS=['RANGE','TREND','VOLATILE'] means the HMM never emits the string 'SQUEEZE'.The purpose-built SQUEEZE strategy (0.5xATR SL, 3.0R TP, 600s exit) is dead code for the live engine. This was presumably designed for a4-state HMM that was never implemented. Resolution: either add a 4th HMM state, or route VOLATILE+high_Amihud_rank to SQUEEZE paramsdirectly in _detect_regime().
+3. LOW VOLATILITY / RANGE MARKET  PERFORMANCE DIAGNOSIS
+RANGE is the HMM's most stable state: P(R®R)=0.9624, emission mu=[ATR%=0.002143, |Z|=1.110, tape=0.0, ATR_rank=0.199].The bot applies mean-reversion strategy (Strategy B) with z_threshold=1.06 (Student-t adjusted), tight SL (1.14xATR), and lower OFIbar (0.08). This is the highest-fidelity regime in the system.
+Component
+Status
+Grade
+Finding
+HMM RANGE Persistence
+P(R®R)=0.9624
+A
+Excellent stability. Low false-exits from RANGE. Student-t Z-thresholdadjustment (x0.8165) correctly widens significance at fat-taileddistributions.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 4
+Dead Market Guard
+_dead_market_cycles counter
+A-
+Prevents sustained RANGE entries when Z is flat. Correct applicationof Fokker-Planck drift near zero  no signal in pure diffusion.
+Z-Threshold
+1.06 (Student-t adj from 1.30)
+A-
+Well-calibrated for 15m BTC RANGE. Student-t correctionappropriate given heavy tails in crypto returns.
+OFI Bound
+0.08  lowest among regimes
+B+
+Correct: in low-vol, even small order-flow imbalances carry signal.Three-stage OFI pipeline (True OFI ® MAD filter ® EWMA+tanh) issound.
+VWAP Z-Score
+24h rolling window (288-candlemax buffer)
+A
+HMM-SESSION-VWAP fix correctly replaced midnight UTC reset with24h rolling window. No boundary artifacts.
+RSI Mean Reversion
+Active  RSI extremes NOTsuppressed in RANGE
+A
+Correct. Overbought/oversold RSI is primary confirmation inrange-bound markets.
+Candle Gate
+30s after candle open (fastestamong regimes)
+B
+Appropriate for RANGE. However, 30s minimum in a 15m systemmeans entry is always at least 3% into candle  acceptable.
+Cascade Cooldown
+180s (3min)  shorter thanNEUTRAL/TREND
+B+
+Allows faster recovery after sweep. Correct thermodynamicre-equilibration assumption.
+Partial Take
+0.50 at 0.60R
+B+
+Earlier, larger partial vs TREND  correct for range scalp geometry.
+HTF Block
+htf_block=False for RANGE
+A
+Counter-HTF is the strategy in RANGE. Correct macro-contextoverride  no HTF block when mean-reverting.
+RANGE is the strongest-performing regime in this architecture. Primary risk is false RANGE classification during low-volume pre-breakoutcompression  ATR_rank alone cannot distinguish between dead consolidation and accumulation coiling. Recommend adding a Bollinger BandWidth percentile rank as a 5th HMM feature to differentiate.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 5
+4. CONSOLIDATING MARKET  PERFORMANCE DIAGNOSIS
+Consolidation is handled by the NEUTRAL regime plus CVD divergence detection. NEUTRAL applies balanced thresholds (z=1.50,ATR=1.43x, OFI=0.10) and activates all three strategy branches (Trend A, Mean Reversion B, Liquidity Sweep C). The Bayesianfusion layer is the primary arbitration mechanism in NEUTRAL  per-regime Beta(alpha, beta) priors track historical win ratesseparately and apply a cold-start discount for the first 30 trades.
+Component
+Status
+Grade
+Finding
+NEUTRAL Regime Strategy
+All 3 strategies active
+B+
+Correct: no regime certainty ® broader signal basket. Risk of signaldilution  Bayesian fusion must do heavy lifting.
+Per-Regime Beta Prior
+Separate alpha/beta per RANGE/TREND/NEUTRAL/LIQUIDITY
+A-
+Strong design. Regime-specific win rates preventcross-contamination. Prior softening at 3+ consecutive losses iswell-calibrated.
+CVD Divergence Gate (Stage 4.5)
+EMA-Z normalized,age-weighted, streak-tracked
+A-
+Most sophisticated component in the system. Cross-candleinstitutional footprint read. Age cap at 8 candles prevents TRENDmisclassification as divergence.
+Cold-Start Discount
+0.05 confidence reduction forfirst 30 trades
+B
+Conservative. 30-trade window may be too short for regime-specificcalibration (TREND sees far fewer trades than RANGE inconsolidation).
+CVD Post-Reset Cooldown
+5 candles after daily CVDreset
+A-
+Ghost signal suppression correctly implemented. Daily CVD resetartifact (spurious BEARISH div) would otherwise persist 100+candles.
+Signal Diversity in NEUTRAL
+OFI + RSI + Z-score + CVD+ VWAP + tape
+B+
+Good signal breadth. However, signals share common information(OFI and CVD are partially collinear  both order-flow derived). Trueorthogonality is partially addressed by GLR score using funding rate.
+Confidence Threshold
+0.62  same as RANGE
+B
+Appropriate for neutral conditions. Should arguably be HIGHER inconsolidation where false signals dominate  recommend 0.65 floorin NEUTRAL.
+Bayesian Override
+BAYES_OVERRIDE_THRESHOLD=0.78 bypassessome gates
+B-
+Dangerous in consolidation  a 0.78 Bayesian posterior inNEUTRAL is often a data artifact from parameter fitting, not genuineedge. Recommend requiring ULIS STRONG_LONG/SHORT beforeoverride activates.
+Time Exit
+1200s (20min)
+B+
+One-candle-plus window. Appropriate for consolidation entries.
+5. HIGH LIQUIDITY MARKET  PERFORMANCE DIAGNOSIS
+High-liquidity environments are characterized by low Amihud illiquidity ratio, tight bid-ask spread, and deep resting order books. TheAmihudEngine computes both linear (Amihud) and kinetic-energy squared (KE) variants using log-normalization and rolling percentileranks over a 500-trade buffer. SOLID label (amihud_rank < 0.20) indicates high liquidity. The LIQUIDITY regime in the HMM contextrefers to wall-proximity sweeps, not the Amihud metric  these are conceptually distinct.
+Component
+Status
+Grade
+Finding
+AmihudEngine (Linear)
+Log-normalized, percentile rank,500-trade window
+A-
+Correct implementation. Log normalization handles fat-tailedprice-impact distribution. Hysteresis (N=3 ticks) preventsSOLID/FLUID/VAPOR flickering.
+KE Variant (Kinetic Energy)
+Squared price-impact /dollar-volume
+B+
+KE variant captures higher-order microstructure dynamics. Bothvariants run in parallel  good redundancy.
+Warm-up Guard
+100 trades minimum before featuresare trusted
+A
+Cold-start neutral (0.5, 0.5) prevents spurious SOLID/VAPORclassification on restart. Critical for integrity.
+SOLID Regime Effect
+amihud_rank < 0.20 ®FLUID/TREND eligible
+B+
+Low illiquidity ® lower market impact ® executions favor takerfills. System correctly de-risks illiquidity premium in SOLID state.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 6
+VAPOR Detection (LowLiquidity)
+amihud_rank > 0.80 ® SQUEEZEcandidate
+B
+VAPOR should route to SQUEEZE strategy (tighter SL, 3R TP)but SQUEEZE params are currently unreachable (Defect V-01).VAPOR detection is therefore partially wasted.
+LOB Depth Normalization
+ILIH score in ULIS: normalized1000-80000 range
+B
+Normalization range [1000, 80000] total LOB depth in USDT isreasonable for BTC/USDT USDM futures. However, this is astatic constant  should adapt to session-average depth.
+Wall Classification
+Threshold = 5x median order size
+B+
+Robust to LOB size distribution shifts. Filters micro-orders fromwall detection. Top-of-book no longer used (P1-4 fix noted incode).
+Execution Price Reference
+Top-of-book best bid/ask (not wallmid)
+A-
+Correct for taker execution modeling. PHASE-1.1 fix properlyuses execution price rather than wall-filtered mid.
+Spread-Based Fee Geometry
+Dynamic slippage: ATR% x 0.15 forsweep fills
+B+
+Realistic slippage model for BTC sweeps. Better than flat 0.02%assumption that was replaced.
+Throughput Gate
+Monitors aggTrade msg/min; thinthroughput = veto
+B+
+Detects exchange data degradation before it produces badsignals. Correct defensive engineering.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 7
+6. SPOOFING & INSTITUTIONAL ORDER DETECTION
+This is the most structurally critical gap in the system. Spoofing  the placement and rapid cancellation of large orders to manipulateperceived supply/demand  is endemic in BTC/USDT perpetual futures markets. Institutional iceberg orders fragment large sizeacross hundreds of micro-fills. The current architecture has partial defenses but no cancel-velocity tracking, no order-lifetime analysis,and no iceberg detection algorithm.
+Mechanism
+Current Defense
+Grade
+Gap / Risk
+Spoofed Wall Detection
+Wall threshold = 5x median size.Checks if wall persists from priorsnapshot via nearest_bid/askcontinuity.
+C+
+NO cancel-velocity tracker. A large bid placed and cancelled withinthe same depth snapshot cycle (100ms) passes undetected. Criticalmiss.
+Ghost Order Identification
+CVD divergence: price moves UPbut CVD (net taker volume) isflat/down = bearish divergence
+B
+CVD divergence is the PRIMARY indirect spoof signal in this system.Works well for ORDER FLOW spoofing but not RESTING ORDERspoofing (iceberg).
+Iceberg Order Detection
+None explicit
+F
+Zero iceberg detection. Institutional algorithms fragment largeorders. The bot sees small fills but no aggregate size. Amihud KEvariant partially captures this (high KE with small price move =iceberg absorption) but is not wired to a signal gate.
+Wash Trading Detection
+Tape speed (SCREAMING) + CVDalignment check
+C
+Wash trading produces high tape speed with near-zero net CVD.Current system flags this as high reflexivity but does not explicitlyveto  AVOID verdict may trigger if cascade_risk is also elevated.
+GEX-Based Dealer Spoofing
+Deribit GEX computed (signed:call=+, put=-)
+B+
+Best institutional defense in the system. Negative GEX (dealer shortgamma) amplifies moves  correctly routes to SWEEP confirmationrather than fade. 48h expiry filter prevents gamma noise fromshort-dated options.
+Whale Ratio (Coinglass)
+whale_ratio fetched; crowdedlong/short logic
+B
+Correctly identifies crowding. However, Coinglass data has 515minute latency  cannot detect intrabar whale positioning shifts.Useful for macro bias only.
+LOB State Persistence
+Depth snapshot every 100ms via@depth20@100ms
+C+
+Two-level wall persistence check between snapshots. Not sufficient:professional spoofing cancels within 1050ms. Need @depth@0ms(full book) for cancel-velocity computation.
+Order Lifetime Modeling
+None
+F
+No order-lifetime histogram. Resting orders with >0 lifetime = real.Resting orders with <50ms lifetime = spoofed. This requires storingthe previous N depth snapshots and comparing cancellations.
+Momentum Ignition Detection
+Partial: SCREAMING tape + highZ-score + OFI spike = TREND signal
+C+
+The system will FOLLOW momentum ignition, not detect and fade it.A rapid sequence of aggressive buys followed by immediate reversal(ignition pattern) is treated as bullish by the OFI/CVD pipeline. NeedHawkes process to detect self-excitation anomalies.
+CRITICAL DEFECT S-01: NO CANCEL-VELOCITY TRACKER
+The @depth20@100ms stream provides snapshots at 100ms intervals. A cancel-velocity tracker would compute: cancel_rate[price] = (size_t-1 -size_t) / delta_t for each level where size decreased without a trade fill. Orders disappearing at >10 BTC/100ms without aggTrade confirmation areclassified as spoofed. This is a straightforward data structure change in data_feed.py. Requires storing the previous depth snapshot andcomparing level-by-level. Estimated: 1 week.
+CRITICAL DEFECT S-02: MOMENTUM IGNITION VULNERABILITY
+A Hawkes self-exciting process with exponential kernel lambda(t) = mu + sum_i alpha*exp(-beta*(t-t_i)) would detect when trade arrival rateexceeds its long-run mean by >3 sigma within a 500ms window and then rapidly decays  the ignition signature. The current system has no suchfilter and will enter long positions triggered by ignition events, taking the exact adverse fill the manipulator intends. This is the singlehighest-expected-cost defect in the spoofing domain.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 8
+7. EXECUTION JITTER & LATENCY ARCHITECTURE
+Execution jitter is the primary structural limitation of this system. The bot operates on a 15-second polling loop(ANALYSIS_INTERVAL=15) for signal evaluation, with event-driven triggers only on candle-close (15m). All order placement goesthrough CCXT's async REST layer to Binance USDM fapi.binance.com. The cross-continental deployment (Railway USA « BinanceEU) adds ~80150ms network RTT on top of the inherent 15-second decision granularity.
+Layer
+Type
+EstimatedLatency
+Jitter Source
+Grade
+WebSocket Data Ingestion
+Event-driven(aggTrade +@depth20)
+~1030ms
+Network congestion, WS frame batchingat 100ms for depth
+B+
+Candle-Close Event Trigger
+candle_close_event.set() on finalkline
+~50200ms
+Binance kline finalization delay +asyncio event loop scheduling
+B
+Signal Computation(QuantEngine)
+Synchronous inmain loop, numpyops
+~520ms
+ATR_rank (2880-element percentile),OFI MAD filter, EWMA chains
+A-
+HMM Classification
+GaussianHMMonline predict(60-samplewindow)
+~28ms
+Negligible  diagonal covariancemakes it O(n_states x n_features)
+A
+ULIS/ALDE Verdict (Stage 6)
+Pure Python, noML
+~13ms
+Negligible
+A
+Derivatives Context Fetch
+REST: Deribit +Coinglass + Bybit
+300900s cycle
+Async background task, 15min refresh.Not on critical path.
+B+
+Order Placement(create_market_order)
+CCXT async RESTtofapi.binance.com
+~80300ms
+Cross-continental RTT, Binance USDMAPI processing, Railway TCP overhead
+C+
+SL/TP Placement (STOP limit)
+Attempt 1: STOPlimit; fallback:STOP_MARKET
+~200600ms
+Two REST calls after fill confirm +asyncio.sleep(1.0) between retries
+C
+TP Requeue Mechanism
+Heartbeat polling(60s interval) forfailed TPs
+Up to 60s delay
+TP placement failures requeued up to 3attempts over minutes
+C-
+Post-Trade Cooldown
+POST_TRADE_COOLDOWN_S=90s hard pause
+90s minimum
+Fixed cooldown prevents reactivere-entry. Correct risk management butcreates artificial 90s dead zone.
+B
+Main Analysis Loop
+asyncio.sleep(15s)polling
+15s baseresolution
+15s polling is the dominant jitter source all intrabar signals are evaluated atmost once per 15s
+C
+recvWindow / Clock Skew
+recvWindow=10000ms, adjustForTimeDifference=True
+Handled
+Cross-continental skew compensated.Correct configuration.
+A
+STRUCTURAL JITTER DEFECT J-01: 15-SECOND POLLING LOOP
+The bot's core decision cycle runs every 15 seconds regardless of market state. On a 15-minute candle system, this yields 60 evaluationopportunities per candle  but most are idle, wasting computational cycles without providing sub-candle alpha. The candle_close_event.set()provides one event-driven trigger per candle close, which is the correct primary entry trigger. However, mid-candle signal changes (e.g., a liquiditysweep at candle T+7min) are evaluated at the next 15s tick boundary, introducing up to 14.9s of signal latency for intrabar events.Recommendation: implement adaptive polling  fast polling (2s) in TREND/LIQUIDITY regimes, slow polling (30s) in confirmed RANGE. Thispreserves CPU budget while reducing sweep latency.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 9
+STRUCTURAL JITTER DEFECT J-02: SL/TP PLACEMENT IS SEQUENTIAL
+After market order fill, the bot places SL then TP in separate sequential REST calls, each with asyncio.sleep(1.0) between attempts. Total SL+TPplacement time: 200ms2s under normal conditions, 310s if the first SL attempt fails and falls back to STOP_MARKET. During this window theposition is unprotected. Recommendation: submit OCO (One-Cancels-Other) order on Binance USDM using the native OCO endpoint  atomicSL/TP in a single API call. CCXT supports this via create_order with 'TAKE_PROFIT' and 'STOP_MARKET' in a single request payload.
+STRUCTURAL JITTER DEFECT J-03: TP REQUEUE DELAY UP TO 60 SECONDS
+Failed TP placements are requeued via attempt_tp_requeue() which is polled by the heartbeat at approximately 60-second intervals. A failed TPmeans the position holds no profit-lock for up to 60 seconds. In high-volatility BTC moves, 60 seconds can represent 38 ATR candles.Resolution: move TP requeue to the main analysis loop at every 15s tick, not the heartbeat.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 10
+8. ALPHA UPDATE ROADMAP  PRIORITIZED
+The following alpha improvements are ordered by expected Sharpe contribution, implementation complexity, and risk of introducingnew defects. All recommendations are within the existing architectural paradigm (Python async, CCXT, Binance USDM) unlessotherwise stated.
+Priority
+Component
+Recommendation
+Mechanism
+Expected Lift
+P1 CRITICAL
+Spoof Cancel-VelocityTracker
+Store prev depth snapshot; computecancel_rate[level] = (prev_size - curr_size) / 0.1s. Ifcancel_rate > 10 BTC/100ms and no aggTrade fillat that level ® mark as GHOST_WALL. ReduceOFI weight by 0.5x when GHOST_WALL flag isactive.
+LOB Microstructure /Adversarial GameTheory
+Reduces adverse selectionon spoofed walls. Est. -15%to -25% false LIQUIDITYentries.
+P2 CRITICAL
+Hawkes Self-ExcitationMonitor
+Implement lambda(t) = mu + alpha * sumexp(-beta*(t-t_i)) over aggTrade stream. Iflambda(t) > 3-sigma above baseline AND decayswithin 5s ® IGNITION_DETECTED flag. Vetotrend entries for 60s post-ignition.
+Stochastic HawkesProcess /Jump-DiffusionDetection
+Eliminates the single largestadverse-fill scenario. Est.-30% false TREND entriesduring manipulation.
+P3 HIGH
+OCO Order Submission
+Replace sequential SL + TP placement with nativeBinance USDM OCO (type=TAKE_PROFIT +STOP_MARKET in single request). Eliminates the200ms10s unprotected window post-entry.
+ExecutionEngineering / LatencyReduction
+Eliminates naked positionwindow. Direct P&L;protection improvement.
+P4 HIGH
+SQUEEZE HMM StateActivation
+Add 4th HMM state to _HMMRegimeClassifier:features = [ATR_rank > 0.80, amihud_rank > 0.80,|Z| < 1.0, tape=SCREAMING]. Route to SQUEEZEREGIME_PARAMS (SL=0.5xATR, TP=3R). Trainon BTCUSDT periods with documented squeezeevents (Mar 2024, Oct 2024).
+HMM RegimeExtension / AmihudIntegration
+Unlocks SQUEEZE alphachannel currentlyunreachable. Est. 35additional trade setups permonth.
+P5 HIGH
+Adaptive Polling Loop
+Replace flat 15s asyncio.sleep with adaptive:TREND/LIQUIDITY/VOLATILE ® 2s; NEUTRAL ®10s; RANGE ® 25s. Gate withregime.last_confirmed_at to prevent rapidswitching overhead.
+Systems Engineering/ Latency Reduction
+Reduces mid-candle signallag from 14.9s to 1.9s inactive regimes. Est. -0.5 to-1.0 ATR average entryslippage.
+P6 HIGH
+TREND Time-ExitExtension
+Raise time_exit_sec for TREND from 1800s to5400s (6 candles). Add trailing stop activation at2R: once 2xATR profit achieved, trail SL at0.75xATR below running high (long) or aboverunning low (short).
+Risk / PositionLifecycleManagement
+Captures full trendingmoves instead of exitingafter 2 candles. Est.+20-40% average winner onTREND trades.
+P7 MEDIUM
+BBW Percentile asHMM Feature
+Add Bollinger Band Width percentile rank as 5thHMM feature. BBW_rank < 0.10 = volatilitycompression (coiling pre-breakout). PreventsRANGE classification of pre-breakout compressionzones.
+Statistical Mechanics/ Phase TransitionDetection
+Separates deadconsolidation frompre-breakout coiling. Avoidsmean-reversion entries intoaccumulation zones.
+P8 MEDIUM
+Platt Scaling onBayesian Posterior
+Apply logistic regression calibration (Platt scaling)to map raw Bayesian posterior to calibratedprobability. Train on historical signal vs outcomepairs. Prevents overconfident posterior inflationfrom collinear signals.
+Calibration /Information Theory
+Improves confidencethreshold reliability.Required for Kelly Criterionto be theoretically valid.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 11
+P9 MEDIUM
+Dixon-Coles PriceReturn Model
+Augment Bayesian fusion with Dixon-Coles MLEon 5-minute return distribution. Providestheoretically correct probability estimate of returnsign rather than heuristic Beta prior. Particularlyvaluable for NEUTRAL regime where prior isweakest.
+Maximum LikelihoodEstimation /Stochastic Calculus
+Improves NEUTRAL regimeconfidence quality.Estimated +5-10%improvement in NEUTRALwin rate.
+P10 LOW
+Shannon TransferEntropy Gate
+Compute TE(CVD ® Price) and TE(Price ® CVD)over rolling 20-candle window. HighTE(CVD®Price) confirms CVD is informationallyleading (genuine institutional flow). Low TE = CVDand price are co-driven (no causal arrow),suggesting market-maker manipulation.
+Information Theory /Non-EquilibriumThermodynamics
+Provides causal validationof CVD divergence signal.Reduces false institutionalfootprint reads.
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 12
+9. CONSOLIDATED DEFECT REGISTER
+ID
+File
+Severity
+Status
+Description
+T-01
+signal_config.py
+HIGH
+OPEN
+TREND time_exit_sec=1800 caps trending trades at 2 candles. Systematicallytruncates winners.
+T-02
+main.py
+HIGH
+OPEN
+RSI extreme fully suppressed in TREND  no terminal momentum/exhaustionprotection.
+V-01
+signal_config.py / main.py
+HIGH
+OPEN
+SQUEEZE regime params unreachable. REGIME_ALIAS + _LABELS mismatchmeans 4th strategy branch is dead code.
+V-02
+quant_engine.py
+MEDIUM
+OPEN
+RV/IV discriminant uses 30s tick window. Too short for genuine high-vol events degrades to candle fallback exactly when tick-level RV is most needed.
+S-01
+data_feed.py
+CRITICAL
+OPEN
+No cancel-velocity tracker. Spoofed walls at <100ms lifetime pass as legitimatesupply/demand to OFI pipeline.
+S-02
+quant_engine.py / main.py
+CRITICAL
+OPEN
+No Hawkes self-excitation monitor. Momentum ignition events trigger trend entries maximum adverse-selection scenario.
+S-03
+ulis_engine.py
+MEDIUM
+OPEN
+Iceberg order detection absent. KE variant partially captures absorption but notwired to a decision gate.
+J-01
+main.py
+HIGH
+OPEN
+15s flat polling loop. Mid-candle liquidity sweeps have up to 14.9s signal lag in allregimes.
+J-02
+executor.py
+HIGH
+OPEN
+Sequential SL + TP placement post-fill. Creates 200ms10s unprotected positionwindow. OCO not implemented.
+J-03
+executor.py / heartbeat.py
+MEDIUM
+OPEN
+TP requeue polled at 60s heartbeat interval. Up to 60s without profit-lock on failedTP placement.
+C-01
+signal_config.py
+LOW
+OPEN
+MIN_CONFIDENCE_GLOBAL=0.62 same for RANGE and NEUTRAL. NEUTRALshould be higher (0.65) given signal noise in consolidation.
+C-02
+main.py
+LOW
+OPEN
+BAYES_OVERRIDE_THRESHOLD=0.78 can bypass gates in NEUTRAL regimewithout ULIS strong alignment requirement.
+L-01
+ulis_engine.py
+MEDIUM
+OPEN
+ILIH score normalization [1000, 80000] USDT depth is static. Should adapt tosession-average depth for stable percentile behavior.
+L-02
+derivatives_context.py
+LOW
+OPEN
+Coinglass whale_ratio has 515min latency. Used for macro bias only acceptable, but should be documented as lagged signal.
+H-01
+quant_engine.py
+LOW
+OPEN
+No Bollinger Band Width percentile as HMM feature. Cannot distinguish deadconsolidation from pre-breakout compression.
+H-02
+quant_engine.py
+LOW
+OPEN
+No Platt scaling on Bayesian posterior. Kelly Criterion position sizing depends oncalibrated probability  current posterior is uncalibrated.
+Severity
+Count
+% of Total
+CRITICAL
+2
+12.5%
+HIGH
+5
+31.2%
+MEDIUM
+5
+31.2%
+LOW
+4
+25.0%
+TOTAL
+16
+100%
+10. FINAL AUDIT VERDICT
+CONFIDENTIAL  INSTITUTIONAL INTERNAL USE ONLY
+Engineering_Vol_fix | Full Diagnostic Audit | Page 13
+Engineering_Vol_fix represents a materially advanced iteration over its predecessor systems. The three-stage OFI pipeline,per-regime Beta conjugate priors, CVD divergence gate with age-capping and EMA-Z normalization, signed GEX from Deribit, andAmihud KE variant together constitute a genuinely institutional-grade signal architecture for a retail-scale system. The MacroShieldcalendar blackout and panic mode are correctly implemented with appropriate thermodynamic analogues to phase transitions innon-equilibrium systems.
+However, the system is NOT CERTIFIED for live capital deployment at institutional sizing due to two CRITICAL adversarial defects(S-01, S-02) and two HIGH execution defects (J-01, J-02). These are not calibration issues  they are structural architectural gapsthat create systematic adverse selection exposure in exactly the market conditions (high volume, rapid price movement) where thesystem is most likely to be actively trading.
+Domain
+Verdict
+Blocking for LiveDeploy?
+RANGE (Low Vol)
+PASS
+No
+TREND (Trending)
+CONDITIONAL PASS  fix T-01, T-02 first
+Recommended
+HIGH VOLATILITY
+CONDITIONAL PASS  fix V-01 first
+Recommended
+CONSOLIDATION
+CONDITIONAL PASS  minor tuning
+No
+HIGH LIQUIDITY
+PASS
+No
+SPOOFING DEFENSE
+FAIL  S-01, S-02 are CRITICAL gaps
+YES  BLOCKING
+INSTITUTIONAL READS
+PASS WITH CAVEATS (latency on Coinglass)
+No
+EXECUTION JITTER
+FAIL  J-01, J-02 are HIGH gaps
+YES  BLOCKING
+OVERALL SYSTEM
+NOT CERTIFIED FOR LIVE CAPITAL
+YES
+Minimum Remediation Before Mainnet Sizing: Implement S-01 (cancel-velocity tracker), S-02 (Hawkes ignition monitor), J-02(OCO orders). Address J-01 (adaptive polling) within 30 days. These four items represent approximately 34 weeks offocused engineering effort. All other defects are performance optimizations, not safety-critical gates.
+Chief Scientific Co-Pilot · Quantitative Quantum & Thermodynamic Architecture · June 15, 2026

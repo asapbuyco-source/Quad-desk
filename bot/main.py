@@ -102,11 +102,16 @@ TESTNET             = os.environ.get("BOT_TESTNET",             "true").lower() 
 MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        str(CFG_MAX_RISK_PCT)))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  str(CFG_MAX_DAILY_LOSS_PCT)))
 ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
+# D1 FIX: Adaptive polling intervals
+FAST_ANALYSIS_INTERVAL = int(os.environ.get("BOT_FAST_ANALYSIS_INTERVAL", "3"))   # TREND/VOLATILE/LIQUIDITY/SQUEEZE or active position
+SLOW_ANALYSIS_INTERVAL = int(os.environ.get("BOT_SLOW_ANALYSIS_INTERVAL", "30"))  # Stable RANGE without position
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
 MIN_CONFIDENCE = float(os.environ.get("BOT_MIN_CONFIDENCE", str(CFG_MIN_BAYESIAN)))  # P12 FIX: wire env var, fallback to signal_config
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
 LEVERAGE            = int(os.environ.get("BOT_LEVERAGE",              "3"))    # futures leverage (3× = efficient margin on Binance USDM)
 ULIS_GATE_ENABLED   = os.environ.get("BOT_ULIS_GATE",           "true").lower() != "false"
+# DIM 1 FIX: Kyle adverse-selection gate — block entry when |OFI| exceeds threshold (toxic flow)
+KYLE_OFI_THRESHOLD = float(os.environ.get("BOT_KYLE_OFI_THRESHOLD", "0.75"))  # tanh-normalized OFI gate
 
 # Fee rates: Coinbase Spot 1.2% | Binance Spot 0.1% | Binance USDM Futures 0.04%
 _EXCHANGE_FEE_RATE  = 0.012 if EXCHANGE == "coinbase" else (0.0004 if EXCHANGE == "binanceusdm" else 0.001)
@@ -724,6 +729,12 @@ class _HMMRegimeClassifier:
         self._candidate_regime = "RANGE"   # regime the HMM is suggesting
         self._candidate_streak = 0         # consecutive candles suggesting candidate
 
+        # DIM 5 FIX: CVD memory kernel buffer for non-Markovian regime detection
+        # Klint audit: CVD lag-2=0.223 → statistically significant persistence.
+        # This buffer stores recent CVD deltas so the classifier can bias TREND
+        # probability when CVD exhibits directional persistence.
+        self._cvd_momentum_buf: deque = deque(maxlen=8)  # ~2 hours at 15m candles
+
         # Symbol-isolated persistence path so each coin's HMM state is independent
         _raw_sym = os.environ.get("BOT_SYMBOL", "BTC/USDT")
         _safe_sym = _raw_sym.replace("/", "").replace(":", "").replace("-", "").upper()
@@ -1021,7 +1032,8 @@ class _HMMRegimeClassifier:
     def classify(self, atr_pct: float, z_score: float, tape: str,
                  atr_pct_rank: float = 0.5,
                  amihud_rank: float = 0.5,
-                 t_kinetic: float = 0.5) -> dict:
+                 t_kinetic: float = 0.5,
+                 cvd_momentum: float = 0.0) -> dict:
         """
         Main entry: add one observation and return regime probability vector.
 
@@ -1087,6 +1099,28 @@ class _HMMRegimeClassifier:
         raw_label  = self._LABELS[best_state]
         raw_conf   = float(posterior[best_state])
 
+        # ── DIM 5 FIX: CVD Memory Kernel (NHHMM feed-forward) ────────────
+        # Non-Markovian memory: CVD exhibits statistically significant lag-2
+        # persistence (r=0.223, Klint audit). When CVD maintains directional
+        # pressure for 2+ consecutive observations, TREND regime probability
+        # is boosted — this is the "memory kernel" that a standard HMM misses.
+        self._cvd_momentum_buf.append(cvd_momentum)
+        if len(self._cvd_momentum_buf) >= 2:
+            recent = list(self._cvd_momentum_buf)[-3:]
+            n_same_sign = sum(1 for v in recent if v * cvd_momentum > 0)
+            if n_same_sign >= 2 and abs(cvd_momentum) > 0.01:
+                # Persistent CVD direction → boost TREND, dampen RANGE
+                persistence_strength = min(abs(cvd_momentum) * 0.15, 0.12)
+                trend_idx = self._LABELS.index("TREND")
+                range_idx = self._LABELS.index("RANGE")
+                posterior[trend_idx] += persistence_strength
+                posterior[range_idx] = max(0.0, posterior[range_idx] - persistence_strength * 0.5)
+                posterior = posterior / np.maximum(posterior.sum(), 1e-12)
+                logger.debug(
+                    f"[MemoryKernel] CVD persistent (n={n_same_sign}/3, "
+                    f"strength={persistence_strength:.3f}) — boosting TREND"
+                )
+
         # ── Hysteresis: 3-candle debounce on regime transitions ──────
         # Prevents flickering at regime boundaries (e.g. TREND→RANGE→TREND
         # on consecutive cycles when the posterior is near 50/50).
@@ -1147,8 +1181,47 @@ class _HMMRegimeClassifier:
 _hmm_classifier = _HMMRegimeClassifier(window=60, update_every=500)   # FIX 4: was 200, 500 = ~12.5h at 15s cycles
 _amihud_engine = AmihudEngine(window=500, min_buffer=100, hysteresis_n=3)
 
+# B1 FIX: SQUEEZE router state — tracks consecutive SQUEEZE confirmations
+_squeeze_confirmations = 0
+_squeeze_candidate_reason = ""
+
+# D1 FIX: Adaptive polling state — tracks previous regime for interval selection
+_prev_regime = "NEUTRAL"  # Initialize to NEUTRAL so first cycle uses fast interval
+_last_interval_logged = 0  # Track last logged interval to avoid redundant logs
+
 # Derivatives context for institutional signals
 _derivatives_ctx = DerivativesContext(symbol=FEED_SYMBOL)
+
+
+def _get_adaptive_interval(has_active_position: bool, executor) -> int:
+    """
+    D1 FIX: Select adaptive polling interval based on market conditions.
+
+    Returns:
+        - FAST_ANALYSIS_INTERVAL (2-5s) if:
+          * Active position exists, OR
+          * Previous regime was TREND/VOLATILE/LIQUIDITY/SQUEEZE
+        - SLOW_ANALYSIS_INTERVAL (15-30s) if:
+          * No active position AND previous regime was RANGE/NEUTRAL
+    """
+    global _prev_regime, _last_interval_logged
+
+    if has_active_position:
+        interval = FAST_ANALYSIS_INTERVAL
+        reason = "active_position"
+    elif _prev_regime in ("TREND", "VOLATILE", "LIQUIDITY", "SQUEEZE"):
+        interval = FAST_ANALYSIS_INTERVAL
+        reason = f"regime={_prev_regime}"
+    else:
+        interval = SLOW_ANALYSIS_INTERVAL
+        reason = f"stable_{_prev_regime}"
+
+    # Log interval changes only when value changes
+    if interval != _last_interval_logged:
+        logger.info(f"[AdaptivePoll] Switching to {interval}s interval (reason={reason})")
+        _last_interval_logged = interval
+
+    return interval
 
 
 
@@ -1194,7 +1267,19 @@ def _detect_regime(
         for w in (buy_walls[:1] + sell_walls[:1])
     )
 
-    if near_wall:
+    # C1 FIX: Prevent LIQUIDITY override when nearest wall is flagged as ghost
+    ghost_wall_near = False
+    if feed_state is not None and getattr(feed_state, "ghost_wall_active", False):
+        ghost_price = getattr(feed_state, "ghost_wall_price", 0.0)
+        ghost_side = getattr(feed_state, "ghost_wall_side", "")
+        if ghost_price > 0 and abs(price - ghost_price) / price <= WALL_PROXIMITY:
+            ghost_wall_near = True
+            logger.info(
+                f"[Regime] Ghost wall near price={ghost_price} side={ghost_side} — "
+                f"suppressing LIQUIDITY override"
+            )
+
+    if near_wall and not ghost_wall_near:
         metrics["regime_confidence"] = 1.0
         metrics["regime_probs"] = {"RANGE": 0.0, "TREND": 0.0, "NEUTRAL": 0.0, "LIQUIDITY": 1.0}
         quant._liquidity_consecutive += 1
@@ -1233,7 +1318,9 @@ def _detect_regime(
             f"raw_atr_pct={atr_pct:.4%} → norm={_atr_pct_normalised:.4%}"
         )
 
-    hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic)
+    # DIM 5 FIX: Pass CVD momentum as non-Markovian memory kernel feed-forward
+    cvd_momentum = float(metrics.get("cvd_delta", 0.0) or 0.0)
+    hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic, cvd_momentum=cvd_momentum)
 
     # HIGH-2 FIX: REGIME_REMAP removed — it was dead code (HMM state 2 is "NEUTRAL"
     # in _LABELS, never "VOLATILE"). Keeping it was a hazard: renaming the label
@@ -1249,11 +1336,59 @@ def _detect_regime(
         "VOLATILE": hmm_result["p_volatile"],
     }
 
+    # ── B1 FIX: Deterministic SQUEEZE Router ─────────────────────────────
+    # Runs after HMM classification but before returning regime.
+    # Candidate conditions (all must be met):
+    #   - atr_pct_rank >= 0.80 (high volatility)
+    #   - amihud_rank >= 0.80 (illiquidity vacuum)
+    #   - abs(zScore) < 1.00 (price near VWAP — squeeze not trend)
+    #   - tapeSpeed == "SCREAMING" (aggressive tape)
+    #   - no active ghost-wall flag (C1: will be checked when ghost-wall tracking is added)
+    # Requires 2 consecutive confirmations before routing to SQUEEZE params.
+    global _squeeze_confirmations, _squeeze_candidate_reason
+    squeeze_conditions_met = (
+        atr_pct_rank >= 0.80
+        and amihud_rank >= 0.80
+        and abs(z) < 1.00
+        and tape == "SCREAMING"
+    )
+    ghost_wall_active = getattr(feed_state, "ghost_wall_active", False) if feed_state else False
+
+    if squeeze_conditions_met and not ghost_wall_active:
+        _squeeze_confirmations += 1
+        reasons = []
+        if atr_pct_rank >= 0.80:
+            reasons.append(f"atr_rank={atr_pct_rank:.2f}")
+        if amihud_rank >= 0.80:
+            reasons.append(f"amihud={amihud_rank:.2f}")
+        if abs(z) < 1.00:
+            reasons.append(f"|z|={abs(z):.2f}<1.0")
+        if tape == "SCREAMING":
+            reasons.append("tape=SCREAMING")
+        _squeeze_candidate_reason = ",".join(reasons)
+        metrics["squeeze_candidate"] = True
+        metrics["squeeze_confirms"] = _squeeze_confirmations
+        metrics["squeeze_reason"] = _squeeze_candidate_reason
+    else:
+        _squeeze_confirmations = 0
+        _squeeze_candidate_reason = ""
+        metrics["squeeze_candidate"] = False
+        metrics["squeeze_confirms"] = 0
+        metrics["squeeze_reason"] = ""
+
+    # Route to SQUEEZE only after 2 consecutive confirmations
+    if _squeeze_confirmations >= 2:
+        logger.info(
+            f"[SQUEEZE Router] Routing to SQUEEZE (confirms={_squeeze_confirmations}) "
+            f"reason={_squeeze_candidate_reason}"
+        )
+        regime = "SQUEEZE"
+
     # ── 70% Confidence Gate ──────────────────────────────────────────
     # If the HMM isn't confident enough, fall back to NEUTRAL.
     # This prevents the bot from committing to TREND or MEAN_REVERSION
     # when the regime is genuinely ambiguous (e.g. P(TREND)=0.52).
-    if confidence < _HMMRegimeClassifier.MIN_CONFIDENCE:
+    if confidence < _HMMRegimeClassifier.MIN_CONFIDENCE and regime != "SQUEEZE":
         logger.info(
             f"[HMM] Regime={hmm_result['raw_regime']}→NEUTRAL (conf={confidence:.0%} "
             f"< {_HMMRegimeClassifier.MIN_CONFIDENCE:.0%} gate) | "
@@ -2415,7 +2550,7 @@ async def _compute_signal(
 
     # Stage 2: Regime
     regime = _detect_regime(metrics, buy_walls, sell_walls, quant=quant, sweep=sweep, feed_state=feed_state)
-    
+
     # PHASE 3: RV/IV Real-Time Discriminant Override
     # Cross-check to prevent HMM from hallucinating VOLATILE in low-RV environments.
     rv_iv_ratio = metrics.get("rv_iv_ratio", 1.0)
@@ -2434,6 +2569,11 @@ async def _compute_signal(
                 f"({vol_state}). Elevating RANGE to VOLATILE."
             )
             regime = "VOLATILE"
+
+    # D1 FIX: Update global regime tracker for adaptive polling interval
+    # selection after all regime overrides have been applied.
+    global _prev_regime
+    _prev_regime = regime
 
     logger.info(f"[Regime] {regime} | Z={metrics['zScore']:.2f} | "
                 f"ATR%={metrics.get('atr_pct', 0):.3%} | Tape={metrics['tapeSpeed']}")
@@ -2662,6 +2802,20 @@ async def _compute_signal(
                 )
                 return {**WAIT, "analysis": "Late-long exhaustion risk: continuation evidence not strong enough."}
 
+    # DIM 1 FIX: Kyle Adverse-Selection Gate
+    # When |OFI| exceeds the threshold, order flow has extreme imbalance suggesting
+    # someone with information advantage is aggressively moving the book (toxic flow).
+    # Blocking entry during these spikes protects against adverse selection.
+    # Based on Klint P95 live-log calibration: |OFI| peaks indicate institutional flow.
+    ofi_abs = abs(float(metrics.get("ofi", 0.0)) if metrics else 0.0)
+    if ofi_abs > KYLE_OFI_THRESHOLD:
+        _gate_stats_summary("kyle_adverse_selection")
+        logger.warning(
+            f"[KyleGate] Blocking {raw_direction}: |OFI|={ofi_abs:.3f} > "
+            f"KYLE_OFI_THRESHOLD={KYLE_OFI_THRESHOLD:.2f} — adverse selection risk"
+        )
+        return {**WAIT, "analysis": f"Kyle gate: |OFI|={ofi_abs:.3f} > {KYLE_OFI_THRESHOLD}. Toxic flow blocked."}
+
     # Stage 4b: HTF Counter-Trend Block
     # P0: htf_block is regime-conditional. In RANGE, mean-reversion against HTF is the strategy.
     is_long_dir = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
@@ -2694,6 +2848,37 @@ async def _compute_signal(
                     return {**WAIT, "analysis": f"Funding Rate {fr:.4%} < {FUNDING_SHORT_BLOCK:.4%}. Blocked short."}
             except (ValueError, TypeError):
                 pass
+
+    # C2 FIX: Momentum-Ignition Veto — block TREND entries in ignition direction
+    # unless independent OFI/CVD/tape continuation evidence persists.
+    # Ignition represents a burst-and-decay manipulation pattern, not sustained trend.
+    if is_trend_strat and feed_state is not None:
+        ignition_active = getattr(feed_state, "ignition_detected", False)
+        if ignition_active:
+            ignition_side = getattr(feed_state, "ignition_side", "")
+            # Check if entry direction matches ignition direction
+            entry_matches_ignition = (
+                (is_long_dir and ignition_side == "BUY") or
+                (not is_long_dir and ignition_side == "SELL")
+            )
+            if entry_matches_ignition:
+                # Check for independent continuation evidence
+                ofi = float(metrics.get("ofi", 0.0)) if metrics else 0.0
+                cvd_delta = float(metrics.get("cvd_delta", 0.0)) if metrics else 0.0
+                tape = str(metrics.get("tapeSpeed", "NORMAL")) if metrics else "NORMAL"
+                continuation_strong = (
+                    (ignition_side == "BUY" and ofi > 0.15 and cvd_delta > 0 and tape == "SCREAMING") or
+                    (ignition_side == "SELL" and ofi < -0.15 and cvd_delta < 0 and tape == "SCREAMING")
+                )
+                if not continuation_strong:
+                    ttl_remaining = max(0.0, getattr(feed_state, "ignition_active_until", 0.0) - time.time())
+                    logger.warning(
+                        f"[IgnitionVeto] Blocking TREND {raw_direction}: "
+                        f"ignition active on {ignition_side} (TTL={ttl_remaining:.0f}s), "
+                        f"no strong continuation evidence (OFI={ofi:.2f} CVDd={cvd_delta:.0f} tape={tape})"
+                    )
+                    _gate_stats_summary("ignition_veto")
+                    return {**WAIT, "analysis": f"Ignition veto: {ignition_side} burst, no continuation."}
 
     # FIX-P4: HTF Directional Filter for LIQUIDITY Sweep entries.
     # htf_block=False in LIQUIDITY correctly allows the regime — sweeps ARE reversal setups.
@@ -3248,11 +3433,16 @@ async def execution_loop(
     while True:
         try:
             # ── Event-driven execution (Phase 6) ───────────────────────────
+            # D1 FIX: Use adaptive polling interval
+            # Fast (2-5s) for active positions or TREND/VOLATILE/LIQUIDITY/SQUEEZE regimes
+            # Slow (15-30s) for stable RANGE without position
+            has_active_pos = executor.active_position is not None
+            adaptive_interval = _get_adaptive_interval(has_active_pos, executor)
             try:
                 # Wait for candle close OR timeout (whichever comes first)
                 await asyncio.wait_for(
                     asyncio.shield(feed.state.candle_close_event.wait()),
-                    timeout=float(ANALYSIS_INTERVAL)
+                    timeout=float(adaptive_interval)
                 )
                 feed.state.candle_close_event.clear()
             except (asyncio.TimeoutError, TimeoutError):
@@ -3476,10 +3666,6 @@ async def execution_loop(
                     if pnl < 0:
                         logger.warning("[Main] Stop Loss exited. Activating 5-minute Cascade Cooldown to prevent revenge trading.")
 
-                    # H4 FIX: Retry TP placement on every cycle for positions missing TP
-                    if executor.active_position is not None and not executor.dry_run:
-                        await executor.attempt_tp_requeue()
-
                     # In live mode, simulate the exchange fill through crossover and clean up
                     if not executor.dry_run:
                         # Cancel orphaned opposing order (SL or TP)
@@ -3498,6 +3684,10 @@ async def execution_loop(
                                 else:
                                     logger.warning(f"[Executor] Failed to cancel opposing order {cancel_id}: {e}")
 
+            # H4 FIX: Retry TP placement on every cycle for positions missing TP (moved outside exited block)
+            if executor.active_position is not None and not executor.dry_run:
+                if executor.active_position.get("requeue_tp_attempts", 0) > 0:
+                    await executor.attempt_tp_requeue()
 
             stats["active_position"] = executor.active_position
 
@@ -4165,6 +4355,7 @@ async def main():
         asyncio.create_task(_derivatives_refresh_loop(),  name="deriv_refresh"),  # FIX-7.1: background derivatives
         asyncio.create_task(macro_shield.run_calendar_loop(), name="macro_calendar"),
         asyncio.create_task(macro_shield.run_dxy_loop(),      name="macro_dxy"),
+        asyncio.create_task(macro_shield.run_us10y_loop(),    name="macro_us10y"),  # DIM 5 FIX
         asyncio.create_task(_operator_command_loop(executor, BOT_STATS), name="operator_commands"),
         _exec_task,
         asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS), name="heartbeat"),

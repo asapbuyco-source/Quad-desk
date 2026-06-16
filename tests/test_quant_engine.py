@@ -107,3 +107,87 @@ def test_rv_iv_discriminant_marks_sparse_ticks_stale_and_falls_back():
     assert result["rv_data_stale"] is True
     assert math.isfinite(result["rv_iv_ratio"])
     assert result["vol_state"] in {"COMPRESSION", "EXPANSION", "NORMAL"}
+
+
+# ── Phase 0 / B2: Regression tests for configurable RV/IV windows ────────────
+
+def test_rv_iv_discriminant_configurable_window_normal():
+    """B2 FIX: RV/IV should accept configurable window_ms and return rv_window_ms."""
+    now_ms = 1_700_000_000_000.0
+    prices = [100.0, 101.0, 102.0, 101.0, 103.0, 104.0]
+    trades = [
+        {"price": price, "time": now_ms - idx * 1_000}
+        for idx, price in enumerate(prices)
+    ]
+
+    result = QuantEngine._rv_iv_discriminant(
+        trades=trades,
+        closes=np.array([100.0, 100.1, 100.2]),
+        atr=0.5,
+        current_price=104.0,
+        now_ms=now_ms,
+        window_ms=30_000,
+        min_ticks=5,
+    )
+
+    assert result["rv_data_stale"] is False
+    assert result["rv_window_ms"] == 30_000
+    assert result["rv_tick_count"] == 6
+    assert result["vol_state"] in {"COMPRESSION", "EXPANSION", "NORMAL"}
+
+
+def test_rv_iv_discriminant_configurable_window_vol():
+    """B2 FIX: RV/IV should use 120s window when high-vol conditions are signaled."""
+    now_ms = 1_700_000_000_000.0
+    prices = [100.0, 101.0, 102.0, 101.0, 103.0, 104.0, 105.0, 106.0]
+    trades = [
+        {"price": price, "time": now_ms - idx * 500}  # 8 trades in ~4s
+        for idx, price in enumerate(prices)
+    ]
+
+    result = QuantEngine._rv_iv_discriminant(
+        trades=trades,
+        closes=np.array([100.0, 100.1, 100.2]),
+        atr=0.5,
+        current_price=106.0,
+        now_ms=now_ms,
+        window_ms=120_000,
+        min_ticks=5,
+    )
+
+    assert result["rv_data_stale"] is False
+    assert result["rv_window_ms"] == 120_000
+    assert result["rv_tick_count"] == 8
+
+
+# ── Phase 0 / A2: Regression test for extended TREND time exit ────────────────
+
+def test_trend_time_exit_extended():
+    """A2 FIX: TREND time_exit_sec must be 5400s (90min), not 1800s (30min)."""
+    from bot.signal_config import REGIME_PARAMS
+    trend = REGIME_PARAMS["TREND"]
+    assert trend["time_exit_sec"] == 5400, (
+        f"Expected 5400, got {trend.get('time_exit_sec')}"
+    )
+    assert trend["time_exit_hard_cap_s"] == 10800, (
+        f"Expected 10800, got {trend.get('time_exit_hard_cap_s')}"
+    )
+    assert trend["time_exit_hard_cap_s"] > trend["time_exit_sec"], (
+        "Hard cap must be strictly greater than base time_exit_sec"
+    )
+
+
+def test_trend_time_exit_longer_than_other_regimes():
+    """A2 FIX: TREND must have longer time exits than RANGE, LIQUIDITY, VOLATILE."""
+    from bot.signal_config import REGIME_PARAMS
+    trend = REGIME_PARAMS["TREND"]
+    for regime in ("RANGE", "LIQUIDITY", "VOLATILE", "NEUTRAL"):
+        params = REGIME_PARAMS[regime]
+        assert trend["time_exit_sec"] > params["time_exit_sec"], (
+            f"TREND time_exit_sec ({trend['time_exit_sec']}) should exceed "
+            f"{regime} ({params['time_exit_sec']})"
+        )
+        assert trend["time_exit_hard_cap_s"] > params["time_exit_hard_cap_s"], (
+            f"TREND hard_cap ({trend['time_exit_hard_cap_s']}) should exceed "
+            f"{regime} ({params['time_exit_hard_cap_s']})"
+        )

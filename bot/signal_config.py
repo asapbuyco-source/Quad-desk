@@ -137,7 +137,7 @@ REGIME_PARAMS = {
         "htf_block":          True,
         "cascade_cooldown_s": 300,
     },
-    "TREND": {
+"TREND": {
         # High-volatility: trend-following
         "z_threshold":        2.0,
         "atr_multiplier_sl":  2.09,
@@ -147,8 +147,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    2.0,
         "partial_take_r":     0.75,
         "partial_take_pct":   0.40,
-        "time_exit_sec":      1800,
-        "time_exit_hard_cap_s": 3600,  # FIX-3: explicit 2× hard cap
+        "time_exit_sec":      5400,  # A2 FIX: was 1800 (30min) — extended to 90min for trend holds
+        "time_exit_hard_cap_s": 10800,  # A2 FIX: was 3600 — extended to 3hr hard cap
         "panic_threshold":    10.0,
         "candle_gate_sec":    60,
         "htf_block":          True,
@@ -210,9 +210,8 @@ REGIME_PARAMS = {
 }
 
 # REGIME_ALIAS: maps HMM state names that don't have their own REGIME_PARAMS entry
-# to an existing entry. SQUEEZE (HMM state 2) is named LIQUIDITY in _LABELS, so
-# this alias is for the case where the HMM regime label is literally "SQUEEZE".
-# The bot currently uses LIQUIDITY params for SQUEEZE state (backwards compat).
+# to an existing entry.
+# B1 FIX: SQUEEZE no longer aliased to LIQUIDITY — deterministic router in main.py
+# now routes to SQUEEZE after 2 consecutive confirmations, so SQUEEZE params are used.
 REGIME_ALIAS = {
-    "SQUEEZE": "LIQUIDITY",
 }

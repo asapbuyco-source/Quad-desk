@@ -2,11 +2,22 @@ import asyncio
 import json
 import logging
 import time
+import os
 import websockets
 import httpx
 from collections import deque
 
 logger = logging.getLogger(__name__)
+
+# C1 FIX: Ghost-wall tracking configuration
+GHOST_CANCEL_QTY = float(os.environ.get("BOT_GHOST_CANCEL_QTY", "10.0"))
+GHOST_CANCEL_WINDOW_MS = int(os.environ.get("BOT_GHOST_CANCEL_WINDOW_MS", "100"))
+GHOST_WALL_TTL_S = int(os.environ.get("BOT_GHOST_WALL_TTL_S", "10"))
+
+# C2 FIX: Ignition / momentum burst detector configuration
+IGNITION_TTL_S = int(os.environ.get("BOT_IGNITION_TTL_S", "60"))
+IGNITION_Z_THRESHOLD = 3.0  # z-score of arrival rate to trigger ignition
+IGNITION_SIDE_DOMINANCE = 0.70  # side must be >70% one direction
 
 
 class MarketState:
@@ -37,6 +48,23 @@ class MarketState:
         self.msgs_per_min: int = 0           # FIX-M10: current throughput for signal gate
         self.last_fired_sweep_candle_ts: float = 0.0  # FIX-C3: dedup guard for sweep detection
         self._trade_callback = None  # Optional[Callable[[float, float, bool], None]] for AmihudEngine
+
+        # C1 FIX: Ghost-wall / cancel-velocity tracking fields
+        self._prev_bids: dict = {}   # previous bid depth map
+        self._prev_asks: dict = {}   # previous ask depth map
+        self._prev_depth_ts: float = 0.0  # timestamp of previous depth update
+        self.ghost_wall_active: bool = False  # whether a ghost wall is currently flagged
+        self.ghost_wall_side: str = ""  # "BUY" or "SELL"
+        self.ghost_wall_price: float = 0.0  # price level of ghost wall
+        self.ghost_cancel_rate: float = 0.0  # ratio of cancelled size to total size at wall
+        self.ghost_wall_expire_ts: float = 0.0  # TTL expiry timestamp
+        self._cancel_events: deque = deque(maxlen=100)  # recent cancel velocity events
+
+        # C2 FIX: Ignition / momentum burst detector fields
+        self.ignition_detected: bool = False  # whether ignition burst is active
+        self.ignition_side: str = ""  # "BUY" or "SELL" — direction of burst
+        self.ignition_active_until: float = 0.0  # TTL expiry timestamp
+        self._burst_history: deque = deque(maxlen=50)  # rolling burst events for z-score calc
 
     # ------------------------------------------------------------------
     # Candle management
@@ -106,14 +134,241 @@ class MarketState:
     # Order book
     # ------------------------------------------------------------------
     def update_depth(self, depth_data: dict):
-        """Full snapshot of the top-20 levels."""
+        """Full snapshot of the top-20 levels.
+
+        C1 FIX: Computes cancel velocity and ghost-wall detection by comparing
+        previous depth snapshot to current. Size decreases not matched by
+        aggTrade fills are classified as cancellations.
+        """
         raw_b = depth_data.get('b', depth_data.get('bids', []))
         raw_a = depth_data.get('a', depth_data.get('asks', []))
-        self.bids = {float(p): float(q) for p, q in raw_b}
-        self.asks = {float(p): float(q) for p, q in raw_a}
+        new_bids = {float(p): float(q) for p, q in raw_b}
+        new_asks = {float(p): float(q) for p, q in raw_a}
         # Remove levels with zero quantity (Binance sends these as deletes)
-        self.bids = {p: q for p, q in self.bids.items() if q > 0}
-        self.asks = {p: q for p, q in self.asks.items() if q > 0}
+        new_bids = {p: q for p, q in new_bids.items() if q > 0}
+        new_asks = {p: q for p, q in new_asks.items() if q > 0}
+
+        now_ms = time.time() * 1000
+        now_ts = time.time()
+
+        # C1 FIX: Cancel velocity detection — compare with previous depth snapshot
+        if self._prev_bids or self._prev_asks:
+            window_start = now_ms - GHOST_CANCEL_WINDOW_MS
+            recent_trades_in_window = [
+                t for t in self.recent_trades
+                if t['time'] >= window_start
+            ]
+
+            def _matched_trade_qty(price: float, expected_side: str) -> float:
+                matched_qty = 0.0
+                for t in recent_trades_in_window:
+                    try:
+                        trade_price = float(t.get("price", 0.0))
+                        trade_side = str(t.get("side", ""))
+                        trade_size = float(t.get("size", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        continue
+                    if trade_side == expected_side and abs(trade_price - price) < price * 0.0001:
+                        matched_qty += trade_size
+                return matched_qty
+
+            def _flag_ghost(side: str, price: float, size_decrease: float, prev_size: float):
+                cancel_rate = size_decrease / max(prev_size, 1e-9)
+                self.ghost_wall_active = True
+                self.ghost_wall_side = side
+                self.ghost_wall_price = price
+                self.ghost_cancel_rate = cancel_rate
+                self.ghost_wall_expire_ts = now_ts + GHOST_WALL_TTL_S
+                logger.info(
+                    f"[GhostWall] {side} ghost wall flagged: price={price} "
+                    f"cancelled={size_decrease:.4f}/{prev_size:.4f} "
+                    f"cancel_rate={cancel_rate:.1%} TTL={GHOST_WALL_TTL_S}s"
+                )
+
+            # Check bid side for cancellations. Bid depth is consumed by SELL
+            # aggressors; same-price BUY trades do not explain bid disappearance.
+            for price, prev_size in self._prev_bids.items():
+                if price in new_bids:
+                    curr_size = new_bids[price]
+                else:
+                    curr_size = 0.0
+
+                if curr_size < prev_size:
+                    size_decrease = prev_size - curr_size
+                    matched_qty = _matched_trade_qty(price, "SELL")
+
+                    if matched_qty < size_decrease * 0.80 and size_decrease >= GHOST_CANCEL_QTY:
+                        # Unmatched fast disappearance = cancellation (ghost wall)
+                        cancel_event = {
+                            'side': 'SELL',  # bid wall cancellation = sell pressure
+                            'price': price,
+                            'size': size_decrease,
+                            'ts': now_ts,
+                        }
+                        self._cancel_events.append(cancel_event)
+                        logger.debug(
+                            f"[GhostWall] Bid cancel detected: price={price} size={size_decrease} "
+                            f"(no matching trade in {GHOST_CANCEL_WINDOW_MS}ms window)"
+                        )
+                        _flag_ghost("SELL", price, size_decrease, prev_size)
+
+            # Check ask side for cancellations. Ask depth is consumed by BUY
+            # aggressors; same-price SELL trades do not explain ask disappearance.
+            for price, prev_size in self._prev_asks.items():
+                if price in new_asks:
+                    curr_size = new_asks[price]
+                else:
+                    curr_size = 0.0
+
+                if curr_size < prev_size:
+                    size_decrease = prev_size - curr_size
+                    matched_qty = _matched_trade_qty(price, "BUY")
+
+                    if matched_qty < size_decrease * 0.80 and size_decrease >= GHOST_CANCEL_QTY:
+                        # Unmatched fast disappearance = cancellation (ghost wall)
+                        cancel_event = {
+                            'side': 'BUY',  # ask wall cancellation = buy pressure
+                            'price': price,
+                            'size': size_decrease,
+                            'ts': now_ts,
+                        }
+                        self._cancel_events.append(cancel_event)
+                        logger.debug(
+                            f"[GhostWall] Ask cancel detected: price={price} size={size_decrease} "
+                            f"(no matching trade in {GHOST_CANCEL_WINDOW_MS}ms window)"
+                        )
+                        _flag_ghost("BUY", price, size_decrease, prev_size)
+
+        # Check TTL expiry
+        if self.ghost_wall_active and now_ts >= self.ghost_wall_expire_ts:
+            logger.info(f"[GhostWall] TTL expired — deactivating ghost wall")
+            self.ghost_wall_active = False
+            self.ghost_wall_side = ""
+            self.ghost_wall_price = 0.0
+            self.ghost_cancel_rate = 0.0
+
+        # Store current snapshot as previous for next cycle
+        self._prev_bids = new_bids
+        self._prev_asks = new_asks
+        self._prev_depth_ts = now_ms
+
+        self.bids = new_bids
+        self.asks = new_asks
+
+    # ------------------------------------------------------------------
+    # C2 FIX: Momentum-Ignition Burst Detector
+    # ------------------------------------------------------------------
+    def check_ignition(self) -> None:
+        """
+        Detect momentum ignition bursts using a rolling z-score approach.
+
+        Ignition is marked when:
+        - 500ms arrival-rate z-score exceeds IGNITION_Z_THRESHOLD (3.0)
+        - Side dominance exceeds IGNITION_SIDE_DOMINANCE (70%)
+
+        Sets ignition_detected, ignition_side, and ignition_active_until.
+        """
+        now_ts = time.time()
+        now_ms = now_ts * 1000
+
+        # Check TTL expiry
+        if self.ignition_detected and now_ts >= self.ignition_active_until:
+            logger.info(
+                f"[Ignition] TTL expired — deactivating ignition "
+                f"(was {self.ignition_side}, rate={getattr(self, '_ignition_burst_rate', 0):.2f})"
+            )
+            self.ignition_detected = False
+            self.ignition_side = ""
+            self.ignition_active_until = 0.0
+
+        # Get recent trades in 500ms and 5s windows
+        window_500ms = now_ms - 500
+        window_5s = now_ms - 5000
+
+        trades_500ms = [t for t in self.recent_trades if t['time'] >= window_500ms]
+        trades_5s = [t for t in self.recent_trades if t['time'] >= window_5s]
+
+        if len(trades_5s) < 5:
+            return  # Not enough data for baseline
+
+        # Compute arrival rates
+        rate_500ms = len(trades_500ms) / 0.5  # trades per second
+        rate_5s = len(trades_5s) / 5.0  # trades per second baseline
+
+        # Compute z-score of 500ms rate vs 5s baseline
+        if rate_5s > 0:
+            arrival_z = (rate_500ms - rate_5s) / max(rate_5s * 0.5, 0.1)  # rough std estimate
+        else:
+            arrival_z = 0.0
+
+        # Compute side dominance in 500ms window
+        buy_count = sum(1 for t in trades_500ms if t['side'] == 'BUY')
+        sell_count = sum(1 for t in trades_500ms if t['side'] == 'SELL')
+        total_500ms = buy_count + sell_count
+
+        if total_500ms >= 3:
+            buy_ratio = buy_count / total_500ms
+            sell_ratio = sell_count / total_500ms
+        else:
+            buy_ratio = sell_ratio = 0.5
+
+        # Record burst event for history
+        burst_event = {
+            'ts': now_ts,
+            'rate_500ms': rate_500ms,
+            'rate_5s': rate_5s,
+            'arrival_z': arrival_z,
+            'buy_ratio': buy_ratio,
+            'sell_ratio': sell_ratio,
+            'side': 'BUY' if buy_ratio > sell_ratio else 'SELL',
+        }
+        self._burst_history.append(burst_event)
+
+        # Check ignition conditions
+        # 1. Z-score exceeds threshold
+        z_triggered = arrival_z >= IGNITION_Z_THRESHOLD
+
+        # 2. Side dominance exceeds 70%
+        side_triggered = buy_ratio >= IGNITION_SIDE_DOMINANCE or sell_ratio >= IGNITION_SIDE_DOMINANCE
+
+        # 3. Check for rapid decay/reversal — compare first half of 5s window to second half
+        mid_5s = now_ms - 2500
+        trades_first_half = [t for t in trades_5s if t['time'] < mid_5s]
+        trades_second_half = [t for t in trades_5s if t['time'] >= mid_5s]
+
+        burst_decaying = True
+        if trades_first_half and trades_second_half:
+            first_half_buy_ratio = sum(1 for t in trades_first_half if t['side'] == 'BUY') / len(trades_first_half)
+            second_half_buy_ratio = sum(1 for t in trades_second_half if t['side'] == 'BUY') / len(trades_second_half)
+            # If side dominance reverses >50% between halves, burst is decaying
+            if abs(first_half_buy_ratio - second_half_buy_ratio) > 0.5:
+                burst_decaying = True
+            # If second half has much lower volume, also decaying
+            elif len(trades_second_half) < len(trades_first_half) * 0.3:
+                burst_decaying = True
+            else:
+                burst_decaying = False
+
+        # Detect ignition immediately on a concentrated one-sided burst. Sustained
+        # continuation is handled downstream by the TREND veto override in main.py.
+        if z_triggered and side_triggered:
+            ignition_side = 'BUY' if buy_ratio > sell_ratio else 'SELL'
+            if not self.ignition_detected:
+                logger.info(
+                    f"[Ignition] DETECTED — side={ignition_side} "
+                    f"z={arrival_z:.2f} buy_ratio={buy_ratio:.1%} sell_ratio={sell_ratio:.1%} "
+                    f"rate_500ms={rate_500ms:.1f}/s rate_5s={rate_5s:.1f}/s TTL={IGNITION_TTL_S}s"
+                )
+            self.ignition_detected = True
+            self.ignition_side = ignition_side
+            self.ignition_active_until = now_ts + IGNITION_TTL_S
+            self._ignition_burst_rate = rate_500ms
+        elif self.ignition_detected:
+            # Already in ignition — check if sustained (z still high and same direction)
+            if z_triggered and side_triggered:
+                # Sustained — extend TTL
+                self.ignition_active_until = now_ts + IGNITION_TTL_S
+                self._ignition_burst_rate = rate_500ms
 
 
 class BinanceDataFeed:

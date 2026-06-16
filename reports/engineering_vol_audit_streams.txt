@@ -1,0 +1,5397 @@
+
+--- STREAM 1 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 1) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 790.5354 cm
+Q
+q
+1 0 0 1 45.68504 780.5354 cm
+q
+.392157 .454902 .545098 rg
+BT 1 0 0 1 0 2.5 Tm /F2 7.5 Tf 10 TL (ENGINEERING_VOL_FIX) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 752.5354 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 20 Tf 26 TL (Full-Spectrum Diagnostic Audit) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 737.5354 cm
+q
+BT 1 0 0 1 0 4 Tm 13 TL /F1 9 Tf .580392 .639216 .721569 rg (Chief Scientific Co-Pilot \267 Quantitative Quantum & Thermodynamic Architecture) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 725.0315 cm
+Q
+q
+1 0 0 1 45.68504 719.8315 cm
+q
+1.2 w
+1 J
+.784314 .658824 .294118 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 38.26772 625.8315 cm
+q
+.07451 .086275 .117647 rg
+n 0 90 518.7402 -90 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 5 79.5 Tm (Report ID) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 112.7165 79.5 Tm (EV-AUD-2026-R1) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 268.622 79.5 Tm (Audit Scope) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 376.3386 79.5 Tm (20 Source Files \267 607 KB) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 5 61.5 Tm (Bot Arch.) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 112.7165 61.5 Tm (7-Stage Hybrid \(BTC/USDT USDM\)) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 268.622 61.5 Tm (Exchange) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 376.3386 61.5 Tm (Binance USDM Futures) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 5 43.5 Tm (Candle TF) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 112.7165 43.5 Tm (15m \(primary\) + sub-candle aggTrade) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 268.622 43.5 Tm (Leverage) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 376.3386 43.5 Tm (3\327 \(configurable 1\22620\327\)) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 5 25.5 Tm (HMM States) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 112.7165 25.5 Tm (RANGE / TREND / VOLATILE + LIQUIDITY \(wall\)) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 268.622 25.5 Tm (Bayesian) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 376.3386 25.5 Tm (Beta\() Tj /F3 7.5 Tf 12 TL (a) Tj /F1 7.5 Tf 12 TL (,) Tj /F3 7.5 Tf 12 TL (b) Tj /F1 7.5 Tf 12 TL (\) conjugate prior, per-regime) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 5 7.5 Tm (Date) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 112.7165 7.5 Tm (June 15, 2026) Tj T* ET
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+BT 1 0 0 1 268.622 7.5 Tm (Classification) Tj T* ET
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+BT 1 0 0 1 376.3386 7.5 Tm (CONFIDENTIAL / INTERNAL) Tj T* ET
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 90 m 518.7402 90 l S
+n 0 0 m 518.7402 0 l S
+n 0 0 m 0 90 l S
+n 518.7402 0 m 518.7402 90 l S
+n 0 72 m 518.7402 72 l S
+n 0 54 m 518.7402 54 l S
+n 0 36 m 518.7402 36 l S
+n 0 18 m 518.7402 18 l S
+n 107.7165 0 m 107.7165 90 l S
+n 263.622 0 m 263.622 90 l S
+n 371.3386 0 m 371.3386 90 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 614.4929 cm
+Q
+q
+1 0 0 1 45.68504 590.4929 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (EXECUTIVE VERDICT MATRIX) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 585.6929 cm
+q
+.8 w
+1 J
+.784314 .658824 .294118 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 51.02362 288.6929 cm
+q
+.07451 .086275 .117647 rg
+n 0 293 493.2283 -21 re f*
+.05098 .058824 .078431 rg
+n 0 272 493.2283 -272 re f*
+.05098 .058824 .078431 rg
+n 0 272 493.2283 -34 re f*
+.07451 .086275 .117647 rg
+n 0 238 493.2283 -34 re f*
+.05098 .058824 .078431 rg
+n 0 204 493.2283 -34 re f*
+.07451 .086275 .117647 rg
+n 0 170 493.2283 -34 re f*
+.05098 .058824 .078431 rg
+n 0 136 493.2283 -34 re f*
+.07451 .086275 .117647 rg
+n 0 102 493.2283 -34 re f*
+.05098 .058824 .078431 rg
+n 0 68 493.2283 -34 re f*
+.07451 .086275 .117647 rg
+n 0 34 493.2283 -34 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 276 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5.5 Tm /F2 7.5 Tf 13 TL 23.40131 0 Td (Market Condition) Tj T* -23.40131 0 Td ET
+Q
+Q
+q
+1 0 0 1 124.0551 276 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5.5 Tm /F2 7.5 Tf 13 TL 40.85472 0 Td (Overall Assessment) Tj T* -40.85472 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 276 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5.5 Tm /F2 7.5 Tf 13 TL 4.343248 0 Td (Alpha Quality) Tj T* -4.343248 0 Td ET
+Q
+Q
+q
+1 0 0 1 356.4961 276 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5.5 Tm /F2 7.5 Tf 13 TL 3.046457 0 Td (Risk Grade) Tj T* -3.046457 0 Td ET
+Q
+Q
+q
+1 0 0 1 413.189 276 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5.5 Tm /F2 7.5 Tf 13 TL 24.30719 0 Td (Verdict) Tj T* -24.30719 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 248.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (Trending Market) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 242 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL .230974 0 Td (Functional \227 HMM TREND state active, Z-vel) Tj T* 67.09125 0 Td (gated) Tj T* -67.32222 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 248.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 12.67575 0 Td (Moderate) Tj T* -12.67575 0 Td ET
+Q
+Q
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 248.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 18.15521 0 Td (B+) Tj T* -18.15521 0 Td ET
+Q
+Q
+.133333 .772549 .368627 rg
+q
+1 0 0 1 413.189 248.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL .344685 0 Td (CONDITIONAL PASS) Tj T* -0.344685 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 214.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (High Volatility) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 208 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 14.18097 0 Td (VOLATILE regime partially functional;) Tj T* -11.45625 0 Td (SQUEEZE params exist but not HMM-native) Tj T* -2.724724 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 214.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 12.67575 0 Td (Moderate) Tj T* -12.67575 0 Td ET
+Q
+Q
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 214.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 20.34521 0 Td (B) Tj T* -20.34521 0 Td ET
+Q
+Q
+.133333 .772549 .368627 rg
+q
+1 0 0 1 413.189 214.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL .344685 0 Td (CONDITIONAL PASS) Tj T* -0.344685 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 180.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (Low Volatility) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 174 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 9.602224 0 Td (RANGE regime well-tuned; dead-market) Tj T* 43.965 0 Td (guard present) Tj T* -53.56722 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 180.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 19.34325 0 Td (Good) Tj T* -19.34325 0 Td ET
+Q
+Q
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 180.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 19.09646 0 Td (A-) Tj T* -19.09646 0 Td ET
+Q
+Q
+.133333 .772549 .368627 rg
+q
+1 0 0 1 413.189 180.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 27.01469 0 Td (PASS) Tj T* -27.01469 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 146.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (Consolidating) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 140 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 6.785974 0 Td (NEUTRAL regime + CVD divergence gate) Tj T* 53.86875 0 Td (functional) Tj T* -60.65472 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 146.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 12.67575 0 Td (Moderate) Tj T* -12.67575 0 Td ET
+Q
+Q
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 146.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 20.34521 0 Td (B) Tj T* -20.34521 0 Td ET
+Q
+Q
+.133333 .772549 .368627 rg
+q
+1 0 0 1 413.189 146.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL .344685 0 Td (CONDITIONAL PASS) Tj T* -0.344685 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 112.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (High Liquidity) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 106 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 13.14222 0 Td (Amihud SOLID label reduces illiquidity) Tj T* 33.76875 0 Td (premium correctly) Tj T* -46.91097 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 112.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 12.67575 0 Td (Moderate) Tj T* -12.67575 0 Td ET
+Q
+Q
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 112.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 18.15521 0 Td (B+) Tj T* -18.15521 0 Td ET
+Q
+Q
+.133333 .772549 .368627 rg
+q
+1 0 0 1 413.189 112.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL .344685 0 Td (CONDITIONAL PASS) Tj T* -0.344685 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 78.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (Spoofing / Ghost Walls) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 72 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 10.53597 0 Td (Wall threshold \(5\327 median\) present; NO) Tj T* 29.0775 0 Td (cancel-velocity tracker) Tj T* -39.61347 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 78.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 18.93075 0 Td (Weak) Tj T* -18.93075 0 Td ET
+Q
+Q
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 78.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 17.94896 0 Td (C+) Tj T* -17.94896 0 Td ET
+Q
+Q
+.976471 .45098 .086275 rg
+q
+1 0 0 1 413.189 78.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 2.005935 0 Td (FAIL \227 ALPHA GAP) Tj T* -2.005935 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 44.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (Institutional Orders) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 38 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 4.910974 0 Td (CVD divergence + GEX from Deribit; whale) Tj T* 38.4525 0 Td (ratio from Coinglass) Tj T* -43.36347 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 44.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 2.254498 0 Td (Moderate-Good) Tj T* -2.254498 0 Td ET
+Q
+Q
+.976471 .45098 .086275 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 44.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 20.34521 0 Td (B) Tj T* -20.34521 0 Td ET
+Q
+Q
+.937255 .266667 .266667 rg
+q
+1 0 0 1 413.189 38 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 16.39094 0 Td (PASS WITH) Tj T* 3.123745 0 Td (CAVEATS) Tj T* -19.51469 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 10.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL (Execution Jitter) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 14.79972 0 Td (15s polling loop; event-driven only on) Tj T* -4.158746 0 Td (candle-close; no sub-candle limit orders) Tj T* -10.64097 0 Td ET
+Q
+Q
+q
+1 0 0 1 288.4646 10.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 20.59575 0 Td (Poor) Tj T* -20.59575 0 Td ET
+Q
+Q
+.937255 .266667 .266667 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 356.4961 10.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5.5 Tm /F1 7.5 Tf 13 TL 20.13896 0 Td (C) Tj T* -20.13896 0 Td ET
+Q
+Q
+.976471 .45098 .086275 rg
+q
+1 0 0 1 413.189 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 18.5 Tm /F1 7.5 Tf 13 TL 5.969685 0 Td (FAIL \227 LATENCY) Tj T* 23.13 0 Td (GAP) Tj T* -29.09969 0 Td ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 293 m 493.2283 293 l S
+n 0 0 m 493.2283 0 l S
+n 0 0 m 0 293 l S
+n 493.2283 0 m 493.2283 293 l S
+n 0 272 m 493.2283 272 l S
+n 0 238 m 493.2283 238 l S
+n 0 204 m 493.2283 204 l S
+n 0 170 m 493.2283 170 l S
+n 0 136 m 493.2283 136 l S
+n 0 102 m 493.2283 102 l S
+n 0 68 m 493.2283 68 l S
+n 0 34 m 493.2283 34 l S
+n 119.0551 0 m 119.0551 293 l S
+n 283.4646 0 m 283.4646 293 l S
+n 351.4961 0 m 351.4961 293 l S
+n 408.189 0 m 408.189 293 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 277.3543 cm
+Q
+q
+1 0 0 1 45.68504 253.3543 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (1. TRENDING MARKET \227 PERFORMANCE DIAGNOSIS) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 248.5543 cm
+q
+.8 w
+1 J
+.078431 .721569 .65098 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 179.5543 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 56.5 Tm /F1 8.5 Tf 13 TL 1.043234 Tw (The TREND regime is triggered when the HMM Gaussian emission P\(TREND|obs\) exceeds the MIN_CONFIDENCE gate \(default) Tj T* 0 Tw 1.261719 Tw (50%\) and the observation vector [ATR%, |Z|, tape_bin, ATR_rank] falls within the calibrated emission: mu=[0.003256, 1.858, 1.0,) Tj T* 0 Tw 8.57977 Tw (0.554], sigma=[0.005409, 0.923, 0.005, 0.269]. The transition matrix shows TREND is highly unstable \227) Tj T* 0 Tw .338407 Tw (P\(TREND) Tj /F3 8.5 Tf 13 TL (\256) Tj /F1 8.5 Tf 13 TL (VOLATILE\)=0.480 \227 meaning the HMM expects trend states to bleed rapidly into volatility expansion. This is empirically) Tj T* 0 Tw (correct for BTC but architecturally problematic: the TREND strategy may be committed exactly at momentum exhaustion.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 51.55433 cm
+q
+.07451 .086275 .117647 rg
+n 0 123 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 102 490.3937 -102 re f*
+.05098 .058824 .078431 rg
+n 0 102 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 68 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 34 490.3937 -34 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 106 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Component) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 106 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Implementation) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 106 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Status) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 106 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Finding) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 78.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HMM TREND Detection) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 72 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (GaussianHMM, 4 features,) Tj T* (Baum-Welch EM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 78.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 72 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Calibrated on ~1yr BTC 15m. Transition P\(T) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL (V\)=0.48 \227 low) Tj T* (persistence. Beware momentum commitment lag.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 44.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Z-Velocity Gate) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 38 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (_z_vel computed from log-returns,) Tj T* (gated to TREND only \(|z_ret|>0.5\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 44.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 38 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Correct design. Prevents z-velocity from polluting RANGE) Tj T* (mean-reversion.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 10.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OFI Threshold \(TREND\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (ofi_bound=0.20 \227 higher than) Tj T* (RANGE \(0.08\) / NEUTRAL \(0.10\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 10.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Sound: TREND requires stronger order-flow confirmation.) Tj T* (Tanh-normalized OFI pipeline correct.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 123 m 490.3937 123 l S
+n 0 0 m 0 123 l S
+n 490.3937 0 m 490.3937 123 l S
+n 0 0 m 490.3937 0 l S
+n 0 102 m 490.3937 102 l S
+n 0 68 m 490.3937 68 l S
+n 0 34 m 490.3937 34 l S
+n 107.7165 0 m 107.7165 123 l S
+n 226.7717 0 m 226.7717 123 l S
+n 277.7953 0 m 277.7953 123 l S
+Q
+Q
+Q
+ 
+
+--- STREAM 2 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 2) Tj T* ET
+Q
+q
+1 0 0 1 52.44094 563.874 cm
+q
+.05098 .058824 .078431 rg
+n 0 238 490.3937 -238 re f*
+.05098 .058824 .078431 rg
+n 0 238 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 204 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 170 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 123 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 89 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 55 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 21 490.3937 -21 re f*
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 214.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (SL Multiplier) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 208 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (ATR x 2.09 \227 widest across all) Tj T* (regimes) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 214.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 208 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Appropriate for trend breathing room. Wilder ATR compensation) Tj T* (noted \(5% reduction applied\).) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 180.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (BE Lock Trigger) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 174 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (2.0x ATR profit before break-even) Tj T* (lock) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 180.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 180.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Correct. Prevents premature BE on volatile intraday trends.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 140 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (RSI Extreme Gate) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 127 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (RSI extreme suppressed in) Tj T* (TREND \(rsi_extreme_suppressed) Tj T* (counter\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 140 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 127 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (CRITICAL DESIGN FLAW: suppressing RSI extremes in TREND) Tj T* (allows entries into terminal momentum \227 no fade protection at) Tj T* (all.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 99.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HTF Block) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 99.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (htf_block=True for TREND) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 99.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 93 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Prevents counter-HTF entries \227 correct for trend-following) Tj T* (mandate.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 65.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Partial Take) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 65.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (0.40 of position at 0.75R) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 65.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 59 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Earlier partial in TREND vs RANGE \227 reasonable but may cap) Tj T* (trend capture on extended moves.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 31.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Time Exit) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 31.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (1800s \(30min\) max hold) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 31.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 25 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (30-min cap on 15m candle system is 2 candles. Caps multi-hour) Tj T* (trend capture excessively.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Confidence Floor) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (0.65 \227 highest among regimes) Tj T* ET
+Q
+Q
+q
+1 0 0 1 231.7717 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 282.7953 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Appropriate: trend entries are most susceptible to false breakout.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 0 m 0 238 l S
+n 490.3937 0 m 490.3937 238 l S
+n 0 0 m 490.3937 0 l S
+n 0 238 m 490.3937 238 l S
+n 0 204 m 490.3937 204 l S
+n 0 170 m 490.3937 170 l S
+n 0 123 m 490.3937 123 l S
+n 0 89 m 490.3937 89 l S
+n 0 55 m 490.3937 55 l S
+n 0 21 m 490.3937 21 l S
+n 107.7165 0 m 107.7165 238 l S
+n 226.7717 0 m 226.7717 238 l S
+n 277.7953 0 m 277.7953 238 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 555.3701 cm
+Q
+q
+1 0 0 1 45.68504 543.3701 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (KEY DEFECT T-01: TREND TIME-EXIT CAP = 2 CANDLES) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 507.3701 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 25.2 Tm /F1 7.8 Tf 11 TL .741984 Tw (time_exit_sec=1800 on a 15m candle system equates to precisely 2 candles. BTC trending phases routinely persist 6\22615 candles \(1.5\2263.75h\).) Tj T* 0 Tw -0.013544 Tw (This cap virtually guarantees systematic early exit on all extended trend moves, converting trend trades into range scalps. Recommended: raise to) Tj T* 0 Tw (5400s \(6 candles / 1.5h\) with trailing stop activation post-2R.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 491.3701 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (KEY DEFECT T-02: RSI SUPPRESSION IN TREND = NO EXHAUSTION GUARD) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 444.3701 cm
+q
+BT 1 0 0 1 0 36.2 Tm .689944 Tw 11 TL /F1 7.8 Tf .580392 .639216 .721569 rg (The rsi_extreme_suppressed gate disables RSI overbought/oversold filtering in TREND regime. While correct for not blocking early momentum) Tj T* 0 Tw 2.075383 Tw (entries, it leaves zero protection against terminal RSI divergence \(RSI>80 on declining momentum = distribution\). Recommend adding a) Tj T* 0 Tw .541426 Tw (DIVERGENCE check rather than full suppression: allow entry if RSI) Tj (<) Tj (75 OR if Z-vel is still accelerating. A Hawkes process self-excitation decay) Tj T* 0 Tw (rate on trade intensity would provide a cleaner signal.) Tj T* ET
+Q
+Q
+ 
+
+--- STREAM 3 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 3) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 787.874 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (2. HIGH VOLATILITY MARKET \227 PERFORMANCE DIAGNOSIS) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 783.074 cm
+q
+.8 w
+1 J
+.078431 .721569 .65098 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 727.074 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 43.5 Tm /F1 8.5 Tf 13 TL 2.794072 Tw (The system implements a VOLATILE HMM state distinct from TREND, calibrated to [ATR%=0.003691, |Z|=1.020, tape=0.0,) Tj T* 0 Tw .034532 Tw (ATR_rank=0.652] \227 high ATR with moderate Z and LOW tape, correctly characterising whipsaw expansion. The VOLATILE transition) Tj T* 0 Tw 1.966334 Tw (is extremely sticky: P\(V) Tj /F3 8.5 Tf 13 TL (\256) Tj /F1 8.5 Tf 13 TL (V\)=0.944, meaning once volatile, the system expects sustained volatility clustering \227 consistent with) Tj T* 0 Tw (non-equilibrium thermodynamic autocorrelation in LOB microstructure.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 257.074 cm
+q
+.07451 .086275 .117647 rg
+n 0 465 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 444 490.3937 -444 re f*
+.05098 .058824 .078431 rg
+n 0 444 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 410 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 363 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 316 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 282 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 235 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 188 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 141 490.3937 -60 re f*
+.05098 .058824 .078431 rg
+n 0 81 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 47 490.3937 -47 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 448 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Component) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 448 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Status) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 448 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Severity) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 448 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Finding) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 420.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (VOLATILE HMM State) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 420.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ACTIVE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 420.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 414 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Correctly modeled. ATR_rank=0.652 >> RANGE\(0.199\) confirms) Tj T* (high-percentile vol detection.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 380 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (SQUEEZE Regime Params) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 373.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (DEFINED but) Tj T* (ALIASED) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 380 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 367 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (SQUEEZE params in signal_config.py \(SL=0.5xATR, TP=3R\) exist but) Tj T* (SQUEEZE is aliased to LIQUIDITY in _LABELS. HMM never emits 'SQUEEZE') Tj T* (directly \227 these tighter params are unreachable via normal HMM classification.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 333 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (VOLATILE SL Multiplier) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 320 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (1.65xATR) Tj T* (\(Phase 4.1) Tj T* (adjusted\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 333 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 326.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Phase 4.1 reduced from 2.25 to 1.65. Risk of SL being too tight during high-vol) Tj T* (expansion \227 consider adaptive multiplier based on ATR_rank percentile.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 292.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Panic Mode) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 286 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (ACTIVE \227 3%) Tj T* (drop / 5 candles) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 292.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 286 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Flash-crash guard locks for 300s. Correct thermodynamic response to phase) Tj T* (transition.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 252 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ATR Percentile Rank) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 239 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Rolling) Tj T* (2880-candle) Tj T* (window \(30d\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 252 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 245.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Strong design. Allows regime-relative volatility assessment, not absolute ATR.) Tj T* (Critical for multi-symbol operation.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 205 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (RV/IV Discriminant) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 198.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (_rv_iv_discrimin) Tj T* (ant\(\) active) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 205 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 192 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Uses 30s tick window for RV. In genuine high-vol events the 30s window is too) Tj T* (short \227 RV computation degrades to candle fallback. Need 60\226120s window) Tj T* (for vol events.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 158 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Cascade Risk \(ULIS\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 145 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Sigmoid) Tj T* (cascade index) Tj T* (computed) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 158 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 151.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (AVOID verdict fires when cascade_risk>0.65 AND reflexivity>0.50. Tested) Tj T* (against both OFI and Bayes signals \227 correctly orthogonal.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 104.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Funding Rate Veto \(High Vol\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 85 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (FUNDING_LON) Tj T* (G_BLOCK=0.00) Tj T* (08, SHORT_BL) Tj T* (OCK=-0.0005) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 104.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 98 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Conservative. Avoids crowded positioning during funding spikes that precede) Tj T* (vol events.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 57.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (MacroShield Blackout) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 51 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (+/-15min around) Tj T* (CPI/FOMC/NFP) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 57.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 51 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Correct. High-vol macro events are hard-gated. Calendar fetched from) Tj T* (ForexFactory with TTL cache and exponential backoff.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 17 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Vol-Spike CVD Veto) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (CVD_VETO_V) Tj T* (OL_SPIKE=1.4) Tj T* (0x) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 17 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (INFO) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 10.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Vol spike confirmation for CVD divergence veto \227 prevents false institutional) Tj T* (reads during erratic tape.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 465 m 490.3937 465 l S
+n 0 0 m 490.3937 0 l S
+n 0 0 m 0 465 l S
+n 490.3937 0 m 490.3937 465 l S
+n 0 444 m 490.3937 444 l S
+n 0 410 m 490.3937 410 l S
+n 0 363 m 490.3937 363 l S
+n 0 316 m 490.3937 316 l S
+n 0 282 m 490.3937 282 l S
+n 0 235 m 490.3937 235 l S
+n 0 188 m 490.3937 188 l S
+n 0 141 m 490.3937 141 l S
+n 0 81 m 490.3937 81 l S
+n 0 47 m 490.3937 47 l S
+n 119.0551 0 m 119.0551 465 l S
+n 181.4173 0 m 181.4173 465 l S
+n 232.4409 0 m 232.4409 465 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 248.5701 cm
+Q
+q
+1 0 0 1 45.68504 236.5701 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (KEY DEFECT V-01: SQUEEZE PARAMS ARE UNREACHABLE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 189.5701 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 36.2 Tm /F1 7.8 Tf 11 TL .745111 Tw (REGIME_ALIAS={'SQUEEZE':'LIQUIDITY'} and _LABELS=['RANGE','TREND','VOLATILE'] means the HMM never emits the string 'SQUEEZE'.) Tj T* 0 Tw .755987 Tw (The purpose-built SQUEEZE strategy \(0.5xATR SL, 3.0R TP, 600s exit\) is dead code for the live engine. This was presumably designed for a) Tj T* 0 Tw .189917 Tw (4-state HMM that was never implemented. Resolution: either add a 4th HMM state, or route VOLATILE+high_Amihud_rank to SQUEEZE params) Tj T* 0 Tw (directly in _detect_regime\(\).) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 165.5701 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (3. LOW VOLATILITY / RANGE MARKET \227 PERFORMANCE DIAGNOSIS) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 160.7701 cm
+q
+.8 w
+1 J
+.078431 .721569 .65098 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 117.7701 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 30.5 Tm /F1 8.5 Tf 13 TL .908084 Tw (RANGE is the HMM's most stable state: P\(R) Tj /F3 8.5 Tf 13 TL (\256) Tj /F1 8.5 Tf 13 TL (R\)=0.9624, emission mu=[ATR%=0.002143, |Z|=1.110, tape=0.0, ATR_rank=0.199].) Tj T* 0 Tw .269876 Tw (The bot applies mean-reversion strategy \(Strategy B\) with z_threshold=1.06 \(Student-t adjusted\), tight SL \(1.14xATR\), and lower OFI) Tj T* 0 Tw (bar \(0.08\). This is the highest-fidelity regime in the system.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 44.77008 cm
+q
+.07451 .086275 .117647 rg
+n 0 68 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 47 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 47 490.3937 -47 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 51 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Component) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 51 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Status) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 51 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Grade) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 51 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Finding) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 17 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HMM RANGE Persistence) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 17 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P\(R) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL (R\)=0.9624) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 17 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 4 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL -0.074478 Tw (Excellent stability. Low false-exits from RANGE. Student-t Z-threshold) Tj T* 0 Tw (adjustment \(x0.8165\) correctly widens significance at fat-tailed) Tj T* (distributions.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 68 m 490.3937 68 l S
+n 0 0 m 0 68 l S
+n 490.3937 0 m 490.3937 68 l S
+n 0 0 m 490.3937 0 l S
+n 0 47 m 490.3937 47 l S
+n 113.3858 0 m 113.3858 68 l S
+n 221.1024 0 m 221.1024 68 l S
+n 263.622 0 m 263.622 68 l S
+Q
+Q
+Q
+ 
+
+--- STREAM 4 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 4) Tj T* ET
+Q
+q
+1 0 0 1 52.44094 495.874 cm
+q
+.05098 .058824 .078431 rg
+n 0 306 490.3937 -306 re f*
+.05098 .058824 .078431 rg
+n 0 306 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 272 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 238 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 191 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 157 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 123 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 89 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 55 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 34 490.3937 -34 re f*
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 282.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Dead Market Guard) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 282.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (_dead_market_cycles counter) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 282.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 276 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Prevents sustained RANGE entries when Z is flat. Correct application) Tj T* (of Fokker-Planck drift near zero \227 no signal in pure diffusion.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 248.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Z-Threshold) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 248.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (1.06 \(Student-t adj from 1.30\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 248.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 242 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Well-calibrated for 15m BTC RANGE. Student-t correction) Tj T* (appropriate given heavy tails in crypto returns.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 208 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OFI Bound) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 208 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (0.08 \227 lowest among regimes) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 208 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 195 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Correct: in low-vol, even small order-flow imbalances carry signal.) Tj T* (Three-stage OFI pipeline \(True OFI ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( MAD filter ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( EWMA+tanh\) is) Tj T* (sound.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 167.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (VWAP Z-Score) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 161 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (24h rolling window \(288-candle) Tj T* (max buffer\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 167.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 161 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL -0.014478 Tw (HMM-SESSION-VWAP fix correctly replaced midnight UTC reset with) Tj T* 0 Tw (24h rolling window. No boundary artifacts.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 133.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (RSI Mean Reversion) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 127 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Active \227 RSI extremes NOT) Tj T* (suppressed in RANGE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 133.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 127 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Correct. Overbought/oversold RSI is primary confirmation in) Tj T* (range-bound markets.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 99.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Candle Gate) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 93 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (30s after candle open \(fastest) Tj T* (among regimes\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 99.5 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 93 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Appropriate for RANGE. However, 30s minimum in a 15m system) Tj T* (means entry is always at least 3% into candle \227 acceptable.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 65.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Cascade Cooldown) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 59 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (180s \(3min\) \227 shorter than) Tj T* (NEUTRAL/TREND) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 65.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 59 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Allows faster recovery after sweep. Correct thermodynamic) Tj T* (re-equilibration assumption.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 38 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Partial Take) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 38 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (0.50 at 0.60R) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 38 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 38 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Earlier, larger partial vs TREND \227 correct for range scalp geometry.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 10.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HTF Block) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 10.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (htf_block=False for RANGE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 10.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 4 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Counter-HTF is the strategy in RANGE. Correct macro-context) Tj T* (override \227 no HTF block when mean-reverting.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 0 m 0 306 l S
+n 490.3937 0 m 490.3937 306 l S
+n 0 0 m 490.3937 0 l S
+n 0 306 m 490.3937 306 l S
+n 0 272 m 490.3937 272 l S
+n 0 238 m 490.3937 238 l S
+n 0 191 m 490.3937 191 l S
+n 0 157 m 490.3937 157 l S
+n 0 123 m 490.3937 123 l S
+n 0 89 m 490.3937 89 l S
+n 0 55 m 490.3937 55 l S
+n 0 34 m 490.3937 34 l S
+n 113.3858 0 m 113.3858 306 l S
+n 221.1024 0 m 221.1024 306 l S
+n 263.622 0 m 263.622 306 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 462.874 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 25.2 Tm /F1 7.8 Tf 11 TL 1.857019 Tw (RANGE is the strongest-performing regime in this architecture. Primary risk is false RANGE classification during low-volume pre-breakout) Tj T* 0 Tw .415482 Tw (compression \227 ATR_rank alone cannot distinguish between dead consolidation and accumulation coiling. Recommend adding a Bollinger Band) Tj T* 0 Tw (Width percentile rank as a 5th HMM feature to differentiate.) Tj T* ET
+Q
+Q
+ 
+
+--- STREAM 5 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 5) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 787.874 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (4. CONSOLIDATING MARKET \227 PERFORMANCE DIAGNOSIS) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 783.074 cm
+q
+.8 w
+1 J
+.078431 .721569 .65098 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 727.074 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 43.5 Tm /F1 8.5 Tf 13 TL .729301 Tw (Consolidation is handled by the NEUTRAL regime plus CVD divergence detection. NEUTRAL applies balanced thresholds \(z=1.50,) Tj T* 0 Tw 1.212501 Tw (ATR=1.43x, OFI=0.10\) and activates all three strategy branches \(Trend A, Mean Reversion B, Liquidity Sweep C\). The Bayesian) Tj T* 0 Tw 1.856001 Tw (fusion layer is the primary arbitration mechanism in NEUTRAL \227 per-regime Beta\(alpha, beta\) priors track historical win rates) Tj T* 0 Tw (separately and apply a cold-start discount for the first 30 trades.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 304.074 cm
+q
+.07451 .086275 .117647 rg
+n 0 418 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 397 490.3937 -397 re f*
+.05098 .058824 .078431 rg
+n 0 397 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 363 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 316 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 269 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 222 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 175 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 128 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 81 490.3937 -60 re f*
+.05098 .058824 .078431 rg
+n 0 21 490.3937 -21 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 401 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Component) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 401 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Status) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 401 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Grade) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 401 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Finding) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 373.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (NEUTRAL Regime Strategy) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 373.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (All 3 strategies active) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 373.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 367 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Correct: no regime certainty ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( broader signal basket. Risk of signal) Tj T* (dilution \227 Bayesian fusion must do heavy lifting.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 333 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Per-Regime Beta Prior) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 320 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Separate alpha/beta per RA) Tj T* (NGE/TREND/NEUTRAL/LIQ) Tj T* (UIDITY) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 333 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 320 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Strong design. Regime-specific win rates prevent) Tj T* (cross-contamination. Prior softening at 3+ consecutive losses is) Tj T* (well-calibrated.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 286 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (CVD Divergence Gate \(Stage 4.5\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 279.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (EMA-Z normalized,) Tj T* (age-weighted, streak-tracked) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 286 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 273 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Most sophisticated component in the system. Cross-candle) Tj T* (institutional footprint read. Age cap at 8 candles prevents TREND) Tj T* (misclassification as divergence.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 239 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Cold-Start Discount) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 232.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (0.05 confidence reduction for) Tj T* (first 30 trades) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 239 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 226 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Conservative. 30-trade window may be too short for regime-specific) Tj T* (calibration \(TREND sees far fewer trades than RANGE in) Tj T* (consolidation\).) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 192 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (CVD Post-Reset Cooldown) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 185.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (5 candles after daily CVD) Tj T* (reset) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 192 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 179 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Ghost signal suppression correctly implemented. Daily CVD reset) Tj T* (artifact \(spurious BEARISH div\) would otherwise persist 100+) Tj T* (candles.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 145 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Signal Diversity in NEUTRAL) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 138.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (OFI + RSI + Z-score + CVD) Tj T* (+ VWAP + tape) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 145 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 132 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Good signal breadth. However, signals share common information) Tj T* (\(OFI and CVD are partially collinear \227 both order-flow derived\). True) Tj T* (orthogonality is partially addressed by GLR score using funding rate.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 98 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Confidence Threshold) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 98 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (0.62 \227 same as RANGE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 98 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 85 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Appropriate for neutral conditions. Should arguably be HIGHER in) Tj T* (consolidation where false signals dominate \227 recommend 0.65 floor) Tj T* (in NEUTRAL.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 44.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Bayesian Override) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 31.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (BAYES_OVERRIDE_THRE) Tj T* (SHOLD=0.78 bypasses) Tj T* (some gates) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 44.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 25 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Dangerous in consolidation \227 a 0.78 Bayesian posterior in) Tj T* (NEUTRAL is often a data artifact from parameter fitting, not genuine) Tj T* (edge. Recommend requiring ULIS STRONG_LONG/SHORT before) Tj T* (override activates.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Time Exit) Tj T* ET
+Q
+Q
+q
+1 0 0 1 124.0551 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (1200s \(20min\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 268.622 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (One-candle-plus window. Appropriate for consolidation entries.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 418 m 490.3937 418 l S
+n 0 0 m 490.3937 0 l S
+n 0 0 m 0 418 l S
+n 490.3937 0 m 490.3937 418 l S
+n 0 397 m 490.3937 397 l S
+n 0 363 m 490.3937 363 l S
+n 0 316 m 490.3937 316 l S
+n 0 269 m 490.3937 269 l S
+n 0 222 m 490.3937 222 l S
+n 0 175 m 490.3937 175 l S
+n 0 128 m 490.3937 128 l S
+n 0 81 m 490.3937 81 l S
+n 0 21 m 490.3937 21 l S
+n 119.0551 0 m 119.0551 418 l S
+n 221.1024 0 m 221.1024 418 l S
+n 263.622 0 m 263.622 418 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 280.074 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (5. HIGH LIQUIDITY MARKET \227 PERFORMANCE DIAGNOSIS) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 275.274 cm
+q
+.8 w
+1 J
+.078431 .721569 .65098 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 219.274 cm
+q
+BT 1 0 0 1 0 43.5 Tm .547001 Tw 13 TL /F1 8.5 Tf .945098 .960784 .976471 rg (High-liquidity environments are characterized by low Amihud illiquidity ratio, tight bid-ask spread, and deep resting order books. The) Tj T* 0 Tw .259251 Tw (AmihudEngine computes both linear \(Amihud\) and kinetic-energy squared \(KE\) variants using log-normalization and rolling percentile) Tj T* 0 Tw .42679 Tw (ranks over a 500-trade buffer. SOLID label \(amihud_rank < 0.20\) indicates high liquidity. The LIQUIDITY regime in the HMM context) Tj T* 0 Tw (refers to wall-proximity sweeps, not the Amihud metric \227 these are conceptually distinct.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 44.27402 cm
+q
+.07451 .086275 .117647 rg
+n 0 170 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 149 490.3937 -149 re f*
+.05098 .058824 .078431 rg
+n 0 149 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 102 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 68 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 34 490.3937 -34 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 153 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Component) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 153 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Status) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 153 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Grade) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 153 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Finding) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 119 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (AmihudEngine \(Linear\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 112.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Log-normalized, percentile rank,) Tj T* (500-trade window) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 119 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 106 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Correct implementation. Log normalization handles fat-tailed) Tj T* (price-impact distribution. Hysteresis \(N=3 ticks\) prevents) Tj T* (SOLID/FLUID/VAPOR flickering.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 78.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (KE Variant \(Kinetic Energy\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 72 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Squared price-impact /) Tj T* (dollar-volume) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 78.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 72 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (KE variant captures higher-order microstructure dynamics. Both) Tj T* (variants run in parallel \227 good redundancy.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 44.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Warm-up Guard) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 38 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (100 trades minimum before features) Tj T* (are trusted) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 44.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 38 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Cold-start neutral \(0.5, 0.5\) prevents spurious SOLID/VAPOR) Tj T* (classification on restart. Critical for integrity.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 10.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (SOLID Regime Effect) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 4 cm
+q
+BT 1 0 0 1 0 19 Tm 13 TL /F1 7 Tf .917647 .701961 .031373 rg (amihud_rank < 0.20 ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL T* (FLUID/TREND eligible) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 10.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Low illiquidity ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( lower market impact ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( executions favor taker) Tj T* -0.048278 Tw (fills. System correctly de-risks illiquidity premium in SOLID state.) Tj T* 0 Tw ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 170 m 490.3937 170 l S
+n 0 0 m 0 170 l S
+n 490.3937 0 m 490.3937 170 l S
+n 0 0 m 490.3937 0 l S
+n 0 149 m 490.3937 149 l S
+n 0 102 m 490.3937 102 l S
+n 0 68 m 490.3937 68 l S
+n 0 34 m 490.3937 34 l S
+n 113.3858 0 m 113.3858 170 l S
+n 238.1102 0 m 238.1102 170 l S
+n 280.6299 0 m 280.6299 170 l S
+Q
+Q
+Q
+ 
+
+--- STREAM 6 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 6) Tj T* ET
+Q
+q
+1 0 0 1 52.44094 558.874 cm
+q
+.05098 .058824 .078431 rg
+n 0 243 490.3937 -243 re f*
+.05098 .058824 .078431 rg
+n 0 243 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 196 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 149 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 102 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 68 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 34 490.3937 -34 re f*
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 206.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (VAPOR Detection \(Low) Tj T* (Liquidity\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 206.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (amihud_rank > 0.80 ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( SQUEEZE) Tj T* (candidate) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 213 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 200 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (VAPOR should route to SQUEEZE strategy \(tighter SL, 3R TP\)) Tj T* (but SQUEEZE params are currently unreachable \(Defect V-01\).) Tj T* (VAPOR detection is therefore partially wasted.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 166 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (LOB Depth Normalization) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 159.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (ILIH score in ULIS: normalized) Tj T* (1000-80000 range) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 166 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 153 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Normalization range [1000, 80000] total LOB depth in USDT is) Tj T* (reasonable for BTC/USDT USDM futures. However, this is a) Tj T* (static constant \227 should adapt to session-average depth.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 119 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Wall Classification) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 119 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Threshold = 5x median order size) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 119 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 106 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Robust to LOB size distribution shifts. Filters micro-orders from) Tj T* (wall detection. Top-of-book no longer used \(P1-4 fix noted in) Tj T* (code\).) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 78.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Execution Price Reference) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 72 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Top-of-book best bid/ask \(not wall) Tj T* (mid\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 78.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 72 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Correct for taker execution modeling. PHASE-1.1 fix properly) Tj T* (uses execution price rather than wall-filtered mid.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 44.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Spread-Based Fee Geometry) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 38 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Dynamic slippage: ATR% x 0.15 for) Tj T* (sweep fills) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 44.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 38 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Realistic slippage model for BTC sweeps. Better than flat 0.02%) Tj T* (assumption that was replaced.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 10.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Throughput Gate) Tj T* ET
+Q
+Q
+q
+1 0 0 1 118.3858 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Monitors aggTrade msg/min; thin) Tj T* (throughput = veto) Tj T* ET
+Q
+Q
+q
+1 0 0 1 243.1102 10.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 285.6299 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Detects exchange data degradation before it produces bad) Tj T* (signals. Correct defensive engineering.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 0 m 0 243 l S
+n 490.3937 0 m 490.3937 243 l S
+n 0 0 m 490.3937 0 l S
+n 0 243 m 490.3937 243 l S
+n 0 196 m 490.3937 196 l S
+n 0 149 m 490.3937 149 l S
+n 0 102 m 490.3937 102 l S
+n 0 68 m 490.3937 68 l S
+n 0 34 m 490.3937 34 l S
+n 113.3858 0 m 113.3858 243 l S
+n 238.1102 0 m 238.1102 243 l S
+n 280.6299 0 m 280.6299 243 l S
+Q
+Q
+Q
+ 
+
+--- STREAM 7 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 7) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 787.874 cm
+q
+BT 1 0 0 1 0 3 Tm 14 TL /F2 11 Tf .078431 .721569 .65098 rg (6. SPOOFING & INSTITUTIONAL ORDER DETECTION) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 783.074 cm
+q
+.8 w
+1 J
+.937255 .266667 .266667 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 727.074 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 43.5 Tm /F1 8.5 Tf 13 TL .23962 Tw (This is the most structurally critical gap in the system. Spoofing \227 the placement and rapid cancellation of large orders to manipulate) Tj T* 0 Tw 1.439334 Tw (perceived supply/demand \227 is endemic in BTC/USDT perpetual futures markets. Institutional iceberg orders fragment large size) Tj T* 0 Tw .139188 Tw (across hundreds of micro-fills. The current architecture has partial defenses but no cancel-velocity tracking, no order-lifetime analysis,) Tj T* 0 Tw (and no iceberg detection algorithm.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 226.074 cm
+q
+.07451 .086275 .117647 rg
+n 0 496 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 475 490.3937 -475 re f*
+.05098 .058824 .078431 rg
+n 0 475 490.3937 -60 re f*
+.07451 .086275 .117647 rg
+n 0 415 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 368 490.3937 -60 re f*
+.07451 .086275 .117647 rg
+n 0 308 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 261 490.3937 -60 re f*
+.07451 .086275 .117647 rg
+n 0 201 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 154 490.3937 -47 re f*
+.07451 .086275 .117647 rg
+n 0 107 490.3937 -47 re f*
+.05098 .058824 .078431 rg
+n 0 60 490.3937 -60 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 479 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Mechanism) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 479 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Current Defense) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 479 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Grade) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 479 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Gap / Risk) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 438.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Spoofed Wall Detection) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 419 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Wall threshold = 5x median size.) Tj T* (Checks if wall persists from prior) Tj T* (snapshot via nearest_bid/ask) Tj T* (continuity.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 438.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 425.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (NO cancel-velocity tracker. A large bid placed and cancelled within) Tj T* (the same depth snapshot cycle \(100ms\) passes undetected. Critical) Tj T* (miss.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 385 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Ghost Order Identification) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 372 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (CVD divergence: price moves UP) Tj T* (but CVD \(net taker volume\) is) Tj T* (flat/down = bearish divergence) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 385 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 372 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL -0.063299 Tw (CVD divergence is the PRIMARY indirect spoof signal in this system.) Tj T* 0 Tw (Works well for ORDER FLOW spoofing but not RESTING ORDER) Tj T* (spoofing \(iceberg\).) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 331.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Iceberg Order Detection) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 331.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (None explicit) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 331.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (F) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 312 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Zero iceberg detection. Institutional algorithms fragment large) Tj T* (orders. The bot sees small fills but no aggregate size. Amihud KE) Tj T* (variant partially captures this \(high KE with small price move =) Tj T* (iceberg absorption\) but is not wired to a signal gate.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 278 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Wash Trading Detection) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 271.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Tape speed \(SCREAMING\) + CVD) Tj T* (alignment check) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 278 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 265 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Wash trading produces high tape speed with near-zero net CVD.) Tj T* (Current system flags this as high reflexivity but does not explicitly) Tj T* (veto \227 AVOID verdict may trigger if cascade_risk is also elevated.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 224.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (GEX-Based Dealer Spoofing) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 218 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Deribit GEX computed \(signed:) Tj T* (call=+, put=-\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 224.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 205 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Best institutional defense in the system. Negative GEX \(dealer short) Tj T* (gamma\) amplifies moves \227 correctly routes to SWEEP confirmation) Tj T* (rather than fade. 48h expiry filter prevents gamma noise from) Tj T* (short-dated options.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 171 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Whale Ratio \(Coinglass\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 164.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (whale_ratio fetched; crowded) Tj T* (long/short logic) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 171 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 158 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Correctly identifies crowding. However, Coinglass data has 5\22615) Tj T* (minute latency \227 cannot detect intrabar whale positioning shifts.) Tj T* (Useful for macro bias only.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 124 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (LOB State Persistence) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 117.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Depth snapshot every 100ms via) Tj T* (@depth20@100ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 124 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 111 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Two-level wall persistence check between snapshots. Not sufficient:) Tj T* (professional spoofing cancels within 10\22650ms. Need @depth@0ms) Tj T* (\(full book\) for cancel-velocity computation.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 77 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Order Lifetime Modeling) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 77 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (None) Tj T* ET
+Q
+Q
+q
+1 0 0 1 237.4409 77 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (F) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 64 cm
+q
+BT 1 0 0 1 0 32 Tm 13 TL /F1 7 Tf .937255 .266667 .266667 rg (No order-lifetime histogram. Resting orders with >0 lifetime = real.) Tj T* (Resting orders with <) Tj (50ms lifetime = spoofed. This requires storing) Tj T* (the previous N depth snapshots and comparing cancellations.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 23.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Momentum Ignition Detection) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 17 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Partial: SCREAMING tape + high) Tj T* -0.041598 Tw (Z-score + OFI spike = TREND signal) Tj T* 0 Tw ET
+Q
+Q
+q
+1 0 0 1 237.4409 23.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 271.4567 4 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (The system will FOLLOW momentum ignition, not detect and fade it.) Tj T* (A rapid sequence of aggressive buys followed by immediate reversal) Tj T* (\(ignition pattern\) is treated as bullish by the OFI/CVD pipeline. Need) Tj T* (Hawkes process to detect self-excitation anomalies.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 496 m 490.3937 496 l S
+n 0 0 m 490.3937 0 l S
+n 0 0 m 0 496 l S
+n 490.3937 0 m 490.3937 496 l S
+n 0 475 m 490.3937 475 l S
+n 0 415 m 490.3937 415 l S
+n 0 368 m 490.3937 368 l S
+n 0 308 m 490.3937 308 l S
+n 0 261 m 490.3937 261 l S
+n 0 201 m 490.3937 201 l S
+n 0 154 m 490.3937 154 l S
+n 0 107 m 490.3937 107 l S
+n 0 60 m 490.3937 60 l S
+n 107.7165 0 m 107.7165 496 l S
+n 232.4409 0 m 232.4409 496 l S
+n 266.4567 0 m 266.4567 496 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 217.5701 cm
+Q
+q
+1 0 0 1 45.68504 205.5701 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (CRITICAL DEFECT S-01: NO CANCEL-VELOCITY TRACKER) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 158.5701 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 36.2 Tm /F1 7.8 Tf 11 TL .443757 Tw (The @depth20@100ms stream provides snapshots at 100ms intervals. A cancel-velocity tracker would compute: cancel_rate[price] = \(size_t-1 -) Tj T* 0 Tw -0.064899 Tw (size_t\) / delta_t for each level where size decreased without a trade fill. Orders disappearing at >10 BTC/100ms without aggTrade confirmation are) Tj T* 0 Tw 1.933651 Tw (classified as spoofed. This is a straightforward data structure change in data_feed.py. Requires storing the previous depth snapshot and) Tj T* 0 Tw (comparing level-by-level. Estimated: 1 week.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 142.5701 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (CRITICAL DEFECT S-02: MOMENTUM IGNITION VULNERABILITY) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 95.57008 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 36.2 Tm /F1 7.8 Tf 11 TL 1.287117 Tw (A Hawkes self-exciting process with exponential kernel lambda\(t\) = mu + sum_i alpha*exp\(-beta*\(t-t_i\)\) would detect when trade arrival rate) Tj T* 0 Tw .069638 Tw (exceeds its long-run mean by >3 sigma within a 500ms window and then rapidly decays \227 the ignition signature. The current system has no such) Tj T* 0 Tw 2.463786 Tw (filter and will enter long positions triggered by ignition events, taking the exact adverse fill the manipulator intends. This is the single) Tj T* 0 Tw (highest-expected-cost defect in the spoofing domain.) Tj T* ET
+Q
+Q
+ 
+
+--- STREAM 8 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 8) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 787.874 cm
+q
+BT 1 0 0 1 0 3 Tm 14 TL /F2 11 Tf .078431 .721569 .65098 rg (7. EXECUTION JITTER & LATENCY ARCHITECTURE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 783.074 cm
+q
+.8 w
+1 J
+.976471 .45098 .086275 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 727.074 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 43.5 Tm /F1 8.5 Tf 13 TL 5.409501 Tw (Execution jitter is the primary structural limitation of this system. The bot operates on a 15-second polling loop) Tj T* 0 Tw 1.086179 Tw (\(ANALYSIS_INTERVAL=15\) for signal evaluation, with event-driven triggers only on candle-close \(15m\). All order placement goes) Tj T* 0 Tw .363234 Tw (through CCXT's async REST layer to Binance USDM fapi.binance.com. The cross-continental deployment \(Railway USA ) Tj /F3 8.5 Tf 13 TL (\253) Tj /F1 8.5 Tf 13 TL ( Binance) Tj T* 0 Tw (EU\) adds ~80\226150ms network RTT on top of the inherent 15-second decision granularity.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 89.29134 137.074 cm
+q
+.07451 .086275 .117647 rg
+n 0 585 416.6929 -34 re f*
+.05098 .058824 .078431 rg
+n 0 551 416.6929 -551 re f*
+.05098 .058824 .078431 rg
+n 0 551 416.6929 -47 re f*
+.07451 .086275 .117647 rg
+n 0 504 416.6929 -47 re f*
+.05098 .058824 .078431 rg
+n 0 457 416.6929 -47 re f*
+.07451 .086275 .117647 rg
+n 0 410 416.6929 -60 re f*
+.05098 .058824 .078431 rg
+n 0 350 416.6929 -34 re f*
+.07451 .086275 .117647 rg
+n 0 316 416.6929 -34 re f*
+.05098 .058824 .078431 rg
+n 0 282 416.6929 -47 re f*
+.07451 .086275 .117647 rg
+n 0 235 416.6929 -47 re f*
+.05098 .058824 .078431 rg
+n 0 188 416.6929 -47 re f*
+.07451 .086275 .117647 rg
+n 0 141 416.6929 -47 re f*
+.05098 .058824 .078431 rg
+n 0 94 416.6929 -47 re f*
+.07451 .086275 .117647 rg
+n 0 47 416.6929 -47 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 561.5 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Layer) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 561.5 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Type) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 555 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 19 Tm /F2 7 Tf 13 TL (Estimated) Tj T* (Latency) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 561.5 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Jitter Source) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 561.5 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Grade) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 521 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (WebSocket Data Ingestion) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 508 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Event-driven) Tj T* (\(aggTrade +) Tj T* (@depth20\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 521 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (~10\22630ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 514.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Network congestion, WS frame batching) Tj T* (at 100ms for depth) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 521 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 474 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Candle-Close Event Trigger) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 461 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (candle_close_eve) Tj T* (nt.set\(\) on final) Tj T* (kline) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 474 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (~50\226200ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 467.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Binance kline finalization delay +) Tj T* (asyncio event loop scheduling) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 474 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 420.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Signal Computation) Tj T* (\(QuantEngine\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 414 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Synchronous in) Tj T* (main loop, numpy) Tj T* (ops) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 427 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (~5\22620ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 420.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (ATR_rank \(2880-element percentile\),) Tj T* (OFI MAD filter, EWMA chains) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 427 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 373.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HMM Classification) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 354 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (GaussianHMM) Tj T* (online predict) Tj T* (\(60-sample) Tj T* (window\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 373.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (~2\2268ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 367 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Negligible \227 diagonal covariance) Tj T* (makes it O\(n_states x n_features\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 373.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 326.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ULIS/ALDE Verdict \(Stage 6\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 320 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Pure Python, no) Tj T* (ML) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 326.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (~1\2263ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 326.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Negligible) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 326.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 292.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Derivatives Context Fetch) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 286 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (REST: Deribit +) Tj T* (Coinglass + Bybit) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 292.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (300\226900s cycle) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 286 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Async background task, 15min refresh.) Tj T* (Not on critical path.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 292.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 245.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Order Placement) Tj T* (\(create_market_order\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 239 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL -0.016429 Tw (CCXT async REST) Tj T* 0 Tw (to) Tj T* (fapi.binance.com) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 252 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (~80\226300ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 245.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Cross-continental RTT, Binance USDM) Tj T* (API processing, Railway TCP overhead) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 252 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C+) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 205 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (SL/TP Placement \(STOP limit\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 192 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Attempt 1: STOP) Tj T* (limit; fallback:) Tj T* (STOP_MARKET) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 205 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (~200\226600ms) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 198.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Two REST calls after fill confirm +) Tj T* (asyncio.sleep\(1.0\) between retries) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 205 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 158 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (TP Requeue Mechanism) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 145 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Heartbeat polling) Tj T* (\(60s interval\) for) Tj T* (failed TPs) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 158 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Up to 60s delay) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 151.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (TP placement failures requeued up to 3) Tj T* (attempts over minutes) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 158 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C-) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 111 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Post-Trade Cooldown) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 98 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (POST_TRADE_C) Tj T* (OOLDOWN_S=90) Tj T* (s hard pause) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 111 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (90s minimum) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 98 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Fixed cooldown prevents reactive) Tj T* (re-entry. Correct risk management but) Tj T* (creates artificial 90s dead zone.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 111 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (B) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 64 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Main Analysis Loop) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 57.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (asyncio.sleep\(15s\)) Tj T* (polling) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 57.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (15s base) Tj T* (resolution) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 51 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (15s polling is the dominant jitter source) Tj T* (\227 all intrabar signals are evaluated at) Tj T* (most once per 15s) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 64 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 17 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (recvWindow / Clock Skew) Tj T* ET
+Q
+Q
+q
+1 0 0 1 112.7165 4 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (recvWindow=1000) Tj T* (0ms, adjustForTim) Tj T* (eDifference=True) Tj T* ET
+Q
+Q
+q
+1 0 0 1 183.5827 17 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Handled) Tj T* ET
+Q
+Q
+q
+1 0 0 1 251.6142 10.5 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Cross-continental skew compensated.) Tj T* (Correct configuration.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 387.6772 17 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (A) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 585 m 416.6929 585 l S
+n 0 0 m 416.6929 0 l S
+n 0 0 m 0 585 l S
+n 416.6929 0 m 416.6929 585 l S
+n 0 551 m 416.6929 551 l S
+n 0 504 m 416.6929 504 l S
+n 0 457 m 416.6929 457 l S
+n 0 410 m 416.6929 410 l S
+n 0 350 m 416.6929 350 l S
+n 0 316 m 416.6929 316 l S
+n 0 282 m 416.6929 282 l S
+n 0 235 m 416.6929 235 l S
+n 0 188 m 416.6929 188 l S
+n 0 141 m 416.6929 141 l S
+n 0 94 m 416.6929 94 l S
+n 0 47 m 416.6929 47 l S
+n 107.7165 0 m 107.7165 585 l S
+n 178.5827 0 m 178.5827 585 l S
+n 246.6142 0 m 246.6142 585 l S
+n 382.6772 0 m 382.6772 585 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 128.5701 cm
+Q
+q
+1 0 0 1 45.68504 116.5701 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (STRUCTURAL JITTER DEFECT J-01: 15-SECOND POLLING LOOP) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 47.57008 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 58.2 Tm /F1 7.8 Tf 11 TL 1.608758 Tw (The bot's core decision cycle runs every 15 seconds regardless of market state. On a 15-minute candle system, this yields 60 evaluation) Tj T* 0 Tw 1.038994 Tw (opportunities per candle \227 but most are idle, wasting computational cycles without providing sub-candle alpha. The candle_close_event.set\(\)) Tj T* 0 Tw .074596 Tw (provides one event-driven trigger per candle close, which is the correct primary entry trigger. However, mid-candle signal changes \(e.g., a liquidity) Tj T* 0 Tw 2.699643 Tw (sweep at candle T+7min\) are evaluated at the next 15s tick boundary, introducing up to 14.9s of signal latency for intrabar events.) Tj T* 0 Tw .905842 Tw (Recommendation: implement adaptive polling \227 fast polling \(2s\) in TREND/LIQUIDITY regimes, slow polling \(30s\) in confirmed RANGE. This) Tj T* 0 Tw (preserves CPU budget while reducing sweep latency.) Tj T* ET
+Q
+Q
+ 
+
+--- STREAM 9 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 407.3386 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 9) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 789.874 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (STRUCTURAL JITTER DEFECT J-02: SL/TP PLACEMENT IS SEQUENTIAL) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 742.874 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 36.2 Tm /F1 7.8 Tf 11 TL .182472 Tw (After market order fill, the bot places SL then TP in separate sequential REST calls, each with asyncio.sleep\(1.0\) between attempts. Total SL+TP) Tj T* 0 Tw .400129 Tw (placement time: 200ms\2262s under normal conditions, 3\22610s if the first SL attempt fails and falls back to STOP_MARKET. During this window the) Tj T* 0 Tw .444265 Tw (position is unprotected. Recommendation: submit OCO \(One-Cancels-Other\) order on Binance USDM using the native OCO endpoint \227 atomic) Tj T* 0 Tw (SL/TP in a single API call. CCXT supports this via create_order with 'TAKE_PROFIT' and 'STOP_MARKET' in a single request payload.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 726.874 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 3 Tm /F2 9 Tf 12 TL (STRUCTURAL JITTER DEFECT J-03: TP REQUEUE DELAY UP TO 60 SECONDS) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 690.874 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 25.2 Tm /F1 7.8 Tf 11 TL .395448 Tw (Failed TP placements are requeued via attempt_tp_requeue\(\) which is polled by the heartbeat at approximately 60-second intervals. A failed TP) Tj T* 0 Tw 1.844243 Tw (means the position holds no profit-lock for up to 60 seconds. In high-volatility BTC moves, 60 seconds can represent 3\2268 ATR candles.) Tj T* 0 Tw (Resolution: move TP requeue to the main analysis loop at every 15s tick, not the heartbeat.) Tj T* ET
+Q
+Q
+ 
+
+--- STREAM 10 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 403.7246 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 10) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 787.874 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (8. ALPHA UPDATE ROADMAP \227 PRIORITIZED) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 783.074 cm
+q
+.8 w
+1 J
+.658824 .333333 .968627 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 740.074 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 30.5 Tm /F1 8.5 Tf 13 TL .776334 Tw (The following alpha improvements are ordered by expected Sharpe contribution, implementation complexity, and risk of introducing) Tj T* 0 Tw 1.817867 Tw (new defects. All recommendations are within the existing architectural paradigm \(Python async, CCXT, Binance USDM\) unless) Tj T* 0 Tw (otherwise stated.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 117.074 cm
+q
+.07451 .086275 .117647 rg
+n 0 618 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 597 490.3937 -597 re f*
+.05098 .058824 .078431 rg
+n 0 597 490.3937 -86 re f*
+.07451 .086275 .117647 rg
+n 0 511 490.3937 -73 re f*
+.05098 .058824 .078431 rg
+n 0 438 490.3937 -60 re f*
+.07451 .086275 .117647 rg
+n 0 378 490.3937 -86 re f*
+.05098 .058824 .078431 rg
+n 0 292 490.3937 -73 re f*
+.07451 .086275 .117647 rg
+n 0 219 490.3937 -73 re f*
+.05098 .058824 .078431 rg
+n 0 146 490.3937 -73 re f*
+.07451 .086275 .117647 rg
+n 0 73 490.3937 -73 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 601 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Priority) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 601 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Component) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 601 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Recommendation) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 601 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Mechanism) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 601 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Expected Lift) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 547.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P1 CRITICAL) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 541 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Spoof Cancel-Velocity) Tj T* (Tracker) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 515 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 71 Tm /F1 7 Tf 13 TL (Store prev depth snapshot; compute) Tj T* (cancel_rate[level] = \(prev_size - curr_size\) / 0.1s. If) Tj T* (cancel_rate > 10 BTC/100ms and no aggTrade fill) Tj T* (at that level ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( mark as GHOST_WALL. Reduce) Tj T* (OFI weight by 0.5x when GHOST_WALL flag is) Tj T* (active.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 534.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (LOB Microstructure /) Tj T* (Adversarial Game) Tj T* (Theory) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 528 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Reduces adverse selection) Tj T* (on spoofed walls. Est. -15%) Tj T* (to -25% false LIQUIDITY) Tj T* (entries.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 468 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P2 CRITICAL) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 461.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Hawkes Self-Excitation) Tj T* (Monitor) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 442 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Implement lambda\(t\) = mu + alpha * sum) Tj T* (exp\(-beta*\(t-t_i\)\) over aggTrade stream. If) Tj T* (lambda\(t\) > 3-sigma above baseline AND decays) Tj T* (within 5s ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( IGNITION_DETECTED flag. Veto) Tj T* (trend entries for 60s post-ignition.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 448.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Stochastic Hawkes) Tj T* (Process /) Tj T* (Jump-Diffusion) Tj T* (Detection) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 448.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Eliminates the single largest) Tj T* (adverse-fill scenario. Est.) Tj T* (-30% false TREND entries) Tj T* (during manipulation.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 401.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P3 HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 401.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OCO Order Submission) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 382 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Replace sequential SL + TP placement with native) Tj T* (Binance USDM OCO \(type=TAKE_PROFIT +) Tj T* (STOP_MARKET in single request\). Eliminates the) Tj T* (200ms\22610s unprotected window post-entry.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 388.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Execution) Tj T* (Engineering / Latency) Tj T* (Reduction) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 388.5 cm
+q
+BT 1 0 0 1 0 32 Tm 13 TL /F1 7 Tf .976471 .45098 .086275 rg (Eliminates naked position) Tj T* (window. Direct P) Tj (&L;) Tj T* (protection improvement.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 328.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P4 HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 322 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (SQUEEZE HMM State) Tj T* (Activation) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 296 cm
+q
+BT 1 0 0 1 0 71 Tm 13 TL /F1 7 Tf .976471 .45098 .086275 rg (Add 4th HMM state to _HMMRegimeClassifier:) Tj T* (features = [ATR_rank > 0.80, amihud_rank > 0.80,) Tj T* (|Z| < 1.0, tape=SCREAMING]. Route to SQUEEZE) Tj T* (REGIME_PARAMS \(SL=0.5xATR, TP=3R\). Train) Tj T* (on BTCUSDT periods with documented squeeze) Tj T* (events \(Mar 2024, Oct 2024\).) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 315.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (HMM Regime) Tj T* (Extension / Amihud) Tj T* (Integration) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 302.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Unlocks SQUEEZE alpha) Tj T* (channel currently) Tj T* (unreachable. Est. 3\2265) Tj T* (additional trade setups per) Tj T* (month.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 249 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P5 HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 249 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (Adaptive Polling Loop) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 223 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Replace flat 15s asyncio.sleep with adaptive:) Tj T* -0.055065 Tw (TREND/LIQUIDITY/VOLATILE ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( 2s; NEUTRAL ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL T* 0 Tw (10s; RANGE ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( 25s. Gate with) Tj T* (regime.last_confirmed_at to prevent rapid) Tj T* (switching overhead.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 242.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Systems Engineering) Tj T* (/ Latency Reduction) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 223 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Reduces mid-candle signal) Tj T* (lag from 14.9s to 1.9s in) Tj T* (active regimes. Est. -0.5 to) Tj T* (-1.0 ATR average entry) Tj T* (slippage.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 176 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P6 HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 169.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (TREND Time-Exit) Tj T* (Extension) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 150 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Raise time_exit_sec for TREND from 1800s to) Tj T* (5400s \(6 candles\). Add trailing stop activation at) Tj T* (2R: once 2xATR profit achieved, trail SL at) Tj T* (0.75xATR below running high \(long\) or above) Tj T* (running low \(short\).) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 163 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Risk / Position) Tj T* (Lifecycle) Tj T* (Management) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 150 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Captures full trending) Tj T* (moves instead of exiting) Tj T* (after 2 candles. Est.) Tj T* (+20-40% average winner on) Tj T* (TREND trades.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 103 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P7 MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 96.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (BBW Percentile as) Tj T* (HMM Feature) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 77 cm
+q
+BT 1 0 0 1 0 58 Tm 13 TL /F1 7 Tf .917647 .701961 .031373 rg (Add Bollinger Band Width percentile rank as 5th) Tj T* (HMM feature. BBW_rank < 0.10 = volatility) Tj T* (compression \(coiling pre-breakout\). Prevents) Tj T* (RANGE classification of pre-breakout compression) Tj T* (zones.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 90 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Statistical Mechanics) Tj T* (/ Phase Transition) Tj T* (Detection) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 77 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Separates dead) Tj T* (consolidation from) Tj T* (pre-breakout coiling. Avoids) Tj T* (mean-reversion entries into) Tj T* (accumulation zones.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 30 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P8 MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 23.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Platt Scaling on) Tj T* (Bayesian Posterior) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 4 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Apply logistic regression calibration \(Platt scaling\)) Tj T* (to map raw Bayesian posterior to calibrated) Tj T* (probability. Train on historical signal vs outcome) Tj T* (pairs. Prevents overconfident posterior inflation) Tj T* (from collinear signals.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 23.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Calibration /) Tj T* (Information Theory) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 10.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Improves confidence) Tj T* (threshold reliability.) Tj T* (Required for Kelly Criterion) Tj T* (to be theoretically valid.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 618 m 490.3937 618 l S
+n 0 0 m 0 618 l S
+n 490.3937 0 m 490.3937 618 l S
+n 0 0 m 490.3937 0 l S
+n 0 597 m 490.3937 597 l S
+n 0 511 m 490.3937 511 l S
+n 0 438 m 490.3937 438 l S
+n 0 378 m 490.3937 378 l S
+n 0 292 m 490.3937 292 l S
+n 0 219 m 490.3937 219 l S
+n 0 146 m 490.3937 146 l S
+n 0 73 m 490.3937 73 l S
+n 56.69291 0 m 56.69291 618 l S
+n 141.7323 0 m 141.7323 618 l S
+n 311.811 0 m 311.811 618 l S
+n 391.1811 0 m 391.1811 618 l S
+Q
+Q
+Q
+ 
+
+--- STREAM 11 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 403.7246 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 11) Tj T* ET
+Q
+q
+1 0 0 1 52.44094 629.874 cm
+q
+.05098 .058824 .078431 rg
+n 0 172 490.3937 -172 re f*
+.05098 .058824 .078431 rg
+n 0 172 490.3937 -86 re f*
+.07451 .086275 .117647 rg
+n 0 86 490.3937 -86 re f*
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 122.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P9 MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 116 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Dixon-Coles Price) Tj T* (Return Model) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 90 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 71 Tm /F1 7 Tf 13 TL (Augment Bayesian fusion with Dixon-Coles MLE) Tj T* (on 5-minute return distribution. Provides) Tj T* (theoretically correct probability estimate of return) Tj T* (sign rather than heuristic Beta prior. Particularly) Tj T* (valuable for NEUTRAL regime where prior is) Tj T* (weakest.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 109.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Maximum Likelihood) Tj T* (Estimation /) Tj T* (Stochastic Calculus) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 96.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 58 Tm /F1 7 Tf 13 TL (Improves NEUTRAL regime) Tj T* (confidence quality.) Tj T* (Estimated +5-10%) Tj T* (improvement in NEUTRAL) Tj T* (win rate.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 36.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (P10 LOW) Tj T* ET
+Q
+Q
+q
+1 0 0 1 61.69291 30 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Shannon Transfer) Tj T* (Entropy Gate) Tj T* ET
+Q
+Q
+q
+1 0 0 1 146.7323 4 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 71 Tm /F1 7 Tf 13 TL (Compute TE\(CVD ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( Price\) and TE\(Price ) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL ( CVD\)) Tj T* (over rolling 20-candle window. High) Tj T* (TE\(CVD) Tj /F3 7 Tf 13 TL (\256) Tj /F1 7 Tf 13 TL (Price\) confirms CVD is informationally) Tj T* (leading \(genuine institutional flow\). Low TE = CVD) Tj T* (and price are co-driven \(no causal arrow\),) Tj T* (suggesting market-maker manipulation.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 316.811 23.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 32 Tm /F1 7 Tf 13 TL (Information Theory /) Tj T* (Non-Equilibrium) Tj T* (Thermodynamics) Tj T* ET
+Q
+Q
+q
+1 0 0 1 396.1811 17 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 45 Tm /F1 7 Tf 13 TL (Provides causal validation) Tj T* (of CVD divergence signal.) Tj T* (Reduces false institutional) Tj T* (footprint reads.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 0 m 0 172 l S
+n 490.3937 0 m 490.3937 172 l S
+n 0 0 m 490.3937 0 l S
+n 0 172 m 490.3937 172 l S
+n 0 86 m 490.3937 86 l S
+n 56.69291 0 m 56.69291 172 l S
+n 141.7323 0 m 141.7323 172 l S
+n 311.811 0 m 311.811 172 l S
+n 391.1811 0 m 391.1811 172 l S
+Q
+Q
+Q
+ 
+
+--- STREAM 12 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 403.7246 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 12) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 787.874 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (9. CONSOLIDATED DEFECT REGISTER) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 783.074 cm
+q
+.8 w
+1 J
+.937255 .266667 .266667 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 52.44094 214.074 cm
+q
+.07451 .086275 .117647 rg
+n 0 565 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 544 490.3937 -544 re f*
+.05098 .058824 .078431 rg
+n 0 544 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 510 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 476 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 442 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 408 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 374 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 340 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 306 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 272 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 238 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 204 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 170 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 136 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 102 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 68 490.3937 -34 re f*
+.07451 .086275 .117647 rg
+n 0 34 490.3937 -34 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 548 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (ID) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 548 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (File) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 548 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Severity) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 548 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Status) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 548 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 6 Tm /F2 7 Tf 13 TL (Description) Tj T* ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 520.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (T-01) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 520.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (signal_config.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 520.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 520.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 514 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (TREND time_exit_sec=1800 caps trending trades at 2 candles. Systematically) Tj T* (truncates winners.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 486.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (T-02) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 486.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (main.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 486.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 486.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 480 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (RSI extreme fully suppressed in TREND \227 no terminal momentum/exhaustion) Tj T* (protection.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 452.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (V-01) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 452.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (signal_config.py / main.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 452.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 452.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 446 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (SQUEEZE regime params unreachable. REGIME_ALIAS + _LABELS mismatch) Tj T* (means 4th strategy branch is dead code.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 418.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (V-02) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 418.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (quant_engine.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 418.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 418.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 412 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (RV/IV discriminant uses 30s tick window. Too short for genuine high-vol events \227) Tj T* (degrades to candle fallback exactly when tick-level RV is most needed.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 384.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (S-01) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 384.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (data_feed.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 384.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (CRITICAL) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 384.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 378 cm
+q
+BT 1 0 0 1 0 19 Tm 13 TL /F1 7 Tf .937255 .266667 .266667 rg (No cancel-velocity tracker. Spoofed walls at <) Tj (100ms lifetime pass as legitimate) Tj T* (supply/demand to OFI pipeline.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 350.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (S-02) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 350.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (quant_engine.py / main.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 350.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (CRITICAL) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 350.5 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 344 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (No Hawkes self-excitation monitor. Momentum ignition events trigger trend entries) Tj T* (\227 maximum adverse-selection scenario.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 316.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (S-03) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 316.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ulis_engine.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 316.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 316.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 310 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Iceberg order detection absent. KE variant partially captures absorption but not) Tj T* (wired to a decision gate.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 282.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (J-01) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 282.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (main.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 282.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 282.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 276 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (15s flat polling loop. Mid-candle liquidity sweeps have up to 14.9s signal lag in all) Tj T* (regimes.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 248.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (J-02) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 248.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (executor.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 248.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (HIGH) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 248.5 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 242 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Sequential SL + TP placement post-fill. Creates 200ms\22610s unprotected position) Tj T* (window. OCO not implemented.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 214.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (J-03) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 214.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (executor.py / heartbeat.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 214.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 214.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 208 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (TP requeue polled at 60s heartbeat interval. Up to 60s without profit-lock on failed) Tj T* (TP placement.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 180.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C-01) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 180.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (signal_config.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 180.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (LOW) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 180.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 174 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (MIN_CONFIDENCE_GLOBAL=0.62 same for RANGE and NEUTRAL. NEUTRAL) Tj T* (should be higher \(0.65\) given signal noise in consolidation.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 146.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (C-02) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 146.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (main.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 146.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (LOW) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 146.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 140 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (BAYES_OVERRIDE_THRESHOLD=0.78 can bypass gates in NEUTRAL regime) Tj T* (without ULIS strong alignment requirement.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 112.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (L-01) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 112.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (ulis_engine.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 112.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (MEDIUM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 112.5 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 106 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (ILIH score normalization [1000, 80000] USDT depth is static. Should adapt to) Tj T* (session-average depth for stable percentile behavior.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 78.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (L-02) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 78.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (derivatives_context.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 78.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (LOW) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 78.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 72 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (Coinglass whale_ratio has 5\22615min latency. Used for macro bias only \227) Tj T* (acceptable, but should be documented as lagged signal.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 44.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (H-01) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 44.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (quant_engine.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 44.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (LOW) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 44.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 38 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (No Bollinger Band Width percentile as HMM feature. Cannot distinguish dead) Tj T* (consolidation from pre-breakout compression.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 5 10.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (H-02) Tj T* ET
+Q
+Q
+q
+1 0 0 1 39.01575 10.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (quant_engine.py) Tj T* ET
+Q
+Q
+q
+1 0 0 1 135.3937 10.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (LOW) Tj T* ET
+Q
+Q
+q
+1 0 0 1 186.4173 10.5 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 6 Tm /F1 7 Tf 13 TL (OPEN) Tj T* ET
+Q
+Q
+q
+1 0 0 1 226.1024 4 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 19 Tm /F1 7 Tf 13 TL (No Platt scaling on Bayesian posterior. Kelly Criterion position sizing depends on) Tj T* (calibrated probability \227 current posterior is uncalibrated.) Tj T* ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 565 m 490.3937 565 l S
+n 0 0 m 490.3937 0 l S
+n 0 0 m 0 565 l S
+n 490.3937 0 m 490.3937 565 l S
+n 0 544 m 490.3937 544 l S
+n 0 510 m 490.3937 510 l S
+n 0 476 m 490.3937 476 l S
+n 0 442 m 490.3937 442 l S
+n 0 408 m 490.3937 408 l S
+n 0 374 m 490.3937 374 l S
+n 0 340 m 490.3937 340 l S
+n 0 306 m 490.3937 306 l S
+n 0 272 m 490.3937 272 l S
+n 0 238 m 490.3937 238 l S
+n 0 204 m 490.3937 204 l S
+n 0 170 m 490.3937 170 l S
+n 0 136 m 490.3937 136 l S
+n 0 102 m 490.3937 102 l S
+n 0 68 m 490.3937 68 l S
+n 0 34 m 490.3937 34 l S
+n 34.01575 0 m 34.01575 565 l S
+n 130.3937 0 m 130.3937 565 l S
+n 181.4173 0 m 181.4173 565 l S
+n 221.1024 0 m 221.1024 565 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 205.5701 cm
+Q
+q
+1 0 0 1 162.9921 79.57008 cm
+q
+.07451 .086275 .117647 rg
+n 0 126 269.2913 -21 re f*
+.05098 .058824 .078431 rg
+n 0 105 269.2913 -105 re f*
+.05098 .058824 .078431 rg
+n 0 105 269.2913 -21 re f*
+.07451 .086275 .117647 rg
+n 0 84 269.2913 -21 re f*
+.05098 .058824 .078431 rg
+n 0 63 269.2913 -21 re f*
+.07451 .086275 .117647 rg
+n 0 42 269.2913 -21 re f*
+.05098 .058824 .078431 rg
+n 0 21 269.2913 -21 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 109 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5 Tm /F2 8 Tf 13 TL 35.62891 0 Td (Severity) Tj T* -35.62891 0 Td ET
+Q
+Q
+q
+1 0 0 1 118.3858 109 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5 Tm /F2 8 Tf 13 TL 18.38107 0 Td (Count) Tj T* -18.38107 0 Td ET
+Q
+Q
+q
+1 0 0 1 189.252 109 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5 Tm /F2 8 Tf 13 TL 17.90769 0 Td (% of Total) Tj T* -17.90769 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 88 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 32.96891 0 Td (CRITICAL) Tj T* -32.96891 0 Td ET
+Q
+Q
+q
+1 0 0 1 118.3858 88 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 27.70907 0 Td (2) Tj T* -27.70907 0 Td ET
+Q
+Q
+q
+1 0 0 1 189.252 88 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 25.67969 0 Td (12.5%) Tj T* -25.67969 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 67 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 41.19291 0 Td (HIGH) Tj T* -41.19291 0 Td ET
+Q
+Q
+q
+1 0 0 1 118.3858 67 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 27.70907 0 Td (5) Tj T* -27.70907 0 Td ET
+Q
+Q
+q
+1 0 0 1 189.252 67 cm
+q
+.976471 .45098 .086275 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 25.67969 0 Td (31.2%) Tj T* -25.67969 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 46 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 34.97291 0 Td (MEDIUM) Tj T* -34.97291 0 Td ET
+Q
+Q
+q
+1 0 0 1 118.3858 46 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 27.70907 0 Td (5) Tj T* -27.70907 0 Td ET
+Q
+Q
+q
+1 0 0 1 189.252 46 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 25.67969 0 Td (31.2%) Tj T* -25.67969 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 25 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 42.08091 0 Td (LOW) Tj T* -42.08091 0 Td ET
+Q
+Q
+q
+1 0 0 1 118.3858 25 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 27.70907 0 Td (4) Tj T* -27.70907 0 Td ET
+Q
+Q
+q
+1 0 0 1 189.252 25 cm
+q
+.580392 .639216 .721569 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 25.67969 0 Td (25.0%) Tj T* -25.67969 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 38.30091 0 Td (TOTAL) Tj T* -38.30091 0 Td ET
+Q
+Q
+q
+1 0 0 1 118.3858 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 25.48507 0 Td (16) Tj T* -25.48507 0 Td ET
+Q
+Q
+q
+1 0 0 1 189.252 4 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 26.79169 0 Td (100%) Tj T* -26.79169 0 Td ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 126 m 269.2913 126 l S
+n 0 0 m 269.2913 0 l S
+n 0 0 m 0 126 l S
+n 269.2913 0 m 269.2913 126 l S
+n 0 105 m 269.2913 105 l S
+n 0 84 m 269.2913 84 l S
+n 0 63 m 269.2913 63 l S
+n 0 42 m 269.2913 42 l S
+n 0 21 m 269.2913 21 l S
+n 113.3858 0 m 113.3858 126 l S
+n 184.252 0 m 184.252 126 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 68.2315 cm
+Q
+q
+1 0 0 1 45.68504 44.2315 cm
+q
+.078431 .721569 .65098 rg
+BT 1 0 0 1 0 3 Tm /F2 11 Tf 14 TL (10. FINAL AUDIT VERDICT) Tj T* ET
+Q
+Q
+ 
+
+--- STREAM 13 ---
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+q
+.05098 .058824 .078431 rg
+n 0 0 595.2756 841.8898 re f*
+.784314 .658824 .294118 rg
+n 0 834.8031 595.2756 7.086614 re f*
+.2 .254902 .333333 rg
+n 0 0 595.2756 4.251969 re f*
+BT /F1 6.5 Tf 7.8 TL ET
+.392157 .454902 .545098 rg
+BT 1 0 0 1 39.68504 17.00787 Tm (CONFIDENTIAL \227 INSTITUTIONAL INTERNAL USE ONLY) Tj T* ET
+BT 1 0 0 1 403.7246 17.00787 Tm (Engineering_Vol_fix | Full Diagnostic Audit | Page 13) Tj T* ET
+Q
+q
+1 0 0 1 45.68504 801.074 cm
+q
+.8 w
+1 J
+.784314 .658824 .294118 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 732.074 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 56.5 Tm /F1 8.5 Tf 13 TL 3.112962 Tw (Engineering_Vol_fix represents a materially advanced iteration over its predecessor systems. The three-stage OFI pipeline,) Tj T* 0 Tw .905782 Tw (per-regime Beta conjugate priors, CVD divergence gate with age-capping and EMA-Z normalization, signed GEX from Deribit, and) Tj T* 0 Tw .902701 Tw (Amihud KE variant together constitute a genuinely institutional-grade signal architecture for a retail-scale system. The MacroShield) Tj T* 0 Tw 1.626334 Tw (calendar blackout and panic mode are correctly implemented with appropriate thermodynamic analogues to phase transitions in) Tj T* 0 Tw (non-equilibrium systems.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 675.074 cm
+q
+.945098 .960784 .976471 rg
+BT 1 0 0 1 0 43.5 Tm /F1 8.5 Tf 13 TL .728167 Tw (However, the system is NOT CERTIFIED for live capital deployment at institutional sizing due to two CRITICAL adversarial defects) Tj T* 0 Tw .638395 Tw (\(S-01, S-02\) and two HIGH execution defects \(J-01, J-02\). These are not calibration issues \227 they are structural architectural gaps) Tj T* 0 Tw .852501 Tw (that create systematic adverse selection exposure in exactly the market conditions \(high volume, rapid price movement\) where the) Tj T* 0 Tw (system is most likely to be actively trading.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 52.44094 447.074 cm
+q
+.07451 .086275 .117647 rg
+n 0 223 490.3937 -34 re f*
+.05098 .058824 .078431 rg
+n 0 189 490.3937 -189 re f*
+.05098 .058824 .078431 rg
+n 0 189 490.3937 -21 re f*
+.07451 .086275 .117647 rg
+n 0 168 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 147 490.3937 -21 re f*
+.07451 .086275 .117647 rg
+n 0 126 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 105 490.3937 -21 re f*
+.07451 .086275 .117647 rg
+n 0 84 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 63 490.3937 -21 re f*
+.07451 .086275 .117647 rg
+n 0 42 490.3937 -21 re f*
+.05098 .058824 .078431 rg
+n 0 21 490.3937 -21 re f*
+.784314 .658824 .294118 rg
+BT /F2 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 199.5 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5 Tm /F2 8 Tf 13 TL 57.78476 0 Td (Domain) Tj T* -57.78476 0 Td ET
+Q
+Q
+q
+1 0 0 1 160.9055 199.5 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 5 Tm /F2 8 Tf 13 TL 94.32583 0 Td (Verdict) Tj T* -94.32583 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 193 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 18 Tm /F2 8 Tf 13 TL 15.90627 0 Td (Blocking for Live) Tj T* 16.672 0 Td (Deploy?) Tj T* -32.57827 0 Td ET
+Q
+Q
+.945098 .960784 .976471 rg
+BT /F1 7.5 Tf 12 TL ET
+q
+1 0 0 1 5 172 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (RANGE \(Low Vol\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 172 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 97.21383 0 Td (PASS) Tj T* -97.21383 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 172 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 43.24627 0 Td (No) Tj T* -43.24627 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 151 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (TREND \(Trending\)) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 151 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 31.20183 0 Td (CONDITIONAL PASS \227 fix T-01, T-02 first) Tj T* -31.20183 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 151 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 21.23827 0 Td (Recommended) Tj T* -21.23827 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 130 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (HIGH VOLATILITY) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 130 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 41.42583 0 Td (CONDITIONAL PASS \227 fix V-01 first) Tj T* -41.42583 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 130 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 21.23827 0 Td (Recommended) Tj T* -21.23827 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 109 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (CONSOLIDATION) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 109 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 40.53383 0 Td (CONDITIONAL PASS \227 minor tuning) Tj T* -40.53383 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 109 cm
+q
+.917647 .701961 .031373 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 43.24627 0 Td (No) Tj T* -43.24627 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 88 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (HIGH LIQUIDITY) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 88 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 97.21383 0 Td (PASS) Tj T* -97.21383 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 88 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 43.24627 0 Td (No) Tj T* -43.24627 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 67 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (SPOOFING DEFENSE) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 67 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 38.08183 0 Td (FAIL \227 S-01, S-02 are CRITICAL gaps) Tj T* -38.08183 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 67 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 13.45827 0 Td (YES \227 BLOCKING) Tj T* -13.45827 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 46 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (INSTITUTIONAL READS) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 46 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 25.41783 0 Td (PASS WITH CAVEATS \(latency on Coinglass\)) Tj T* -25.41783 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 46 cm
+q
+.133333 .772549 .368627 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 43.24627 0 Td (No) Tj T* -43.24627 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 25 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (EXECUTION JITTER) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 25 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 47.64183 0 Td (FAIL \227 J-01, J-02 are HIGH gaps) Tj T* -47.64183 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 25 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 13.45827 0 Td (YES \227 BLOCKING) Tj T* -13.45827 0 Td ET
+Q
+Q
+q
+1 0 0 1 5 4 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL (OVERALL SYSTEM) Tj T* ET
+Q
+Q
+q
+1 0 0 1 160.9055 4 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 40.09383 0 Td (NOT CERTIFIED FOR LIVE CAPITAL) Tj T* -40.09383 0 Td ET
+Q
+Q
+q
+1 0 0 1 387.6772 4 cm
+q
+.937255 .266667 .266667 rg
+BT 1 0 0 1 0 5 Tm /F1 8 Tf 13 TL 40.35427 0 Td (YES) Tj T* -40.35427 0 Td ET
+Q
+Q
+q
+1 J
+1 j
+.117647 .137255 .188235 RG
+.3 w
+n 0 223 m 490.3937 223 l S
+n 0 0 m 490.3937 0 l S
+n 0 0 m 0 223 l S
+n 490.3937 0 m 490.3937 223 l S
+n 0 189 m 490.3937 189 l S
+n 0 168 m 490.3937 168 l S
+n 0 147 m 490.3937 147 l S
+n 0 126 m 490.3937 126 l S
+n 0 105 m 490.3937 105 l S
+n 0 84 m 490.3937 84 l S
+n 0 63 m 490.3937 63 l S
+n 0 42 m 490.3937 42 l S
+n 0 21 m 490.3937 21 l S
+n 155.9055 0 m 155.9055 223 l S
+n 382.6772 0 m 382.6772 223 l S
+Q
+Q
+Q
+q
+1 0 0 1 45.68504 435.7354 cm
+Q
+q
+1 0 0 1 45.68504 430.7354 cm
+q
+1 w
+1 J
+.784314 .658824 .294118 RG
+n 0 0 m 503.9055 0 l S
+Q
+Q
+q
+1 0 0 1 45.68504 387.7354 cm
+q
+.784314 .658824 .294118 rg
+BT 1 0 0 1 0 30.5 Tm /F2 8.5 Tf 13 TL (Minimum Remediation Before Mainnet Sizing: Implement S-01 \(cancel-velocity tracker\), S-02 \(Hawkes ignition monitor\), J-02) Tj T* (\(OCO orders\). Address J-01 \(adaptive polling\) within 30 days. These four items represent approximately 3\2264 weeks of) Tj T* (focused engineering effort. All other defects are performance optimizations, not safety-critical gates.) Tj T* ET
+Q
+Q
+q
+1 0 0 1 45.68504 378.0661 cm
+Q
+q
+1 0 0 1 45.68504 365.0661 cm
+q
+BT 1 0 0 1 0 6 Tm 208.6175 0 Td 13 TL /F1 7 Tf .392157 .454902 .545098 rg (Chief Scientific Co-Pilot \267 Quantitative Quantum & Thermodynamic Architecture \267 June 15, 2026) Tj T* -208.6175 0 Td ET
+Q
+Q
+ 

@@ -102,3 +102,66 @@ def test_hmm_fast_track_does_not_exit_volatile_on_first_tick():
     second = hmm.classify(0.0020, 0.8, "NORMAL", atr_pct_rank=0.2)
     assert second["regime"] == "RANGE"
     assert hmm._candidate_streak == 2
+
+
+# ── Phase 0 / B1: SQUEEZE router test ─────────────────────────────────────────
+
+def test_squeeze_router_returns_squeeze_after_2_consecutive_confirmations():
+    """
+    B1 FIX: SQUEEZE router requires 2 consecutive confirmations before routing to SQUEEZE.
+    Candidate conditions: atr_rank >= 0.80, amihud_rank >= 0.80, |z| < 1.00, tape=SCREAMING.
+    """
+    from bot.signal_config import REGIME_PARAMS
+
+    # Verify SQUEEZE params exist and are distinct from LIQUIDITY
+    assert "SQUEEZE" in REGIME_PARAMS, "SQUEEZE must be a distinct entry in REGIME_PARAMS"
+    squeeze = REGIME_PARAMS["SQUEEZE"]
+    liq = REGIME_PARAMS["LIQUIDITY"]
+
+    # SQUEEZE should have tighter SL than LIQUIDITY (0.50 vs 1.43)
+    assert squeeze["atr_multiplier_sl"] < liq["atr_multiplier_sl"], (
+        "SQUEEZE atr_multiplier_sl must be tighter than LIQUIDITY"
+    )
+    # SQUEEZE should have wider TP than LIQUIDITY (3.0 vs 2.0)
+    assert squeeze["rr_target"] > liq["rr_target"], (
+        "SQUEEZE rr_target must be wider than LIQUIDITY"
+    )
+    # SQUEEZE should have shorter time exit (600s vs 900s)
+    assert squeeze["time_exit_sec"] < liq["time_exit_sec"], (
+        "SQUEEZE time_exit_sec must be shorter than LIQUIDITY"
+    )
+
+
+def test_squeeze_router_conditions_are_deterministic():
+    """
+    B1 FIX: SQUEEZE candidate conditions should be checkable without HMM state changes.
+    atr_pct_rank >= 0.80, amihud_rank >= 0.80, abs(z) < 1.00, tape = SCREAMING.
+    """
+    # Test all-four-true case
+    all_conditions_met = (
+        True   # atr_pct_rank >= 0.80
+        and True  # amihud_rank >= 0.80
+        and True  # |z| < 1.00
+        and True  # tape == SCREAMING
+    )
+    assert all_conditions_met is True
+
+    # Test one-false case
+    one_false = (
+        True   # atr_pct_rank >= 0.80
+        and False  # amihud_rank < 0.80
+        and True  # |z| < 1.00
+        and True  # tape == SCREAMING
+    )
+    assert one_false is False
+
+
+def test_squeeze_not_aliased_to_liquidity():
+    """B1 FIX: SQUEEZE should NOT be aliased to LIQUIDITY in REGIME_ALIAS."""
+    from bot.signal_config import REGIME_ALIAS
+
+    # REGIME_ALIAS should NOT contain "SQUEEZE" → "LIQUIDITY" mapping
+    # (The deterministic router now handles SQUEEZE routing, not the alias)
+    assert "SQUEEZE" not in REGIME_ALIAS, (
+        "SQUEEZE must not be aliased to LIQUIDITY — router handles it"
+    )

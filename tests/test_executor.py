@@ -845,3 +845,149 @@ class TestRiskSizing:
 
         # Gross risk-only size would be 1.0. Fee-aware sizing should be smaller.
         assert size == pytest.approx(10.0 / (10.0 + 0.095))
+
+
+# ── Phase 0 / A1: Regression test for TP requeue on open positions ────────────
+
+class TestTpRequeueOnOpenPosition:
+    """A1 FIX: TP requeue must be called while position is open, not only on exit."""
+
+    @pytest.mark.asyncio
+    async def test_attempt_tp_requeue_returns_false_when_no_pending_requeue(self):
+        """attempt_tp_requeue should return False when requeue_tp_attempts is 0."""
+        executor = _make_executor()
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 0.001,
+            "requeue_tp_attempts": 0,  # No pending requeue
+        }
+        result = await executor.attempt_tp_requeue()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_tp_requeue_returns_false_when_no_active_position(self):
+        """attempt_tp_requeue should return False when active_position is None."""
+        executor = _make_executor()
+        executor.active_position = None
+        result = await executor.attempt_tp_requeue()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_tp_requeue_success_updates_bracket_status(self):
+        """A1/D2 FIX: Successful TP requeue should set bracket_status to BRACKETED."""
+        executor = _make_executor()
+        executor.active_position = {
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "size": 0.001,
+            "requeue_tp_attempts": 1,
+            "requeue_tp_side": "sell",
+            "requeue_tp_size": 0.001,
+            "requeue_tp_price": 1030.0,
+            "requeue_tp_symbol": "BTC/USDT:USDT",
+            "bracket_status": "SL_ONLY",
+            "bracket_missing_leg": "TP",
+        }
+        executor.exchange.create_order = AsyncMock(return_value={"id": "tp-requeue-1"})
+
+        result = await executor.attempt_tp_requeue()
+
+        assert result is True
+        assert executor.active_position["bracket_status"] == "BRACKETED"
+        assert executor.active_position["bracket_missing_leg"] is None
+        assert executor.active_position["tp_order_id"] == "tp-requeue-1"
+        assert "requeue_tp_attempts" not in executor.active_position
+
+
+# ── Phase 0 / D2: Bracket status tracking ─────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_position_enters_with_bracket_status_on_successful_tp(self):
+        """D2 FIX: Position entered with TP should have bracket_status=BRACKETED."""
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.is_futures = True
+        executor.exchange_id = "binanceusdm"
+        executor.active_position = None
+        executor.pending_order = None
+        executor.failed_order_ts = 0.0
+        executor.get_usdt_balance = AsyncMock(return_value=10_000.0)
+        executor.exchange.amount_to_precision = MagicMock(return_value="0.01")
+        executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+        executor.exchange.create_market_order = AsyncMock(return_value={
+            "id": "entry-1",
+            "status": "closed",
+            "average": 1000.0,
+        })
+        executor.exchange.create_order = AsyncMock(side_effect=[
+            {"id": "sl-1"},
+            {"id": "tp-1"},
+        ])
+        executor._log_trade = MagicMock(return_value="trade-1")
+
+        result = await executor.execute_signal(
+            symbol="BTCUSDT",
+            current_price=1000.0,
+            signal={
+                "verdict": "BUY",
+                "confidence": 0.8,
+                "stop_loss": 990.0,
+                "take_profit": 1030.0,
+                "atr_at_entry": 10.0,
+            },
+            max_risk_pct=1.0,
+            account_size=10_000.0,
+        )
+
+        assert result is True
+        assert executor.active_position["bracket_status"] == "BRACKETED"
+        assert executor.active_position["bracket_missing_leg"] is None
+        assert executor.active_position["sl_order_id"] == "sl-1"
+        assert executor.active_position["tp_order_id"] == "tp-1"
+
+    @pytest.mark.asyncio
+    async def test_position_enters_with_sl_only_status_on_tp_failure(self):
+        """D2 FIX: Position entered without TP should have bracket_status=SL_ONLY."""
+        executor = _make_executor(dry_run=False)
+        executor.dry_run = False
+        executor.is_futures = True
+        executor.exchange_id = "binanceusdm"
+        executor.active_position = None
+        executor.pending_order = None
+        executor.failed_order_ts = 0.0
+        executor.get_usdt_balance = AsyncMock(return_value=10_000.0)
+        executor.exchange.amount_to_precision = MagicMock(return_value="0.01")
+        executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+        executor.exchange.create_market_order = AsyncMock(return_value={
+            "id": "entry-1",
+            "status": "closed",
+            "average": 1000.0,
+        })
+        executor.exchange.create_order = AsyncMock(side_effect=[
+            {"id": "sl-1"},
+            Exception("TP rejected"),
+            Exception("TP rejected"),
+            Exception("TP rejected"),
+        ])
+        executor._log_trade = MagicMock(return_value="trade-1")
+
+        result = await executor.execute_signal(
+            symbol="BTCUSDT",
+            current_price=1000.0,
+            signal={
+                "verdict": "BUY",
+                "confidence": 0.8,
+                "stop_loss": 990.0,
+                "take_profit": 1030.0,
+                "atr_at_entry": 10.0,
+            },
+            max_risk_pct=1.0,
+            account_size=10_000.0,
+        )
+
+        assert result is True
+        assert executor.active_position["bracket_status"] == "SL_ONLY"
+        assert executor.active_position["bracket_missing_leg"] == "TP"
+        assert executor.active_position["sl_order_id"] == "sl-1"
+        assert executor.active_position["tp_order_id"] is None

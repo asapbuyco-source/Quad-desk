@@ -1201,6 +1201,11 @@ class TradingExecutor:
                 "regime":           signal.get("regime", "NEUTRAL"),
                 "atr_at_entry":     signal.get("atr_at_entry", 0.0),
                 "entry_ts":         time.time(),
+                # D2 FIX: Dry-run has no exchange bracket legs, but the
+                # simulated position is fully represented by local SL/TP logic.
+                "bracket_status":       "DRY_RUN",
+                "bracket_missing_leg":  None,
+                "last_bracket_check_ts": time.time(),
             }
             # Lock released here — Telegram call is outside the critical section
             await self.notifier.send_trade_alert(
@@ -1376,6 +1381,10 @@ class TradingExecutor:
                     "regime":           signal.get("regime", "NEUTRAL"),
                     "atr_at_entry":     signal.get("atr_at_entry", 0.0),
                     "entry_ts":         time.time(),
+                    # D2 FIX: Explicit bracket status for live positions.
+                    "bracket_status":       "BRACKETED" if (sl_placed and current_tp_placed) else "SL_ONLY",
+                    "bracket_missing_leg":  None if (sl_placed and current_tp_placed) else ("TP" if sl_placed else "SL"),
+                    "last_bracket_check_ts": time.time(),
                 }
 
             if self.is_futures:
@@ -2454,6 +2463,9 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                     },
                 )
                 pos["tp_order_id"] = tp_order.get("id")
+                pos["bracket_status"] = "BRACKETED"
+                pos["bracket_missing_leg"] = None
+                pos["last_bracket_check_ts"] = time.time()
                 for k in ["requeue_tp_attempts", "requeue_tp_side", "requeue_tp_size", "requeue_tp_price", "requeue_tp_symbol"]:
                     pos.pop(k, None)
                 logger.info(f"[Executor] TP requeue SUCCESS — TP placed at {tp_price} (attempt {attempts}) ✓")
