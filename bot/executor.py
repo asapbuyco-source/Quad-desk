@@ -926,6 +926,9 @@ class TradingExecutor:
         stop_loss   = float(signal.get("stop_loss", 0))
         take_profit = float(signal.get("take_profit", 0))
 
+        # Reset bracket sentinel
+        self._bracket_handled = False
+
         # Guard rails
         if "WAIT" in verdict:
             return
@@ -1388,108 +1391,123 @@ class TradingExecutor:
                 }
 
             if self.is_futures:
-                # ── FUTURES: STOP (stop-limit) + TAKE_PROFIT_MARKET ──────────
-                # Binance USDM futures uses order type "STOP" for stop-limit orders
-                # (NOT "STOP_LIMIT" which is a spot-only type). "STOP" requires both
-                # a stopPrice (trigger) and a price (limit fill level).
-                # ATR buffer (atr * 0.02) gives ~$63 of slippage room on BTC.
-                # If "STOP" is rejected by the exchange, we fall back to STOP_MARKET
-                # so the bot never enters a position naked without any SL protection.
+                # ── FUTURES: Batch bracket placement using USD-M compatible orders ─
+                # Try batch orders first (preferred), then individual orders sequentially.
+                # If any leg fails, cancel sibling and emergency-flatten per plan spec.
                 atr_for_sl = signal.get("atr_at_entry", 0.0)
                 atr_multiplier = 0.015 if (side == "sell" and funding_rate > 0.00008) else 0.02
                 sl_limit_price = float(self.exchange.price_to_precision(
                     ex_symbol,
                     stop_loss + (atr_for_sl * atr_multiplier) if side == "buy" else stop_loss - (atr_for_sl * atr_multiplier)
                 ))
-                sl_order = None
-                _sl_last_err = None
-                # ── Attempt 1: STOP (stop-limit, preferred — no slippage) ─────
-                for attempt in range(3):
-                    try:
-                        sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP", side=sl_side,
-                            amount=fmt_size,
-                            price=sl_limit_price,
-                            params={
-                                "stopPrice":  float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
-                                "reduceOnly": True,   # FIXED: reduceOnly works with amount; closePosition does not
-                            },
-                        )
-                        sl_placed = True
-                        logger.info(f"[Executor] Futures STOP (stop-limit) SL at {stop_loss} (limit={sl_limit_price}) ✓")
-                        break
-                    except Exception as e:
-                        _sl_last_err = e
-                        logger.warning(f"[Executor] Futures STOP attempt {attempt+1}/3 failed: {e}")
-                        if attempt < 2:
-                            await asyncio.sleep(1.0)
 
-                # ── Fallback: STOP_MARKET if STOP rejected ────────────────────
-                if not sl_placed:
-                    logger.warning(
-                        f"[Executor] STOP order rejected after 3 attempts ({_sl_last_err}). "
-                        f"Falling back to STOP_MARKET — slippage risk accepted over naked position."
-                    )
-                    try:
-                        sl_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="STOP_MARKET", side=sl_side,
-                            amount=fmt_size,
-                            params={
-                                "stopPrice":     float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
-                                "reduceOnly": True,
-                            },
-                        )
-                        sl_placed = True
-                        logger.info(f"[Executor] Futures STOP_MARKET SL (fallback) at {stop_loss} ✓")
-                    except Exception as e2:
-                        raise RuntimeError(
-                            f"SL placement failed: STOP ({_sl_last_err}) and STOP_MARKET ({e2}) both rejected"
-                        )
-                sl_order_id = sl_order.get("id")
-                _activate_position()
+                batch_orders = [
+                    {
+                        "symbol": ex_symbol,
+                        "type": "STOP",
+                        "side": sl_side,
+                        "amount": fmt_size,
+                        "price": sl_limit_price,
+                        "params": {
+                            "stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
+                            "reduceOnly": True,
+                        },
+                    },
+                    {
+                        "symbol": ex_symbol,
+                        "type": "TAKE_PROFIT_MARKET",
+                        "side": sl_side,
+                        "amount": fmt_size,
+                        "params": {
+                            "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                            "reduceOnly": True,
+                            "workingType": "MARK_PRICE",
+                        },
+                    },
+                ]
 
-                tp_order = None
-                _tp_last_err = None
-                for attempt in range(3):
-                    try:
-                        tp_order = await self.exchange.create_order(
-                            symbol=ex_symbol, type="TAKE_PROFIT_MARKET", side=sl_side,
-                            amount=fmt_size,
-                            params={
-                                "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                                "reduceOnly": True,
-                                "workingType": "MARK_PRICE",
-                            },
-                        )
-                        tp_placed = True
-                        break
-                    except Exception as e:
-                        _tp_last_err = e
-                        logger.warning(f"[Executor] Futures TP attempt {attempt+1}/3 failed: {e}")
-                        if attempt < 2:
-                            await asyncio.sleep(1.0)
-                if not tp_placed:
-                    # SL IS placed — position is not naked, just has no profit target.
-                    # H4 FIX: Track requeue attempts so the heartbeat can retry TP placement
-                    # up to MAX_REQUEUE_ATTEMPTS before giving up and alerting the operator.
-                    self.active_position["requeue_tp_attempts"] = 1
-                    self.active_position["requeue_tp_side"] = sl_side
-                    self.active_position["requeue_tp_size"] = fmt_size
-                    self.active_position["requeue_tp_price"] = float(
-                        self.exchange.price_to_precision(ex_symbol, take_profit)
-                    )
-                    self.active_position["requeue_tp_symbol"] = ex_symbol
-                    _tp_warn = (
-                        f"⚠️ TP PLACEMENT FAILED for {side.upper()} {ex_symbol} @ {current_price}. "
-                        f"SL={stop_loss} IS active (id={sl_order_id}). "
-                        f"Will retry TP placement (1/{MAX_REQUEUE_ATTEMPTS}). MONITOR MANUALLY."
-                    )
-                    logger.error(f"[Executor] {_tp_warn}")
-                    await self.notifier.send_error_alert(_tp_warn)
-                    tp_order_id = None
-                else:
-                    tp_order_id = tp_order.get("id")
-                    logger.info(f"[Executor] Futures TAKE_PROFIT_LIMIT at {take_profit} (id={tp_order_id}) ✓")
+                sl_order_id = None
+                tp_order_id = None
+                bracket_accepted = False
+
+                # Attempt 1: Batch orders (preferred for atomicity)
+                try:
+                    batch_result = await self.exchange.create_orders(batch_orders)
+                    sl_order_id = batch_result[0].get("id")
+                    tp_order_id = batch_result[1].get("id")
+                    sl_placed = True
+                    tp_placed = True
+                    bracket_accepted = True
+                    logger.info(f"[Executor] Futures batch bracket placed: SL={sl_order_id}, TP={tp_order_id}")
+                except Exception as batch_err:
+                    logger.warning(f"[Executor] Batch orders failed ({batch_err}). Trying individual orders...")
+                    # Attempt 2: Individual orders sequentially
+                    sl_placed = False
+                    tp_placed = False
+                    _sl_err = None
+                    _tp_err = None
+
+                    for attempt in range(3):
+                        try:
+                            sl_order = await self.exchange.create_order(
+                                symbol=ex_symbol, type="STOP", side=sl_side,
+                                amount=fmt_size, price=sl_limit_price,
+                                params={
+                                    "stopPrice": float(self.exchange.price_to_precision(ex_symbol, stop_loss)),
+                                    "reduceOnly": True,
+                                },
+                            )
+                            sl_placed = True
+                            sl_order_id = sl_order.get("id")
+                            logger.info(f"[Executor] Futures SL placed individually: {sl_order_id}")
+                            break
+                        except Exception as e:
+                            _sl_err = e
+                            if attempt < 2:
+                                await asyncio.sleep(1.0)
+
+                    for attempt in range(3):
+                        try:
+                            tp_order = await self.exchange.create_order(
+                                symbol=ex_symbol, type="TAKE_PROFIT_MARKET", side=sl_side,
+                                amount=fmt_size,
+                                params={
+                                    "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                                    "reduceOnly": True,
+                                    "workingType": "MARK_PRICE",
+                                },
+                            )
+                            tp_placed = True
+                            tp_order_id = tp_order.get("id")
+                            logger.info(f"[Executor] Futures TP placed individually: {tp_order_id}")
+                            break
+                        except Exception as e:
+                            _tp_err = e
+                            if attempt < 2:
+                                await asyncio.sleep(1.0)
+
+                    if not sl_placed or not tp_placed:
+                        failed_leg = "SL" if not sl_placed else "TP"
+                        sibling_leg_id = tp_order_id if not sl_placed else sl_order_id
+                        sibling_leg_type = "TP" if not sl_placed else "SL"
+                        logger.error(f"[Executor] {failed_leg} failed after all attempts. Cancelling sibling {sibling_leg_type} (id={sibling_leg_id}) and flattening.")
+                        if sibling_leg_id:
+                            try:
+                                await self.exchange.cancel_order(sibling_leg_id, ex_symbol)
+                                logger.info(f"[Executor] Cancelled {sibling_leg_type} order {sibling_leg_id}")
+                            except Exception as cancel_err:
+                                logger.warning(f"[Executor] Could not cancel {sibling_leg_type}: {cancel_err}")
+                        flatten_side = "sell" if side == "buy" else "buy"
+                        try:
+                            await self.exchange.create_market_order(ex_symbol, flatten_side, fmt_size, params={"reduceOnly": True})
+                            logger.info(f"[Executor] Emergency flatten executed.")
+                        except Exception as flatten_err:
+                            logger.critical(f"[Executor] Emergency flatten FAILED: {flatten_err}. MANUAL INTERVENTION REQUIRED.")
+                            self._flatten_failed = True
+                        self._bracket_handled = True
+                        raise RuntimeError(f"Bracket placement failed: {failed_leg} leg rejected")
+
+                _activate_position(tp_order_id, tp_placed)
 
             else:
                 # ── SPOT: Exchange-specific limit SL/TP orders ────────────────
@@ -1599,7 +1617,12 @@ class TradingExecutor:
             # ── EMERGENCY: SL failed — position is NAKED. Flatten immediately. ──
             # Note: TP-only failures are handled above and do NOT reach here —
             # the position keeps its SL in that case and is therefore still protected.
-            if self.active_position is None and 'order' in locals() and order and order.get('id'):
+            # Also skip if _bracket_handled is True — that means the bracket fallback
+            # already cancelled the sibling and flattened internally.
+            if getattr(self, '_bracket_handled', False):
+                logger.info("[Executor] _bracket_handled=True — skipping outer emergency flatten.")
+                self._bracket_handled = False
+            elif self.active_position is None and 'order' in locals() and order and order.get('id'):
                 critical_msg = (
                     f"🚨 CRITICAL: SL PLACEMENT FAILED after market fill! "
                     f"FLATTENING NAKED {side.upper()} {ex_symbol} NOW. Error: {e}"
@@ -1952,10 +1975,21 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
                     pos["_be_locked"] = True
 
         profit_target = be_lock_trigger * atr_at_entry
+        regime = pos.get("regime", "NEUTRAL")
+        if regime == "RANGE" and metrics:
+            z_ret = metrics.get("zScore_ret", 0.0)
+            if side == "buy" and z_ret > 0:
+                profit_target *= 0.70
+                logger.info(f"[Executor] RANGE dynamic BE: z_ret={z_ret:.3f} > 0 (reversal). Accelerating BE to {profit_target:.2f}")
+            elif side == "sell" and z_ret < 0:
+                profit_target *= 0.70
+                logger.info(f"[Executor] RANGE dynamic BE: z_ret={z_ret:.3f} < 0 (reversal). Accelerating BE to {profit_target:.2f}")
+
         if side == "buy":
             unrealized_pnl = current_price - entry_price
         else:
             unrealized_pnl = entry_price - current_price
+
         if unrealized_pnl >= profit_target:
             if pos.get("_be_locked", False):
                 return
@@ -1965,6 +1999,133 @@ Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
             )
             await self.move_sl_to_breakeven(pos["symbol"], entry_price)
             pos["_be_locked"] = True
+
+    async def check_trailing_stop(self, current_price: float, atr: float) -> bool:
+        """TREND trailing stop: activate after 2R profit, trail at 0.75*ATR behind running high/low."""
+        if not self.active_position:
+            return False
+        pos = self.active_position
+        regime = pos.get("regime", "NEUTRAL")
+        if regime != "TREND":
+            return False
+
+        atr_at_entry = pos.get("atr_at_entry", 0.0)
+        if atr_at_entry <= 0:
+            return False
+
+        entry_price = pos["entry_price"]
+        side = pos["side"]
+        risk_dist = abs(entry_price - pos.get("stop_loss", entry_price))
+
+        activation_2r = 2.0 * risk_dist
+        if side == "buy":
+            unrealized_pnl = current_price - entry_price
+        else:
+            unrealized_pnl = entry_price - current_price
+
+        if unrealized_pnl < activation_2r:
+            pos["_trailing_active"] = False
+            return False
+
+        if not pos.get("_trailing_active", False):
+            logger.info(f"[Executor] TREND trailing stop ACTIVATED at profit={unrealized_pnl:.2f} >= 2R={activation_2r:.2f}")
+            pos["_trailing_active"] = True
+            pos["_trailing_running_high"] = current_price if side == "buy" else current_price
+            pos["_trailing_running_low"] = current_price if side == "sell" else current_price
+
+        trailing_atr = 0.75 * atr
+        trailing_stop = None
+        if side == "buy":
+            new_high = max(pos.get("_trailing_running_high", current_price), current_price)
+            trailing_stop = new_high - trailing_atr
+            pos["_trailing_running_high"] = new_high
+            if trailing_stop <= (pos.get("stop_loss", 0) or 0):
+                return False
+        else:
+            new_low = min(pos.get("_trailing_running_low", current_price), current_price)
+            trailing_stop = new_low + trailing_atr
+            pos["_trailing_running_low"] = new_low
+            if trailing_stop >= (pos.get("stop_loss", float('inf')) or float('inf')):
+                return False
+
+        old_sl = pos.get("stop_loss", entry_price)
+
+        if self.dry_run:
+            pos["stop_loss"] = trailing_stop
+            logger.info(f"[Executor] DRY-RUN: Trailing SL {old_sl:.2f} -> {trailing_stop:.2f}")
+            return True
+
+        sl_order_id = pos.get("sl_order_id")
+        if not sl_order_id:
+            logger.warning("[Executor] Trailing stop: no sl_order_id to cancel/replace")
+            return False
+
+        sl_side = "sell" if side == "buy" else "buy"
+        try:
+            await self.exchange.cancel_order(sl_order_id, pos["symbol"])
+            logger.info(f"[Executor] Cancelled old SL order {sl_order_id}")
+        except Exception as cancel_err:
+            logger.error(f"[Executor] Trailing stop: cancel failed ({cancel_err}). Aborting replacement to avoid duplicate stops.")
+            return False
+
+        atr_for_sl = atr
+        atr_multiplier = 0.02
+        sl_limit_price = float(self.exchange.price_to_precision(
+            pos["symbol"],
+            trailing_stop + (atr_for_sl * atr_multiplier) if side == "buy" else trailing_stop - (atr_for_sl * atr_multiplier)
+        ))
+        try:
+            new_sl_order = await self.exchange.create_order(
+                symbol=pos["symbol"],
+                type="STOP",
+                side=sl_side,
+                amount=pos["size"],
+                price=sl_limit_price,
+                params={
+                    "stopPrice": float(self.exchange.price_to_precision(pos["symbol"], trailing_stop)),
+                    "reduceOnly": True,
+                },
+            )
+            pos["stop_loss"] = trailing_stop
+            pos["sl_order_id"] = new_sl_order.get("id")
+            logger.info(f"[Executor] Trailing SL placed: {new_sl_order.get('id')} at {trailing_stop:.2f}")
+            return True
+        except Exception as replace_err:
+            logger.error(f"[Executor] Trailing SL placement failed ({replace_err}). Restoring old SL at {old_sl:.2f} to avoid naked position.")
+            old_sl_limit = float(self.exchange.price_to_precision(
+                pos["symbol"],
+                old_sl + (atr_for_sl * atr_multiplier) if side == "buy" else old_sl - (atr_for_sl * atr_multiplier)
+            ))
+            try:
+                restore_order = await self.exchange.create_order(
+                    symbol=pos["symbol"],
+                    type="STOP",
+                    side=sl_side,
+                    amount=pos["size"],
+                    price=old_sl_limit,
+                    params={
+                        "stopPrice": float(self.exchange.price_to_precision(pos["symbol"], old_sl)),
+                        "reduceOnly": True,
+                    },
+                )
+                pos["sl_order_id"] = restore_order.get("id")
+                logger.info(f"[Executor] Old SL restored: {restore_order.get('id')} at {old_sl:.2f}")
+            except Exception as restore_err:
+                logger.critical(f"[Executor] CRITICAL: Failed to restore old SL ({restore_err}). Emergency flattening to avoid naked position.")
+                try:
+                    flatten_side = "sell" if side == "buy" else "buy"
+                    await self.exchange.create_market_order(
+                        pos["symbol"], flatten_side, pos["size"],
+                        params={"reduceOnly": True},
+                    )
+                    logger.info("[Executor] Emergency flatten after SL restore failure successful.")
+                except Exception as flatten_err:
+                    logger.critical(f"[Executor] Emergency flatten also FAILED ({flatten_err}). MANUAL INTERVENTION REQUIRED.")
+                    self._flatten_failed = True
+                if self.active_position:
+                    self.active_position = None
+                self.pending_order = None
+            return False
 
     async def check_time_exit(self, current_price: float) -> tuple:
         """Close positions that exceed their regime max-hold window."""

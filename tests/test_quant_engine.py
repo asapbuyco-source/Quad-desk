@@ -191,3 +191,18 @@ def test_trend_time_exit_longer_than_other_regimes():
             f"TREND hard_cap ({trend['time_exit_hard_cap_s']}) should exceed "
             f"{regime} ({params['time_exit_hard_cap_s']})"
         )
+
+
+def test_volatile_has_atr_multiplier_sl():
+    """VOLATILE must have atr_multiplier_sl configured."""
+    from bot.signal_config import REGIME_PARAMS
+    volatile = REGIME_PARAMS["VOLATILE"]
+    assert "atr_multiplier_sl" in volatile, "VOLATILE missing atr_multiplier_sl"
+    assert volatile["atr_multiplier_sl"] == 1.65, f"Expected 1.65, got {volatile['atr_multiplier_sl']}"
+
+
+def test_neutral_min_confidence_is_65():
+    """NEUTRAL min_confidence must be 0.65."""
+    from bot.signal_config import REGIME_PARAMS
+    neutral = REGIME_PARAMS["NEUTRAL"]
+    assert neutral["min_confidence"] == 0.65, f"Expected 0.65, got {neutral['min_confidence']}"

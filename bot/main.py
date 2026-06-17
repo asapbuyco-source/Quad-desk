@@ -1225,6 +1225,61 @@ def _get_adaptive_interval(has_active_position: bool, executor) -> int:
 
 
 
+def _route_volatile(z_ret: float, tape: str) -> str:
+    """Route VOLATILE regime to TREND, MEAN_REVERSION, or BLOCK based on kinetic energy.
+
+    KE = 0.5 * zScore_ret^2
+    - KE > 4.5  → BLOCK (chaotic — no predictable edge)
+    - KE >= 0.32 → TREND
+    - KE < 0.32 and SCREAMING tape → BLOCK
+    - KE < 0.32 and not SCREAMING → MEAN_REVERSION
+    """
+    KE = 0.5 * (z_ret ** 2)
+    if KE > 4.5:
+        logger.info(f"[VOLATILE Route] KE={KE:.3f} > 4.5 (chaotic) — BLOCK")
+        return "BLOCK"
+    if KE >= 0.32:
+        return "TREND"
+    if tape == "SCREAMING":
+        logger.info(f"[VOLATILE Route] KE={KE:.3f} < 0.32 but tape=SCREAMING — BLOCK")
+        return "BLOCK"
+    return "MEAN_REVERSION"
+
+
+def _apply_rv_iv_override(
+    regime: str,
+    rv_iv_ratio: float,
+    vol_state: str,
+    rv_data_stale: bool,
+) -> str:
+    """Apply RV/IV real-time discriminant override to the regime classification.
+
+    Extracted as a testable helper.  Called from _compute_signal() after HMM
+    regime detection to prevent the HMM from hallucinating VOLATILE in low-RV
+    environments or misclassifying RANGE during expansion.
+    """
+    if regime == "VOLATILE":
+        if rv_data_stale:
+            logger.info(
+                f"[Regime Override] HMM VOLATILE trusted — live tick RV is insufficient (stale). "
+                f"RV/IV ratio={rv_iv_ratio:.2f} ({vol_state}). Not downgrading."
+            )
+        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.8:
+            logger.warning(
+                f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
+                f"({vol_state}). Overriding to NEUTRAL."
+            )
+            return "NEUTRAL"
+    elif regime == "RANGE":
+        if vol_state == "EXPANSION" or rv_iv_ratio > 1.2:
+            logger.warning(
+                f"[Regime Override] HMM lagging. RV/IV ratio={rv_iv_ratio:.2f} "
+                f"({vol_state}). Elevating RANGE to VOLATILE."
+            )
+            return "VOLATILE"
+    return regime
+
+
 def _detect_regime(
     metrics: Dict[str, Any],
     buy_walls: List[float],
@@ -1446,6 +1501,8 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
     # FIX-P5: Per-candle sweep deduplication.
     # The same wick on the same candle was re-firing every 15s cycle (audit Problem 5).
     # Only allow one sweep signal per unique candle open-timestamp.
+    # IMPORTANT: last_fired_sweep_candle_ts is only set AFTER strategy confirmation
+    # to allow re-checking the same candle if reversal hasn't occurred yet.
     for idx, label in [(-1, "live"), (-2, "prev")]:
         candle = candle_history[idx]
         candle_open_ts = float(candle.get("time", 0.0))
@@ -1460,13 +1517,21 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
         if candle["high"] > nearest_sell and price < nearest_sell:
             logger.info(f"[Sweep] ABOVE_HIGHS at {nearest_sell:.2f} (wick={candle['high']:.2f})")
             sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
-            feed_state.last_fired_sweep_candle_ts = candle_open_ts
+            feed_state.sweep_pending_candle_ts = candle_open_ts
+            if getattr(feed_state, "sweep_impulse_candle_ts", None) != candle_open_ts:
+                feed_state.sweep_impulse_z_ret = metrics.get("zScore_ret", 0.0)
+                feed_state.sweep_impulse_candle_ts = candle_open_ts
+                logger.info(f"[Sweep] Stored sweep impulse z_ret={feed_state.sweep_impulse_z_ret:.3f} candle_ts={candle_open_ts:.0f} (INITIAL)")
             return "ABOVE_HIGHS", sweep_ts, float(candle["high"])
 
         if candle["low"] < nearest_buy and price > nearest_buy:
             logger.info(f"[Sweep] BELOW_LOWS at {nearest_buy:.2f} (wick={candle['low']:.2f})")
             sweep_ts = time.time() if label == "live" else float(candle["time"]) + 900.0
-            feed_state.last_fired_sweep_candle_ts = candle_open_ts
+            feed_state.sweep_pending_candle_ts = candle_open_ts
+            if getattr(feed_state, "sweep_impulse_candle_ts", None) != candle_open_ts:
+                feed_state.sweep_impulse_z_ret = metrics.get("zScore_ret", 0.0)
+                feed_state.sweep_impulse_candle_ts = candle_open_ts
+                logger.info(f"[Sweep] Stored sweep impulse z_ret={feed_state.sweep_impulse_z_ret:.3f} candle_ts={candle_open_ts:.0f} (INITIAL)")
             return "BELOW_LOWS", sweep_ts, float(candle["low"])
 
     return None, None, None
@@ -1567,21 +1632,64 @@ def _strategy_mean_reversion(metrics: Dict[str, Any], z_threshold: float = 1.5) 
     """B4 FIX: Hard RSI floors — RSI < 45 for longs, RSI > 55 for shorts."""
     z = metrics.get("zScore", 0.0)
     rsi = metrics.get("rsi", 50.0)
-    rsi_long_gate = 45.0   # B4: hard floor — only enter long when RSI < 45
-    rsi_short_gate = 55.0  # B4: hard floor — only enter short when RSI > 55
+    z_ret = metrics.get("zScore_ret", 0.0)
+    rsi_long_gate = 45.0
+    rsi_short_gate = 55.0
+    MOMENTUM_REJECT_THRESHOLD = 0.5
+
     if z >= z_threshold and rsi > rsi_short_gate:
+        if z_ret > MOMENTUM_REJECT_THRESHOLD:
+            logger.info(f"[MeanRev] SHORT rejected — downside zScore_ret={z_ret:.3f} > {MOMENTUM_REJECT_THRESHOLD} still accelerating")
+            return None
         return "MEAN_REVERSAL_SHORT"
     if z <= -z_threshold and rsi < rsi_long_gate:
+        if z_ret < -MOMENTUM_REJECT_THRESHOLD:
+            logger.info(f"[MeanRev] LONG rejected — upside zScore_ret={z_ret:.3f} < -{MOMENTUM_REJECT_THRESHOLD} still accelerating")
+            return None
         return "MEAN_REVERSAL_LONG"
     return None
 
 
-def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[str]:
+def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any], feed_state=None) -> Optional[str]:
     ofi      = metrics["ofi"]
     cvd      = metrics["cvd"]
     dominant = metrics["tapeDominant"]
     z        = metrics.get("zScore", 0.0)
     rsi      = metrics.get("rsi", 50.0)
+    z_ret    = metrics.get("zScore_ret", 0.0)
+
+    sweep_impulse_z_ret = getattr(feed_state, "sweep_impulse_z_ret", None) if feed_state else None
+    if sweep_impulse_z_ret is not None:
+        if abs(sweep_impulse_z_ret) < 0.60:
+            logger.info(
+                f"[SweepGate] {sweep} velocity={sweep_impulse_z_ret:.3f} |impulse| < 0.60 — too weak, waiting"
+            )
+            return None
+        same_cycle = abs(z_ret - sweep_impulse_z_ret) < 1e-9
+        if same_cycle:
+            if sweep == "BELOW_LOWS" and z_ret < 0:
+                logger.info(
+                    f"[SweepGate] {sweep} same-cycle — impulse={sweep_impulse_z_ret:.3f}, "
+                    f"z_ret={z_ret:.3f} still negative, waiting for reversal"
+                )
+                return None
+            if sweep == "ABOVE_HIGHS" and z_ret > 0:
+                logger.info(
+                    f"[SweepGate] {sweep} same-cycle — impulse={sweep_impulse_z_ret:.3f}, "
+                    f"z_ret={z_ret:.3f} still positive, waiting for reversal"
+                )
+                return None
+        else:
+            if sweep == "BELOW_LOWS" and not (z_ret > sweep_impulse_z_ret):
+                logger.info(
+                    f"[SweepGate] BUY rejected — impulse={sweep_impulse_z_ret:.3f} but current z_ret={z_ret:.3f} not decelerated/reversed"
+                )
+                return None
+            if sweep == "ABOVE_HIGHS" and not (z_ret < sweep_impulse_z_ret):
+                logger.info(
+                    f"[SweepGate] SELL rejected — impulse={sweep_impulse_z_ret:.3f} but current z_ret={z_ret:.3f} not decelerated/reversed"
+                )
+                return None
 
     # P1-1 FIX: Z+RSI overbought/oversold gate on sweep entries.
     # The Apr-23 audit caught Z=+2.67, RSI=70 entering a BELOW_LOWS BUY sweep —
@@ -1611,6 +1719,9 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
         ])
         if confirms >= 2:
             logger.info(f"[SweepStrat] SELL after ABOVE_HIGHS (confirms={confirms}/3)")
+            if feed_state:
+                feed_state.last_fired_sweep_candle_ts = getattr(feed_state, "sweep_pending_candle_ts", 0) or 0
+                feed_state.sweep_pending_candle_ts = None
             return "SELL"
 
     if sweep == "BELOW_LOWS":
@@ -1621,6 +1732,9 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
         ])
         if confirms >= 2:
             logger.info(f"[SweepStrat] BUY after BELOW_LOWS (confirms={confirms}/3)")
+            if feed_state:
+                feed_state.last_fired_sweep_candle_ts = getattr(feed_state, "sweep_pending_candle_ts", 0) or 0
+                feed_state.sweep_pending_candle_ts = None
             return "BUY"
 
     BOT_STATS["gate_stats"]["sweep_confirms_failed"] = BOT_STATS["gate_stats"].get("sweep_confirms_failed", 0) + 1
@@ -1631,7 +1745,7 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any]) -> Optional[s
 # ── STAGE 5 — BAYESIAN SIGNAL FUSION ─────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
-def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sweep: bool = False) -> float:
+def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sweep: bool = False, feed_state=None) -> float:
     """
     Stage 5: Macro Bayesian Logic
     Updates the prior confidence (from QuantEngine) with current directional evidence.
@@ -1728,6 +1842,42 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
 
     odds *= osc_factor
 
+    # 5.5 Velocity Likelihoods — regime-aware directional velocity boosts/penalties
+    z_ret = metrics.get("zScore_ret", 0.0)
+    z_slope = metrics.get("zScore", 0.0) - metrics.get("zScore_prev", metrics.get("zScore", 0.0))
+    KE = 0.5 * (z_ret ** 2)
+
+    if regime == "RANGE":
+        L_zrev = 1.0
+        if abs(z_ret) <= 0.30:
+            L_zrev = 1.12
+        if is_long and z_ret < 0:
+            L_zrev *= 0.92
+        elif not is_long and z_ret > 0:
+            L_zrev *= 0.92
+        odds *= L_zrev
+    elif regime == "NEUTRAL":
+        if abs(z_slope) > 0.15:
+            slope_confirms = (is_long and z_slope < 0) or (not is_long and z_slope > 0)
+            if slope_confirms:
+                odds *= 1.10
+    elif regime == "VOLATILE":
+        L_zke = 1.0
+        if KE >= 2.0:
+            L_zke = 1.20
+        elif KE >= 0.80:
+            L_zke = 1.08
+        elif KE < 0.32 and not is_sweep:
+            L_zke = 0.90
+        if KE > 4.5:
+            L_zke *= 0.80
+        odds *= L_zke
+    elif regime == "LIQUIDITY" and is_sweep:
+        sweep_impulse_z_ret = getattr(feed_state, "sweep_impulse_z_ret", None) if feed_state else None
+        if sweep_impulse_z_ret is not None and abs(sweep_impulse_z_ret) >= 0.60:
+            if (is_long and z_ret > sweep_impulse_z_ret) or (not is_long and z_ret < sweep_impulse_z_ret):
+                odds *= 1.15
+
     # 6. Tape Check
     if tape == "SCREAMING":
         if is_long and "BUY" in dominant:        odds *= 1.20
@@ -1812,13 +1962,18 @@ def _apply_ulis_gate(
 
     # Direction alignment check
     is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
-    ulis_bullish = verdict_str in ("STRONG_LONG", "LONG")
-    ulis_bearish = verdict_str in ("STRONG_SHORT", "SHORT")
+    ulis_strong_bearish = verdict_str == "STRONG_SHORT"
+    ulis_strong_bullish = verdict_str == "STRONG_LONG"
+    ulis_soft_bearish = verdict_str == "SHORT"
+    ulis_soft_bullish = verdict_str == "LONG"
 
     # Compare raw Bayesian posterior, not pipeline-accumulated confidence
     _raw_bayes = metrics.get("bayesianPosterior", 0.5)
     _bayes_long = _raw_bayes if is_long else (1.0 - _raw_bayes)
-    if is_long and ulis_bearish:
+    if is_long and (ulis_strong_bearish or ulis_soft_bearish):
+        if ulis_soft_bearish:
+            logger.warning(f"[ULIS] Direction conflict — bot=LONG, ULIS={verdict_str}. Skipping.")
+            return False, 0.0, verdict_str
         if _bayes_long >= BAYES_OVERRIDE_THRESHOLD:
             logger.info(
                 f"[ULIS] Bayesian override: raw_bayes_long={_bayes_long:.2%} "
@@ -1830,7 +1985,10 @@ def _apply_ulis_gate(
                            f"raw_bayes_long={_bayes_long:.2%} < threshold. Skipping.")
             return False, 0.0, verdict_str
 
-    if not is_long and ulis_bullish:
+    if not is_long and (ulis_strong_bullish or ulis_soft_bullish):
+        if ulis_soft_bullish:
+            logger.warning(f"[ULIS] Direction conflict — bot=SHORT, ULIS={verdict_str}. Skipping.")
+            return False, 0.0, verdict_str
         if (1.0 - _raw_bayes) >= BAYES_OVERRIDE_THRESHOLD:
             logger.info(
                 f"[ULIS] Bayesian override: raw_bayes_short={1.0-_raw_bayes:.2%} "
@@ -2553,22 +2711,12 @@ async def _compute_signal(
 
     # PHASE 3: RV/IV Real-Time Discriminant Override
     # Cross-check to prevent HMM from hallucinating VOLATILE in low-RV environments.
-    rv_iv_ratio = metrics.get("rv_iv_ratio", 1.0)
-    vol_state = metrics.get("vol_state", "NORMAL")
-    if regime == "VOLATILE":
-        if vol_state == "COMPRESSION" or rv_iv_ratio < 0.8:
-            logger.warning(
-                f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
-                f"({vol_state}). Overriding to NEUTRAL."
-            )
-            regime = "NEUTRAL"
-    elif regime == "RANGE":
-        if vol_state == "EXPANSION" or rv_iv_ratio > 1.2:
-            logger.warning(
-                f"[Regime Override] HMM lagging. RV/IV ratio={rv_iv_ratio:.2f} "
-                f"({vol_state}). Elevating RANGE to VOLATILE."
-            )
-            regime = "VOLATILE"
+    regime = _apply_rv_iv_override(
+        regime,
+        metrics.get("rv_iv_ratio", 1.0),
+        metrics.get("vol_state", "NORMAL"),
+        metrics.get("rv_data_stale", False),
+    )
 
     # D1 FIX: Update global regime tracker for adaptive polling interval
     # selection after all regime overrides have been applied.
@@ -2669,7 +2817,7 @@ async def _compute_signal(
 
     if sweep:
         strategy_type = "LIQUIDITY_SWEEP"
-        raw_direction = _strategy_liquidity_sweep(sweep, metrics)
+        raw_direction = _strategy_liquidity_sweep(sweep, metrics, feed_state=feed_state)
         logger.info(f"[MetaModel] → LIQUIDITY_SWEEP (sweep={sweep})")
     elif regime == "TREND":
         strategy_type = "TREND"
@@ -2677,26 +2825,23 @@ async def _compute_signal(
         logger.info("[MetaModel] → TREND strategy")
     elif regime == "VOLATILE":
         vol_z_thr = regime_p.get("z_threshold", 1.75)
-        strategy_type = "TREND"
-        raw_direction = _strategy_trend(metrics, z_min=vol_z_thr)
-        if raw_direction is None:
-            z_current = metrics.get("zScore", 0.0)
-            rsi = metrics.get("rsi", 50.0)
-            if abs(z_current) >= vol_z_thr and metrics.get("tapeSpeed") != "SCREAMING":
-                raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
-                strategy_type = "MEAN_REVERSION"
+        z_ret = metrics.get("zScore_ret", 0.0)
+        tape = metrics.get("tapeSpeed", "NORMAL")
+        vol_route = _route_volatile(z_ret, tape)
+
+        if vol_route == "BLOCK":
+            raw_direction = None
+            strategy_type = "VOLATILE"
+        elif vol_route == "TREND":
+            strategy_type = "TREND"
+            raw_direction = _strategy_trend(metrics, z_min=vol_z_thr)
             if raw_direction:
-                logger.info(
-                    f"[MetaModel] VOLATILE -> {strategy_type} ({raw_direction}) "
-                    f"z={z_current:.2f} rsi={rsi:.1f}"
-                )
-            else:
-                logger.debug(
-                    f"[MetaModel] VOLATILE: no setup "
-                    f"(z={z_current:.2f}, rsi={rsi:.1f}, tape={metrics.get('tapeSpeed')})"
-                )
-        else:
-            logger.info("[MetaModel] VOLATILE -> TREND strategy")
+                logger.info(f"[MetaModel] VOLATILE — KEd out to TREND")
+        elif vol_route == "MEAN_REVERSION":
+            strategy_type = "MEAN_REVERSION"
+            raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
+            if raw_direction:
+                logger.info(f"[MetaModel] VOLATILE — KEd out to MEAN_REVERSION")
     elif regime == "RANGE":
         strategy_type = "MEAN_REVERSION"
         raw_direction = _strategy_mean_reversion(
@@ -2945,7 +3090,7 @@ async def _compute_signal(
         return {**WAIT, "analysis": f"Throughput={_msgs_per_min}/min < 150. CVD strength {_cvd_strength:.2f} < 0.40. Skipped."}
 
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
-    confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep))
+    confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep), feed_state=feed_state)
     confidence = _apply_cvd_confidence_adjustment(confidence, _cvd_adj)
 
     # _bayesian_fusion returns probability in the target signal direction.
@@ -3920,6 +4065,7 @@ async def execution_loop(
                     await executor.check_breakeven_and_partials(
                         current_price, metrics.get("atr", 0.0), metrics
                     )
+                    await executor.check_trailing_stop(current_price, metrics.get("atr", 0.0))
                     forced_exit = getattr(executor, "_pending_forced_exit", None)
                     if forced_exit:
                         executor._pending_forced_exit = None

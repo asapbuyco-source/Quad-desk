@@ -463,7 +463,8 @@ class TestMinNotionalFloor:
 class TestLiveSafetyHardening:
 
     @pytest.mark.asyncio
-    async def test_tp_failure_after_sl_keeps_tracked_sl_only_position(self):
+    async def test_tp_failure_after_sl_flattens_instead_of_sl_only(self):
+        """All-or-flatten: TP failure after SL placed cancels sibling and flattens."""
         executor = _make_executor(dry_run=False)
         executor.dry_run = False
         executor.is_futures = True
@@ -471,9 +472,12 @@ class TestLiveSafetyHardening:
         executor.active_position = None
         executor.pending_order = None
         executor.failed_order_ts = 0.0
+        executor._bracket_handled = False
         executor.get_usdt_balance = AsyncMock(return_value=10_000.0)
         executor.exchange.amount_to_precision = MagicMock(return_value="0.01")
         executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+        executor.exchange.create_orders = AsyncMock(side_effect=Exception("batch failed"))
+        executor.exchange.cancel_order = AsyncMock()
         executor.exchange.create_market_order = AsyncMock(return_value={
             "id": "entry-1",
             "status": "closed",
@@ -501,17 +505,10 @@ class TestLiveSafetyHardening:
             account_size=10_000.0,
         )
 
-        assert result is True
-        assert executor.active_position is not None
-        assert executor.active_position["sl_placed"] is True
-        assert executor.active_position["tp_placed"] is False
-        assert executor.active_position["sl_order_id"] == "sl-1"
-        assert executor.active_position["tp_order_id"] is None
-        assert executor.active_position["requeue_tp_attempts"] == 1
-        assert executor.active_position["requeue_tp_symbol"] == "BTC/USDT:USDT"
-        executor.exchange.create_market_order.assert_awaited_once()
-        assert executor.exchange.create_market_order.await_args.kwargs["params"] == {}
-        executor.notifier.send_error_alert.assert_awaited()
+        # TP failure → flatten. Result is None (exception caught internally).
+        assert result is None
+        assert executor.active_position is None
+        assert executor.pending_order is None
 
     @pytest.mark.asyncio
     async def test_live_market_load_failure_blocks_trading(self):
@@ -912,6 +909,7 @@ class TestTpRequeueOnOpenPosition:
         executor.active_position = None
         executor.pending_order = None
         executor.failed_order_ts = 0.0
+        executor._bracket_handled = False
         executor.get_usdt_balance = AsyncMock(return_value=10_000.0)
         executor.exchange.amount_to_precision = MagicMock(return_value="0.01")
         executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
@@ -920,6 +918,8 @@ class TestTpRequeueOnOpenPosition:
             "status": "closed",
             "average": 1000.0,
         })
+        # Batch fails → fall back to individual, both succeed
+        executor.exchange.create_orders = AsyncMock(side_effect=Exception("batch unsupported"))
         executor.exchange.create_order = AsyncMock(side_effect=[
             {"id": "sl-1"},
             {"id": "tp-1"},
@@ -947,8 +947,8 @@ class TestTpRequeueOnOpenPosition:
         assert executor.active_position["tp_order_id"] == "tp-1"
 
     @pytest.mark.asyncio
-    async def test_position_enters_with_sl_only_status_on_tp_failure(self):
-        """D2 FIX: Position entered without TP should have bracket_status=SL_ONLY."""
+    async def test_bracket_leg_failure_handles_internally(self):
+        """All-or-flatten: bracket leg failure cancels sibling, flattens, and does not crash."""
         executor = _make_executor(dry_run=False)
         executor.dry_run = False
         executor.is_futures = True
@@ -956,20 +956,28 @@ class TestTpRequeueOnOpenPosition:
         executor.active_position = None
         executor.pending_order = None
         executor.failed_order_ts = 0.0
+        executor._bracket_handled = False
         executor.get_usdt_balance = AsyncMock(return_value=10_000.0)
         executor.exchange.amount_to_precision = MagicMock(return_value="0.01")
         executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+
+        executor.exchange.create_orders = AsyncMock(side_effect=Exception("batch failed"))
         executor.exchange.create_market_order = AsyncMock(return_value={
             "id": "entry-1",
             "status": "closed",
             "average": 1000.0,
         })
-        executor.exchange.create_order = AsyncMock(side_effect=[
-            {"id": "sl-1"},
-            Exception("TP rejected"),
-            Exception("TP rejected"),
-            Exception("TP rejected"),
-        ])
+
+        call_count = {"sl": 0}
+        async def create_order_side_effect(**kwargs):
+            if kwargs.get("type") == "STOP":
+                call_count["sl"] += 1
+                if call_count["sl"] == 1:
+                    return {"id": "sl-1"}
+            raise Exception("order rejected")
+
+        executor.exchange.cancel_order = AsyncMock()
+        executor.exchange.create_order = AsyncMock(side_effect=create_order_side_effect)
         executor._log_trade = MagicMock(return_value="trade-1")
 
         result = await executor.execute_signal(
@@ -986,8 +994,9 @@ class TestTpRequeueOnOpenPosition:
             account_size=10_000.0,
         )
 
-        assert result is True
-        assert executor.active_position["bracket_status"] == "SL_ONLY"
-        assert executor.active_position["bracket_missing_leg"] == "TP"
-        assert executor.active_position["sl_order_id"] == "sl-1"
-        assert executor.active_position["tp_order_id"] is None
+        # RuntimeError is caught internally, function returns None
+        assert result is None
+        assert executor.exchange.cancel_order.called
+        # Entry + emergency flatten with reduceOnly
+        assert executor.exchange.create_market_order.call_count >= 2
+        assert executor.active_position is None

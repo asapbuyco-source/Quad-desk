@@ -125,7 +125,7 @@ REGIME_PARAMS = {
         "z_threshold":        1.50,
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.10,
-        "min_confidence":     0.62,
+        "min_confidence":     0.65,
         "rr_target":          2.0,
         "be_lock_trigger":    1.5,
         "partial_take_r":     0.60,
@@ -158,6 +158,7 @@ REGIME_PARAMS = {
         # Elevated ATR but no clean sweep. Prefer trend continuation; allow
         # stricter mean reversion only when tape is not screaming.
         "z_threshold":        1.75,
+        "atr_multiplier_sl":  1.65,
         "ofi_bound":          0.20,
         "min_confidence":     0.65,
         "rr_target":          1.80,  # Phase 4.1: was 2.3
