@@ -2,6 +2,7 @@ import logging
 import httpx
 import asyncio
 import html
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ class TelegramNotifier:
         self.token = token
         self.chat_id = chat_id
         self.base_url = f"https://api.telegram.org/bot{token}/sendMessage" if token else None
+        self.document_url = f"https://api.telegram.org/bot{token}/sendDocument" if token else None
         self._client: httpx.AsyncClient = None  # H1: lazy-initialized persistent client
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -44,6 +46,32 @@ class TelegramNotifier:
                 return
             except Exception as e:
                 logger.error(f"[Telegram] Failed to send message (attempt {attempt+1}): {e}")
+                if critical and attempt == 0:
+                    await asyncio.sleep(2.0)
+
+    async def send_document(self, file_path: str, caption: str = "", critical: bool = False):
+        """Send a local file to Telegram as a document attachment."""
+        if not self.is_active:
+            return
+
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            logger.warning(f"[Telegram] Document not found: {path}")
+            return
+
+        for attempt in range(2 if critical else 1):
+            try:
+                client = await self._get_client()
+                data = {"chat_id": self.chat_id}
+                if caption:
+                    data["caption"] = caption[:1024]
+                with path.open("rb") as fh:
+                    files = {"document": (path.name, fh, "text/plain")}
+                    resp = await client.post(self.document_url, data=data, files=files, timeout=60.0)
+                resp.raise_for_status()
+                return
+            except Exception as e:
+                logger.error(f"[Telegram] Failed to send document (attempt {attempt+1}): {e}")
                 if critical and attempt == 0:
                     await asyncio.sleep(2.0)
 

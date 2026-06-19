@@ -39,6 +39,7 @@ Geographic note (Railway USA ↔ Binance Europe account):
 
 import asyncio
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import os
 import re
 import signal
@@ -46,7 +47,8 @@ import threading
 import time
 import numpy as np
 from collections import deque
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 
 from dotenv import load_dotenv
@@ -81,6 +83,22 @@ logging.basicConfig(
     format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
     datefmt='%H:%M:%S',
 )
+LOG_FILE_PATH = Path(os.environ.get("BOT_LOG_FILE", "logs/bot.log"))
+try:
+    LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _file_handler = TimedRotatingFileHandler(
+        LOG_FILE_PATH,
+        when="midnight",
+        backupCount=int(os.environ.get("BOT_LOG_BACKUP_DAYS", "7")),
+        encoding="utf-8",
+    )
+    _file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logging.getLogger().addHandler(_file_handler)
+except Exception as e:
+    logging.getLogger("bot.main").warning(f"[Main] Could not attach file log handler: {e}")
 # BUG-4 FIX: Prevent httpx from logging URLs containing Telegram bot token.
 # Without this the full token appears in Railway plaintext logs.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -143,6 +161,12 @@ if BINANCE_ED25519_PRIVKEY:
 # Telegram credentials
 TG_BOT_TOKEN   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID     = os.environ.get("TELEGRAM_CHAT_ID",   "")
+SEND_DAILY_LOG_TO_TELEGRAM = os.environ.get("BOT_SEND_DAILY_LOG_TO_TELEGRAM", "true").lower() != "false"
+DAILY_LOG_SEND_HOUR = max(0, min(23, int(os.environ.get("BOT_DAILY_LOG_SEND_HOUR", "23"))))
+DAILY_LOG_SEND_MINUTE = max(0, min(59, int(os.environ.get("BOT_DAILY_LOG_SEND_MINUTE", "55"))))
+DAILY_LOG_MAX_BYTES = max(1024 * 1024, int(os.environ.get("BOT_DAILY_LOG_MAX_BYTES", str(45 * 1024 * 1024))))
+LOG_SEND_INTERVAL_HOURS = max(0.25, float(os.environ.get("BOT_LOG_SEND_INTERVAL_HOURS", "6")))
+LOG_SEND_INTERVAL_SECONDS = int(LOG_SEND_INTERVAL_HOURS * 3600)
 
 # Derive dry-run: explicit override or no credentials at all
 ENV_DRY_RUN = str(os.environ.get("BOT_DRY_RUN", "")).lower() == "true"
@@ -1745,7 +1769,7 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any], feed_state=No
 # ── STAGE 5 — BAYESIAN SIGNAL FUSION ─────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
-def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sweep: bool = False, feed_state=None) -> float:
+def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, strategy_type: str = "UNKNOWN", is_sweep: bool = False, feed_state=None, quant=None) -> float:
     """
     Stage 5: Macro Bayesian Logic
     Updates the prior confidence (from QuantEngine) with current directional evidence.
@@ -1757,6 +1781,7 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
     - Mid-range OFI tier (5-10) now gets a partial boost (was binary ≥10 only)
     - CVD delta (rate-of-change) used: recovering CVD = bullish even when absolute CVD < 0
     - Scaled skew boost: gradual 0→15% as |skew| 0.05→0.30 (was never triggered at > 0.5)
+    - Setup-performance prior calibration keyed by (regime, direction, strategy_type)
     """
     # 1. Start with the prior confidence from Quant Engine Stage 4 (which is P-Bull)
     p_bull_prior = metrics.get("bayesianPosterior", 0.5)
@@ -1922,6 +1947,27 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, is_sw
                 0.0, 1.0
             ))
 
+    # 10. Setup-Performance Calibration: blend setup win-rate prior keyed by (regime, direction, strategy_type)
+    # This is the final confidence calibration layer applied after directional Bayesian fusion.
+    if quant is not None and strategy_type != "UNKNOWN":
+        setup_key = f"{regime}|{direction}|{strategy_type}"
+        setup_prior = quant.get_setup_perf_prior(regime, direction, strategy_type)
+        setup_alpha = float(quant._setup_perf_alpha.get(setup_key, 5.0))
+        setup_beta = float(quant._setup_perf_beta.get(setup_key, 5.0))
+        n_setup_trades = setup_alpha + setup_beta - 10.0
+        MIN_SETUP_HISTORY = 6
+        if n_setup_trades >= MIN_SETUP_HISTORY:
+            blend_weight = 0.20
+            p_final = float(np.clip(
+                blend_weight * setup_prior + (1.0 - blend_weight) * p_final,
+                0.0, 1.0
+            ))
+            logger.debug(
+                f"[BayesFusion] Setup perf calibration: regime={regime} dir={direction} "
+                f"strat={strategy_type} prior={setup_prior:.2%} n={n_setup_trades:.0f} "
+                f"→ conf={p_final:.2%}"
+            )
+
     return float(p_final)
 
 
@@ -1935,6 +1981,7 @@ def _apply_ulis_gate(
     feed_state,
     raw_direction: str,
     confidence: float,
+    regime: str,
 ) -> Tuple[bool, float, str]:
     """
     Run the ALDE+ULIS hybrid verdict engine as Stage 6.
@@ -2040,6 +2087,8 @@ def _apply_ulis_gate(
     # liquidity_vector aligns with the trade direction, it is corroborating
     # evidence → apply a small boost. Only penalise when it conflicts.
     boost = ulis["confidence_boost"]
+    if verdict_str == "NEUTRAL" and regime in ("RANGE", "TREND"):
+        boost = 0.04
     if verdict_str == "BREAKOUT_WATCH":
         vector_bullish = ulis["liquidity_vector"] > 0
         if (is_long and vector_bullish) or (not is_long and not vector_bullish):
@@ -2656,6 +2705,8 @@ async def _compute_signal(
                 logger.warning("[RiskEngine] Persistent hard ATR panic detected. Activating 15m observation cooldown.")
                 ATR_PANIC_COOLDOWN_UNTIL = now_ts + 900
                 ATR_PANIC_CONSECUTIVE = 0
+                _gate_stats_summary("atr_panic_halt")
+                return {**WAIT, "analysis": "Persistent ATR panic. Observation cooldown activated."}
             else:
                 logger.warning(
                     f"[RiskEngine] ATR PANIC HALT - ATR rank={atr_pct_rank:.1%}, "
@@ -2686,7 +2737,7 @@ async def _compute_signal(
     time_since_last_trade = time.time() - LAST_ANY_TRADE_CLOSE_TIME
     # FREQ-1: wire split cooldown — 45s after TP, 90s after SL
     _last_was_sl = LAST_TRADE_WAS_SL
-    _cooldown = POST_TRADE_COOLDOWN_S if _last_was_sl else 120
+    _cooldown = POST_TRADE_COOLDOWN_S if _last_was_sl else 45
     if time_since_last_trade < _cooldown:
         _gate_stats_summary("post_trade_cooldown")
         return {**WAIT, "analysis": f"Post-trade cooldown ({_cooldown - int(time_since_last_trade)}s remain, {'SL' if _last_was_sl else 'TP'} exit)"}
@@ -2886,10 +2937,10 @@ async def _compute_signal(
     if regime == "VOLATILE":
         z_current = metrics.get("zScore", 0.0)
         vol_z_thr = regime_p.get("z_threshold", 1.75)
-        if abs(z_current) < 0.75 * vol_z_thr:
+        if abs(z_current) < 0.60 * vol_z_thr:
             BOT_STATS["gate_stats"]["z_drift_blocked"] += 1
-            logger.info(f"[ZDrift] Blocked {raw_direction} — abs(z)={abs(z_current):.2f} < 0.75×{vol_z_thr:.2f}")
-            return {**WAIT, "analysis": f"Z-drift blocked: abs(z) {abs(z_current):.2f} < 0.75 * {vol_z_thr}"}
+            logger.info(f"[ZDrift] Blocked {raw_direction} — abs(z)={abs(z_current):.2f} < 0.60×{vol_z_thr:.2f}")
+            return {**WAIT, "analysis": f"Z-drift blocked: abs(z) {abs(z_current):.2f} < 0.60 * {vol_z_thr}"}
 
     # --- AUDIT FIX 3: RSI EXTREMES GATE (regime-conditional) ---
     # In TREND regime: suppress RSI block for direction-with-momentum.
@@ -3090,7 +3141,7 @@ async def _compute_signal(
         return {**WAIT, "analysis": f"Throughput={_msgs_per_min}/min < 150. CVD strength {_cvd_strength:.2f} < 0.40. Skipped."}
 
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
-    confidence = _bayesian_fusion(metrics, raw_direction, regime, is_sweep=bool(sweep), feed_state=feed_state)
+    confidence = _bayesian_fusion(metrics, raw_direction, regime, strategy_type, is_sweep=bool(sweep), feed_state=feed_state, quant=quant)
     confidence = _apply_cvd_confidence_adjustment(confidence, _cvd_adj)
 
     # _bayesian_fusion returns probability in the target signal direction.
@@ -3115,7 +3166,7 @@ async def _compute_signal(
 
     # Stage 6 ★ ULIS/ALDE gate FIRST (applies confidence boost)
     should_trade, confidence, ulis_verdict_str = _apply_ulis_gate(
-        metrics, candle_history, feed_state, raw_direction, confidence
+        metrics, candle_history, feed_state, raw_direction, confidence, regime
     )
 
     if not should_trade:
@@ -3201,7 +3252,7 @@ async def _compute_signal(
     # We do NOT multiply by LEVERAGE here, because leverage magnifies both profit and fees equally.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
     round_trip_fee_rate = _EXCHANGE_FEE_RATE * 2            # entry + exit on notional
-    min_viable_tp_pct = round_trip_fee_rate * 3.0           # TP must comfortably cover fees/slippage
+    min_viable_tp_pct = round_trip_fee_rate * 2.5           # TP must comfortably cover fees/slippage
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "
@@ -3311,6 +3362,12 @@ async def _process_exit(
         logger.info(f"[_process_exit] Micro-loss forgiveness: ignoring {pnl:.2f} time-exit fee bleed.")
     else:
         quant.update_win_rate(won=is_win, regime=regime)
+        quant.update_setup_perf(
+            regime=regime,
+            direction=pos.get("entry_direction", ""),
+            strategy_type=pos.get("strategy_type", "UNKNOWN"),
+            won=is_win,
+        )
         
     stats["consecutive_losses"] = getattr(quant, "_consecutive_losses", 0)
 
@@ -3488,6 +3545,59 @@ async def _operator_command_loop(executor: TradingExecutor, stats: Dict[str, Any
             logger.warning(f"[Operator] Command poll failed: {e}")
 
         await asyncio.sleep(poll_seconds)
+
+
+def _prepare_log_text_file(source: Path, max_bytes: int) -> Path:
+    """Create a capped .txt copy so Telegram receives a text document."""
+    tmp_path = Path(os.environ.get("BOT_TELEGRAM_LOG_TXT_FILE", "logs/bot_telegram_log.txt"))
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+
+    truncated = source.stat().st_size > max_bytes
+    with source.open("rb") as src:
+        if truncated:
+            src.seek(-max_bytes, os.SEEK_END)
+        data = src.read()
+
+    with tmp_path.open("wb") as dst:
+        if truncated:
+            header = (
+                b"Log file exceeded BOT_DAILY_LOG_MAX_BYTES; sending the most recent "
+                + str(max_bytes).encode("ascii")
+                + b" bytes.\n\n"
+            )
+            dst.write(header)
+        dst.write(data)
+    return tmp_path
+
+
+async def _daily_log_delivery_loop(notifier) -> None:
+    if not SEND_DAILY_LOG_TO_TELEGRAM:
+        logger.info("[DailyLog] Telegram daily log delivery disabled.")
+        return
+    if not getattr(notifier, "is_active", False):
+        logger.info("[DailyLog] Telegram credentials missing; daily log delivery disabled.")
+        return
+
+    logger.info(f"[DailyLog] Telegram text log delivery enabled every {LOG_SEND_INTERVAL_HOURS:g}h.")
+
+    while True:
+        await asyncio.sleep(LOG_SEND_INTERVAL_SECONDS)
+        try:
+            if not LOG_FILE_PATH.exists():
+                logger.warning(f"[DailyLog] Log file not found: {LOG_FILE_PATH}")
+                continue
+            for handler in logging.getLogger().handlers:
+                flush = getattr(handler, "flush", None)
+                if callable(flush):
+                    flush()
+            upload_path = _prepare_log_text_file(LOG_FILE_PATH, DAILY_LOG_MAX_BYTES)
+            caption = f"Quad Desk bot log - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            await notifier.send_document(str(upload_path), caption=caption, critical=True)
+            logger.info(f"[DailyLog] Sent Telegram text log document: {upload_path}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"[DailyLog] Failed to send Telegram log document: {e}")
 
 
 async def execution_loop(
@@ -3766,15 +3876,21 @@ async def execution_loop(
                             f"{price_change_pct:.2f}% in {PANIC_LOOKBACK} candles "
                             f"(from ${lookback_price:.2f} → ${current_price:.2f})"
                         )
+                        _panic_snapshot = dict(executor.active_position) if executor.active_position else {}
+                        if not _panic_snapshot:
+                            executor._last_panic_pnl = 0.0
                         await executor.engage_panic_mode(panic_reason, lock_seconds=PANIC_LOCK_SECONDS)
-                        # BUG-3 FIX: Update daily_pnl from panic exit PnL
                         _panic_pnl = getattr(executor, "_last_panic_pnl", 0.0)
-                        if _panic_pnl != 0.0:
-                            stats["daily_pnl"] = stats.get("daily_pnl", 0.0) + _panic_pnl
-                            max_loss_usd = _daily_loss_limit_usd(stats)
-                            if stats["daily_pnl"] < -max_loss_usd and not stats.get("daily_loss_halt"):
-                                stats["daily_loss_halt"] = True
-                                logger.warning("[RiskEngine] Daily loss limit hit via flash-crash panic exit. Halted.")
+                        if _panic_snapshot:
+                            await _process_exit(
+                                pnl=_panic_pnl,
+                                regime=_panic_snapshot.get("regime", "NEUTRAL"),
+                                stats=stats,
+                                quant=quant,
+                                executor=executor,
+                                pos_snapshot=_panic_snapshot,
+                                exit_type="PANIC",
+                            )
                         stats["active_position"] = None
                         continue
 
@@ -4062,10 +4178,12 @@ async def execution_loop(
                     if _time_exited:
                         await _process_exit(_time_pnl, pos.get("regime", "NEUTRAL"), stats, quant, executor, pos_snapshot=dict(pos), exit_type="TIME_EXIT")
                         continue
-                    await executor.check_breakeven_and_partials(
-                        current_price, metrics.get("atr", 0.0), metrics
-                    )
-                    await executor.check_trailing_stop(current_price, metrics.get("atr", 0.0))
+                    if metrics is not None:
+                        _atr = metrics.get("atr", 0.0)
+                        await executor.check_breakeven_and_partials(current_price, _atr, metrics)
+                        await executor.check_trailing_stop(current_price, _atr)
+                    else:
+                        logger.warning("[Main] Metrics unavailable — skipping ATR-dependent exit management (breakeven/partials/trailing).")
                     forced_exit = getattr(executor, "_pending_forced_exit", None)
                     if forced_exit:
                         executor._pending_forced_exit = None
@@ -4217,16 +4335,27 @@ async def execution_loop(
                             if _q_sl > 0 and _q_tp > 0 and _q_atr > 0:
                                 _price_delta = _exec_price - _q_price
                                 _q_dir = _queued_signal.get("verdict", "")
-                                if "BUY" in _q_dir or "LONG" in _q_dir:
-                                    _exec_signal = {**_queued_signal, "stop_loss": _q_sl + _price_delta, "take_profit": _q_tp + _price_delta}
+                                _is_long = "BUY" in _q_dir or "LONG" in _q_dir
+                                _new_sl = _q_sl + _price_delta
+                                _new_tp = _q_tp + _price_delta
+                                _geometry_valid = (_is_long and _new_sl < _exec_price < _new_tp) or (not _is_long and _new_tp < _exec_price < _new_sl)
+                                if _geometry_valid:
+                                    _exec_signal = {**_queued_signal, "stop_loss": _new_sl, "take_profit": _new_tp}
+                                    logger.info(
+                                        f"[Main] ▶ Executing QUEUED signal (conf={_q_conf:.0%}) "
+                                        f"post-lockout — price Δ={abs(_price_delta):.2f}, "
+                                        f"SL {_q_sl:.2f}→{_new_sl:.2f}, "
+                                        f"TP {_q_tp:.2f}→{_new_tp:.2f}"
+                                    )
                                 else:
-                                    _exec_signal = {**_queued_signal, "stop_loss": _q_sl - _price_delta, "take_profit": _q_tp - _price_delta}
-                                logger.info(
-                                    f"[Main] ▶ Executing QUEUED signal (conf={_q_conf:.0%}) "
-                                    f"post-lockout — price Δ={abs(_price_delta):.2f}, "
-                                    f"SL {_q_sl:.2f}→{_exec_signal['stop_loss']:.2f}, "
-                                    f"TP {_q_tp:.2f}→{_exec_signal['take_profit']:.2f}"
-                                )
+                                    logger.warning(
+                                        f"[Main] Queued signal geometry invalid after translation "
+                                        f"(SL={_new_sl:.2f}, EP={_exec_price:.2f}, TP={_new_tp:.2f}). "
+                                        f"Discarding queued signal, using current."
+                                    )
+                                    _exec_signal = verdict_json
+                                    _exec_price = metrics["execution_price"]
+                                    _exec_ulis = ulis_str
                             else:
                                 logger.info(
                                     f"[Main] ▶ Executing QUEUED signal (conf={_q_conf:.0%}) "
@@ -4503,6 +4632,7 @@ async def main():
         asyncio.create_task(macro_shield.run_dxy_loop(),      name="macro_dxy"),
         asyncio.create_task(macro_shield.run_us10y_loop(),    name="macro_us10y"),  # DIM 5 FIX
         asyncio.create_task(_operator_command_loop(executor, BOT_STATS), name="operator_commands"),
+        asyncio.create_task(_daily_log_delivery_loop(executor.notifier), name="daily_log_delivery"),
         _exec_task,
         asyncio.create_task(heartbeat.run_heartbeat(BOT_STATS), name="heartbeat"),
         # P0-2 FIX: Feed health monitor — detects frozen WebSocket and forces reconnect

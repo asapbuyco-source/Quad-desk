@@ -34,9 +34,12 @@ class QuantEngine:
         # Tracks win rate independently for RANGE (mean-reversion),
         # TREND (momentum), and NEUTRAL/LIQUIDITY (mixed) regimes.
         # Mean = α/(α+β) = 0.5 at startup (uniform prior, no assumptions).
-        self._regime_alpha: dict = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
-        self._regime_beta:  dict = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0}
-        self._regime_trade_count: dict = {"RANGE": 0, "NEUTRAL": 0, "TREND": 0, "LIQUIDITY": 0}
+        self._regime_alpha: dict = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0, "VOLATILE": 5.0, "SQUEEZE": 5.0}
+        self._regime_beta:  dict = {"RANGE": 5.0, "NEUTRAL": 5.0, "TREND": 5.0, "LIQUIDITY": 5.0, "VOLATILE": 5.0, "SQUEEZE": 5.0}
+        self._regime_trade_count: dict = {"RANGE": 0, "NEUTRAL": 0, "TREND": 0, "LIQUIDITY": 0, "VOLATILE": 0, "SQUEEZE": 0}
+        # Separate directional+strategy priors: (regime, direction, strategy_type) -> (alpha, beta)
+        self._setup_perf_alpha: dict = {}
+        self._setup_perf_beta:  dict = {}
         # Keep global fallback for backwards compatibility with _bayesian()
         self._alpha: float = 5.0
         self._beta:  float = 5.0
@@ -210,14 +213,14 @@ class QuantEngine:
                     f"[QuantEngine] Consecutive loss #{self._consecutive_losses} — "
                     f"softening prior toward Beta(5,5): "
                     f"α={self._alpha:.1f} β={self._beta:.1f} "
-                    f"P(bull)={self._alpha/(self._alpha+self._beta):.1%}"
+                    f"win_rate={self._alpha/(self._alpha+self._beta):.1%}"
                 )
         self._regime_trade_count[regime] = self._regime_trade_count.get(regime, 0) + 1
-        p_bull = self._alpha / (self._alpha + self._beta)
+        win_rate = self._alpha / (self._alpha + self._beta)
         n = self._alpha + self._beta - 2
         logger.info(
             f"[QuantEngine] Win-rate updated: α={self._alpha:.0f} β={self._beta:.0f} "
-            f"→ P(bull)={p_bull:.2%} | regime={regime}  (n={n:.0f} trades)"
+            f"→ win_rate={win_rate:.2%} | regime={regime}  (n={n:.0f} trades)"
         )
         self._save_state()
 
@@ -247,16 +250,36 @@ class QuantEngine:
     # ------------------------------------------------------------------
     def get_all_regime_priors(self) -> dict:
         """
-        Returns dict of regime → win_rate_prior for all 4 regimes.
+        Returns dict of regime → win_rate_prior for all 6 regimes.
         Injected into metrics before _compute_signal() so _bayesian_fusion
         can blend per-regime prior with the base Bayesian posterior.
         """
         result = {}
-        for regime in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+        for regime in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY", "VOLATILE", "SQUEEZE"):
             a = self._regime_alpha.get(regime, 1.0)
             b = self._regime_beta.get(regime, 1.0)
             result[regime] = a / (a + b)   # Beta distribution mean
         return result
+
+    def get_setup_perf_prior(self, regime: str, direction: str, strategy_type: str) -> float:
+        """
+        Returns setup win-rate prior for (regime, direction, strategy_type).
+        Returns 0.5 (neutral) if no history exists yet.
+        Used in _bayesian_fusion() as a confidence calibration layer AFTER
+        directional Bayesian fusion.
+        """
+        key = f"{regime}|{direction}|{strategy_type}"
+        a = self._setup_perf_alpha.get(key, 5.0)
+        b = self._setup_perf_beta.get(key, 5.0)
+        return a / (a + b)
+
+    def update_setup_perf(self, regime: str, direction: str, strategy_type: str, won: bool) -> None:
+        """Update setup-performance prior after a trade."""
+        key = f"{regime}|{direction}|{strategy_type}"
+        if won:
+            self._setup_perf_alpha[key] = self._setup_perf_alpha.get(key, 5.0) + 1.0
+        else:
+            self._setup_perf_beta[key] = self._setup_perf_beta.get(key, 5.0) + 1.0
 
     # ------------------------------------------------------------------
     # State Persistence: Firestore primary, /tmp/ file fallback
@@ -280,6 +303,8 @@ class QuantEngine:
             "regime_alpha":   self._regime_alpha,
             "regime_beta":    self._regime_beta,
             "regime_count":   self._regime_trade_count,
+            "setup_perf_alpha": self._setup_perf_alpha,
+            "setup_perf_beta":  self._setup_perf_beta,
             "ofi_ewma_mu":    self._ofi_ewma_mu,
             "ofi_ewma_var":   self._ofi_ewma_var,
             "ofi_smooth":     self._ofi_smooth,
@@ -335,17 +360,19 @@ class QuantEngine:
                     saved_ra = data.get("regime_alpha", {})
                     saved_rb = data.get("regime_beta",  {})
                     saved_rc = data.get("regime_count", {})
-                    for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+                    for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY", "VOLATILE", "SQUEEZE"):
                         self._regime_alpha[r]       = float(saved_ra.get(r, 5.0))
                         self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
                         self._regime_trade_count[r] = int(saved_rc.get(r, 0))
+                    self._setup_perf_alpha = data.get("setup_perf_alpha", {})
+                    self._setup_perf_beta  = data.get("setup_perf_beta",  {})
 
                     n_trades = sum(self._regime_trade_count.values())
-                    p_bull   = self._alpha / (self._alpha + self._beta)
+                    win_rate = self._alpha / (self._alpha + self._beta)
                     logger.info(
                         f"[QuantEngine] ✅ State loaded from Firestore — "
                         f"α={self._alpha:.0f} β={self._beta:.0f} "
-                        f"P(bull)={p_bull:.1%} | "
+                        f"win_rate={win_rate:.1%} | "
                         f"n_trades={n_trades} "
                         f"(saved {(time.time() - float(data.get('saved_at', time.time()))):.0f}s ago)"
                     )
@@ -365,10 +392,12 @@ class QuantEngine:
                 saved_ra = data.get("regime_alpha", {})
                 saved_rb = data.get("regime_beta",  {})
                 saved_rc = data.get("regime_count", {})
-                for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+                for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY", "VOLATILE", "SQUEEZE"):
                     self._regime_alpha[r]       = float(saved_ra.get(r, 5.0))
                     self._regime_beta[r]        = float(saved_rb.get(r, 5.0))
                     self._regime_trade_count[r] = int(saved_rc.get(r, 0))
+                self._setup_perf_alpha = data.get("setup_perf_alpha", {})
+                self._setup_perf_beta  = data.get("setup_perf_beta",  {})
 
                 logger.info(
                     "[QuantEngine] ⚠️ State loaded from /tmp/ (Firestore unavailable). "
@@ -379,12 +408,14 @@ class QuantEngine:
             logger.warning(f"[QuantEngine] /tmp/ state load error: {e}")
 
         # ── 3. Cold start — fresh Beta(5,5) ─────────────────────────────
-        for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY"):
+        for r in ("RANGE", "NEUTRAL", "TREND", "LIQUIDITY", "VOLATILE", "SQUEEZE"):
             self._regime_alpha[r]       = 5.0
             self._regime_beta[r]        = 5.0
             self._regime_trade_count[r] = 0
         self._alpha = 5.0
         self._beta  = 5.0
+        self._setup_perf_alpha = {}
+        self._setup_perf_beta  = {}
         logger.info("[QuantEngine] 🆕 Cold start: Beta(5,5) uninformed prior.")
 
 
@@ -949,7 +980,13 @@ class QuantEngine:
     def _bayesian(self, rsi: float, z_score: float, skewness: float,
                   ofi: float, z_ret: float = 0.0, regime: str = "NEUTRAL") -> float:
         """
-        Beta(α,β) conjugate prior — self-calibrates to historical win rate.
+        Directional Bayesian fusion — produces P(bull) from market evidence only.
+
+        Plan 1 FIX: Separates directional probability from win-rate calibration.
+        - Uses neutral 0.50 as prior (no directional bias from win/loss history).
+        - RSI, OFI, Z, skew, velocity produce P(bull) purely from market signals.
+        - Setup win-rate (regime+direction+strategy) is applied AFTER this,
+          as a confidence calibration layer in _bayesian_fusion() in main.py.
 
         OFI is now in (-1, +1) from the Three-Stage Pipeline (tanh output).
         Thresholds updated from the old ±100 scale to the new ±1 scale.
@@ -957,9 +994,8 @@ class QuantEngine:
         z_ret  : Log-Return Z-Score (Z-06) — velocity-based signal for TREND.
         regime : Current HMM regime — gates the z_ret likelihood to TREND only.
         """
-        # ── Step 1: Beta prior ───────────────────────────────────────────────
-        p_prior = self._alpha / (self._alpha + self._beta)
-        p_prior = max(0.01, min(0.99, p_prior))
+        # ── Step 1: Neutral prior (market evidence only, no win/loss bias) ───
+        p_prior = 0.50
         prior_odds = p_prior / (1.0 - p_prior)
 
         # ── Step 2: RSI likelihood ───────────────────────────────────────────

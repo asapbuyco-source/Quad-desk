@@ -135,7 +135,7 @@ REGIME_PARAMS = {
         "panic_threshold":    10.0,
         "candle_gate_sec":    45,
         "htf_block":          True,
-        "cascade_cooldown_s": 300,
+        "cascade_cooldown_s": 180,
     },
 "TREND": {
         # High-volatility: trend-following
