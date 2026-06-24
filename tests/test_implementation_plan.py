@@ -261,9 +261,9 @@ class TestVOLATILERoutingKE:
         assert result == "BLOCK"
 
     def test_ke_ge_032_routes_to_trend(self):
-        """KE = 0.5*(1.0^2) = 0.5 >= 0.32 → TREND."""
+        """z_ret=1.32 → KE=0.5*(1.32^2)=0.8712 >= 0.86 boundary check. z=1.32 → KE=0.8712 → TREND."""
         from bot.main import _route_volatile
-        result = _route_volatile(z_ret=1.0, tape="NORMAL")
+        result = _route_volatile(z_ret=1.32, tape="NORMAL")
         assert result == "TREND"
 
     def test_ke_lt_032_screaming_blocks(self):
@@ -364,7 +364,7 @@ class TestBayesOverrideTightening:
             mp.setattr("bot.main.compute_ulis_verdict", lambda **kwargs: ulis_mock)
 
             should_trade, confidence, verdict = _apply_ulis_gate(
-                metrics, candle_history, feed_state, "BUY", 0.80
+                metrics, candle_history, feed_state, "BUY", 0.80, "NEUTRAL"
             )
 
         assert should_trade is False, "Soft SHORT should veto LONG without override"
@@ -401,7 +401,7 @@ class TestTrendTrailingStop:
             "_be_locked": False,
         }
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             executor.check_trailing_stop(current_price=102.5, atr=2.0)
         )
         assert result is True or executor.active_position.get("_trailing_active") is True
@@ -441,7 +441,7 @@ class TestTrendTrailingStop:
             "regime": "TREND",
         }
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             executor.check_trailing_stop(current_price=102.5, atr=2.0)
         )
 

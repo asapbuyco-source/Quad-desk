@@ -174,16 +174,19 @@ class MarketState:
 
             def _flag_ghost(side: str, price: float, size_decrease: float, prev_size: float):
                 cancel_rate = size_decrease / max(prev_size, 1e-9)
+                if cancel_rate < 0.25:
+                    return
+                if not self.ghost_wall_active:
+                    logger.info(
+                        f"[GhostWall] {side} ghost wall flagged: price={price} "
+                        f"cancelled={size_decrease:.4f}/{prev_size:.4f} "
+                        f"cancel_rate={cancel_rate:.1%} TTL={GHOST_WALL_TTL_S}s"
+                    )
                 self.ghost_wall_active = True
                 self.ghost_wall_side = side
                 self.ghost_wall_price = price
                 self.ghost_cancel_rate = cancel_rate
                 self.ghost_wall_expire_ts = now_ts + GHOST_WALL_TTL_S
-                logger.info(
-                    f"[GhostWall] {side} ghost wall flagged: price={price} "
-                    f"cancelled={size_decrease:.4f}/{prev_size:.4f} "
-                    f"cancel_rate={cancel_rate:.1%} TTL={GHOST_WALL_TTL_S}s"
-                )
 
             # Check bid side for cancellations. Bid depth is consumed by SELL
             # aggressors; same-price BUY trades do not explain bid disappearance.

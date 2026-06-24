@@ -171,7 +171,7 @@ class QuantEngine:
         rv_iv_ratio = rv / iv_proxy if iv_proxy > 0 else 1.0
         vol_state = (
             "COMPRESSION"
-            if rv_iv_ratio < 0.8
+            if rv_iv_ratio < 0.65
             else ("EXPANSION" if rv_iv_ratio > 1.2 else "NORMAL")
         )
         return {
@@ -952,10 +952,10 @@ class QuantEngine:
             if ghost_cancel_rate > 0.5:  # Only neutralize if >50% of wall was cancelled
                 if (ofi > 0 and ghost_side == "BUY") or (ofi < 0 and ghost_side == "SELL"):
                     logger.info(
-                        f"[OFI-GhostWall] Neutralizing OFI={ofi:.4f} — "
+                        f"[OFI-GhostWall] Penalizing OFI={ofi:.4f} — "
                         f"ghost wall on {ghost_side} side (cancel_rate={ghost_cancel_rate:.1%})"
                     )
-                    ofi = 0.0
+                    ofi *= 0.60
 
         # OFI Warm-Up Guard (Fix B): EWMA is seeded at arbitrary values (mu=0, var=1).
         # Until the filter has processed enough samples to be meaningful, emit 0.0.

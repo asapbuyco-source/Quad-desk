@@ -1262,7 +1262,7 @@ def _route_volatile(z_ret: float, tape: str) -> str:
     if KE > 4.5:
         logger.info(f"[VOLATILE Route] KE={KE:.3f} > 4.5 (chaotic) — BLOCK")
         return "BLOCK"
-    if KE >= 0.32:
+    if KE >= 0.86:
         return "TREND"
     if tape == "SCREAMING":
         logger.info(f"[VOLATILE Route] KE={KE:.3f} < 0.32 but tape=SCREAMING — BLOCK")
@@ -1288,7 +1288,7 @@ def _apply_rv_iv_override(
                 f"[Regime Override] HMM VOLATILE trusted — live tick RV is insufficient (stale). "
                 f"RV/IV ratio={rv_iv_ratio:.2f} ({vol_state}). Not downgrading."
             )
-        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.8:
+        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.65:
             logger.warning(
                 f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
                 f"({vol_state}). Overriding to NEUTRAL."
@@ -1617,16 +1617,16 @@ def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0) -> Optional[str
         # Intended LONG
         z = metrics.get("zScore", 0.0)
         if abs(z) < z_min:
-            logger.info(f"[TrendStrategy] BUY rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
+            logger.debug(f"[TrendStrategy] BUY rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
             return None
         if ofi < 0:
-            logger.info(f"[TrendStrategy] BUY rejected — OFI={ofi:.2f} < 0 (structural contradiction)")
+            logger.debug(f"[TrendStrategy] BUY rejected — OFI={ofi:.2f} < 0 (structural contradiction)")
             return None
             
         ofi_cvd_aligned = (ofi > 0.15 and cvd > 0)
         if micro_confirms_bull < 2 and score < 3.0 and not ofi_cvd_aligned:
             BOT_STATS["gate_stats"]["micro_confirms_failed"] = BOT_STATS["gate_stats"].get("micro_confirms_failed", 0) + 1
-            logger.info(f"[TrendStrategy] score={score:+.2f} rejected LONG (micro_confirms_bull={micro_confirms_bull}/3, OFI+CVD not aligned)")
+            logger.debug(f"[TrendStrategy] score={score:+.2f} rejected LONG (micro_confirms_bull={micro_confirms_bull}/3, OFI+CVD not aligned)")
             return None
         return "BUY"
     
@@ -1634,16 +1634,16 @@ def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0) -> Optional[str
         # Intended SHORT
         z = metrics.get("zScore", 0.0)
         if abs(z) < z_min:
-            logger.info(f"[TrendStrategy] SELL rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
+            logger.debug(f"[TrendStrategy] SELL rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
             return None
         if ofi > 0:
-            logger.info(f"[TrendStrategy] SELL rejected — OFI={ofi:.2f} > 0 (structural contradiction)")
+            logger.debug(f"[TrendStrategy] SELL rejected — OFI={ofi:.2f} > 0 (structural contradiction)")
             return None
             
         ofi_cvd_aligned = (ofi < -0.15 and cvd < 0)
         if micro_confirms_bear < 2 and score > -3.0 and not ofi_cvd_aligned:
             BOT_STATS["gate_stats"]["micro_confirms_failed"] = BOT_STATS["gate_stats"].get("micro_confirms_failed", 0) + 1
-            logger.info(f"[TrendStrategy] score={score:+.2f} rejected SHORT (micro_confirms_bear={micro_confirms_bear}/3, OFI+CVD not aligned)")
+            logger.debug(f"[TrendStrategy] score={score:+.2f} rejected SHORT (micro_confirms_bear={micro_confirms_bear}/3, OFI+CVD not aligned)")
             return None
         return "SELL"
 
@@ -1663,12 +1663,12 @@ def _strategy_mean_reversion(metrics: Dict[str, Any], z_threshold: float = 1.5) 
 
     if z >= z_threshold and rsi > rsi_short_gate:
         if z_ret > MOMENTUM_REJECT_THRESHOLD:
-            logger.info(f"[MeanRev] SHORT rejected — downside zScore_ret={z_ret:.3f} > {MOMENTUM_REJECT_THRESHOLD} still accelerating")
+            logger.debug(f"[MeanRev] SHORT rejected — downside zScore_ret={z_ret:.3f} > {MOMENTUM_REJECT_THRESHOLD} still accelerating")
             return None
         return "MEAN_REVERSAL_SHORT"
     if z <= -z_threshold and rsi < rsi_long_gate:
         if z_ret < -MOMENTUM_REJECT_THRESHOLD:
-            logger.info(f"[MeanRev] LONG rejected — upside zScore_ret={z_ret:.3f} < -{MOMENTUM_REJECT_THRESHOLD} still accelerating")
+            logger.debug(f"[MeanRev] LONG rejected — upside zScore_ret={z_ret:.3f} < -{MOMENTUM_REJECT_THRESHOLD} still accelerating")
             return None
         return "MEAN_REVERSAL_LONG"
     return None
@@ -1705,12 +1705,12 @@ def _strategy_liquidity_sweep(sweep: str, metrics: Dict[str, Any], feed_state=No
                 return None
         else:
             if sweep == "BELOW_LOWS" and not (z_ret > sweep_impulse_z_ret):
-                logger.info(
+                logger.debug(
                     f"[SweepGate] BUY rejected — impulse={sweep_impulse_z_ret:.3f} but current z_ret={z_ret:.3f} not decelerated/reversed"
                 )
                 return None
             if sweep == "ABOVE_HIGHS" and not (z_ret < sweep_impulse_z_ret):
-                logger.info(
+                logger.debug(
                     f"[SweepGate] SELL rejected — impulse={sweep_impulse_z_ret:.3f} but current z_ret={z_ret:.3f} not decelerated/reversed"
                 )
                 return None
@@ -3193,7 +3193,7 @@ async def _compute_signal(
         import math
         alpha = quant._regime_alpha.get(regime, 5.0)
         beta = quant._regime_beta.get(regime, 5.0)
-        adaptive_floor = min(0.90, 0.60 + 0.12 * math.log1p(beta / max(alpha, 1e-6)))
+        adaptive_floor = min(0.75, 0.60 + 0.12 * math.log1p(beta / max(alpha, 1e-6)))
         if adaptive_floor > _base_conf:
             logger.info(f"[RiskEngine] VOLATILE adaptive confidence floor active: {adaptive_floor:.0%} (α={alpha:.1f}, β={beta:.1f})")
             _base_conf = adaptive_floor
@@ -4169,7 +4169,7 @@ async def execution_loop(
                         if pos["side"] == "buy" else
                         (pos["entry_price"] - current_price) / pos["entry_price"] * 100
                     )
-                    logger.info(
+                    logger.debug(
                         f"[Main] HOLDING {pos['side'].upper()} @ {pos['entry_price']:.2f}"
                         f" | now={current_price:.2f} | PnL={pnl_pct:+.2f}%"
                         f" | SL={pos['stop_loss']} TP={pos['take_profit']}"
@@ -4208,7 +4208,7 @@ async def execution_loop(
                 )
                 continue
 
-            logger.info(
+            logger.debug(
                 f"[Metrics] P={metrics['price']:.2f} | "
                 f"RSI={metrics['rsi']:.1f} | Z={metrics['zScore']:.2f} | "
                 f"Bayes={metrics['bayesianPosterior']:.2%} | Skew={metrics['skewness']:.3f} | "
@@ -4227,6 +4227,7 @@ async def execution_loop(
                     f"last trade {time.time() - feed.state._last_trade_ts:.0f}s ago, "
                     f"buffer={len(feed.state.recent_trades)} trades. Tape/CVD metrics unreliable."
                 )
+                quant.reset_cvd_divergence_state()
 
             # Stages 2–7: Full signal engine
             if stats.get("operator_paused"):
@@ -4293,12 +4294,13 @@ async def execution_loop(
             # Show real Bayes score even when blocked — conf=0% was misleading
             _bayes_display = metrics.get('bayesianPosterior', conf) if metrics else conf
             _block_tag = " [EQUITY_BLOCKED]" if action == "WAIT" and ACCOUNT_SIZE < 150.0 else ""
-            logger.info(
+            _log_func = logger.info if action != "WAIT" else logger.debug
+            _log_func(
                 f"[Main] {action} | conf={conf:.0%} | bayes={_bayes_display:.0%}{_block_tag} "
                 f"| SL={stop_loss} TP={take_profit} | ULIS={ulis_str}"
             )
             if analysis:
-                logger.info(f"[Main] {analysis}")
+                _log_func(f"[Main] {analysis}")
 
             is_actionable = action in ("BUY", "SELL", "MEAN_REVERSAL_LONG", "MEAN_REVERSAL_SHORT")
             if is_actionable:

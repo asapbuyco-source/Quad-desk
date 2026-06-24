@@ -607,12 +607,22 @@ def load_data(symbol: str, years_back: int = 2) -> pd.DataFrame:
     periods = int((end_date - start_date).total_seconds() / 300)  # 5-min bars
     dates   = pd.date_range(end=end_date, periods=periods, freq="5min")
 
-    returns = np.random.normal(0, 0.001, periods) * np.abs(np.random.normal(1, 0.2, periods))
-    close   = 30_000.0 * np.exp(np.cumsum(returns))   # BTC-realistic starting price
-    high    = close * (1 + np.abs(np.random.normal(0, 0.0005, periods)))
-    low     = close * (1 - np.abs(np.random.normal(0, 0.0005, periods)))
-    open_   = np.roll(close, 1); open_[0] = close[0]
-    vol     = np.random.lognormal(mean=10, sigma=1, size=periods)
+    # Create a synthetic market with distinct TREND and RANGE regimes
+    t = np.linspace(0, 100 * np.pi, periods)
+    base_trend = np.sin(t) * 2000 + t * 50  # Sine wave + upward drift
+    
+    # Volatility clustering (GARCH-like)
+    volatility = 0.001 + 0.003 * np.abs(np.sin(t / 2))
+    returns = np.random.normal(0, volatility, periods)
+    
+    close = 30_000.0 + base_trend + (30_000.0 * np.cumsum(returns))
+    high = close * (1 + np.abs(np.random.normal(0, 0.002, periods)))
+    low = close * (1 - np.abs(np.random.normal(0, 0.002, periods)))
+    open_ = np.roll(close, 1); open_[0] = close[0]
+    
+    # Simulate high volume during trends (steep parts of sine wave)
+    gradient = np.abs(np.gradient(base_trend))
+    vol = np.random.lognormal(mean=10, sigma=1, size=periods) * (1 + gradient * 2)
 
     return pd.DataFrame(
         {'open': open_, 'high': high, 'low': low, 'close': close, 'volume': vol},
