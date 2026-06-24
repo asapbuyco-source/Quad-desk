@@ -27,7 +27,7 @@ Environment variables:
     BOT_MIN_CONFIDENCE          — default: 0.65 (Bayesian fusion threshold)
     BOT_ACCOUNT_SIZE            — default: 100  (USDT equity in futures wallet)
     BOT_ULIS_GATE               — default: true (enable Stage 6 ULIS gate)
-    BOT_PANIC_DROP_PCT          — default: 3.0  (% flash-crash triggers panic mode)
+    BOT_PANIC_DROP_PCT          — default: 5.0  (% flash-crash triggers panic mode)
     BOT_PANIC_LOOKBACK          — default: 5    (candles to look back for crash)
     BOT_PANIC_LOCK_SECONDS      — default: 300  (seconds to lock after panic)
 
@@ -119,10 +119,10 @@ SYMBOL              = os.environ.get("BOT_SYMBOL",              "BTC-USDC" if EX
 TESTNET             = os.environ.get("BOT_TESTNET",             "true").lower() != "false"   # P11 FIX: safe-by-default — testnet unless explicitly set to mainnet
 MAX_RISK_PCT        = float(os.environ.get("BOT_MAX_RISK_PCT",        str(CFG_MAX_RISK_PCT)))
 MAX_DAILY_LOSS_PCT  = float(os.environ.get("BOT_MAX_DAILY_LOSS_PCT",  str(CFG_MAX_DAILY_LOSS_PCT)))
-ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "15"))
+ANALYSIS_INTERVAL   = int(os.environ.get("BOT_ANALYSIS_INTERVAL",    "60"))
 # D1 FIX: Adaptive polling intervals
-FAST_ANALYSIS_INTERVAL = int(os.environ.get("BOT_FAST_ANALYSIS_INTERVAL", "3"))   # TREND/VOLATILE/LIQUIDITY/SQUEEZE or active position
-SLOW_ANALYSIS_INTERVAL = int(os.environ.get("BOT_SLOW_ANALYSIS_INTERVAL", "30"))  # Stable RANGE without position
+FAST_ANALYSIS_INTERVAL = int(os.environ.get("BOT_FAST_ANALYSIS_INTERVAL", "10"))   # TREND/VOLATILE/LIQUIDITY/SQUEEZE or active position
+SLOW_ANALYSIS_INTERVAL = int(os.environ.get("BOT_SLOW_ANALYSIS_INTERVAL", "120"))  # Stable RANGE without position
 CANDLE_INTERVAL     = os.environ.get("BOT_CANDLE_INTERVAL",      "15m")
 MIN_CONFIDENCE = float(os.environ.get("BOT_MIN_CONFIDENCE", str(CFG_MIN_BAYESIAN)))  # P12 FIX: wire env var, fallback to signal_config
 ACCOUNT_SIZE        = float(os.environ.get("BOT_ACCOUNT_SIZE",        "100.0"))
@@ -136,7 +136,7 @@ _EXCHANGE_FEE_RATE  = 0.012 if EXCHANGE == "coinbase" else (0.0004 if EXCHANGE =
 
 # Panic mode: trigger if price drops this % within PANIC_LOOKBACK candles
 # e.g. 3.0 = 3% crash within 5 candles → engage panic mode
-PANIC_DROP_PCT     = float(os.environ.get("BOT_PANIC_DROP_PCT",   "3.0"))
+PANIC_DROP_PCT     = float(os.environ.get("BOT_PANIC_DROP_PCT",   "5.0"))
 PANIC_LOOKBACK     = int(os.environ.get("BOT_PANIC_LOOKBACK",     "5"))   # candles
 PANIC_LOCK_SECONDS = int(os.environ.get("BOT_PANIC_LOCK_SECONDS", "300")) # 5 min default
 # Max drawdown: halt ALL trading if cumulative session PnL exceeds this % of ACCOUNT_SIZE
@@ -1057,7 +1057,9 @@ class _HMMRegimeClassifier:
                  atr_pct_rank: float = 0.5,
                  amihud_rank: float = 0.5,
                  t_kinetic: float = 0.5,
-                 cvd_momentum: float = 0.0) -> dict:
+                 cvd_momentum: float = 0.0,
+                 z_ret: float = 0.0,
+                 funding_rate: float = 0.0) -> dict:
         """
         Main entry: add one observation and return regime probability vector.
 
@@ -1082,6 +1084,8 @@ class _HMMRegimeClassifier:
             float(np.clip(abs(z_score),  0.0,  4.0)),     # f1: |z| raw scale (matches calibration)
             1.0 if tape == "SCREAMING" else 0.0,        # f2: tape binary
             float(np.clip(atr_pct_rank,  0.0,  1.0)),    # f3: atr percentile rank
+            float(np.clip(abs(z_ret),    0.0,  4.0)),    # f4: |z_ret| log-return velocity
+            float(np.clip(funding_rate * 1000, -2.0, 2.0)), # f5: funding rate
         ], dtype=float)
         # NOTE: amihud_rank and t_kinetic are intentionally excluded (audit v3 P1).
         # The calibrated 4D emission matrices (_MU/_SIGMA) do not include them.
@@ -1366,11 +1370,10 @@ def _detect_regime(
             quant._liquidity_cap_cooldown -= 1
             quant._liquidity_consecutive = 0
             logger.debug(f"[Regime] LIQUIDITY cooldown={quant._liquidity_cap_cooldown} — falling through to HMM")
-        # P2 AUDIT FIX: Raise cap from 3 → 6 cycles.
-        # At 15s analysis intervals, 3 cycles = 45s which is too aggressive —
-        # the cap expires before meaningful sweep setups can form, causing
-        # LIQUIDITY ↔ NEUTRAL oscillation near walls for hours.
-        elif quant._liquidity_consecutive > 6 and sweep is None:
+        # AUDIT FIX: Cap LIQUIDITY regime to 2 consecutive cycles to prevent monopolization.
+        # This forces the bot to fall back to the HMM regime classification much faster,
+        # unlocking other strategies.
+        elif quant._liquidity_consecutive > 2 and sweep is None:
             logger.info("[Regime] LIQUIDITY cap reached — falling through to HMM")
             quant._liquidity_consecutive = 0
             quant._liquidity_cap_cooldown = 2
@@ -1399,7 +1402,9 @@ def _detect_regime(
 
     # DIM 5 FIX: Pass CVD momentum as non-Markovian memory kernel feed-forward
     cvd_momentum = float(metrics.get("cvd_delta", 0.0) or 0.0)
-    hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic, cvd_momentum=cvd_momentum)
+    z_ret = float(metrics.get("zScore_ret", 0.0))
+    funding_rate = float(metrics.get("funding_rate", 0.0))
+    hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic, cvd_momentum=cvd_momentum, z_ret=z_ret, funding_rate=funding_rate)
 
     # HIGH-2 FIX: REGIME_REMAP removed — it was dead code (HMM state 2 is "NEUTRAL"
     # in _LABELS, never "VOLATILE"). Keeping it was a hazard: renaming the label
@@ -2087,8 +2092,8 @@ def _apply_ulis_gate(
     # liquidity_vector aligns with the trade direction, it is corroborating
     # evidence → apply a small boost. Only penalise when it conflicts.
     boost = ulis["confidence_boost"]
-    if verdict_str == "NEUTRAL" and regime in ("RANGE", "TREND"):
-        boost = 0.04
+    if verdict_str == "NEUTRAL":
+        boost = 0.03  # Mild "no objection" nudge across all regimes
     if verdict_str == "BREAKOUT_WATCH":
         vector_bullish = ulis["liquidity_vector"] > 0
         if (is_long and vector_bullish) or (not is_long and not vector_bullish):
@@ -2848,12 +2853,11 @@ async def _compute_signal(
     # to measure its age. This correctly handles sweeps detected from the live candle.
     if sweep:
         sweep_candle_age_s = _time.time() - sweep_ts
-        # A 15m candle = 900s. We allow entry at ANY POINT within the CURRENT candle
+        # A 1H candle = 3600s. We allow entry at ANY POINT within the CURRENT candle
         # after the previous candle produced the sweep — i.e. up to 2 full candle lengths.
-        # Old value (900+gate_sec=945s) gave only a 45s reaction window which was far
-        # too tight: mid-session starts and any latency caused instant staleness.
+        # 1H migration: updated from 900+gate_sec (15m) to 3600+gate_sec (1h).
         gate_sec = regime_p["candle_gate_sec"]
-        max_sweep_age = 900 + gate_sec  # PHASE-5.3: was 1800+gate_sec (~30min), now 900+gate_sec (~15min)
+        max_sweep_age = 3600 + gate_sec  # 1H migration: 1 full 1H candle + gate buffer
         if sweep_candle_age_s > max_sweep_age:
             logger.info(
                 f"[CandleGate] Sweep signal stale — sweep candle closed "
@@ -3252,7 +3256,7 @@ async def _compute_signal(
     # We do NOT multiply by LEVERAGE here, because leverage magnifies both profit and fees equally.
     tp_gain_pct = abs(take_profit - price) / price          # % gain if TP hit
     round_trip_fee_rate = _EXCHANGE_FEE_RATE * 2            # entry + exit on notional
-    min_viable_tp_pct = round_trip_fee_rate * 2.5           # TP must comfortably cover fees/slippage
+    min_viable_tp_pct = round_trip_fee_rate * 1.5           # P9 FIX: was 2.5× — overly conservative, rejecting viable small-R trades
     if tp_gain_pct < min_viable_tp_pct:
         logger.warning(
             f"[FeeCheck] TP gain {tp_gain_pct:.3%} < min viable {min_viable_tp_pct:.3%} "

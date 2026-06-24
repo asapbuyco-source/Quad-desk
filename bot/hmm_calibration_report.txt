@@ -1,0 +1,37 @@
+HMM CALIBRATION AUDIT REPORT
+============================================================
+Generated: 2026-06-24T23:53:40.705589+00:00
+Mode:      multi_symbol_ensemble
+Symbols:   BTCUSDT, ETHUSDT, SOLUSDT
+Interval:  15m
+Period:    2024-06-24 -> 2026-06-24
+Obs count: 210,090
+
+EDGE SUFFICIENCY
+  Gross expected edge:  0.0176%
+  Round-trip fee cost:  0.0900%
+  Net edge:             -0.0724%
+  Sufficient (≥0.30%):  False
+
+REGIME SEPARATION (Bhattacharyya distance, min required 0.40)
+  RANGE vs VOLATILE:  0.2955
+  RANGE vs TREND:     117.6068
+  TREND vs VOLATILE:  108.2666
+
+HALLUCINATION
+  Max across symbols: 0.2%  (limit: 35%)
+
+PER-SYMBOL WALK-FORWARD
+  BTCUSDT: OOS consistency = 0.9876  [GOOD]
+  ETHUSDT: OOS consistency = 0.9905  [GOOD]
+  SOLUSDT: OOS consistency = 0.938  [GOOD]
+
+READINESS VERDICT
+  NOT READY
+
+ACTION REQUIRED IF NOT READY
+  1. Collect >= 2 years of data (--years 2)
+  2. Check Bhattacharyya distances — if TREND vs VOLATILE < 0.40,
+     the feature set cannot separate them. Add funding rate as f5.
+  3. If hallucination rate high, the VOLATILE state boundary is too
+     diffuse — clip atr_pct more aggressively (reduce to 0.02).

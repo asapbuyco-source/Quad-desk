@@ -13,12 +13,22 @@ class TelegramNotifier:
 
     H1 FIX: Persistent httpx.AsyncClient reused across all requests.
     """
+
+logger = logging.getLogger(__name__)
+
+class TelegramNotifier:
+    """
+    Handle sending trade alerts and error notifications to Telegram.
+
+    H1 FIX: Persistent httpx.AsyncClient reused across all requests.
+    """
     def __init__(self, token: Optional[str], chat_id: Optional[str]):
         self.token = token
         self.chat_id = chat_id
         self.base_url = f"https://api.telegram.org/bot{token}/sendMessage" if token else None
         self.document_url = f"https://api.telegram.org/bot{token}/sendDocument" if token else None
         self._client: httpx.AsyncClient = None  # H1: lazy-initialized persistent client
+        self._last_errors = {}  # Deduplication cache for errors
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -76,19 +86,21 @@ class TelegramNotifier:
                     await asyncio.sleep(2.0)
 
     async def send_trade_alert(self, symbol: str, side: str, price: float, size: float, sl: float, tp: float, is_dry: bool = False):
-        """Send a beautiful trade entry alert."""
-        mode_str = "🧪 [DRY-RUN]" if is_dry else "🚀 [LIVE-TRADE]"
-        emoji = "📈" if side.lower() == "buy" else "📉"
+        """Send a beautiful, compact trade entry alert."""
+        mode_str = "🧪 DRY" if is_dry else "🚀 LIVE"
+        emoji = "📈 LONG" if side.lower() == "buy" else "📉 SHORT"
+        
+        # Calculate Risk and Reward
+        risk = abs(price - sl)
+        reward = abs(tp - price)
+        rr = reward / risk if risk > 0 else 0.0
+        notional = price * size
         
         msg = (
-            f"<b>{mode_str} ENTRY</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"{emoji} <b>{side.upper()} {symbol}</b>\n"
-            f"💰 Price: <code>{price:.2f}</code>\n"
-            f"📦 Size: <code>{size:.6f}</code>\n"
-            f"🛑 SL: <code>{sl:.2f}</code>\n"
-            f"🎯 TP: <code>{tp:.2f}</code>\n"
-            f"━━━━━━━━━━━━━━━"
+            f"<b>{mode_str} | {emoji} {symbol}</b>\n"
+            f"💰 Entry: <code>{price:.4f}</code> | Vol: <code>${notional:.0f}</code>\n"
+            f"🛑 SL: <code>{sl:.4f}</code>\n"
+            f"🎯 TP: <code>{tp:.4f}</code> (RR: {rr:.1f}x)"
         )
         await self.send_message(msg)
 
@@ -105,36 +117,41 @@ class TelegramNotifier:
         mode_emoji = "🧪" if mode == "DRY-RUN" else "🚀"
         msg = (
             f"<b>{mode_emoji} QUAD-DESK BOT ONLINE</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"📡 <b>Exchange:</b> <code>{exchange.upper()}</code>\n"
-            f"💹 <b>Symbol:</b>   <code>{symbol}</code>\n"
-            f"⚡ <b>Leverage:</b> <code>{leverage}×</code>\n"
-            f"⏱ <b>Interval:</b> <code>{interval}</code>\n"
-            f"🤖 <b>Mode:</b>     <code>{mode}</code>\n"
-            f"🔧 <b>Engine:</b>   <code>7-Stage Hybrid {version}</code>\n"
-            f"━━━━━━━━━━━━━━━\n"
+            f"📡 <code>{exchange.upper()}</code> | 💹 <code>{symbol}</code>\n"
+            f"⚡ {leverage}× | ⏱ {interval} | 🔧 {version}\n"
             f"<i>Bot is live and scanning markets.</i>"
         )
         await self.send_message(msg)
 
     async def send_error_alert(self, error_msg: str):
-        """Send an urgent error notification."""
-        error_msg = html.escape(str(error_msg), quote=False)
-        msg = f"⚠️ <b>BOT ERROR</b>\n━━━━━━━━━━━━━━━\n<code>{error_msg}</code>"
+        """Send an urgent error notification with rate-limiting."""
+        import time
+        now = time.time()
+        
+        # Simple deduplication: don't spam the exact same error within 5 minutes
+        if error_msg in self._last_errors:
+            if now - self._last_errors[error_msg] < 300:
+                return  # Skip spam
+        
+        self._last_errors[error_msg] = now
+        
+        # Cleanup old errors to prevent memory leak
+        self._last_errors = {k: v for k, v in self._last_errors.items() if now - v < 300}
+
+        error_msg_esc = html.escape(str(error_msg), quote=False)
+        msg = f"⚠️ <b>BOT ERROR</b>\n<code>{error_msg_esc}</code>"
         await self.send_message(msg)
 
     async def send_close_alert(self, symbol: str, side: str, price: float, type: str, pnl: float, is_dry: bool = False):
-        """Send a beautiful trade exit summary alert."""
-        mode_str = "🧪 [DRY-RUN]" if is_dry else "🚀 [LIVE-TRADE]"
-        emoji = "🔴" if type == "SL" else "🟢"
+        """Send a beautiful, compact trade exit summary alert."""
+        mode_str = "🧪 DRY" if is_dry else "🚀 LIVE"
+        emoji = "🔴" if type == "SL" else ("🔵" if type == "BE" else "🟢")
         result = "PROFIT" if pnl >= 0 else "LOSS"
         
         msg = (
-            f"<b>{mode_str} CLOSE</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"{emoji} <b>{type} HIT: {side.upper()} {symbol}</b>\n"
-            f"🔚 Exit Price: <code>{price:.2f}</code>\n"
-            f"💵 {result}: <code>${pnl:.2f}</code>\n"
-            f"━━━━━━━━━━━━━━━"
+            f"<b>{mode_str} | {emoji} {type} HIT</b>\n"
+            f"📊 <b>{side.upper()} {symbol}</b>\n"
+            f"🔚 Exit: <code>{price:.4f}</code>\n"
+            f"💵 {result}: <code>${pnl:.2f}</code>"
         )
         await self.send_message(msg)

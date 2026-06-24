@@ -20,7 +20,7 @@ except ImportError:
 # It makes sure that there is enough volatility to trade and make a profit.
 # ==============================================================================
 CONFIG = {
-    "symbols": ["BTCUSDT"],
+    "symbols": ["SOLUSDT"],
     "timeframe_mins": 15,
     "initial_balance": 10000.0,
     "base_risk_pct": 1.0,
@@ -43,7 +43,7 @@ CONFIG = {
     "slippage_bps": 3,
     # commission_pct: exchange fee per trade LEG (Coinbase Advanced taker = 0.10%)
     # Total round-trip cost at defaults: 3 bps slip ×2 + 0.10% comm ×2 = ~0.26% per trade
-    "commission_pct": 0.0004,    # expressed as a fraction (0.001 = 0.1%)
+    "commission_pct": 0.0002,    # expressed as a fraction (0.001 = 0.1%)
 }
 
 # ==============================================================================
@@ -309,7 +309,7 @@ def backtest_hybrid(df, config, symbol):
 
                 # ── Apply realistic friction ─────────────────────────────
                 slip = config.get('slippage_bps', 3) / 10_000.0
-                comm = config.get('commission_pct', 0.0004)  # Binance USDM futures default
+                comm = config.get('commission_pct', 0.0002)  # Binance USDM futures default
 
                 # Slippage worsens both fill prices
                 if is_long:
@@ -537,7 +537,7 @@ def backtest_hybrid(df, config, symbol):
     # Close remaining open trades at the last known price
     last_px = close[-1]
     slip = config.get('slippage_bps', 3) / 10_000.0
-    comm = config.get('commission_pct', 0.0004)
+    comm = config.get('commission_pct', 0.0002)
     for t in open_trades:
         is_long = t['dir'] == 1
         eff_entry = t['entry'] * (1.0 + slip) if is_long else t['entry'] * (1.0 - slip)

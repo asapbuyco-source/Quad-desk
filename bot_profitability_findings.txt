@@ -1,0 +1,189 @@
+================================================================================
+QUAD-DESK BOT — PROFITABILITY & PROMPT ANALYSIS
+================================================================================
+Date: 2026-06-24
+Analyst: Automated codebase review
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+Quad-Desk Terminal is an institutional-grade, fully-automated crypto futures
+trading bot. It trades Binance USDM Futures via the CCXT exchange library.
+
+Stack:
+  - Frontend: React + TypeScript (Vite, Zustand, lightweight-charts)
+  - Backend:  FastAPI (Python) with Google Gemini AI
+  - Bot:      Autonomous Python trading engine (~12,000+ lines)
+  - Infra:    Firebase (Firestore), Telegram notifications
+
+The bot runs a 7-Stage Hybrid Pipeline:
+  Stage 1: Feature Engine          — OFI, CVD, VWAP Z-Score, Tape Speed, RSI, ATR
+  Stage 2: Regime Detection (HMM)  — 3-state HMM: RANGE | TREND | VOLATILE
+  Stage 3: Liquidity Sweep         — Stop-hunt detection above/below order book walls
+  Stage 4: Strategy Layer          — Trend Following / Mean Reversion / Liquidity Sweep
+  Stage 5: Bayesian Fusion         — Beta conjugate prior + evidence multipliers
+  Stage 6: ULIS/ALDE Gate           — Proprietary veto system (triple alignment)
+  Stage 7: Risk Engine             — ATR-based SL/TP, daily loss halt, drawdown guard
+
+================================================================================
+2. THE CORE FINDING: TRADING IS 100% DETERMINISTIC — NO AI PROMPT IN USE
+================================================================================
+
+The bot's trading decisions are made by pure math/statistics:
+  - Z-score (Student's t-distribution)
+  - Order Flow Imbalance (MAD outlier filter + EWMA + tanh saturation)
+  - Cummulative Volume Delta
+  - Hidden Markov Model (Baum-Welch calibrated)
+  - Bayesian conjugate prior (Beta distribution)
+  - ATR-based position sizing and risk
+
+The ENTIRE trading decision path is deterministic. There is NO LLM/AI prompt
+anywhere in the signal pipeline (bot/main.py, bot/quant_engine.py,
+bot/executor.py, bot/ulis_engine.py).
+
+The only AI (Google Gemini) used in the project is in the BACKEND:
+  - File: backend/main.py, line 797-802
+  - Endpoint: GET /market-intelligence
+  - Purpose: Summarizes crypto news headlines into a JSON blob with
+    {main_narrative, whale_impact, ai_sentiment_score}
+  - The BOT NEVER CALLS THIS ENDPOINT. It serves only the frontend dashboard.
+
+The /analyze endpoints in the backend are ALSO deterministic — they are
+rule-based signal aggregators, not LLM calls.
+
+================================================================================
+3. AUDIT FINDINGS: WHY THE BOT ISN'T PROFITABLE
+================================================================================
+
+The bot received a D+ grade (55/100) in a deep audit (bot_audit_report.md).
+Thirteen issues were identified. NONE are prompt-related.
+
+CRITICAL ISSUES:
+
+  #1  Symbol misconfigured — BOT_SYMBOL may be set to "usdc/btc" instead
+      of "BTC/USDT". The data feed silently normalizes to BTCUSDT for analysis,
+      but the executor may trade the wrong pair or fail silently.
+      IMPACT: Bot may literally not be trading at all.
+
+  #2  Risk parameters are 3x too aggressive — BOT_MAX_RISK_PCT=3.0% (safe: 1.0%)
+      and BOT_MAX_DAILY_LOSS_PCT=10.0% (safe: 3.0%).
+      With $100 equity: 3 losses = 24.6% drawdown.
+
+  #3  Position sizing uses total equity instead of margin balance. On Binance
+      Futures, available margin can be lower than total equity leading to
+      order rejections.
+
+CODE-LEVEL BUGS (from audit):
+
+  #4  HTF Trend Filter blocks mean-reversion entries. The 4H trend filter
+      blocks ALL counter-trend entries, even though mean-reversion strategies
+      are DESIGNED to fade trends. Misses 30-40% of valid trades.
+
+  #5  Candle-Close Gate kills sweep signals mid-candle. The gate only allows
+      sweeps within 20 seconds of a new candle. With a 10s analysis interval,
+      many sweeps are detected too late and rejected. Misses ~50% of sweeps.
+
+  #6  ULIS OFI thresholds tuned for spot, not futures. On 15m futures candles,
+      normal OFI variance is ±15, not ±8. Bot false-vetoes 25-30% of trades.
+
+  #7  Break-even lock ignores fees. Bot moves SL to break-even at +1R,
+      but round-trip fees are 0.08%. Net result: small winners become losers.
+
+  #8  Panic mode triggers on normal volatility. 3% move in 5 candles triggers
+      lockout. BTC regularly moves 3-5% in an hour normally.
+
+  #9  Partial close uses wrong position size after session restart (KeyError).
+
+  #10 CVD delta spikes after bot restart. LAST_CVD global reset to 0.0 creates
+      an artificial huge delta on the first cycle.
+
+STRATEGY ISSUES:
+
+  #11 Fee profitability check too conservative — requires 1.5x fee buffer
+      instead of 1.2x, rejecting 10-15% of profitable small-R trades.
+
+  #12 Mean-reversion Z-score threshold too high at ±2.2. On 15m BTC,
+      Z≥2.2 occurs in only ~2% of candles. Only 2-3 signals/month instead
+      of expected 15-20.
+
+  #13 Trend strategy doesn't require SCREAMING tape — enters on weak flow
+      that doesn't meet its own regime criteria.
+
+================================================================================
+4. CAN A BETTER PROMPT MAKE IT PROFITABLE?
+================================================================================
+
+SHORT ANSWER: Not with the current architecture.
+
+Because:
+  - The bot's trading pipeline uses ZERO AI prompts
+  - All decisions are statistical/mathematical
+  - The bugs listed above are deterministic code errors
+
+If you wanted to ADD an LLM prompt to improve profitability, you would need to
+build a new integration — e.g., inject Gemini into the signal pipeline as a
+"context confidence adjuster" at Stage 5.5. But that is a NEW FEATURE, not
+just a "better prompt."
+
+However, the higher-ROI approach is:
+
+  >>> FIX THE 13 IDENTIFIED BUGS FIRST <<<
+
+  The audit estimates that fixing all issues would improve:
+    - Win rate:      45% → 52-55%
+    - Profit factor: 1.1 → 1.4-1.6
+    - Max drawdown:  18% → 10-12%
+
+================================================================================
+5. ACTION PLAN (IN PRIORITY ORDER)
+================================================================================
+
+WEEK 1 — Critical Fixes:
+  [ ] Fix BOT_SYMBOL to "BTC/USDT" (5 min — EXISTS in .env or Railway vars)
+  [ ] Set BOT_MAX_RISK_PCT=1.0 and BOT_MAX_DAILY_LOSS_PCT=3.0 (2 min)
+  [ ] Apply Bug #3 — margin balance check in executor.py (15 min)
+  [ ] Apply Bug #4 — HTF filter only block trend-following, not mean-rev (10 min)
+  [ ] Apply Bug #7 — BE lock add 0.15R fee buffer (10 min)
+
+WEEK 2 — Strategy Tuning:
+  [ ] Apply Bug #5 — widen candle-close gate from 20s to 60s (5 min)
+  [ ] Apply Bug #6 — widen ULIS OFI bounds from ±8 to ±15 (5 min)
+  [ ] Apply Issue #12 — lower mean-rev Z from ±2.2 to ±1.8 (5 min)
+  [ ] Run: python -m bot.hmm_calibrate (calibrate HMM with real data)
+  [ ] Run: python -m bot.backtest_hybrid (verify fixes)
+
+WEEK 3 — Validation:
+  [ ] Paper trade 1 week with DRY_RUN enabled
+  [ ] Review stats vs. backtest expectations
+  [ ] Decision: go live with minimum size or iterate
+
+IF YOU WANT TO ADD LLM INTEGRATION (Optional, Post-Fixes):
+  [ ] Wire Gemini call at Stage 5 in main.py _compute_signal()
+  [ ] Use it to analyze anomalous microstructure + OHLCV context
+  [ ] Provide a ±5-10% confidence adjustment to the Bayesian posterior
+  [ ] Gate behind a confidence threshold so LLM can't override strong
+      deterministic signals
+
+================================================================================
+6. KEY FILES REFERENCED
+================================================================================
+
+  bot/main.py              — 4690 lines, 7-stage pipeline, signal computation
+  bot/executor.py          — 2658 lines, order placement, SL/TP, monitoring
+  bot/quant_engine.py      — 1376 lines, OFI, CVD, Z-score, Bayesian prior
+  bot/signal_config.py     —  218 lines, ALL thresholds (edit HERE, not in main)
+  bot/ulis_engine.py       —        , ULIS/ALDE veto gate
+  bot/data_feed.py         —  926 lines, Binance WebSocket data feed
+  bot/notifier.py          —  140 lines, Telegram notifications
+  bot/hmm_calibrate.py     —        , Baum-Welch HMM calibration from historical data
+  bot/backtest_hybrid.py   —        , mirrors live pipeline for backtesting
+  bot/global_risk.py       —   44 lines, multi-symbol aggregate risk
+  backend/main.py           — 1578 lines, FastAPI server, Gemini AI for news
+  launcher.py               —  183 lines, multi-coin process orchestrator
+  BOT_STRATEGY.md           — Strategy architecture description
+  bot_audit_report.md       — D+ grade audit (673 lines, 13 issues found)
+
+================================================================================
+END OF REPORT
+================================================================================

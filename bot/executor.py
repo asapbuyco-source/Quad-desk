@@ -1219,20 +1219,16 @@ class TradingExecutor:
             )
             return
 
-        # ── LIVE EXECUTION ────────────────────────────────────────────────
+        # ── LIVE EXECUTION (MAKER-ONLY) ────────────────────────────────────
         # Guard: if the last order failed (e.g. -2015), wait before retrying.
-        # Without this, the bot re-attempts the same signal every 15s.
         if time.time() < self.failed_order_ts:
             remaining = int(self.failed_order_ts - time.time())
             logger.info(f"[Executor] Failed-order cooldown active — {remaining}s remaining. Skipping.")
             return
 
         # P5 FIX: Set pending_order INFLIGHT BEFORE releasing the outer lock.
-        # This prevents a TOCTOU race where a concurrent signal checking pending_order
-        # between lock release (line 757) and market order (line 830) would see no pending order.
-        # The heartbeat check at line 592 sees INFLIGHT and skips entry for TTL duration.
         self.pending_order = {
-            "id": None,   # filled after market order returns
+            "id": None,
             "symbol": None,
             "side": None,
             "size": None,
@@ -1242,8 +1238,6 @@ class TradingExecutor:
         }
 
         try:
-            # We already have ex_symbol correctly formatted at line ~506 (e.g. BTC/USDT:USDT)
-            # Only do the Coinbase USDC -> USD swap if applicable
             if self.exchange_id == "coinbase" and "USDC" in ex_symbol:
                 ex_symbol = ex_symbol.replace("USDC", "USD")
                 
@@ -1254,14 +1248,6 @@ class TradingExecutor:
                     self.exchange.amount_to_precision(ex_symbol, equity * 0.95 / current_price)
                 )
                 cost = fmt_size * current_price
-
-            order_amount = fmt_size
-            order_params = {}
-            if self.exchange_id == "coinbase" and not self.is_futures and side == "buy":
-                # Coinbase spot market buys spend quote currency when this CCXT
-                # option is disabled; keep fmt_size as BTC size for SL/TP state.
-                order_amount = float(self.exchange.price_to_precision(ex_symbol, cost))
-                order_params["createMarketBuyOrderRequiresPrice"] = False
 
             min_live_rr = self._min_live_entry_rr()
             prefill_rr = self._effective_reward_risk(side, current_price, stop_loss, take_profit)
@@ -1274,33 +1260,122 @@ class TradingExecutor:
                 self.pending_order = None
                 return False
 
-            logger.info(
-                f"[Executor] Placing MARKET {side.upper()} {order_amount} {ex_symbol} @ ~{current_price}"
-            )
+            # ── MAKER-ONLY ENTRY: Limit order at best bid/ask with postOnly ─
             import asyncio
+            ORDER_TTL_SEC = 60
+            POLL_INTERVAL_S = 3.0
+
+            # Determine limit price from live order book (best bid/ask)
+            try:
+                ob = await self.exchange.fetch_order_book(ex_symbol, 1)
+                if side == "buy":
+                    limit_price = ob['bids'][0][0] if ob.get('bids') and ob['bids'][0][0] > 0 else current_price * 0.9998
+                else:
+                    limit_price = ob['asks'][0][0] if ob.get('asks') and ob['asks'][0][0] > 0 else current_price * 1.0002
+            except Exception:
+                # Fallback to spread assumption (2bp)
+                limit_price = current_price * 0.9998 if side == "buy" else current_price * 1.0002
+
             order = None
             for attempt in range(3):
                 try:
-                    order = await self.exchange.create_market_order(
-                        ex_symbol, side, order_amount, params=order_params
-                    )
+                    limit_p = float(self.exchange.price_to_precision(ex_symbol, limit_price))
+                    if self.exchange_id == "coinbase" and not self.is_futures:
+                        order = await self.exchange.create_limit_order(
+                            ex_symbol, side, fmt_size, limit_p,
+                            params={"postOnly": True}
+                        )
+                    else:
+                        order = await self.exchange.create_order(
+                            ex_symbol, "LIMIT", side, fmt_size, limit_p,
+                            params={"postOnly": True, "timeInForce": "GTC"}
+                        )
                     break
                 except Exception as e:
                     if attempt == 2:
-                        # Engage 90s cooldown — avoids flooding -2015 errors every cycle
                         self.failed_order_ts = time.time() + 90.0
-                        logger.error(f"[Executor] Live order failed: {e}")
+                        logger.error(f"[Executor] Limit order failed after 3 attempts: {e}")
                         raise e
-                    logger.warning(f"[Executor] Market order failed: {e}. Retrying {attempt+1}/3...")
+                    logger.warning(f"[Executor] Limit order attempt {attempt+1}/3 failed: {e}. Retrying...")
                     await asyncio.sleep(0.5)
-            logger.info(f"[Executor] Market order placed: id={order.get('id')} status={order.get('status')}")
-            fill_price = float(order.get("average") or order.get("price") or current_price)
-            entry_fee_actual = self._extract_trade_fee(order)
-            entry_fee_est = abs(fill_price * fmt_size * self.TAKER_FEE)
+
+            order_id = order.get("id")
             logger.info(
-                f"[Executor] Fill price: {fill_price:.2f} "
-                f"(signal was {current_price:.2f}, diff={fill_price-current_price:+.2f})"
+                f"[MakerEntry] LIMIT {side.upper()} {fmt_size} {ex_symbol} "
+                f"@ {limit_price:.2f} | id={order_id} | postOnly=True | TTL={ORDER_TTL_SEC}s"
             )
+            self.pending_order = {
+                "id": order_id,
+                "symbol": ex_symbol,
+                "side": side,
+                "size": fmt_size,
+                "entry_price": limit_price,
+                "status": "PENDING",
+                "expires_at": time.time() + ORDER_TTL_SEC,
+            }
+
+            # ── TTL Polling Loop — monitor fill progress ──────────────────
+            deadline = time.time() + ORDER_TTL_SEC
+            filled = 0.0
+            fill_price = limit_price
+            order_status = "open"
+
+            while time.time() < deadline:
+                await asyncio.sleep(POLL_INTERVAL_S)
+                try:
+                    updated = await self.exchange.fetch_order(order_id, ex_symbol)
+                except Exception as fetch_err:
+                    logger.warning(f"[MakerEntry] fetch_order error: {fetch_err}. Retrying in next poll.")
+                    continue
+
+                order_status = updated.get("status", "open")
+                filled = float(updated.get("filled", 0.0) or 0.0)
+                avg = updated.get("average")
+                if avg is not None:
+                    fill_price = float(avg)
+
+                if order_status == "closed":
+                    logger.info(f"[MakerEntry] Fully filled. size={filled} avg={fill_price:.2f}")
+                    break
+                elif order_status in ("canceled", "expired", "rejected"):
+                    logger.warning(f"[MakerEntry] Order {order_status}. Aborting entry.")
+                    self.pending_order = None
+                    return False
+
+            if filled <= 0.0:
+                logger.warning("[MakerEntry] Not filled within TTL. Cancelling and aborting.")
+                try:
+                    await self.exchange.cancel_order(order_id, ex_symbol)
+                except Exception:
+                    pass
+                self.pending_order = None
+                return False
+
+            # ── Partial Fill Handling ─────────────────────────────────────
+            if filled < fmt_size:
+                logger.info(
+                    f"[MakerEntry] Partial fill: {filled}/{fmt_size} {ex_symbol}. "
+                    "Cancelling remaining and scaling position."
+                )
+                try:
+                    await self.exchange.cancel_order(order_id, ex_symbol)
+                except Exception:
+                    pass
+                fmt_size = float(self.exchange.amount_to_precision(ex_symbol, filled))
+                if fmt_size <= 0.0:
+                    logger.error("[MakerEntry] Partial fill rounded to 0. Aborting.")
+                    self.pending_order = None
+                    return False
+
+            # Fee estimation: use maker rate for limit entry
+            entry_fee_actual = 0.0
+            entry_fee_est = abs(fill_price * fmt_size * self.MAKER_FEE)
+            logger.info(
+                f"[MakerEntry] Fill: price={fill_price:.2f} size={fmt_size} "
+                f"(signal ~{current_price:.2f}, diff={fill_price-current_price:+.2f}) "
+                f"maker_fee_est={entry_fee_est:.4f}"
+            )
+
             fill_rr = self._effective_reward_risk(side, fill_price, stop_loss, take_profit)
             if fill_rr < min_live_rr:
                 logger.warning(
@@ -1405,6 +1480,14 @@ class TradingExecutor:
                     stop_loss + (atr_for_sl * atr_multiplier) if side == "buy" else stop_loss - (atr_for_sl * atr_multiplier)
                 ))
 
+                # MAKER-ONLY TP: TAKE_PROFIT_LIMIT with postOnly for maker fee (0.02% vs 0.05%).
+                # Limit price offset slightly beyond trigger so the order sits in the book
+                # as a maker when the stop triggers. Falls back to taker if postOnly rejected.
+                tp_limit_offset = 1.0005 if sl_side == "sell" else 0.9995
+                tp_limit_price = float(self.exchange.price_to_precision(
+                    ex_symbol, take_profit * tp_limit_offset
+                ))
+
                 batch_orders = [
                     {
                         "symbol": ex_symbol,
@@ -1419,13 +1502,16 @@ class TradingExecutor:
                     },
                     {
                         "symbol": ex_symbol,
-                        "type": "TAKE_PROFIT_MARKET",
+                        "type": "TAKE_PROFIT_LIMIT",
                         "side": sl_side,
                         "amount": fmt_size,
+                        "price": tp_limit_price,
                         "params": {
                             "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                            "price": tp_limit_price,
                             "reduceOnly": True,
                             "workingType": "MARK_PRICE",
+                            "postOnly": True,
                         },
                     },
                 ]
@@ -1472,18 +1558,35 @@ class TradingExecutor:
 
                     for attempt in range(3):
                         try:
-                            tp_order = await self.exchange.create_order(
-                                symbol=ex_symbol, type="TAKE_PROFIT_MARKET", side=sl_side,
-                                amount=fmt_size,
-                                params={
-                                    "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                                    "reduceOnly": True,
-                                    "workingType": "MARK_PRICE",
-                                },
-                            )
+                            # MAKER-ONLY TP: try TAKE_PROFIT_LIMIT with postOnly first.
+                            # Fall back to TAKE_PROFIT_MARKET (taker) if exchange rejects postOnly.
+                            tp_params = {
+                                "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
+                                "price": tp_limit_price,
+                                "reduceOnly": True,
+                                "workingType": "MARK_PRICE",
+                                "postOnly": True,
+                            }
+                            tp_type = "TAKE_PROFIT_LIMIT"
+                            try:
+                                tp_order = await self.exchange.create_order(
+                                    symbol=ex_symbol, type=tp_type, side=sl_side,
+                                    amount=fmt_size, price=tp_limit_price,
+                                    params=tp_params,
+                                )
+                            except Exception:
+                                # postOnly may be rejected by some exchanges — fall back to taker TP
+                                logger.info("[Executor] postOnly TP rejected. Falling back to TAKE_PROFIT_MARKET.")
+                                tp_params.pop("postOnly", None)
+                                tp_params.pop("price", None)
+                                tp_type = "TAKE_PROFIT_MARKET"
+                                tp_order = await self.exchange.create_order(
+                                    symbol=ex_symbol, type=tp_type, side=sl_side,
+                                    amount=fmt_size, params=tp_params,
+                                )
                             tp_placed = True
                             tp_order_id = tp_order.get("id")
-                            logger.info(f"[Executor] Futures TP placed individually: {tp_order_id}")
+                            logger.info(f"[Executor] Futures TP placed individually ({tp_type}): {tp_order_id}")
                             break
                         except Exception as e:
                             _tp_err = e
@@ -1662,14 +1765,23 @@ class TradingExecutor:
     # ------------------------------------------------------------------
 
     async def move_sl_to_breakeven(self, symbol: str, entry_price: float):
-        """Moves the current Stop Loss to the entry price (Breakeven)."""
+        """Moves the current Stop Loss to the entry price (Breakeven).
+        FEE-BUFFER FIX: Ofsets the breakeven price by the taker fee to cover the exit
+        leg cost. Without this, hitting BE on a limit/market exit still nets a loss
+        because the round-trip fee is 0.08% on Binance Futures.
+        """
+        side = self.active_position.get("side", "buy") if self.active_position else "buy"
+        fee_buffer = entry_price * self.TAKER_FEE
+        be_price = entry_price + fee_buffer if side == "buy" else entry_price - fee_buffer
+
         if self.dry_run:
-            logger.info("[Executor] DRY-RUN: Simulated moving SL to breakeven.")
+            logger.info(f"[Executor] DRY-RUN: Simulated moving SL to breakeven+fees @ {be_price:.2f} (buffer={fee_buffer:.2f}).")
             if self.active_position:
-                self.active_position["stop_loss"] = entry_price
+                self.active_position["stop_loss"] = be_price
             return
 
-        logger.info(f"[Executor] Moving Stop Loss to Breakeven @ {entry_price:.2f}")
+        logger.info(f"[Executor] Moving Stop Loss to Breakeven+fees @ {be_price:.2f} "
+                     f"(entry={entry_price:.2f}, fee_buffer={fee_buffer:.2f})")
         try:
             if not self.active_position:
                 return
@@ -1686,12 +1798,12 @@ class TradingExecutor:
                 fmt_size,
                 None,
                 params={
-                    "stopPrice": float(self.exchange.price_to_precision(symbol, entry_price)),
+                    "stopPrice": float(self.exchange.price_to_precision(symbol, be_price)),
                     "reduceOnly": True
                 }
             )
-            logger.info("[Executor] Phase 1 Success: New Breakeven SL safely placed on exchange.")
-            self.active_position["stop_loss"] = entry_price
+            logger.info("[Executor] Phase 1 Success: New Breakeven+fees SL safely placed on exchange.")
+            self.active_position["stop_loss"] = be_price
             self.active_position["sl_order_id"] = new_order.get("id")
             self.active_position["sl_placed"] = True
             
@@ -1705,8 +1817,8 @@ class TradingExecutor:
                     logger.debug(f"[Executor] Phase 2 Success: Cancelled old SL order {order['id']}")
             
             if hasattr(self, "notifier") and self.notifier:
-                await self.notifier.send_message(f"🔒 **Breakeven Secured**\
-Moved Stop Loss to entry price at {entry_price:.2f} for {symbol}.")
+                await self.notifier.send_message(f"🔒 **Breakeven+fees Secured**\
+Moved Stop Loss to {be_price:.2f} (entry={entry_price:.2f} + fee buffer) for {symbol}.")
                     
         except Exception as e:
             # If Phase 1 fails, Phase 2 never runs. The original Stop Loss remains active.

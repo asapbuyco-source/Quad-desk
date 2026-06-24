@@ -23,7 +23,7 @@ IGNITION_SIDE_DOMINANCE = 0.70  # side must be >70% one direction
 class MarketState:
     def __init__(self, symbol: str):
         self.symbol = symbol.upper()
-        self.candles: deque = deque(maxlen=600)  # WARN-5: was 200, 600 = ~6h of 15m candles
+        self.candles: deque = deque(maxlen=600)
         # Keep all trades received; prune old ones in add_trade
         self.recent_trades: deque = deque(maxlen=50000)
         # Order Book snapshot { price_float: size_float }

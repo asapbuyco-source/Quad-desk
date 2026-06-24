@@ -109,12 +109,12 @@ REGIME_PARAMS = {
         "atr_multiplier_sl":  1.14,   # Was 1.2 — 5% reduction post-Wilder compensation
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
-        "rr_target":          1.8,   # 1.8:1 minimum R:R
+        "rr_target":          2.3,   # 2.3:1 minimum R:R
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
         "time_exit_sec":      900,
-        "time_exit_hard_cap_s": 1800,  # FIX-3: explicit 2× hard cap
+        "time_exit_hard_cap_s": 1800,
         "panic_threshold":    10.0,
         "candle_gate_sec":    30,
         "htf_block":          False,
@@ -126,29 +126,29 @@ REGIME_PARAMS = {
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.10,
         "min_confidence":     0.65,
-        "rr_target":          2.0,
+        "rr_target":          2.5,
         "be_lock_trigger":    1.5,
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
         "time_exit_sec":      1200,
-        "time_exit_hard_cap_s": 2400,  # FIX-3: explicit 2× hard cap
+        "time_exit_hard_cap_s": 2400,
         "panic_threshold":    10.0,
         "candle_gate_sec":    45,
         "htf_block":          True,
         "cascade_cooldown_s": 180,
     },
-"TREND": {
+    "TREND": {
         # High-volatility: trend-following
         "z_threshold":        2.0,
         "atr_multiplier_sl":  2.09,
         "ofi_bound":          0.20,
         "min_confidence":     0.65,
-        "rr_target":          2.5,
+        "rr_target":          3.0,
         "be_lock_trigger":    2.0,
         "partial_take_r":     0.75,
         "partial_take_pct":   0.40,
-        "time_exit_sec":      5400,  # A2 FIX: was 1800 (30min) — extended to 90min for trend holds
-        "time_exit_hard_cap_s": 10800,  # A2 FIX: was 3600 — extended to 3hr hard cap
+        "time_exit_sec":      5400,
+        "time_exit_hard_cap_s": 10800,
         "panic_threshold":    10.0,
         "candle_gate_sec":    60,
         "htf_block":          True,
@@ -161,12 +161,12 @@ REGIME_PARAMS = {
         "atr_multiplier_sl":  1.65,
         "ofi_bound":          0.20,
         "min_confidence":     0.65,
-        "rr_target":          1.80,  # Phase 4.1: was 2.3
+        "rr_target":          2.30,
         "be_lock_trigger":    2.0,
         "partial_take_r":     0.75,
         "partial_take_pct":   0.40,
-        "time_exit_sec":      900,   # Phase 4.1: was 1200 — 15min base exit
-        "time_exit_hard_cap_s": 1200, # FIX-3: hard cap = 20min; base+hard give 15/20 two-tier exit
+        "time_exit_sec":      900,
+        "time_exit_hard_cap_s": 1200,
         "panic_threshold":    10.0,
         "candle_gate_sec":    60,
         "htf_block":          True,
@@ -178,14 +178,14 @@ REGIME_PARAMS = {
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.12,
         "min_confidence":     0.62,  # FIX-P10: was 0.55 which == sweep neutralizer floor (no-op); raised to 0.62 so threshold is meaningful
-        "rr_target":          2.0,
+        "rr_target":          2.5,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      900,   # Hold at least one 15m candle for liquidity sweeps
-        "time_exit_hard_cap_s": 1800, # FIX-3: explicit 2× hard cap
+        "time_exit_sec":      900,
+        "time_exit_hard_cap_s": 1800,
         "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
-        "candle_gate_sec":    45,    # Was 60s
+        "candle_gate_sec":    45,
         "htf_block":          False,
         "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (sweep may repeat next candle)
     },
@@ -197,12 +197,12 @@ REGIME_PARAMS = {
         "atr_multiplier_sl":  0.50,   # TIGHTER SL: 0.5×ATR — vacuum can extend further
         "ofi_bound":          0.12,
         "min_confidence":     0.65,   # Higher bar — squeeze entries are risky
-        "rr_target":          3.0,   # WIDER TP: squeeze snaps back violently
+        "rr_target":          3.5,   # WIDER TP: squeeze snaps back violently
         "be_lock_trigger":    1.0,   # Lock BE faster — squeeze resolves in 3-8 candles
         "partial_take_r":     0.50,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      600,   # 10 min max for vacuum resolution without instant churn
-        "time_exit_hard_cap_s": 1200, # FIX-3: 2× base for safety margin
+        "time_exit_sec":      600,
+        "time_exit_hard_cap_s": 1200,
         "panic_threshold":    5.0,   # Tighter panic — squeeze moves fast
         "candle_gate_sec":    30,
         "htf_block":          False,
