@@ -1480,9 +1480,11 @@ class TradingExecutor:
                     stop_loss + (atr_for_sl * atr_multiplier) if side == "buy" else stop_loss - (atr_for_sl * atr_multiplier)
                 ))
 
-                # MAKER-ONLY TP: TAKE_PROFIT_LIMIT with postOnly for maker fee (0.02% vs 0.05%).
-                # Limit price offset slightly beyond trigger so the order sits in the book
-                # as a maker when the stop triggers. Falls back to taker if postOnly rejected.
+                # NOTE: Binance Futures does NOT support TAKE_PROFIT_LIMIT in batch orders.
+                # Batch TP stays as TAKE_PROFIT_MARKET (taker). Individual TP path below
+                # attempts TAKE_PROFIT_LIMIT with postOnly for maker fees, falling back to
+                # TAKE_PROFIT_MARKET on rejection. The main fee savings come from the
+                # LIMIT entry (maker), not the TP.
                 tp_limit_offset = 1.0005 if sl_side == "sell" else 0.9995
                 tp_limit_price = float(self.exchange.price_to_precision(
                     ex_symbol, take_profit * tp_limit_offset
@@ -1502,16 +1504,13 @@ class TradingExecutor:
                     },
                     {
                         "symbol": ex_symbol,
-                        "type": "TAKE_PROFIT_LIMIT",
+                        "type": "TAKE_PROFIT_MARKET",
                         "side": sl_side,
                         "amount": fmt_size,
-                        "price": tp_limit_price,
                         "params": {
                             "stopPrice": float(self.exchange.price_to_precision(ex_symbol, take_profit)),
-                            "price": tp_limit_price,
                             "reduceOnly": True,
                             "workingType": "MARK_PRICE",
-                            "postOnly": True,
                         },
                     },
                 ]
@@ -1943,6 +1942,11 @@ Moved Stop Loss to {be_price:.2f} (entry={entry_price:.2f} + fee buffer) for {sy
         return True
 
     async def _maybe_take_partial_profit(self, current_price: float) -> None:
+        # PARTIAL TP DISABLED — let trades run to full TP or SL/BE.
+        # Rationale: partial take at 0.6R caps max upside to ~1.45R instead of 2.3R.
+        # Without partial TP, winners cover losers at a lower required win rate (~30% vs ~38%).
+        # BE lock still active via check_breakeven_and_partials().
+        return
         pos = self.active_position
         if not pos or pos.get("_partial_taken", False):
             return
@@ -2015,7 +2019,29 @@ Moved Stop Loss to {be_price:.2f} (entry={entry_price:.2f} + fee buffer) for {sy
             pos["realized_partial_pnl"] = float(pos.get("realized_partial_pnl") or 0.0) + partial_pnl
             self._log_partial_take(pos.get("trade_doc_id"), fmt_partial, current_price, partial_pnl, side)
 
-            desired_stop_loss = entry if not pos.get("_be_locked", False) else float(pos.get("stop_loss") or entry)
+            # P10 FIX: After partial TP, the price may have already moved past the BE+fees level,
+            # causing "Order would immediately trigger" on the replacement SL. If the BE SL is
+            # already breached, keep the original initial_stop_loss instead of emergency-flattening.
+            initial_sl = float(pos.get("initial_stop_loss") or 0.0)
+            if not pos.get("_be_locked", False):
+                desired_stop_loss = entry
+            else:
+                be_candidate = float(pos.get("stop_loss") or entry)
+                # For LONG: SL is a sell stop — triggered if price drops BELOW it.
+                # For SHORT: SL is a buy stop — triggered if price rises ABOVE it.
+                be_breached = (
+                    (side == "buy" and current_price <= be_candidate) or
+                    (side == "sell" and current_price >= be_candidate)
+                )
+                if be_breached and initial_sl > 0:
+                    logger.warning(
+                        f"[Executor] BE+fees SL {be_candidate:.2f} already breached "
+                        f"(current price={current_price:.2f}). "
+                        f"Using initial SL {initial_sl:.2f} instead."
+                    )
+                    desired_stop_loss = initial_sl
+                else:
+                    desired_stop_loss = be_candidate
             restored = await self._restore_reduced_exit_orders(pos, fmt_remaining, desired_stop_loss)
 
             if restored:
@@ -2048,7 +2074,8 @@ Moved Stop Loss to {be_price:.2f} (entry={entry_price:.2f} + fee buffer) for {sy
                 await self.notifier.send_error_alert(f"Partial TP failed for {symbol}: {e}")
 
     async def check_breakeven_and_partials(self, current_price: float, atr: float, metrics: dict = None) -> None:
-        """Check if breakeven stop should be locked, based on be_lock_trigger threshold."""
+        """Check if breakeven stop should be locked, based on be_lock_trigger threshold.
+        Partial TP is DISABLED — trades run to full TP/SL. Only BE lock is active."""
         if not self.active_position:
             return
         pos = self.active_position

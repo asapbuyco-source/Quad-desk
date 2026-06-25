@@ -955,7 +955,7 @@ class QuantEngine:
                         f"[OFI-GhostWall] Penalizing OFI={ofi:.4f} — "
                         f"ghost wall on {ghost_side} side (cancel_rate={ghost_cancel_rate:.1%})"
                     )
-                    ofi *= 0.60
+                    ofi *= 0.75  # P5 FIX: was 0.60 — 40% penalty was too aggressive. 25% preserves more signal.
 
         # OFI Warm-Up Guard (Fix B): EWMA is seeded at arbitrary values (mu=0, var=1).
         # Until the filter has processed enough samples to be meaningful, emit 0.0.
@@ -983,7 +983,8 @@ class QuantEngine:
         Directional Bayesian fusion — produces P(bull) from market evidence only.
 
         Plan 1 FIX: Separates directional probability from win-rate calibration.
-        - Uses neutral 0.50 as prior (no directional bias from win/loss history).
+        - Uses per-regime Beta(α,β) conjugate prior when available (≥10 trades).
+        - Falls back to neutral 0.50 for cold-start regimes.
         - RSI, OFI, Z, skew, velocity produce P(bull) purely from market signals.
         - Setup win-rate (regime+direction+strategy) is applied AFTER this,
           as a confidence calibration layer in _bayesian_fusion() in main.py.
@@ -994,8 +995,18 @@ class QuantEngine:
         z_ret  : Log-Return Z-Score (Z-06) — velocity-based signal for TREND.
         regime : Current HMM regime — gates the z_ret likelihood to TREND only.
         """
-        # ── Step 1: Neutral prior (market evidence only, no win/loss bias) ───
-        p_prior = 0.50
+        # ── Step 1: Per-regime conjugate prior (P5 FIX: was hardcoded 0.50) ───
+        # Use stored Beta(α,β) win rate for the regime when we have ≥10 trades.
+        # This gives the base Bayesian a slight head start (~52-58%) instead of
+        # always starting from 50%, allowing signals to pass confidence gates
+        # that were previously falling just short.
+        a = self._regime_alpha.get(regime, 5.0)
+        b = self._regime_beta.get(regime, 5.0)
+        n_regime = a + b - 10.0
+        if n_regime >= 10 and (a + b) > 0:
+            p_prior = a / (a + b)
+        else:
+            p_prior = 0.50
         prior_odds = p_prior / (1.0 - p_prior)
 
         # ── Step 2: RSI likelihood ───────────────────────────────────────────
