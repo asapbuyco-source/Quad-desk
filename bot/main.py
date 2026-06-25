@@ -1084,8 +1084,6 @@ class _HMMRegimeClassifier:
             float(np.clip(abs(z_score),  0.0,  4.0)),     # f1: |z| raw scale (matches calibration)
             1.0 if tape == "SCREAMING" else 0.0,        # f2: tape binary
             float(np.clip(atr_pct_rank,  0.0,  1.0)),    # f3: atr percentile rank
-            float(np.clip(abs(z_ret),    0.0,  4.0)),    # f4: |z_ret| log-return velocity
-            float(np.clip(funding_rate * 1000, -2.0, 2.0)), # f5: funding rate
         ], dtype=float)
         # NOTE: amihud_rank and t_kinetic are intentionally excluded (audit v3 P1).
         # The calibrated 4D emission matrices (_MU/_SIGMA) do not include them.
@@ -4212,7 +4210,7 @@ async def execution_loop(
                 )
                 continue
 
-            logger.debug(
+            logger.info(
                 f"[Metrics] P={metrics['price']:.2f} | "
                 f"RSI={metrics['rsi']:.1f} | Z={metrics['zScore']:.2f} | "
                 f"Bayes={metrics['bayesianPosterior']:.2%} | Skew={metrics['skewness']:.3f} | "
@@ -4261,7 +4259,7 @@ async def execution_loop(
                     "confidence": 0.0,
                     "stop_loss": 0.0,
                     "take_profit": 0.0,
-"analysis": f"Consecutive Loss Cooldown active. Resumes at {time.strftime('%H:%M:%S', time.localtime(stats['cooldown_until']))}",
+                    "analysis": f"Consecutive Loss Cooldown active. Resumes at {time.strftime('%H:%M:%S', time.localtime(stats['cooldown_until']))}",
                     "ulis_verdict": "—"
                 }
             else:
@@ -4298,8 +4296,7 @@ async def execution_loop(
             # Show real Bayes score even when blocked — conf=0% was misleading
             _bayes_display = metrics.get('bayesianPosterior', conf) if metrics else conf
             _block_tag = " [EQUITY_BLOCKED]" if action == "WAIT" and ACCOUNT_SIZE < 150.0 else ""
-            _log_func = logger.info if action != "WAIT" else logger.debug
-            _log_func(
+            logger.info(
                 f"[Main] {action} | conf={conf:.0%} | bayes={_bayes_display:.0%}{_block_tag} "
                 f"| SL={stop_loss} TP={take_profit} | ULIS={ulis_str}"
             )
