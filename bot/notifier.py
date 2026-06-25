@@ -13,15 +13,6 @@ class TelegramNotifier:
 
     H1 FIX: Persistent httpx.AsyncClient reused across all requests.
     """
-
-logger = logging.getLogger(__name__)
-
-class TelegramNotifier:
-    """
-    Handle sending trade alerts and error notifications to Telegram.
-
-    H1 FIX: Persistent httpx.AsyncClient reused across all requests.
-    """
     def __init__(self, token: Optional[str], chat_id: Optional[str]):
         self.token = token
         self.chat_id = chat_id

@@ -20,7 +20,7 @@ except ImportError:
 # It makes sure that there is enough volatility to trade and make a profit.
 # ==============================================================================
 CONFIG = {
-    "symbols": ["SOLUSDT"],
+    "symbols": ["BTCUSDT"],
     "timeframe_mins": 15,
     "initial_balance": 10000.0,
     "base_risk_pct": 1.0,

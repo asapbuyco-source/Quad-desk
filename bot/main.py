@@ -4301,7 +4301,7 @@ async def execution_loop(
                 f"| SL={stop_loss} TP={take_profit} | ULIS={ulis_str}"
             )
             if analysis:
-                _log_func(f"[Main] {analysis}")
+                logger.info(f"[Main] {analysis}")
 
             is_actionable = action in ("BUY", "SELL", "MEAN_REVERSAL_LONG", "MEAN_REVERSAL_SHORT")
             if is_actionable:
