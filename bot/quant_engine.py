@@ -171,7 +171,7 @@ class QuantEngine:
         rv_iv_ratio = rv / iv_proxy if iv_proxy > 0 else 1.0
         vol_state = (
             "COMPRESSION"
-            if rv_iv_ratio < 0.65
+            if rv_iv_ratio < 0.01
             else ("EXPANSION" if rv_iv_ratio > 1.2 else "NORMAL")
         )
         return {

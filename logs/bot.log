@@ -1,4 +1,1 @@
-2026-06-25 02:16:57 | ERROR    | bot.main | [HMM] Failed to load calibrated params from C:\Users\pc\Desktop\projects\Quad-desk\bot\hmm_params.json: mu shape (3, 6) != expected (3, 4). Using hardcoded defaults.
-2026-06-25 02:16:57 | INFO     | bot.main | [HMM] Persisted online params disabled; using calibrated params only (set HMM_LOAD_PERSISTED_PARAMS=true to restore Firestore/tmp state).
-2026-06-25 02:17:16 | WARNING  | bot.main | [HMM] Calibrated params not found at C:\Users\pc\Desktop\projects\Quad-desk\bot\hmm_params.json; using hardcoded defaults.
-2026-06-25 02:17:16 | INFO     | bot.main | [HMM] Persisted online params disabled; using calibrated params only (set HMM_LOAD_PERSISTED_PARAMS=true to restore Firestore/tmp state).
+2026-06-26 21:21:32 | WARNING  | bot.main | [HMM] Calibrated params not found at C:\Users\pc\Desktop\projects\Quad-desk\bot\hmm_params.json; using hardcoded defaults.

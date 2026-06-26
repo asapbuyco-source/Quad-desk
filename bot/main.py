@@ -1290,7 +1290,7 @@ def _apply_rv_iv_override(
                 f"[Regime Override] HMM VOLATILE trusted — live tick RV is insufficient (stale). "
                 f"RV/IV ratio={rv_iv_ratio:.2f} ({vol_state}). Not downgrading."
             )
-        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.65:
+        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.01:
             logger.warning(
                 f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
                 f"({vol_state}). Overriding to NEUTRAL."
@@ -3129,18 +3129,18 @@ async def _compute_signal(
         return {**WAIT, "analysis": f"CVD divergence veto: {_div_veto}"}
 
     # FIX: Throughput gate — was 300/min (too high for BTC, blocked normal 200-250 tape).
-    # Lowered to 150/min to catch truly dead markets while letting normal BTC through.
+    # Lowered to 50/min to catch truly dead markets while letting normal BTC through.
     # CVD exception (>0.40) and boot grace (120s) both bypass this gate.
     _msgs_per_min = getattr(feed_state, "msgs_per_min", 999)
     _cvd_div = metrics.get("cvd_divergence", {})
     _cvd_strength = _cvd_div.get("strength", 0.0) if _cvd_div else 0.0
     _boot_grace = (time.time() - BOT_START_TIME) < 120
-    if not _boot_grace and _msgs_per_min < 150 and _cvd_strength < 0.40:
+    if not _boot_grace and _msgs_per_min < 50 and _cvd_strength < 0.40:
         logger.warning(
-            f"[ThroughputGate] Blocked: msgs/min={_msgs_per_min} < 150, CVD strength={_cvd_strength:.2f}"
+            f"[ThroughputGate] Blocked: msgs/min={_msgs_per_min} < 50, CVD strength={_cvd_strength:.2f}"
         )
         _gate_stats_summary("throughput_thin")
-        return {**WAIT, "analysis": f"Throughput={_msgs_per_min}/min < 150. CVD strength {_cvd_strength:.2f} < 0.40. Skipped."}
+        return {**WAIT, "analysis": f"Throughput={_msgs_per_min}/min < 50. CVD strength {_cvd_strength:.2f} < 0.40. Skipped."}
 
     # Stage 5: Bayesian fusion (P1: regime_priors already injected into metrics upstream)
     confidence = _bayesian_fusion(metrics, raw_direction, regime, strategy_type, is_sweep=bool(sweep), feed_state=feed_state, quant=quant)
