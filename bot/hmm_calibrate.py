@@ -52,12 +52,15 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Physics constants
 # ---------------------------------------------------------------------------
-FEE_RATE          = 0.00045   # Binance USDM taker fee per side
-ROUND_TRIP_COST   = FEE_RATE * 2
+FEE_RATE          = 0.0002    # Binance USDM maker fee (entry always postOnly limit)
+ROUND_TRIP_COST   = FEE_RATE + 0.0002 * 0.55 + 0.0005 * 0.45   # 0.0535%: maker entry + TP/SL blend
+#                                ^maker TP@55%WR   ^taker SL@45%WR
 MIN_EDGE_THRESHOLD = 0.003    # 0.3% minimum expected move net of fees
 BHATTACHARYYA_MIN  = 0.40     # minimum state separation (0=identical, ∞=perfect)
 VOLATILE_HALLUCINATION_MAX = 0.35  # max fraction of RANGE bars mis-labelled VOLATILE
 TREND_STABILITY_MIN        = 0.70  # P(TREND→TREND) must be this high for real trend regime
+
+from bot.hmm_features import FEATURE_SCHEMA_V2  # F-01: schema identity for main.py validation
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
@@ -117,13 +120,13 @@ def _calc_atr_rank(atr_pct, window=2880):
 
 def build_feature_matrix(df, symbol: str = "BTCUSDT", start_idx: int = 50):
     """
-    Build 5-column observation matrix:
+    F-01 FIX: Build 6-column observation matrix matching FEATURE_SCHEMA_V2.
       f0: atr_pct / atr_scale         — normalised volatility level
       f1: |z_score|                   — VWAP deviation magnitude
       f2: tape_bin (binary)           — volume spike indicator
       f3: atr_pct_rank                — ATR percentile in 30-day window
-      f4: |z_ret|                     — NEW: log-return velocity
-      f5: funding_rate                — Funding rate scaled
+      f4: |z_ret|                     — log-return velocity (kinetic energy)
+      f5: funding_rate × 1000         — funding rate scaled and bounded
     """
     close  = df['close'].values.astype(float)
     high   = df['high'].values.astype(float)
@@ -161,44 +164,46 @@ def build_feature_matrix(df, symbol: str = "BTCUSDT", start_idx: int = 50):
 # HMM fitting
 # ---------------------------------------------------------------------------
 
-def fit_hmm(X, n_components=3, n_iter=300):
-    """Fit GaussianHMM and return model."""
+def fit_hmm(X, n_components=5, n_iter=300, n_restarts=3):
+    """F-02: 5-state GaussianHMM — RANGE, COMPRESSION, TREND, VOLATILE, SQUEEZE."""
     from hmmlearn import hmm as hmmlearn_hmm
-    model = hmmlearn_hmm.GaussianHMM(
-        n_components=n_components,
-        covariance_type="diag",
-        n_iter=n_iter,
-        tol=1e-5,
-        random_state=42,
-        verbose=False,
-    )
-    model.fit(X, lengths=[len(X)])
-    return model
+    best_model = None
+    best_score = -np.inf
+    for seed in range(n_restarts):
+        model = hmmlearn_hmm.GaussianHMM(
+            n_components=n_components,
+            covariance_type="diag",
+            n_iter=n_iter,
+            tol=1e-5,
+            random_state=seed,
+            verbose=False,
+        )
+        model.fit(X, lengths=[len(X)])
+        score = model.score(X, lengths=[len(X)])
+        if score > best_score:
+            best_score = score
+            best_model = model
+    print(f"  Best log-likelihood: {best_score:.2f} (over {n_restarts} restarts)")
+    return best_model
 
 
 def order_states(model):
     """
-    Order states by ascending atr_pct mean (f0).
-    RANGE = lowest volatility, TREND = mid, VOLATILE = highest ATR rank
-    but with moderate z (not highest z — that belongs to TREND).
-
-    We use a two-pass ordering:
-      1. Sort by f0 (atr_pct) ascending.
-      2. Of the two highest-atr states, swap if the lower-z one has higher atr_rank
-         (this correctly separates TREND from VOLATILE).
+    F-02 FIX: Order 5 HMM states by ascending atr_pct mean (f0).
+    RANGE < COMPRESSION < TREND < VOLATILE < SQUEEZE.
+    
+    The first 4 states are ordered by atr_pct ascending. SQUEEZE is the
+    highest-atr state (f0 max) with extreme |z_ret| (f4 max). If the
+    highest-atr state has lower |z_ret| than state 3, swap them.
     """
-    order = np.argsort(model.means_[:, 0])   # sort by atr_pct
+    n_s = model.means_.shape[0]
+    order = np.argsort(model.means_[:, 0])  # sort by atr_pct ascending
 
-    # Refine: TREND should have highest |z| (f1), VOLATILE highest atr_rank (f3)
-    # Check if state[1] and state[2] (after sort) need swap
-    s1, s2 = order[1], order[2]
-    z1, z2       = model.means_[s1, 1], model.means_[s2, 1]
-    rank1, rank2 = model.means_[s1, 3], model.means_[s2, 3]
-
-    # TREND: high z, moderate rank. VOLATILE: moderate z, high rank.
-    # If current assignment has s1 with higher rank but lower z than s2, they're swapped.
-    if rank1 > rank2 and z2 > z1:
-        order = [order[0], s2, s1]
+    # Refine SQUEEZE/VOLATILE: SQUEEZE should have highest |z_ret| (f4)
+    if n_s >= 5:
+        s3, s4 = order[3], order[4]
+        if model.means_[s3, 4] > model.means_[s4, 4]:
+            order = np.array([order[0], order[1], order[2], s4, s3])
 
     return np.array(order)
 
@@ -239,7 +244,7 @@ def compute_hallucination_rate(X, model, order, labels):
     from hmmlearn import hmm as hmmlearn_hmm
     states = model.predict(X)
     range_idx    = list(order).index(order[0])   # RANGE = lowest atr state
-    volatile_idx = 2  # VOLATILE is index 2 in labels after ordering
+    volatile_idx = labels.index("VOLATILE")  # F-02: was hardcoded 2 — wrong for 5-state
 
     # RANGE bars: f0 (atr_pct) below 25th percentile
     q25 = np.percentile(X[:, 0], 25)
@@ -268,27 +273,38 @@ def compute_expected_edge(mu, sigma, A, labels, fee_rate=FEE_RATE):
     Return: dict of estimated_gross_edge, net_edge, edge_sufficient bool
     """
     range_idx    = labels.index("RANGE")
+    comp_idx     = labels.index("COMPRESSION") if "COMPRESSION" in labels else range_idx
     trend_idx    = labels.index("TREND")
     volatile_idx = labels.index("VOLATILE")
+    squeeze_idx  = labels.index("SQUEEZE") if "SQUEEZE" in labels else volatile_idx
+    n_states     = len(labels)
 
     # RANGE edge: ATR move on mean reversion, realised fraction = 1 - persistence
-    range_atr  = mu[range_idx, 0]   # normalised atr_pct
+    range_atr  = mu[range_idx, 0]
     range_persistence = A[range_idx, range_idx]
     range_edge = range_atr * (1.0 - range_persistence)
+
+    # COMPRESSION edge: coiling spring — higher potential energy than RANGE
+    comp_atr  = mu[comp_idx, 0]
+    comp_persistence = A[comp_idx, comp_idx]
+    comp_edge = comp_atr * (1.0 - comp_persistence) * 1.2  # 20% bonus for explosive breakouts
 
     # TREND edge: z_score magnitude × atr gives approximate expected move
     trend_atr  = mu[trend_idx, 0]
     trend_z    = mu[trend_idx, 1]
-    trend_zret = mu[trend_idx, 4] if mu.shape[1] > 4 else 0.0
-    trend_edge = trend_atr * min(trend_z, 3.0) * 0.3   # dampening factor
+    trend_edge = trend_atr * min(trend_z, 3.0) * 0.3
 
     # VOLATILE edge: weighted by KE routing probability
     vol_zret = mu[volatile_idx, 4] if mu.shape[1] > 4 else 1.0
     ke = 0.5 * vol_zret ** 2
-    # With corrected threshold 0.86: TREND route fires when KE >= 0.86
-    p_trend_route  = 1.0 - math.exp(-max(ke - 0.86, 0.0))
-    p_mr_route     = 1.0 - p_trend_route
+    p_trend_route = 1.0 - math.exp(-max(ke - 0.86, 0.0))
+    p_mr_route = 1.0 - p_trend_route
     vol_edge = (p_trend_route * trend_edge + p_mr_route * range_edge) * 0.7
+
+    # SQUEEZE edge: cascade vacuum — highest ATR with rapid reversion
+    squeeze_atr = mu[squeeze_idx, 0]
+    squeeze_persistence = A[squeeze_idx, squeeze_idx] if squeeze_idx != volatile_idx else 0.3
+    squeeze_edge = squeeze_atr * (1.0 - squeeze_persistence) * 1.5  # explosive reversion
 
     # Weighted by stationary distribution (eigenvector of A)
     try:
@@ -297,9 +313,11 @@ def compute_expected_edge(mu, sigma, A, labels, fee_rate=FEE_RATE):
         stationary = np.abs(evecs[:, stat_idx])
         stationary /= stationary.sum()
     except Exception:
-        stationary = np.array([0.5, 0.3, 0.2])
+        stationary = np.ones(n_states) / n_states
 
-    edges = np.array([range_edge, trend_edge, vol_edge])
+    edges = np.array([range_edge, comp_edge, trend_edge, vol_edge, squeeze_edge])
+    if len(edges) > n_states:
+        edges = edges[:n_states]
     gross_edge = float(np.dot(stationary, edges))
     net_edge   = gross_edge - ROUND_TRIP_COST
     sufficient = net_edge >= MIN_EDGE_THRESHOLD
@@ -310,8 +328,10 @@ def compute_expected_edge(mu, sigma, A, labels, fee_rate=FEE_RATE):
         "edge_sufficient": bool(sufficient),
         "stationary_dist": [float(x) for x in stationary.tolist()],
         "range_edge":      float(range_edge),
+        "compression_edge": float(comp_edge),
         "trend_edge":      float(trend_edge),
         "volatile_edge":   float(vol_edge),
+        "squeeze_edge":    float(squeeze_edge),
     }
 
 
@@ -320,33 +340,43 @@ def validate_params(mu, sigma, A, labels):
     Full physics audit of calibrated parameters.
     Returns (passed: bool, report: dict).
     """
-    range_idx    = labels.index("RANGE")
-    trend_idx    = labels.index("TREND")
-    volatile_idx = labels.index("VOLATILE")
+    range_idx       = labels.index("RANGE")
+    comp_idx        = labels.index("COMPRESSION") if "COMPRESSION" in labels else range_idx
+    trend_idx       = labels.index("TREND")
+    volatile_idx    = labels.index("VOLATILE")
+    squeeze_idx     = labels.index("SQUEEZE") if "SQUEEZE" in labels else volatile_idx
 
-    # 1. Bhattacharyya separation between each pair
-    bd_rv = bhattacharyya_distance(mu[range_idx],    sigma[range_idx],
-                                    mu[volatile_idx], sigma[volatile_idx])
+    # 1. Bhattacharyya separation — key pairs
+    bd_rc = bhattacharyya_distance(mu[range_idx],    sigma[range_idx],
+                                    mu[comp_idx],     sigma[comp_idx])   # RANGE/COMPRESSION
+    bd_ct = bhattacharyya_distance(mu[comp_idx],     sigma[comp_idx],
+                                    mu[trend_idx],    sigma[trend_idx])   # COMPRESSION/TREND
     bd_rt = bhattacharyya_distance(mu[range_idx],    sigma[range_idx],
-                                    mu[trend_idx],    sigma[trend_idx])
+                                    mu[trend_idx],    sigma[trend_idx])   # RANGE/TREND
     bd_tv = bhattacharyya_distance(mu[trend_idx],    sigma[trend_idx],
-                                    mu[volatile_idx], sigma[volatile_idx])
+                                    mu[volatile_idx], sigma[volatile_idx]) # TREND/VOLATILE
+    bd_vs = bhattacharyya_distance(mu[volatile_idx], sigma[volatile_idx],
+                                    mu[squeeze_idx],  sigma[squeeze_idx])  # VOLATILE/SQUEEZE
 
-    # Require at least 2 of 3 pairs to satisfy Bhattacharyya distance.
-    # RANGE vs VOLATILE is the hardest pair (similar low-vol structure);
-    # what matters for trading is that TREND is well-separated from both.
-    bd_scores = [bd >= BHATTACHARYYA_MIN for bd in [bd_rv, bd_rt, bd_tv]]
-    sep_ok = sum(bd_scores) >= 2
+    # F-02 FIX: Mandatory separation — TREND must be separable from COMPRESSION
+    # and VOLATILE (the two adjacent states). RANGE/VOLATILE was the old problem;
+    # now COMPRESSION bridges them so separation is naturally better.
+    bd_ct_ok = bd_ct >= BHATTACHARYYA_MIN  # mandatory
+    bd_tv_ok = bd_tv >= BHATTACHARYYA_MIN  # mandatory
+    sep_ok = bd_ct_ok and bd_tv_ok
 
     # 2. TREND persistence
     trend_stability = A[trend_idx, trend_idx]
-    stability_ok    = trend_stability >= TREND_STABILITY_MIN
+    stability_ok = trend_stability >= TREND_STABILITY_MIN
 
-    # 3. VOLATILE > RANGE in atr_pct
-    vol_gt_range = mu[volatile_idx, 0] > mu[range_idx, 0]
+    # 3. State ordering: atr_pct must be strictly RANGE < COMP < TREND < VOL < SQUEEZE
+    vol_ordering_ok = (
+        mu[range_idx, 0] < mu[comp_idx, 0] < mu[trend_idx, 0] < mu[volatile_idx, 0] < mu[squeeze_idx, 0]
+    )
 
     # 4. TREND has highest |z| (f1)
-    trend_highest_z = mu[trend_idx, 1] >= max(mu[range_idx, 1], mu[volatile_idx, 1])
+    trend_highest_z = mu[trend_idx, 1] >= max(mu[range_idx, 1], mu[comp_idx, 1],
+                                                mu[volatile_idx, 1], mu[squeeze_idx, 1])
 
     # 5. Sigma > 0 for all
     sigma_positive = np.all(sigma > 0)
@@ -354,19 +384,22 @@ def validate_params(mu, sigma, A, labels):
     # 6. Transition rows sum to 1
     row_sums_ok = np.allclose(A.sum(axis=1), 1.0, atol=1e-3)
 
-    passed = all([sep_ok, stability_ok, vol_gt_range, sigma_positive, row_sums_ok])
+    passed = all([sep_ok, stability_ok, vol_ordering_ok, trend_highest_z,
+                   sigma_positive, row_sums_ok])
 
     return bool(passed), {
-        "bhattacharyya_range_volatile": float(round(bd_rv, 4)),
-        "bhattacharyya_range_trend":    float(round(bd_rt, 4)),
-        "bhattacharyya_trend_volatile": float(round(bd_tv, 4)),
-        "separation_ok":                bool(sep_ok),
-        "trend_persistence":            float(round(trend_stability, 4)),
-        "stability_ok":                 bool(stability_ok),
-        "vol_atr_gt_range":             bool(vol_gt_range),
-        "trend_highest_z":              bool(trend_highest_z),
-        "sigma_positive":               bool(sigma_positive),
-        "row_sums_ok":                  bool(row_sums_ok),
+        "bhattacharyya_range_compression":  float(round(bd_rc, 4)),
+        "bhattacharyya_compression_trend":  float(round(bd_ct, 4)),
+        "bhattacharyya_range_trend":        float(round(bd_rt, 4)),
+        "bhattacharyya_trend_volatile":     float(round(bd_tv, 4)),
+        "bhattacharyya_volatile_squeeze":   float(round(bd_vs, 4)),
+        "separation_ok":                    bool(sep_ok),
+        "trend_persistence":                float(round(trend_stability, 4)),
+        "stability_ok":                     bool(stability_ok),
+        "vol_ordering_ok":                  bool(vol_ordering_ok),
+        "trend_highest_z":                  bool(trend_highest_z),
+        "sigma_positive":                   bool(sigma_positive),
+        "row_sums_ok":                      bool(row_sums_ok),
     }
 
 
@@ -374,7 +407,7 @@ def validate_params(mu, sigma, A, labels):
 # Walk-forward out-of-sample test
 # ---------------------------------------------------------------------------
 
-def walk_forward_test(X, n_components=3, train_frac=0.80):
+def walk_forward_test(X, n_components=5, train_frac=0.80):
     """
     Train on first train_frac of data, evaluate label consistency on remainder.
     Returns accuracy proxy: fraction of OOS bars where predicted state
@@ -387,12 +420,12 @@ def walk_forward_test(X, n_components=3, train_frac=0.80):
     if len(X_train) < 200 or len(X_test) < 50:
         return {"oos_consistency": None, "note": "Insufficient data for walk-forward"}
 
-    model_train = fit_hmm(X_train, n_components)
+    model_train = fit_hmm(X_train, n_components, n_restarts=1)  # speed: consistency check only
     order_train = order_states(model_train)
     mu_train, sigma_train, A_train, _ = extract_params(model_train, order_train)
 
     # Full model for reference
-    model_full  = fit_hmm(X, n_components)
+    model_full  = fit_hmm(X, n_components, n_restarts=1)  # speed: consistency check only
     order_full  = order_states(model_full)
     mu_full, sigma_full, _, _ = extract_params(model_full, order_full)
 
@@ -552,6 +585,17 @@ def ensemble_params(results: list, weights=None):
     return mu_ens, sigma_ens, A_ens
 
 
+def ensemble_pi(results: list, weights=None):
+    """F-06 FIX: Weighted average initial-state distribution across symbols."""
+    if weights is None:
+        weights = [2.0 if r["symbol"] == "BTCUSDT" else 1.0 for r in results]
+    total_w = sum(weights)
+    weights = [w / total_w for w in weights]
+    pi_ens = sum(w * np.array(r["pi"]) for w, r in zip(weights, results))
+    pi_ens = pi_ens / pi_ens.sum()
+    return pi_ens.tolist()
+
+
 # ---------------------------------------------------------------------------
 # Auto-patcher: writes params into main.py
 # ---------------------------------------------------------------------------
@@ -656,7 +700,7 @@ def run_single(symbol: str, interval: str = "15m", years_back: int = 1,
           f"[{wf.get('interpretation', '')}]")
 
     # Full fit
-    print(f"  Fitting GaussianHMM(3 states, diag cov, 300 iter)...")
+    print(f"  Fitting GaussianHMM(5 states, diag cov, 300 iter)...")
     try:
         model = fit_hmm(X)
     except Exception as e:
@@ -664,7 +708,7 @@ def run_single(symbol: str, interval: str = "15m", years_back: int = 1,
         return None
 
     order  = order_states(model)
-    labels = ["RANGE", "TREND", "VOLATILE"]
+    labels = ["RANGE", "COMPRESSION", "TREND", "VOLATILE", "SQUEEZE"]
     mu, sigma, A, pi = extract_params(model, order)
 
     print(f"\n  Calibrated means (MU):")
@@ -749,12 +793,19 @@ def run_multi(interval: str = "15m", years_back: int = 1,
 
     val_passed, val_report = validate_params(mu_ens, sigma_ens, A_ens, labels)
     edge = compute_expected_edge(mu_ens, sigma_ens, A_ens, labels)
+    # B-04 FIX: Include hallucination gate in ensemble validation.
+    # Previously hall_ok was computed per-symbol but dropped from the
+    # ensemble gate check, allowing high-hallucination ensembles to ship.
+    hall_rate_max = max(r["hallucination"] for r in results)
+    hall_ok = hall_rate_max <= VOLATILE_HALLUCINATION_MAX
 
     print(f"  Ensemble validation: {'PASS' if val_passed else 'FAIL'}")
     print(f"  Ensemble net edge:   {edge['net_edge']:.4%} "
           f"({'SUFFICIENT' if edge['edge_sufficient'] else 'INSUFFICIENT'})")
+    print(f"  Max hallucination:   {hall_rate_max:.2%} "
+          f"({'OK' if hall_ok else 'HIGH'}) (<= {VOLATILE_HALLUCINATION_MAX:.0%})")
 
-    overall_ok = val_passed and edge["edge_sufficient"]
+    overall_ok = val_passed and edge["edge_sufficient"] and hall_ok
 
     # Build output
     start_ts = min(r["start"] for r in results)
@@ -763,12 +814,15 @@ def run_multi(interval: str = "15m", years_back: int = 1,
         "mu":        mu_ens.tolist(),
         "sigma":     sigma_ens.tolist(),
         "transmat":  A_ens.tolist(),
+        # F-06 FIX: Include calibrated initial-state distribution pi
+        "pi":        ensemble_pi(results) if all("pi" in r for r in results) else [0.50, 0.30, 0.20],
         "labels":    labels,
         "meta": {
             "mode":           "multi_symbol_ensemble",
             "symbols":        [r["symbol"] for r in results],
             "interval":       interval,
             "years_back":     years_back,
+            "feature_schema": list(FEATURE_SCHEMA_V2),  # F-01: schema identity for main.py validation
             "total_obs":      sum(r["n_obs"] for r in results),
             "start":          start_ts,
             "end":            end_ts,
@@ -777,9 +831,9 @@ def run_multi(interval: str = "15m", years_back: int = 1,
             "net_edge":       edge["net_edge"],
             "hallucination":  max(r["hallucination"] for r in results),
             "bhattacharyya_min": min(
-                val_report["bhattacharyya_range_volatile"],
-                val_report["bhattacharyya_range_trend"],
-                val_report["bhattacharyya_trend_volatile"],
+                val_report.get("bhattacharyya_compression_trend", 0),
+                val_report.get("bhattacharyya_trend_volatile", 0),
+                val_report.get("bhattacharyya_range_compression", 0),
             ),
         },
         "per_symbol": results,
@@ -857,9 +911,18 @@ def _write_report(output, per_symbol):
     lines.append(f"  Sufficient (≥0.30%):  {meta['overall_ok']}")
     lines.append("")
     lines.append("REGIME SEPARATION (Bhattacharyya distance, min required 0.40)")
-    lines.append(f"  RANGE vs VOLATILE:  {val['bhattacharyya_range_volatile']:.4f}")
-    lines.append(f"  RANGE vs TREND:     {val['bhattacharyya_range_trend']:.4f}")
-    lines.append(f"  TREND vs VOLATILE:  {val['bhattacharyya_trend_volatile']:.4f}")
+    lines.append(f"  RANGE vs COMPRESSION: {val['bhattacharyya_range_compression']:.4f}")
+    lines.append(f"  COMPRESSION vs TREND: {val['bhattacharyya_compression_trend']:.4f}  (mandatory)")
+    lines.append(f"  RANGE vs TREND:       {val['bhattacharyya_range_trend']:.4f}")
+    lines.append(f"  TREND vs VOLATILE:    {val['bhattacharyya_trend_volatile']:.4f}  (mandatory)")
+    lines.append(f"  VOLATILE vs SQUEEZE:  {val['bhattacharyya_volatile_squeeze']:.4f}")
+    # B-02 FIX: Dynamically identify which pair(s) failed
+    failed_pairs = []
+    if val['bhattacharyya_compression_trend'] < BHATTACHARYYA_MIN:
+        failed_pairs.append("COMPRESSION/TREND")
+    if val['bhattacharyya_trend_volatile'] < BHATTACHARYYA_MIN:
+        failed_pairs.append("TREND/VOLATILE")
+    lines.append(f"  Separation gate:    {'PASS' if val['separation_ok'] else 'FAIL — ' + ', '.join(failed_pairs)}")
     lines.append("")
     lines.append("HALLUCINATION")
     lines.append(f"  Max across symbols: {meta['hallucination']:.1%}  "

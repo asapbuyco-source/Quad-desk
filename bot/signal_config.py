@@ -120,6 +120,25 @@ REGIME_PARAMS = {
         "htf_block":          False,
         "cascade_cooldown_s": 180,
     },
+    "COMPRESSION": {
+        # F-02 FIX: Compression = coiling spring — low micro-vol but tightening ATR rank.
+        # This is the pre-breakout state where volatility is building but |z| is still low.
+        # Strategy: mean-reversion with tighter SL, ready to flip to TREND on breakout.
+        "z_threshold":        1.20,
+        "atr_multiplier_sl":  1.05,   # Tighter SL — compression tends to break, not revert slowly
+        "ofi_bound":          0.08,
+        "min_confidence":     0.62,
+        "rr_target":          2.8,   # Higher R:R — compression breakouts are explosive
+        "be_lock_trigger":    1.0,
+        "partial_take_r":     0.60,
+        "partial_take_pct":   0.50,
+        "time_exit_sec":      600,   # Shorter hold — compression resolves fast
+        "time_exit_hard_cap_s": 1200,
+        "panic_threshold":    10.0,
+        "candle_gate_sec":    30,
+        "htf_block":          False,
+        "cascade_cooldown_s": 120,
+    },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
         "z_threshold":        1.50,
@@ -210,9 +229,8 @@ REGIME_PARAMS = {
     },
 }
 
-# REGIME_ALIAS: maps HMM state names that don't have their own REGIME_PARAMS entry
-# to an existing entry.
-# B1 FIX: SQUEEZE no longer aliased to LIQUIDITY — deterministic router in main.py
-# now routes to SQUEEZE after 2 consecutive confirmations, so SQUEEZE params are used.
+# F-02 FIX: REGIME_ALIAS maps HMM state names that don't have their own
+# REGIME_PARAMS entry to an existing entry. COMPRESSION and SQUEEZE now have
+# their own entries so aliasing is no longer needed.
 REGIME_ALIAS = {
 }

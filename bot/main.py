@@ -74,6 +74,9 @@ from bot.signal_config import (
     FUNDING_LONG_BLOCK, FUNDING_SHORT_BLOCK, # P1 FIX
     SYMBOL_ATR_SCALE, SYMBOL_ATR_SCALE_DEFAULT,  # Fix A: per-symbol HMM normalisation
 )
+from bot.hmm_features import (
+    FEATURE_SCHEMA_V2, N_FEATURES, schema_identity_match,
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # Logging
@@ -144,6 +147,12 @@ MAX_DRAWDOWN_PCT   = float(os.environ.get("BOT_MAX_DRAWDOWN_PCT",  str(CFG_MAX_D
 DERIVATIVES_REFRESH_SEC = max(300, int(os.environ.get("BOT_DERIVATIVES_REFRESH_SEC", "900")))
 DERIVATIVES_REFRESH_JITTER_SEC = max(0, int(os.environ.get("BOT_DERIVATIVES_REFRESH_JITTER_SEC", "45")))
 DERIVATIVES_STALE_SEC = max(900, DERIVATIVES_REFRESH_SEC + DERIVATIVES_REFRESH_JITTER_SEC + 60)
+
+# F-03 FIX: Kinetic Energy route threshold — single source of truth.
+# The VOLATILE regime router, Bayesian fusion stage, and all log messages
+# reference this constant. Previously three different values existed (0.32
+# in docstrings, 0.86 in the actual router, 0.80 in Bayesian fusion).
+KE_ROUTE_THRESHOLD = 0.86
 
 
 # Coinbase credentials
@@ -689,45 +698,59 @@ class _HMMRegimeClassifier:
     """
 
     # --- Emission means (μ) per state × feature -----------------------
-    # Spec seeds from Dr. Klint Section 2.4
-    # Dim order: [atr_pct, |z|, tape_bin, atr_rank]
-    # P1 AUDIT FIX v3 (Jun 2026) — 1-year BTC 15m data, hmmlearn GaussianHMM(3, diag)
-    # 4D features matching classify() obs vector: [atr_pct, |z|, tape_bin, atr_rank]
-    # RANGE: low ATR% (0.21%), moderate Z; TREND: high Z + tape surge; VOLATILE: elevated ATR%
-    # Clipping ranges: atr_pct∈[0,0.03], |z|∈[0,4], tape∈{0,1}, atr_rank∈[0,1]
+    # F-02 FIX: 5-state HMM — RANGE, COMPRESSION, TREND, VOLATILE, SQUEEZE.
+    # This resolves the RANGE/VOLATILE Bhattacharyya collapse by splitting
+    # the low-vol cluster into RANGE (quiet) and COMPRESSION (coiling spring).
+    # 6D features matching FEATURE_SCHEMA_V2.
+    # Dim order: [atr_pct, |z|, tape_bin, atr_rank, |z_ret|, funding_rate_x1000]
+    # Defaults are fallback seeds — replace with calibrated values from
+    # `python -m bot.hmm_calibrate --multi --years 1` for production.
     _MU = np.array([
-        [0.002143, 1.110481, 0.00, 0.198910],   # RANGE
-        [0.003256, 1.857669, 1.00, 0.553613],  # TREND — high Z + tape surge (vol spike)
-        [0.003691, 1.020432, 0.00, 0.652134],  # VOLATILE — elevated ATR%, moderate Z
+        [0.002143, 1.110, 0.00, 0.199, 0.15, 0.05],   # RANGE — quiet, no edge
+        [0.002500, 0.950, 0.00, 0.350, 0.20, 0.04],   # COMPRESSION — coiling spring
+        [0.003256, 1.858, 1.00, 0.554, 1.50, 0.10],   # TREND — momentum
+        [0.003691, 1.020, 0.00, 0.652, 0.50, 0.05],   # VOLATILE — choppy, noisy
+        [0.005000, 2.500, 1.00, 0.850, 2.50, 0.15],   # SQUEEZE — vacuum cascade
     ], dtype=float)
     _SIGMA = np.array([
-        [0.001650, 0.758794, 0.001456, 0.119213],  # RANGE
-        [0.005409, 0.922987, 0.005285, 0.269366],  # TREND
-        [0.001988, 0.682877, 0.001664, 0.159848],  # VOLATILE
+        [0.001650, 0.759, 0.0015, 0.119, 0.50, 0.20],  # RANGE
+        [0.001800, 0.670, 0.0010, 0.140, 0.45, 0.18],  # COMPRESSION
+        [0.005409, 0.923, 0.0053, 0.269, 1.20, 0.30],  # TREND
+        [0.001988, 0.683, 0.0017, 0.160, 0.80, 0.20],  # VOLATILE
+        [0.006000, 0.950, 0.0060, 0.200, 1.50, 0.35],  # SQUEEZE
     ], dtype=float)
 
-    # --- 3-state transition matrix (rows = from-state, cols = to-state) ---
-    # Calibrated from hmmlearn GaussianHMM on 1 year BTC 15m data (Jun 2026, 4D features)
+    # --- 5-state transition matrix (rows = from-state, cols = to-state) ---
+    # RANGE→COMPRESSION (0.010): volatility coiling precedes breakouts
+    # COMPRESSION→TREND (0.200): coil resolves to trend as expected
+    # COMPRESSION→RANGE (0.015): false coil — returns to quiet
+    # TREND→SQUEEZE (0.080): trend exhausts into squeeze cascade
+    # TREND→VOLATILE (0.200): trend bleeds into noise
+    # SQUEEZE→VOLATILE (0.700): squeeze resolves quickly to high-vol noise
     # LIQUIDITY is NOT in the HMM — it is detected independently via wall-proximity
-    # in _detect_regime() and takes precedence over HMM output when near a wall.
     _A = np.array([
-        [0.9624, 0.0310, 0.0066],   # RANGE — high persistence
-        [0.2379, 0.2821, 0.4800],   # TREND — bleeds to VOLATILE on sustained moves
-        [0.0255, 0.0304, 0.9441],   # VOLATILE — strong self-loop (clustered volatility)
+        [0.9624, 0.0100, 0.0022, 0.0200, 0.0054],   # RANGE
+        [0.0150, 0.7750, 0.2000, 0.0050, 0.0050],   # COMPRESSION — unstable, resolves
+        [0.0050, 0.0020, 0.6330, 0.2000, 0.1600],   # TREND
+        [0.0050, 0.0100, 0.0150, 0.9200, 0.0500],   # VOLATILE — strong self-loop
+        [0.0030, 0.0020, 0.0150, 0.7000, 0.2800],   # SQUEEZE — resolves to VOLATILE
     ], dtype=float)
 
     # --- Initial state distribution ------------------------------------
-    _PI = np.array([0.50, 0.30, 0.20], dtype=float)
+    _PI = np.array([0.50, 0.20, 0.15, 0.10, 0.05], dtype=float)
 
-    # State labels: 3 HMM states; LIQUIDITY is wall-detection, not HMM
-    _LABELS = ["RANGE", "TREND", "VOLATILE"]
+    # State labels: 5 HMM states; LIQUIDITY is wall-detection, not HMM
+    _LABELS = ["RANGE", "COMPRESSION", "TREND", "VOLATILE", "SQUEEZE"]
+    N_STATES = len(_LABELS)  # 5 — used throughout forward/Viterbi/online-update
 
     # Confidence & hysteresis thresholds
     MIN_CONFIDENCE        = 0.60
     HYSTERESIS_CANDLES    = 2     # FIXED: 30-min lag (was 3 = 45-min lag)
     FAST_TRACK_CONFIDENCE = 0.88  # NEW: 1-candle commit at very high confidence
 
-    def __init__(self, window: int = 60, update_every: int = 50):
+    def __init__(self, window: int = 30, update_every: int = 50):
+        # F-07 FIX: window reduced from 60 → 30 candles (= 7.5 hours at 15m bars
+        # instead of 15 hours). Exponential recency weights applied in classify().
         self._window    = window
         self._update_n  = update_every
         self._obs_buf   = deque(maxlen=200)  # circular feature history
@@ -786,10 +809,34 @@ class _HMMRegimeClassifier:
             sigma = np.array(data.get("sigma"), dtype=float)
             transmat = np.array(data.get("transmat", self._A), dtype=float)
             labels = data.get("labels", self._LABELS)
-            if mu.shape != self._MU.shape:
-                raise ValueError(f"mu shape {mu.shape} != expected {self._MU.shape}")
-            if sigma.shape != self._SIGMA.shape:
-                raise ValueError(f"sigma shape {sigma.shape} != expected {self._SIGMA.shape}")
+            # F-06 FIX: Load calibrated initial state distribution pi.
+            # Previously only mu/sigma/transmat were loaded; pi was always
+            # the hardcoded [0.50, 0.30, 0.20]. The calibrated pi from
+            # hmm_calibrate.py is the stationary distribution of the learned
+            # transition matrix, which anchors the forward algorithm correctly.
+            pi_raw = data.get("pi", None)
+            if pi_raw is not None:
+                pi = np.array(pi_raw, dtype=float)
+                pi = np.clip(pi, 1e-6, None)
+                pi = pi / pi.sum()
+                self._PI = pi
+                logger.info(f"[HMM] Loaded calibrated pi: {self._PI.tolist()}")
+            # F-01 FIX: Schema identity check replaces brittle shape check.
+            # The calibrator annotates its output with a feature_schema in meta.
+            # If it matches FEATURE_SCHEMA_V2, the arrays are guaranteed to have
+            # the correct dimension and feature order regardless of future changes.
+            _cal_schema = data.get("meta", {}).get("feature_schema", None)
+            _schema_ok = schema_identity_match(FEATURE_SCHEMA_V2, _cal_schema)
+            if not _schema_ok:
+                logger.critical(
+                    f"[HMM] Schema mismatch — calibrator schema is {_cal_schema}, "
+                    f"expected {list(FEATURE_SCHEMA_V2)}. Using hardcoded defaults."
+                )
+                return
+            if mu.shape[1] != N_FEATURES:
+                raise ValueError(f"mu shape {mu.shape} != expected ({mu.shape[0]}, {N_FEATURES})")
+            if sigma.shape[1] != N_FEATURES:
+                raise ValueError(f"sigma shape {sigma.shape} != expected ({sigma.shape[0]}, {N_FEATURES})")
             if transmat.shape != self._A.shape:
                 raise ValueError(f"transmat shape {transmat.shape} != expected {self._A.shape}")
             if list(labels) != list(self._LABELS):
@@ -935,7 +982,7 @@ class _HMMRegimeClassifier:
         return a_max + np.log(np.sum(np.exp(a - a_max)))
 
     # ------------------------------------------------------------------
-    def _forward(self, obs_seq: np.ndarray) -> np.ndarray:
+    def _forward(self, obs_seq: np.ndarray, weights: np.ndarray = None) -> np.ndarray:
         """
         Scaled forward algorithm — returns posterior P(state_T | obs_1...T).
 
@@ -943,18 +990,24 @@ class _HMMRegimeClassifier:
         the forward algorithm gives the marginal probability of each state
         at the final timestep, integrating over all possible state paths.
         This is mathematically correct for regime uncertainty quantification.
+
+        F-07: Optional exponential recency weights down-weight older
+        observations, reducing regime-detection lag from 15h to ~4h effective.
         """
         T    = len(obs_seq)
-        n_s  = 3
+        n_s  = self.N_STATES
         log_A  = np.log(np.maximum(self._A, 1e-300))
         log_pi = np.log(np.maximum(self._PI, 1e-300))
 
+        if weights is None:
+            weights = np.ones(T, dtype=float)
+
         # log_alpha[t, s] = log P(o_1...o_t, state_t = s)
         log_alpha = np.full((T, n_s), -np.inf)
-        log_alpha[0] = log_pi + self._gaussian_log_prob(obs_seq[0])
+        log_alpha[0] = log_pi + self._gaussian_log_prob(obs_seq[0]) * weights[0]
 
         for t in range(1, T):
-            log_emit = self._gaussian_log_prob(obs_seq[t])
+            log_emit = self._gaussian_log_prob(obs_seq[t]) * weights[t]
             for j in range(n_s):
                 # Sum over all possible previous states (marginalise)
                 log_alpha[t, j] = self._logsumexp(
@@ -973,7 +1026,7 @@ class _HMMRegimeClassifier:
         if total > 0:
             posterior /= total
         else:
-            posterior = np.array([0.50, 0.30, 0.20])  # fallback to prior
+            posterior = self._PI / self._PI.sum()  # fallback to prior
 
         return posterior
 
@@ -981,7 +1034,7 @@ class _HMMRegimeClassifier:
     def _viterbi(self, obs_seq: np.ndarray) -> np.ndarray:
         """Pure-numpy Viterbi — returns most-likely state sequence."""
         T, _   = obs_seq.shape
-        n_s    = 3
+        n_s    = self.N_STATES
         log_A  = np.log(np.maximum(self._A, 1e-300))
         log_pi = np.log(np.maximum(self._PI, 1e-300))
 
@@ -1027,7 +1080,7 @@ class _HMMRegimeClassifier:
         obs = np.array(list(self._obs_buf)[-self._window:], dtype=float)
         states = self._viterbi(obs)
         updated = False
-        for s in range(3):
+        for s in range(self.N_STATES):
             mask = states == s
             if mask.sum() >= 3:
                 live_mu = obs[mask].mean(axis=0)
@@ -1080,16 +1133,13 @@ class _HMMRegimeClassifier:
             raw_regime: str   — instantaneous HMM output (before hysteresis)
         """
         obs = np.array([
-            float(np.clip(atr_pct,       0.0,  0.03)),   # f0: atr_pct (0-3% range, matches calibration)
-            float(np.clip(abs(z_score),  0.0,  4.0)),     # f1: |z| raw scale (matches calibration)
+            float(np.clip(atr_pct,       0.0,  0.03)),   # f0: atr_pct (0-3% range)
+            float(np.clip(abs(z_score),  0.0,  4.0)),     # f1: |z| raw scale
             1.0 if tape == "SCREAMING" else 0.0,        # f2: tape binary
             float(np.clip(atr_pct_rank,  0.0,  1.0)),    # f3: atr percentile rank
+            float(np.clip(abs(z_ret),    0.0,  6.0)),     # f4: |z_ret| — kinetic energy (F-01)
+            float(np.clip(funding_rate * 1000.0, -3.0, 3.0)),  # f5: funding_rate × 1000 (F-01)
         ], dtype=float)
-        # NOTE: amihud_rank and t_kinetic are intentionally excluded (audit v3 P1).
-        # The calibrated 4D emission matrices (_MU/_SIGMA) do not include them.
-        # They are still passed as args and surfaced in metrics for future use.
-        # Once `python -m bot.hmm_calibrate --years 2` is run with 5D features,
-        # the obs vector can be restored to 5D by uncommenting the two lines below.
 
         self._obs_buf.append(obs)
         self._cycle += 1
@@ -1111,16 +1161,36 @@ class _HMMRegimeClassifier:
                 raw = "RANGE"
             return {
                 "regime": raw, "confidence": 0.50,
-                "p_range": 0.25, "p_trend": 0.25, "p_volatile": 0.25,
-                "raw_regime": raw,
+                "p_range": 0.20, "p_compression": 0.20,
+                "p_trend": 0.20, "p_volatile": 0.20, "p_squeeze": 0.20,
+                "raw_regime": raw, "entropy": float(np.log(5)),
             }
 
         # ── Forward algorithm: posterior probability vector ────────────
-        posterior = self._forward(seq)
+        # F-07: Exponential recency weights give newer candles more influence.
+        # At 30-candle window, weight[t] = exp((t - T+1) / T) → oldest=0.37, newest=1.0.
+        _n = len(seq)
+        _recency_weights = np.exp(np.linspace(-1.0, 0.0, _n))
+        posterior = self._forward(seq, weights=_recency_weights)
+        # F-05 FIX: Entropy-aware temperature — only sharpen when HMM is confident.
+        # A temperature of 1.35 lowers effective confidence by 2-3%, making the
+        # gate harder than the nominal MIN_CONFIDENCE. With entropy gating,
+        # temperature is only applied when the posterior is already peaked
+        # (low entropy = the classifier is sure), and skipped when uncertain.
         posterior_temp = float(os.environ.get("HMM_POSTERIOR_TEMPERATURE", "1.35"))
         if posterior_temp > 1.0:
-            posterior = np.power(np.maximum(posterior, 1e-6), 1.0 / posterior_temp)
-            posterior = posterior / np.maximum(posterior.sum(), 1e-12)
+            # Compute Shannon entropy (nats) of raw posterior
+            _h = float(-sum(p * np.log(max(p, 1e-12)) for p in posterior))
+            _h_max = float(np.log(len(posterior)))  # uniform = ln(3) ≈ 1.099
+            _h_norm = _h / _h_max if _h_max > 0 else 0.0
+            if _h_norm > 0.55:  # > 55% of max entropy → classifier is uncertain
+                logger.debug(
+                    f"[HMM] Skipping temperature sharpening — posterior entropy "
+                    f"too high (h_norm={_h_norm:.2f} > 0.55)"
+                )
+            else:
+                posterior = np.power(np.maximum(posterior, 1e-6), 1.0 / posterior_temp)
+                posterior = posterior / np.maximum(posterior.sum(), 1e-12)
         best_state = int(np.argmax(posterior))
         raw_label  = self._LABELS[best_state]
         raw_conf   = float(posterior[best_state])
@@ -1176,6 +1246,7 @@ class _HMMRegimeClassifier:
 
         if _fast or _normal:
             old = self._committed_regime
+            self._prev_committed_regime = old  # track for transition-aware strategies
             self._committed_regime = self._candidate_regime
             logger.info(
                 f"[HMM] Regime TRANSITION ({'FAST' if _fast else 'normal'}): "
@@ -1190,16 +1261,23 @@ class _HMMRegimeClassifier:
         logger.debug(
             f"[HMM] raw={raw_label}({raw_conf:.0%}) committed={self._committed_regime}"
             f"({committed_conf:.0%}) streak={self._candidate_streak} | "
-            f"P=[R:{posterior[0]:.0%} T:{posterior[1]:.0%} Sq:{posterior[2]:.0%}]"
+            f"P=[R:{posterior[0]:.0%} C:{posterior[1]:.0%} T:{posterior[2]:.0%} V:{posterior[3]:.0%} Sq:{posterior[4]:.0%}]"
         )
+
+        # O-01 FIX: Shannon entropy of posterior — used by adaptive polling
+        _entropy = float(-sum(p * np.log(p + 1e-12) for p in posterior))
+        self._last_posterior_entropy = _entropy
 
         return {
             "regime":      self._committed_regime,
             "confidence":  committed_conf,
-            "p_range":     float(posterior[0]),
-            "p_trend":     float(posterior[1]),
-            "p_volatile":  float(posterior[2]),
+            "p_range":       float(posterior[0]),
+            "p_compression": float(posterior[1]),
+            "p_trend":       float(posterior[2]),
+            "p_volatile":    float(posterior[3]),
+            "p_squeeze":     float(posterior[4]),
             "raw_regime":  raw_label,
+            "entropy":     _entropy,
         }
 
 
@@ -1219,18 +1297,22 @@ _last_interval_logged = 0  # Track last logged interval to avoid redundant logs
 _derivatives_ctx = DerivativesContext(symbol=FEED_SYMBOL)
 
 
-def _get_adaptive_interval(has_active_position: bool, executor) -> int:
+def _get_adaptive_interval(has_active_position: bool, executor, hmm_entropy: float = 0.0) -> int:
     """
-    D1 FIX: Select adaptive polling interval based on market conditions.
+    D1 FIX + O-01 FIX: Select adaptive polling interval based on market conditions.
 
     Returns:
         - FAST_ANALYSIS_INTERVAL (2-5s) if:
           * Active position exists, OR
-          * Previous regime was TREND/VOLATILE/LIQUIDITY/SQUEEZE
+          * Previous regime was TREND/VOLATILE/LIQUIDITY/SQUEEZE, OR
+          * HMM posterior entropy > 0.6 (classifier uncertain — poll fast to catch transitions)
         - SLOW_ANALYSIS_INTERVAL (15-30s) if:
-          * No active position AND previous regime was RANGE/NEUTRAL
+          * No active position AND previous regime was RANGE/NEUTRAL AND low entropy
     """
     global _prev_regime, _last_interval_logged
+    # O-01: Entropy-adaptive — when the HMM is uncertain (entropy > 0.6 nats),
+    # it's likely near a regime boundary. Poll faster to reduce 30-min detection lag.
+    HIGH_ENTROPY_THRESHOLD = 0.60
 
     if has_active_position:
         interval = FAST_ANALYSIS_INTERVAL
@@ -1238,6 +1320,9 @@ def _get_adaptive_interval(has_active_position: bool, executor) -> int:
     elif _prev_regime in ("TREND", "VOLATILE", "LIQUIDITY", "SQUEEZE"):
         interval = FAST_ANALYSIS_INTERVAL
         reason = f"regime={_prev_regime}"
+    elif hmm_entropy > HIGH_ENTROPY_THRESHOLD:
+        interval = FAST_ANALYSIS_INTERVAL
+        reason = f"high_entropy={hmm_entropy:.2f}"
     else:
         interval = SLOW_ANALYSIS_INTERVAL
         reason = f"stable_{_prev_regime}"
@@ -1256,18 +1341,18 @@ def _route_volatile(z_ret: float, tape: str) -> str:
 
     KE = 0.5 * zScore_ret^2
     - KE > 4.5  → BLOCK (chaotic — no predictable edge)
-    - KE >= 0.32 → TREND
-    - KE < 0.32 and SCREAMING tape → BLOCK
-    - KE < 0.32 and not SCREAMING → MEAN_REVERSION
+    - KE >= KE_ROUTE_THRESHOLD → TREND
+    - KE < KE_ROUTE_THRESHOLD and SCREAMING tape → BLOCK
+    - KE < KE_ROUTE_THRESHOLD and not SCREAMING → MEAN_REVERSION
     """
     KE = 0.5 * (z_ret ** 2)
     if KE > 4.5:
         logger.info(f"[VOLATILE Route] KE={KE:.3f} > 4.5 (chaotic) — BLOCK")
         return "BLOCK"
-    if KE >= 0.86:
+    if KE >= KE_ROUTE_THRESHOLD:
         return "TREND"
     if tape == "SCREAMING":
-        logger.info(f"[VOLATILE Route] KE={KE:.3f} < 0.32 but tape=SCREAMING — BLOCK")
+        logger.info(f"[VOLATILE Route] KE={KE:.3f} < {KE_ROUTE_THRESHOLD} but tape=SCREAMING — BLOCK")
         return "BLOCK"
     return "MEAN_REVERSION"
 
@@ -1568,7 +1653,58 @@ def _detect_liquidity_sweep(metrics: Dict[str, Any],
 # ── STAGE 4 — STRATEGY LAYER ──────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 
-def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0) -> Optional[str]:
+def _strategy_funding_contrarian(metrics: Dict[str, Any]) -> Optional[str]:
+    """Enter contrarian to extreme funding rates.
+    
+    When funding > FUNDING_LONG_BLOCK (0.08% per 8h), longs are paying shorts
+    at 29% annualized — the market is overcrowded long. Enter SHORT.
+    When funding < FUNDING_SHORT_BLOCK (-0.05%), shorts pay longs — enter LONG.
+    
+    Requires: z-score confirmation (overbought for short, oversold for long)
+    to avoid entering into a still-accelerating trend.
+    """
+    funding = metrics.get("funding_rate", 0.0)
+    z = metrics.get("zScore", 0.0)
+    rsi = metrics.get("rsi", 50.0)
+    
+    if funding > FUNDING_LONG_BLOCK and z > 0.5 and rsi > 55:
+        logger.info(f"[FundingContra] SHORT | funding={funding:.4%} z={z:.2f} rsi={rsi:.1f}")
+        return "SELL"
+    if funding < FUNDING_SHORT_BLOCK and z < -0.5 and rsi < 45:
+        logger.info(f"[FundingContra] LONG | funding={funding:.4%} z={z:.2f} rsi={rsi:.1f}")
+        return "BUY"
+    return None
+
+
+def _strategy_cvd_flip(metrics: Dict[str, Any]) -> Optional[str]:
+    """Enter when cumulative volume delta reverses direction.
+    
+    CVD captures the cumulative net buying/selling pressure. When CVD flips
+    after sustained directional flow (5+ consecutive same-sign deltas), it
+    signals institutional positioning change — the big money is reversing.
+    
+    Requires OFI confirmation to avoid false flips from noise.
+    """
+    cvd = metrics.get("cvd", 0.0)
+    cvd_delta = metrics.get("cvd_delta", 0.0)
+    cvd_streak = metrics.get("cvd_streak", 0)   # consecutive same-sign deltas
+    ofi = metrics.get("ofi", 0.0)
+    
+    if abs(cvd_streak) < 5:
+        return None  # Not enough sustained pressure for a meaningful flip
+    
+    # CVD was negative (sustained selling), now turning positive → BIG buys
+    if cvd < 0 and cvd_delta > 0 and cvd_streak < 0 and ofi > 0:
+        logger.info(f"[CVDFlip] LONG | cvd={cvd:.0f} delta={cvd_delta:.0f} streak={cvd_streak}")
+        return "BUY"
+    # CVD was positive (sustained buying), now turning negative → BIG sells
+    if cvd > 0 and cvd_delta < 0 and cvd_streak > 0 and ofi < 0:
+        logger.info(f"[CVDFlip] SHORT | cvd={cvd:.0f} delta={cvd_delta:.0f} streak={cvd_streak}")
+        return "SELL"
+    return None
+
+
+def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0, quant=None) -> Optional[str]:
     bayes      = metrics["bayesianPosterior"]
     ofi        = metrics["ofi"]
     cvd        = metrics["cvd"]
@@ -1605,6 +1741,22 @@ def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0) -> Optional[str
     elif z_ret > 0.8:  score += 0.30
     elif z_ret < -1.5: score -= 0.75
     elif z_ret < -0.8: score -= 0.30
+
+    # F-04 FIX: Empirical Bayesian boost — use live trade history to calibrate
+    # feature multipliers. Replaces guesswork with actual win-rate data.
+    # Only applies when we have sufficient trades (n >= 5 for that condition).
+    if quant:
+        _boost = 1.0
+        # Tape speed boost: SCREAMING tape has real historical edge
+        _t = quant.get_feature_likelihood_boost("tape", tape_speed)
+        if _t is not None: _boost *= _t
+        # Funding extreme boost: extreme funding predicts reversals
+        _funding = metrics.get("funding_rate", 0.0)
+        _fext = "extreme" if abs(_funding) > 0.0005 else "normal"
+        _f = quant.get_feature_likelihood_boost("funding", _fext)
+        if _f is not None: _boost *= _f
+        # Apply boost to score (clamped to avoid overfitting on small samples)
+        score *= float(np.clip(_boost, 0.70, 1.30))
 
     ofi_bull = ofi > 0.15
     cvd_bull = cvd > 0
@@ -1893,9 +2045,9 @@ def _bayesian_fusion(metrics: Dict[str, Any], direction: str, regime: str, strat
         L_zke = 1.0
         if KE >= 2.0:
             L_zke = 1.20
-        elif KE >= 0.80:
+        elif KE >= KE_ROUTE_THRESHOLD:
             L_zke = 1.08
-        elif KE < 0.32 and not is_sweep:
+        elif KE < KE_ROUTE_THRESHOLD and not is_sweep:
             L_zke = 0.90
         if KE > 4.5:
             L_zke *= 0.80
@@ -2867,68 +3019,107 @@ async def _compute_signal(
     # Stage 4: Strategy
     raw_direction: Optional[str] = None
     strategy_type: str
+    # Track previous regime for transition-aware entries
+    # COMPRESSION→TREND = breakout entry, TREND→SQUEEZE = cascade entry
+    _prev_regime = getattr(_hmm_classifier, "_prev_committed_regime", None)
 
     if sweep:
         strategy_type = "LIQUIDITY_SWEEP"
         raw_direction = _strategy_liquidity_sweep(sweep, metrics, feed_state=feed_state)
         logger.info(f"[MetaModel] → LIQUIDITY_SWEEP (sweep={sweep})")
-    elif regime == "TREND":
-        strategy_type = "TREND"
-        raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 2.0))
-        logger.info("[MetaModel] → TREND strategy")
-    elif regime == "VOLATILE":
-        vol_z_thr = regime_p.get("z_threshold", 1.75)
-        z_ret = metrics.get("zScore_ret", 0.0)
-        tape = metrics.get("tapeSpeed", "NORMAL")
-        vol_route = _route_volatile(z_ret, tape)
-
-        if vol_route == "BLOCK":
-            raw_direction = None
-            strategy_type = "VOLATILE"
-        elif vol_route == "TREND":
-            strategy_type = "TREND"
-            raw_direction = _strategy_trend(metrics, z_min=vol_z_thr)
-            if raw_direction:
-                logger.info(f"[MetaModel] VOLATILE — KEd out to TREND")
-        elif vol_route == "MEAN_REVERSION":
-            strategy_type = "MEAN_REVERSION"
-            raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
-            if raw_direction:
-                logger.info(f"[MetaModel] VOLATILE — KEd out to MEAN_REVERSION")
-    elif regime == "RANGE":
-        strategy_type = "MEAN_REVERSION"
-        raw_direction = _strategy_mean_reversion(
-            metrics,
-            z_threshold=regime_p["z_threshold"],
-        )
-        logger.info(f"[MetaModel] → MEAN_REVERSION strategy (z_thr={regime_p['z_threshold']})")
-    elif regime == "NEUTRAL":
-        strategy_type = "MEAN_REVERSION"
-        z_current = metrics.get("zScore", 0.0)
-        z_prev = metrics.get("zScore_prev", z_current)
-        z_slope = z_current - z_prev
-        rsi = metrics.get("rsi", 50.0)
-        rsi_prev = metrics.get("rsi_prev", rsi)
-        rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)
-        rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
-        rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
-        z_thr = regime_p["z_threshold"]
-        candidate = _strategy_mean_reversion(metrics, z_threshold=z_thr)
-        if candidate == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
-            candidate = None
-        if candidate == "MEAN_REVERSAL_SHORT" and (z_slope >= 0 or not rsi_peak):
-            candidate = None
-        raw_direction = candidate
+    
+    # CVD Flip and Funding Contrarian fire in any regime — they're orthogonal signals
+    if raw_direction is None:
+        raw_direction = _strategy_cvd_flip(metrics)
         if raw_direction:
-            logger.info(f"[MetaModel] NEUTRAL -> {strategy_type} ({raw_direction}) "
-                         f"z={z_current:.2f} slope={z_slope:+.3f}")
+            strategy_type = "CVD_FLIP"
+            logger.info(f"[MetaModel] → CVD_FLIP ({raw_direction})")
+    
+    if raw_direction is None:
+        raw_direction = _strategy_funding_contrarian(metrics)
+        if raw_direction:
+            strategy_type = "FUNDING_CONTRA"
+            logger.info(f"[MetaModel] → FUNDING_CONTRA ({raw_direction})")
+    
+    # Regime-specific strategies
+    if raw_direction is None:
+        if regime == "TREND":
+            strategy_type = "TREND"
+            raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 2.0), quant=quant)
+            if raw_direction:
+                logger.info("[MetaModel] → TREND strategy")
+            else:
+                logger.info("[MetaModel] TREND — no edge.")
+        elif regime == "VOLATILE":
+            vol_z_thr = regime_p.get("z_threshold", 1.75)
+            z_ret = metrics.get("zScore_ret", 0.0)
+            tape = metrics.get("tapeSpeed", "NORMAL")
+            vol_route = _route_volatile(z_ret, tape)
+            if vol_route == "BLOCK":
+                raw_direction = None; strategy_type = "VOLATILE"
+            elif vol_route == "TREND":
+                strategy_type = "TREND"
+                raw_direction = _strategy_trend(metrics, z_min=vol_z_thr, quant=quant)
+                if raw_direction: logger.info(f"[MetaModel] VOLATILE — routed to TREND")
+            elif vol_route == "MEAN_REVERSION":
+                strategy_type = "MEAN_REVERSION"
+                raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
+                if raw_direction: logger.info(f"[MetaModel] VOLATILE — routed to MEAN_REVERSION")
+        elif regime == "RANGE":
+            _gate_stats_summary("regime_no_edge")
+            return {**WAIT, "analysis": "RANGE skipped — no edge."}
+        elif regime == "COMPRESSION":
+            # COMPRESSION is the launchpad: enter if transitioning to TREND (breakout),
+            # or trade mean-reversion if still coiling.
+            is_breakout = (regime == "COMPRESSION" and (
+                metrics.get("zScore_ret_intra", 0) > 1.0 or  # O-04: intra-bar tick signal
+                metrics.get("zScore_ret", 0) > 1.0            # fallback: candle-level
+            ))
+            if is_breakout:
+                strategy_type = "COMPRESSION_BREAKOUT"
+                raw_direction = _strategy_trend(metrics, z_min=regime_p["z_threshold"], quant=quant)
+                if raw_direction:
+                    logger.info(f"[MetaModel] COMPRESSION → BREAKOUT ({raw_direction})")
+            if raw_direction is None:
+                strategy_type = "MEAN_REVERSION"
+                raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
+                if raw_direction:
+                    logger.info(f"[MetaModel] → COMPRESSION MR")
+                else:
+                    logger.info(f"[MetaModel] COMPRESSION — coiling, no edge yet.")
+        elif regime == "SQUEEZE":
+            # SQUEEZE cascade: enter in squeeze direction with tight SL, wide TP.
+            # Use trend strategy with SQUEEZE params for momentum capture.
+            strategy_type = "SQUEEZE_CASCADE"
+            raw_direction = _strategy_trend(metrics, z_min=regime_p["z_threshold"], quant=quant)
+            if raw_direction:
+                logger.info(f"[MetaModel] → SQUEEZE CASCADE ({raw_direction})")
+            else:
+                logger.info(f"[MetaModel] SQUEEZE — no direction confirmed.")
+        elif regime == "NEUTRAL":
+            strategy_type = "MEAN_REVERSION"
+            z_current = metrics.get("zScore", 0.0)
+            z_prev = metrics.get("zScore_prev", z_current)
+            z_slope = z_current - z_prev
+            rsi = metrics.get("rsi", 50.0)
+            rsi_prev = metrics.get("rsi_prev", rsi)
+            rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)
+            rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
+            rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
+            z_thr = regime_p["z_threshold"]
+            candidate = _strategy_mean_reversion(metrics, z_threshold=z_thr)
+            if candidate == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
+                candidate = None
+            if candidate == "MEAN_REVERSAL_SHORT" and (z_slope >= 0 or not rsi_peak):
+                candidate = None
+            raw_direction = candidate
+            if raw_direction:
+                logger.info(f"[MetaModel] NEUTRAL -> {strategy_type} ({raw_direction}) "
+                            f"z={z_current:.2f} slope={z_slope:.3f}")
+            else:
+                logger.info(f"[MetaModel] NEUTRAL — no edge (z={z_current:.2f} slope={z_slope:.3f})")
         else:
-            logger.debug(f"[MetaModel] NEUTRAL: no setup (z={z_current:.2f}, "
-                          f"slope={z_slope:+.3f}")
-    else:
-        strategy_type = "NEUTRAL"
-        raw_direction = None
-        logger.info(f"[MetaModel] → WAIT (regime={regime}, no sweep)")
+            logger.info(f"[MetaModel] → WAIT (regime={regime}, no strategy matched)")
 
     if raw_direction is None:
         _gate_stats_summary("signal_none")
@@ -3363,7 +3554,9 @@ async def _process_exit(
     if is_micro_loss:
         logger.info(f"[_process_exit] Micro-loss forgiveness: ignoring {pnl:.2f} time-exit fee bleed.")
     else:
-        quant.update_win_rate(won=is_win, regime=regime)
+        # F-04 FIX: Pass entry-time features for empirical Bayesian tracking
+        _entry_feats = pos.get("entry_features", {}) if pos else {}
+        quant.update_win_rate(won=is_win, regime=regime, entry_features=_entry_feats)
         quant.update_setup_perf(
             regime=regime,
             direction=pos.get("entry_direction", ""),
@@ -3425,17 +3618,22 @@ async def _process_exit(
             f"(limit=-${max_loss_usd:.2f} on day_start=${day_start_equity:.2f}). Halted until tomorrow."
         )
 
-    max_drawdown_usd = ACCOUNT_SIZE * MAX_DRAWDOWN_PCT / 100.0
+    # Drawdown gate anchored to peak equity (not boot-time ACCOUNT_SIZE).
+    # As the account grows, the drawdown budget scales proportionally so the
+    # bot is not locked at the original stake's absolute dollar limit.
+    _peak_equity = stats.get("equity_peak", ACCOUNT_SIZE)
+    max_drawdown_usd = _peak_equity * MAX_DRAWDOWN_PCT / 100.0
     if stats["cumulative_pnl"] < -max_drawdown_usd and not stats.get("drawdown_halt"):
         stats["drawdown_halt"] = True
         logger.critical(
             f"[RiskEngine] 🚨 MAX DRAWDOWN BREACHED: "
-            f"${stats['cumulative_pnl']:.2f} (limit=-${max_drawdown_usd:.2f}). HALTED."
+            f"${stats['cumulative_pnl']:.2f} (limit=-${max_drawdown_usd:.2f}, peak=${_peak_equity:.2f}). HALTED."
         )
         if executor.notifier:
             await executor.notifier.send_message(
                 f"🚨 Quad-Desk MAX DRAWDOWN HIT\n"
-                f"Cumulative PnL: ${stats['cumulative_pnl']:.2f} / Limit: -${max_drawdown_usd:.2f}\n"
+                f"Cumulative PnL: ${stats['cumulative_pnl']:.2f} / Limit: -${max_drawdown_usd:.2f}"
+                f" (peak equity: ${_peak_equity:.2f})\n"
                 f"Bot halted. Restart to resume."
             , critical=True)
 
@@ -3694,7 +3892,8 @@ async def execution_loop(
             # Fast (2-5s) for active positions or TREND/VOLATILE/LIQUIDITY/SQUEEZE regimes
             # Slow (15-30s) for stable RANGE without position
             has_active_pos = executor.active_position is not None
-            adaptive_interval = _get_adaptive_interval(has_active_pos, executor)
+            _hmm_entropy = getattr(_hmm_classifier, "_last_posterior_entropy", 0.0)
+            adaptive_interval = _get_adaptive_interval(has_active_pos, executor, _hmm_entropy)
             try:
                 # Wait for candle close OR timeout (whichever comes first)
                 await asyncio.wait_for(
@@ -3955,7 +4154,10 @@ async def execution_loop(
             stats["active_position"] = executor.active_position
 
             # Stage 1: Compute metrics (Needed for ATR trailing stop in V3 monitor)
-            metrics = quant.compute_metrics()
+            # M-16 FIX: Pass previous committed HMM regime so the Bayesian prior
+            # is keyed on actual regime classification, not a z-score proxy.
+            _prev_regime = getattr(_hmm_classifier, "_committed_regime", None)
+            metrics = quant.compute_metrics(hmm_regime=_prev_regime)
 
             # PHASE-7.1: Periodic exchange position reconciliation (every 300s)
             current_time = time.time()
@@ -4150,6 +4352,16 @@ async def execution_loop(
                 else:
                     metrics["cvd_delta"] = _current_cvd - LAST_CVD
                     LAST_CVD = _current_cvd
+                    # CVD streak: tracks consecutive same-sign deltas for flip detection
+                    _delta = metrics["cvd_delta"]
+                    _prev_streak = getattr(quant, "_cvd_delta_streak", 0)
+                    if _delta > 0:
+                        quant._cvd_delta_streak = _prev_streak + 1 if _prev_streak >= 0 else 1
+                    elif _delta < 0:
+                        quant._cvd_delta_streak = _prev_streak - 1 if _prev_streak <= 0 else -1
+                    else:
+                        quant._cvd_delta_streak = 0
+                    metrics["cvd_streak"] = quant._cvd_delta_streak
 
                 # Inject per-regime win-rate priors for Bayesian fusion blending
                 metrics["_regime_priors"] = quant.get_all_regime_priors()
@@ -4626,6 +4838,56 @@ async def main():
     )
     _exec_task.add_done_callback(_task_death_callback)
 
+    # O-11 FIX: _flatten_failed watchdog — retries emergency flatten with
+    # exponential backoff. Without this, a failed flatten permanently halts the bot.
+    async def _flatten_watchdog(executor, feed_state, interval: int = 30):
+        """Retry emergency flatten if previous attempt failed. Exponential backoff."""
+        _retry_count = 0
+        while True:
+            await asyncio.sleep(interval)
+            if getattr(executor, "_flatten_failed", False):
+                _retry_count += 1
+                _delay = min(30 * (2 ** (_retry_count - 1)), 600)
+                logger.warning(
+                    f"[Watchdog] _flatten_failed detected (retry #{_retry_count}). "
+                    f"Attempting emergency flatten…"
+                )
+                try:
+                    if executor.active_position:
+                        pos = executor.active_position
+                        sym = pos.get("symbol", "BTC/USDT")
+                        sz = pos.get("size", 0.0)
+                        side = "sell" if pos.get("side") == "buy" else "buy"
+                        await executor.exchange.create_market_order(
+                            sym, side, sz, params={"reduceOnly": True}
+                        )
+                        executor.active_position = None
+                        executor.pending_order = None
+                        executor._flatten_failed = False
+                        _retry_count = 0
+                        logger.info("[Watchdog] Emergency flatten succeeded ✓")
+                        if executor.notifier:
+                            await executor.notifier.send_error_alert(
+                                "✅ Quad-Desk Watchdog: Emergency flatten succeeded after retry."
+                            )
+                    else:
+                        # No position to flatten — just clear the flag
+                        executor._flatten_failed = False
+                        _retry_count = 0
+                        logger.info("[Watchdog] _flatten_failed cleared (no active position).")
+                except Exception as e:
+                    logger.critical(
+                        f"[Watchdog] Flatten retry #{_retry_count} failed: {e}. "
+                        f"Next retry in {_delay}s."
+                    )
+                    if _retry_count >= 10:
+                        logger.critical(
+                            "[Watchdog] 10 failed flatten retries. Giving up — "
+                            "MANUAL INTERVENTION REQUIRED."
+                        )
+                        break
+                    await asyncio.sleep(_delay)
+
     tasks = [
         asyncio.create_task(feed.run(),                    name="data_feed"),
         asyncio.create_task(feed.run_aggtrade(),           name="aggtrade_spot"),   # FIX-A: separate aggTrade on Spot WS
@@ -4642,6 +4904,11 @@ async def main():
         asyncio.create_task(
             feed.feed_health_monitor(notifier=executor.notifier),
             name="feed_health_monitor"
+        ),
+        # O-11 FIX: Emergency flatten watchdog — retries failed market-close orders
+        asyncio.create_task(
+            _flatten_watchdog(executor, feed.state),
+            name="flatten_watchdog"
         ),
         # P4 FIX: User-data stream task added to shutdown list so it is cancelled on exit
         *([feed._uds_task] if getattr(feed, '_uds_task', None) is not None else []),

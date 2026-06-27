@@ -10,9 +10,15 @@ from collections import deque
 logger = logging.getLogger(__name__)
 
 # C1 FIX: Ghost-wall tracking configuration
-GHOST_CANCEL_QTY = float(os.environ.get("BOT_GHOST_CANCEL_QTY", "10.0"))
+# AUDIT FIX: GHOST_CANCEL_QTY raised from 10.0 → 25.0 to reduce false positives
+# from market-maker quote adjustments. A 25-base-asset wall is ~$1,500+ notional
+# across all supported symbols, which is a meaningful manipulation floor.
+# GHOST_CANCEL_MATCH_THRESHOLD added so that only walls where >50% of the size
+# decrease is unmatched (i.e. cancelled without filling) are flagged as ghost walls.
+GHOST_CANCEL_QTY = float(os.environ.get("BOT_GHOST_CANCEL_QTY", "25.0"))
 GHOST_CANCEL_WINDOW_MS = int(os.environ.get("BOT_GHOST_CANCEL_WINDOW_MS", "100"))
 GHOST_WALL_TTL_S = int(os.environ.get("BOT_GHOST_WALL_TTL_S", "10"))
+GHOST_CANCEL_MATCH_THRESHOLD = float(os.environ.get("BOT_GHOST_MATCH_THRESHOLD", "0.50"))
 
 # C2 FIX: Ignition / momentum burst detector configuration
 IGNITION_TTL_S = int(os.environ.get("BOT_IGNITION_TTL_S", "60"))
@@ -200,7 +206,7 @@ class MarketState:
                     size_decrease = prev_size - curr_size
                     matched_qty = _matched_trade_qty(price, "SELL")
 
-                    if matched_qty < size_decrease * 0.80 and size_decrease >= GHOST_CANCEL_QTY:
+                    if matched_qty < size_decrease * GHOST_CANCEL_MATCH_THRESHOLD and size_decrease >= GHOST_CANCEL_QTY:
                         # Unmatched fast disappearance = cancellation (ghost wall)
                         cancel_event = {
                             'side': 'SELL',  # bid wall cancellation = sell pressure
@@ -227,7 +233,7 @@ class MarketState:
                     size_decrease = prev_size - curr_size
                     matched_qty = _matched_trade_qty(price, "BUY")
 
-                    if matched_qty < size_decrease * 0.80 and size_decrease >= GHOST_CANCEL_QTY:
+                    if matched_qty < size_decrease * GHOST_CANCEL_MATCH_THRESHOLD and size_decrease >= GHOST_CANCEL_QTY:
                         # Unmatched fast disappearance = cancellation (ghost wall)
                         cancel_event = {
                             'side': 'BUY',  # ask wall cancellation = buy pressure
@@ -421,7 +427,7 @@ class BinanceDataFeed:
         self._funding_backoff_until: float = 0.0
         self._funding_backoff_s: float = 60.0
         self._funding_last_error_log: float = 0.0
-        self._funding_poll_interval_s: float = 300.0
+        self._funding_poll_interval_s: float = 60.0  # O-12 FIX: was 300s, now 60s to catch funding spikes
         self._last_kline_frame_ts: float = time.time()  # epoch-seconds of last kline WS frame received
         # H1 FIX: Persistent httpx client for REST API calls — reused across
         # _fetch_funding_rate and _fetch_historical_candles_rest.  Eliminates

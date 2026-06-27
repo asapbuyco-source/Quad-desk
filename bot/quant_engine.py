@@ -100,8 +100,19 @@ class QuantEngine:
         self._cvd_div_streak_dir:   str = "NONE"
         self._cvd_div_streak_count: int = 0
 
+        # CVD delta streak: consecutive cycles with same-sign CVD delta.
+        # Positive = sustained buying, negative = sustained selling.
+        # Used by _strategy_cvd_flip() to detect institutional reversals.
+        self._cvd_delta_streak: int = 0
+
         # ── Consecutive-Loss Tracker (Prior Softening) ──────────────────────────
         self._consecutive_losses: int = 0
+
+        # F-04 FIX: Feature-conditioned win tracking for empirical Bayesian fusion.
+        # Keys are feature condition tuples like ("tape_screaming", "zret_high", "funding_extreme").
+        # Values are [wins, total] for Beta posterior estimation.
+        self._feature_wins: dict = {}
+        self._feature_totals: dict = {}
 
         # ── CVD Post-Reset Cooldown (Ghost Signal Fix 2026-05-13) ─────────────
         # Suppresses divergence detection for N cycles after the daily CVD reset.
@@ -160,13 +171,15 @@ class QuantEngine:
         rv_data_stale = len(recent_prices) < min_ticks
         if not rv_data_stale:
             tick_returns = np.diff(np.log(recent_prices))
-            rv = float(np.std(tick_returns)) * math.sqrt(max(len(tick_returns), 1))
+            # M-11 FIX: RV and IV_proxy must be in consistent units (both per-period %).
+            # Previously RV applied sqrt(N) scaling (total-period), while IV_proxy
+            # used ATR% (per-period). Removing sqrt(N) makes RV comparable to ATR%.
+            rv = float(np.std(tick_returns)) if len(tick_returns) > 0 else 0.001
         elif len(closes) >= 2:
             log_returns = np.diff(np.log(closes))
             rv = float(np.std(log_returns))
-        else:
-            rv = 0.001
 
+        # Use Parkinson IV proxy in log-return units for dimensional consistency
         iv_proxy = atr / current_price if current_price > 0 else 0.001
         rv_iv_ratio = rv / iv_proxy if iv_proxy > 0 else 1.0
         vol_state = (
@@ -187,35 +200,24 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # Public: update win-rate tracker after each trade
     # ------------------------------------------------------------------
-    def update_win_rate(self, won: bool, regime: str = "NEUTRAL"):
+    def update_win_rate(self, won: bool, regime: str = "NEUTRAL",
+                         entry_features: dict = None):
         if won:
             self._alpha += 1.0
             self._regime_alpha[regime] = self._regime_alpha.get(regime, 1.0) + 1.0
-            self._consecutive_losses = 0   # reset streak on any win
+            self._consecutive_losses = 0
         else:
             self._beta += 1.0
             self._regime_beta[regime] = self._regime_beta.get(regime, 1.0) + 1.0
             self._consecutive_losses = getattr(self, "_consecutive_losses", 0) + 1
-            # Prior-softening: after 3+ consecutive losses the Beta prior has drifted
-            # too bearish to recover naturally. Pull it 15% toward Beta(5,5) each loss
-            # so the bot can re-engage after a bad streak without a full cold-start reset.
-            # NEW-FIX 1: softened at >= 3 to match the halt gate (also >= 3).
-            # Previously used >= 2 which meant a 2-loss streak degraded the prior
-            # without triggering the safety halt.
-            if self._consecutive_losses >= 3:
-                _target = 5.0
-                self._alpha = self._alpha * 0.85 + _target * 0.15
-                self._beta  = self._beta  * 0.85 + _target * 0.15
-                if regime in self._regime_alpha:
-                    self._regime_alpha[regime] = self._regime_alpha[regime] * 0.85 + _target * 0.15
-                    self._regime_beta[regime] = self._regime_beta[regime] * 0.85 + _target * 0.15
-                logger.warning(
-                    f"[QuantEngine] Consecutive loss #{self._consecutive_losses} — "
-                    f"softening prior toward Beta(5,5): "
-                    f"α={self._alpha:.1f} β={self._beta:.1f} "
-                    f"win_rate={self._alpha/(self._alpha+self._beta):.1%}"
-                )
         self._regime_trade_count[regime] = self._regime_trade_count.get(regime, 0) + 1
+
+        # F-04 FIX: Track wins/losses by feature conditions for empirical Bayes
+        if entry_features:
+            for fkey, fval in entry_features.items():
+                cond = f"{fkey}:{fval}"
+                self._feature_wins[cond] = self._feature_wins.get(cond, 0) + (1 if won else 0)
+                self._feature_totals[cond] = self._feature_totals.get(cond, 0) + 1
         win_rate = self._alpha / (self._alpha + self._beta)
         n = self._alpha + self._beta - 2
         logger.info(
@@ -226,6 +228,35 @@ class QuantEngine:
 
     def get_regime_trade_counts(self) -> dict:
         return dict(self._regime_trade_count)
+
+    def get_feature_win_rate(self, feature_key: str, feature_value) -> float:
+        """F-04: Empirical win rate for a specific feature condition.
+        
+        Returns Beta posterior mean with Jeffreys prior (α=0.5, β=0.5) for
+        conditions with insufficient data. Returns None if no data at all.
+        """
+        cond = f"{feature_key}:{feature_value}"
+        wins = self._feature_wins.get(cond, 0)
+        total = self._feature_totals.get(cond, 0)
+        if total == 0:
+            return None
+        alpha = wins + 0.5   # Jeffreys prior
+        beta = (total - wins) + 0.5
+        return alpha / (alpha + beta)
+
+    def get_feature_likelihood_boost(self, feature_key: str, feature_value,
+                                      base: float = 0.50) -> float:
+        """F-04: Compute empirical likelihood multiplier for a feature condition.
+        
+        Returns odds multiplier: P(win|feature) / P(win) baseline.
+        A value > 1.0 means this feature condition predicts higher win rate.
+        Clamped to [0.80, 1.25] to prevent overfitting from small samples.
+        """
+        emp = self.get_feature_win_rate(feature_key, feature_value)
+        if emp is None:
+            return 1.0
+        ratio = emp / max(base, 0.01)
+        return float(np.clip(ratio, 0.80, 1.25))
 
     def reset_cvd_divergence_state(self) -> None:
         """
@@ -420,9 +451,57 @@ class QuantEngine:
 
 
     # ------------------------------------------------------------------
+    # O-04 FIX: Intra-bar tick signals — prevent alpha decay
+    # ------------------------------------------------------------------
+    def _intrabar_z_ret(self, lookback_ticks: int = 200) -> float:
+        """Compute z_ret from tick-level log returns instead of candle closes.
+        
+        The edge in z_ret decays in 5-7 minutes; waiting for a 15-min candle
+        close loses 60-70% of the signal. Computing from the tick buffer gives
+        a real-time kinetic energy reading.
+        """
+        if not self.state.recent_trades:
+            return 0.0
+        prices = []
+        for t in list(self.state.recent_trades)[-lookback_ticks:]:
+            p = t.get("price")
+            if p is not None:
+                prices.append(float(p))
+        if len(prices) < 10:
+            return 0.0
+        log_rets = np.diff(np.log(prices))
+        log_rets = log_rets[np.isfinite(log_rets)]
+        if len(log_rets) < 5:
+            return 0.0
+        prior = log_rets[:-1]
+        current = log_rets[-1]
+        mu = float(np.mean(prior)) if len(prior) > 0 else 0.0
+        sigma = float(np.std(prior, ddof=1)) if len(prior) > 1 else 1e-10
+        if sigma < 1e-10:
+            return 0.0
+        zr = (current - mu) / sigma
+        return float(np.clip(zr, -4.0, 4.0))
+
+    @staticmethod
+    def _intrabar_ofi(bids: dict, asks: dict, last_ofi: float = 0.0) -> float:
+        """Compute order flow imbalance from live order book snapshot.
+        
+        OFI = (bid_size - ask_size) / (bid_size + ask_size), range [-1, +1].
+        Positive OFI = buying pressure, negative = selling pressure.
+        Uses top 5 depth levels for robustness against single-level noise.
+        """
+        bid_size = sum(bids.get(p, 0.0) for p in sorted(bids.keys(), reverse=True)[:5])
+        ask_size = sum(asks.get(p, 0.0) for p in sorted(asks.keys())[:5])
+        total = bid_size + ask_size
+        if total <= 0:
+            return last_ofi
+        raw = (bid_size - ask_size) / total
+        return float(np.clip(0.7 * last_ofi + 0.3 * raw, -1.0, 1.0))  # EWMA smooth
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def compute_metrics(self) -> Optional[Dict[str, Any]]:
+    def compute_metrics(self, hmm_regime: str = None) -> Optional[Dict[str, Any]]:
         """
         Returns a fully-populated metrics dict, or None if not enough data.
         """
@@ -482,10 +561,15 @@ class QuantEngine:
         tape_speed, dominant_side = self._tape_metrics()
         ofi, wall_context, all_walls_str, execution_price, valid_bids, valid_asks, nearest_bid, nearest_ask, top_bids, top_asks = self._lob_metrics(current_price)
         z_ret = self._log_return_z_score(closes)
-        # Lightweight regime proxy for z_vel gating: |Z_t| > 1.5 ≈ TREND-like.
-        # Full HMM regime is determined later in main.py; this gives quant engine
-        # a useful signal without a circular dependency on the regime classifier.
-        _regime_proxy = "TREND" if abs(z_score) > 1.5 else "NEUTRAL"
+        # M-16 FIX: Use actual HMM regime when available instead of z-score proxy.
+        # Previously: _regime_proxy = "TREND" if abs(z_score) > 1.5 else "NEUTRAL"
+        # This double-counted z_score (used for regime selection AND as likelihood
+        # factor inside _bayesian), creating a circular feedback loop.
+        # When hmm_regime is provided (from main.py's previous committed regime),
+        # it replaces the proxy. Otherwise the proxy is used as fallback.
+        _regime_proxy = hmm_regime if hmm_regime and hmm_regime in ("RANGE", "TREND", "VOLATILE", "NEUTRAL", "LIQUIDITY", "SQUEEZE") else (
+            "TREND" if abs(z_score) > 1.5 else "NEUTRAL"
+        )
         bayesian_posterior = self._bayesian(rsi, z_score, skewness, ofi,
                                             z_ret=z_ret, regime=_regime_proxy)
         cvd = self.state.cvd
@@ -526,6 +610,14 @@ class QuantEngine:
         # ── CVD Divergence Detection ──────────────────────────────────────────
         cvd_divergence = self._cvd_divergence(current_price, atr, z_score)
 
+        # O-04 FIX: Compute intra-bar signals BEFORE building the return dict
+        _zr_intra = self._intrabar_z_ret()
+        _ofi_intra = self._intrabar_ofi(
+            self.state.bids, self.state.asks,
+            getattr(self, "_last_ofi_intra", 0.0)
+        )
+        self._last_ofi_intra = _ofi_intra
+
         return {
             "symbol":            self.state.symbol,
             "price":             current_price,
@@ -553,6 +645,8 @@ class QuantEngine:
             "z_score_valid":     len(closes) >= 10,
             # Z-06: Log-Return Z-Score — reuse value computed for _bayesian() above
             "zScore_ret":        z_ret,
+            "zScore_ret_intra":  _zr_intra,
+            "ofi_intra":         _ofi_intra,
             # PHASE 3: RV/IV fields
             "rv_iv_ratio":       rv_iv_ratio,
             "vol_state":         vol_state,
@@ -610,12 +704,19 @@ class QuantEngine:
         """
         if len(closes) < window + 2:
             return 0.0
-        log_rets = np.log(closes[-(window + 1):][1:] / closes[-(window + 1):][:-1])
-        valid = log_rets[np.isfinite(log_rets)]
+        log_rets_all = np.log(closes[-(window + 1):][1:] / closes[-(window + 1):][:-1])
+        valid = log_rets_all[np.isfinite(log_rets_all)]
         if len(valid) < 5:
             return 0.0
-        mu    = float(np.mean(valid))
-        sigma = float(np.std(valid))
+        # M-09 FIX: Prior-only rolling window for z_ret normalisation.
+        # The current return (valid[-1]) MUST NOT be included in the mean/std
+        # that it is compared against. Previously mu/sigma were computed from
+        # the full window INCLUDING valid[-1], creating an in-sample bias that
+        # attenuated z_ret by ~0.64× at 5-sigma moves (the outlier pulls
+        # both mu and sigma toward itself, shrinking the Z-score).
+        prior = valid[:-1]
+        mu    = float(np.mean(prior)) if len(prior) > 0 else 0.0
+        sigma = float(np.std(prior, ddof=1)) if len(prior) > 1 else 1e-10
         if sigma < 1e-10:
             return 0.0
         z_ret = (float(valid[-1]) - mu) / sigma
@@ -698,9 +799,11 @@ class QuantEngine:
             return 0.0
         vwap_session = self._vwap_num / self._vwap_den
 
-        # Adaptive sigma window — exclude current candle (closes[-1]) to avoid
-        # double-counting it in both the VWAP mean (vwap_session) and variance.
-        n_sig = max(10, int(atr_pct_rank * 40))
+        # M-10 FIX: Adaptive sigma window — tighter when volatility is high.
+        # Previously `n_sig = max(10, int(atr_pct_rank * 40))` gave LARGER
+        # windows at high volatility, diluting the effect of volatile bars
+        # that should increase Z-score responsiveness. Invert: high rank → tight window.
+        n_sig = max(10, int((1.0 - atr_pct_rank) * 40 + 10))
         if len(closes) - 1 < n_sig:
             n_sig = max(10, len(closes) - 1)
 

@@ -135,10 +135,17 @@ signal.signal(signal.SIGINT,  _shutdown)
 
 
 # ── Launch all bots ───────────────────────────────────────────────────────────
-for sym in SYMBOLS:
+# Each bot instance makes ~10+ REST calls on startup (load_markets, historical
+# candles, funding rate, positions, balance, open interest, klines, etc.).
+# With 3 symbols that's 30+ concurrent calls — guaranteed HTTP 418 IP ban.
+# A 30s stagger gives each bot time to complete its boot REST calls before
+# the next one starts, keeping us under Binance's 1200 req/min hard limit.
+_STARTUP_STAGGER_S = 30
+for i, sym in enumerate(SYMBOLS):
     _processes.append(_start_bot(sym))
-    # Small stagger so all bots don't hit Binance REST at the exact same instant
-    time.sleep(2)
+    if i < len(SYMBOLS) - 1:   # no sleep after the last symbol
+        print(f"[Launcher] Waiting {_STARTUP_STAGGER_S}s before next symbol to avoid rate limits…", flush=True)
+        time.sleep(_STARTUP_STAGGER_S)
 
 
 # ── Monitor loop — restart any crashed child ──────────────────────────────────

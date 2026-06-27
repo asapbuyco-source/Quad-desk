@@ -10,9 +10,9 @@ from bot.main import _HMMRegimeClassifier
 def test_hmm_forward_returns_normalized_posterior():
     hmm = _HMMRegimeClassifier(window=10, update_every=500)
     obs = np.array([
-        [0.0020, 0.8, 0.0, 0.20],
-        [0.0024, 1.0, 0.0, 0.25],
-        [0.0030, 1.2, 0.0, 0.35],
+        [0.0020, 0.8, 0.0, 0.20, 0.0, 0.0],
+        [0.0024, 1.0, 0.0, 0.25, 0.0, 0.0],
+        [0.0030, 1.2, 0.0, 0.35, 0.0, 0.0],
     ], dtype=float)
 
     posterior = hmm._forward(obs)
@@ -30,24 +30,24 @@ def test_hmm_online_update_blends_against_calibrated_anchor():
     hmm._online_blend_alpha = 0.05
 
     anchor_mu = np.array([
-        [1.0, 1.0, 1.0, 1.0],
-        [2.0, 2.0, 2.0, 2.0],
-        [3.0, 3.0, 3.0, 3.0],
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        [2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+        [3.0, 3.0, 3.0, 3.0, 3.0, 3.0],
     ])
-    anchor_sigma = np.full((3, 4), 2.0)
+    anchor_sigma = np.full((3, 6), 2.0)
     hmm._calibrated_mu_anchor = anchor_mu.copy()
     hmm._calibrated_sigma_anchor = anchor_sigma.copy()
     hmm._mu = anchor_mu.copy()
     hmm._sigma = anchor_sigma.copy()
 
-    live_obs = np.full((20, 4), 10.0)
+    live_obs = np.full((20, 6), 10.0)
     hmm._obs_buf = deque(live_obs, maxlen=200)
     hmm._viterbi = MagicMock(return_value=np.zeros(20, dtype=int))
 
     hmm._online_update()
 
     expected_mu = 0.95 * anchor_mu[0] + 0.05 * live_obs.mean(axis=0)
-    expected_sigma = 0.95 * anchor_sigma[0] + 0.05 * np.full(4, 1e-4)
+    expected_sigma = 0.95 * anchor_sigma[0] + 0.05 * np.full(6, 1e-4)
     assert hmm._mu[0] == pytest.approx(expected_mu)
     assert hmm._sigma[0] == pytest.approx(expected_sigma)
     assert not np.allclose(hmm._mu[0], live_obs.mean(axis=0))
@@ -60,8 +60,8 @@ def test_hmm_fast_track_does_not_enter_volatile_on_first_tick():
     hmm._online_update_enabled = False
     hmm._forward = MagicMock(return_value=np.array([0.01, 0.01, 0.98]))
     hmm._obs_buf = deque([
-        np.array([0.0020, 0.8, 0.0, 0.20]),
-        np.array([0.0021, 0.9, 0.0, 0.25]),
+        np.array([0.0020, 0.8, 0.0, 0.20, 0.0, 0.0]),
+        np.array([0.0021, 0.9, 0.0, 0.25, 0.0, 0.0]),
     ], maxlen=200)
     hmm._committed_regime = "RANGE"
     hmm._candidate_regime = "RANGE"
@@ -84,8 +84,8 @@ def test_hmm_fast_track_does_not_exit_volatile_on_first_tick():
     # Simulate a RANGE spike posterior (state 0 = RANGE)
     hmm._forward = MagicMock(return_value=np.array([0.98, 0.01, 0.01]))
     hmm._obs_buf = deque([
-        np.array([0.0020, 0.8, 0.0, 0.20]),
-        np.array([0.0021, 0.9, 0.0, 0.25]),
+        np.array([0.0020, 0.8, 0.0, 0.20, 0.0, 0.0]),
+        np.array([0.0021, 0.9, 0.0, 0.25, 0.0, 0.0]),
     ], maxlen=200)
     # Bot is currently committed to VOLATILE
     hmm._committed_regime = "VOLATILE"

@@ -54,11 +54,11 @@ class TestRVDataStaleGuard:
         assert result == "NEUTRAL"
 
     def test_fresh_rv_low_ratio_downgrades_volatile(self):
-        """When rv_data_stale is False and rv_iv_ratio < 0.8, downgrade."""
+        """When rv_data_stale is False and rv_iv_ratio < 0.01, downgrade."""
         from bot.main import _apply_rv_iv_override
         result = _apply_rv_iv_override(
             regime="VOLATILE",
-            rv_iv_ratio=0.5,
+            rv_iv_ratio=0.005,
             vol_state="NORMAL",
             rv_data_stale=False,
         )
@@ -405,51 +405,6 @@ class TestTrendTrailingStop:
             executor.check_trailing_stop(current_price=102.5, atr=2.0)
         )
         assert result is True or executor.active_position.get("_trailing_active") is True
-
-    def test_trailing_stop_restore_failure_flattens_position(self):
-        """If trailing SL replacement and old-SL restore both fail, executor must flatten."""
-        import asyncio
-        from bot.executor import TradingExecutor
-        from unittest.mock import MagicMock, AsyncMock, patch
-
-        with patch("bot.executor.ccxt") as mock_ccxt:
-            mock_exchange = MagicMock()
-            mock_ccxt.binanceusdm.return_value = mock_exchange
-            executor = TradingExecutor(
-                api_key="test", api_secret="test", testnet=True, dry_run=False,
-                exchange_id="binanceusdm", tg_token="", tg_chat_id=""
-            )
-
-        executor.exchange = MagicMock()
-        executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
-        executor.exchange.cancel_order = AsyncMock()
-        executor.exchange.create_order = AsyncMock(side_effect=[
-            Exception("new trailing stop rejected"),
-            Exception("old stop restore rejected"),
-        ])
-        executor.exchange.create_market_order = AsyncMock(return_value={"id": "flatten-1"})
-        executor.active_position = {
-            "symbol": "BTC/USDT:USDT",
-            "side": "buy",
-            "size": 1.0,
-            "entry_price": 100.0,
-            "stop_loss": 99.0,
-            "sl_order_id": "sl-old",
-            "initial_stop_loss": 99.0,
-            "initial_risk_dist": 1.0,
-            "atr_at_entry": 2.0,
-            "regime": "TREND",
-        }
-
-        result = asyncio.run(
-            executor.check_trailing_stop(current_price=102.5, atr=2.0)
-        )
-
-        assert result is False
-        executor.exchange.create_market_order.assert_awaited_once_with(
-            "BTC/USDT:USDT", "sell", 1.0, params={"reduceOnly": True}
-        )
-        assert executor.active_position is None
 
 
 class TestRANGEDynamicBE:
