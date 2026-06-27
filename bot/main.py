@@ -963,9 +963,10 @@ class _HMMRegimeClassifier:
 
     # ------------------------------------------------------------------
     def _gaussian_log_prob(self, obs: np.ndarray) -> np.ndarray:
-        """Log P(obs | state) for all 3 HMM states. obs shape = (F,)."""
-        log_probs = np.zeros(3)
-        for s in range(3):
+        """Log P(obs | state) for all HMM states. obs shape = (F,)."""
+        n_s = self.N_STATES
+        log_probs = np.zeros(n_s)
+        for s in range(n_s):
             diff    = obs - self._mu[s]
             log_p   = -0.5 * np.sum((diff / np.maximum(self._sigma[s], 1e-9)) ** 2)
             log_p  -= np.sum(np.log(np.maximum(self._sigma[s], 1e-9)))
@@ -3018,7 +3019,7 @@ async def _compute_signal(
 
     # Stage 4: Strategy
     raw_direction: Optional[str] = None
-    strategy_type: str
+    strategy_type: str = "WAIT"  # default — set explicitly by each strategy branch
     # Track previous regime for transition-aware entries
     # COMPRESSION→TREND = breakout entry, TREND→SQUEEZE = cascade entry
     _prev_regime = getattr(_hmm_classifier, "_prev_committed_regime", None)
@@ -3118,6 +3119,11 @@ async def _compute_signal(
                             f"z={z_current:.2f} slope={z_slope:.3f}")
             else:
                 logger.info(f"[MetaModel] NEUTRAL — no edge (z={z_current:.2f} slope={z_slope:.3f})")
+        elif regime == "LIQUIDITY":
+            # LIQUIDITY from wall-proximity (no sweep detected this cycle).
+            # Not a tradable edge — the wall is there but price hasn't pierced it.
+            _gate_stats_summary("signal_none")
+            return {**WAIT, "analysis": "LIQUIDITY regime — wall proximity, no sweep triggered."}
         else:
             logger.info(f"[MetaModel] → WAIT (regime={regime}, no strategy matched)")
 
