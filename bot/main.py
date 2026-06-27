@@ -1376,7 +1376,7 @@ def _apply_rv_iv_override(
                 f"[Regime Override] HMM VOLATILE trusted — live tick RV is insufficient (stale). "
                 f"RV/IV ratio={rv_iv_ratio:.2f} ({vol_state}). Not downgrading."
             )
-        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.01:
+        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.50:  # F-2 FIX: raised from 0.01 per Maxon audit R-3
             logger.warning(
                 f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
                 f"({vol_state}). Overriding to NEUTRAL."
