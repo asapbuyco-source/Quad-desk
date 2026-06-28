@@ -3020,27 +3020,29 @@ async def _compute_signal(
     # Stage 4: Strategy
     raw_direction: Optional[str] = None
     strategy_type: str = "WAIT"  # default — set explicitly by each strategy branch
-    # Track previous regime for transition-aware entries
-    # COMPRESSION→TREND = breakout entry, TREND→SQUEEZE = cascade entry
-    _prev_regime = getattr(_hmm_classifier, "_prev_committed_regime", None)
-
-    if sweep:
-        strategy_type = "LIQUIDITY_SWEEP"
-        raw_direction = _strategy_liquidity_sweep(sweep, metrics, feed_state=feed_state)
-        logger.info(f"[MetaModel] → LIQUIDITY_SWEEP (sweep={sweep})")
     
-    # CVD Flip and Funding Contrarian fire in any regime — they're orthogonal signals
-    if raw_direction is None:
-        raw_direction = _strategy_cvd_flip(metrics)
-        if raw_direction:
-            strategy_type = "CVD_FLIP"
-            logger.info(f"[MetaModel] → CVD_FLIP ({raw_direction})")
+    # CVD Flip and Funding Contrarian are orthogonal strategies — they fire
+    # BEFORE regime-specific blocking (including DeadMarket gate). These
+    # strategies have independent signal sources (CVD delta streak, funding rate)
+    # that do NOT depend on Z-score or regime classification.
+    raw_direction = _strategy_cvd_flip(metrics)
+    if raw_direction:
+        strategy_type = "CVD_FLIP"
+        logger.info(f"[MetaModel] → CVD_FLIP ({raw_direction})")
     
     if raw_direction is None:
         raw_direction = _strategy_funding_contrarian(metrics)
         if raw_direction:
             strategy_type = "FUNDING_CONTRA"
             logger.info(f"[MetaModel] → FUNDING_CONTRA ({raw_direction})")
+    
+    # Track previous regime for transition-aware entries
+    _prev_regime = getattr(_hmm_classifier, "_prev_committed_regime", None)
+
+    if sweep:
+        strategy_type = "LIQUIDITY_SWEEP"
+        raw_direction = _strategy_liquidity_sweep(sweep, metrics, feed_state=feed_state)
+        logger.info(f"[MetaModel] → LIQUIDITY_SWEEP (sweep={sweep})")
     
     # Regime-specific strategies
     if raw_direction is None:
