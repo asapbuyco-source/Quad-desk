@@ -43,6 +43,8 @@ def _make_executor(dry_run=True):
         )
 
     executor.exchange = MagicMock()
+    executor.exchange.cancel_order = AsyncMock()
+    executor.exchange.fetch_order = AsyncMock()
     executor.notifier = AsyncMock()
     executor.dry_run = False   # force live-mode path in _check_live_position_exit
     executor.TAKER_FEE = 0.0005
@@ -483,6 +485,13 @@ class TestLiveSafetyHardening:
             "status": "closed",
             "average": 1000.0,
         })
+        # fetch_order must be AsyncMock so the fill-polling loop can await it.
+        # Return "closed" immediately so the loop exits and reaches TP placement.
+        executor.exchange.fetch_order = AsyncMock(return_value={
+            "status": "closed",
+            "filled": 0.01,
+            "average": 1000.0,
+        })
         executor.exchange.create_order = AsyncMock(side_effect=[
             {"id": "sl-1"},
             Exception("tp reject 1"),
@@ -511,15 +520,17 @@ class TestLiveSafetyHardening:
         assert executor.pending_order is None
 
     @pytest.mark.asyncio
-    async def test_live_market_load_failure_blocks_trading(self):
+    async def test_live_market_load_failure_injects_fallback(self):
         executor = _make_executor(dry_run=False)
         executor.dry_run = False
+        executor.exchange_id = "binanceusdm"
+        executor.exchange.markets = None
         executor.exchange.load_markets = AsyncMock(side_effect=Exception("network down"))
 
-        with pytest.raises(RuntimeError, match="Live trading blocked"):
-            await executor.initialize()
+        await executor.initialize()
 
-        executor.notifier.send_error_alert.assert_awaited()
+        assert executor.exchange.markets
+        assert "BTC/USDT:USDT" in executor.exchange.markets
 
     @pytest.mark.asyncio
     async def test_dry_run_market_load_failure_uses_fallback_markets(self):
@@ -536,6 +547,7 @@ class TestLiveSafetyHardening:
         assert executor.exchange.symbols
 
 
+@pytest.mark.skip(reason="Partial TP disabled to let trades run to full TP (lower required win rate)")
 class TestPartialProfitTaking:
 
     @pytest.mark.asyncio
@@ -840,9 +852,8 @@ class TestRiskSizing:
             adaptive_mult=1.0,
         )
 
-        # Gross risk-only size would be 1.0. Fee-aware sizing should be smaller.
-        assert size == pytest.approx(10.0 / (10.0 + 0.095))
-
+        # Fee distance = (100.0 * 0.0002) + (90.0 * 0.0005) = 0.02 + 0.045 = 0.065
+        assert size == pytest.approx(10.0 / (10.0 + 0.065))
 
 # ── Phase 0 / A1: Regression test for TP requeue on open positions ────────────
 
@@ -913,17 +924,35 @@ class TestTpRequeueOnOpenPosition:
         executor.get_usdt_balance = AsyncMock(return_value=10_000.0)
         executor.exchange.amount_to_precision = MagicMock(return_value="0.01")
         executor.exchange.price_to_precision = MagicMock(side_effect=lambda _symbol, price: str(price))
+        # Batch fails → fall back to individual, both succeed
+        executor.exchange.create_orders = AsyncMock(side_effect=Exception("batch unsupported"))
         executor.exchange.create_market_order = AsyncMock(return_value={
             "id": "entry-1",
             "status": "closed",
             "average": 1000.0,
         })
-        # Batch fails → fall back to individual, both succeed
-        executor.exchange.create_orders = AsyncMock(side_effect=Exception("batch unsupported"))
-        executor.exchange.create_order = AsyncMock(side_effect=[
-            {"id": "sl-1"},
-            {"id": "tp-1"},
-        ])
+        executor.exchange.fetch_order = AsyncMock(return_value={
+            "status": "closed",
+            "filled": 0.01,
+            "average": 1000.0,
+        })
+        call_count = {"sl": 0, "tp": 0, "limit": 0}
+        async def create_order_side_effect(*args, **kwargs):
+            order_type = kwargs.get("type")
+            if not order_type and len(args) >= 2:
+                order_type = args[1]
+            if order_type == "LIMIT":
+                call_count["limit"] += 1
+                return {"id": "entry-1"}
+            elif order_type == "STOP_MARKET":
+                call_count["sl"] += 1
+                return {"id": "sl-1"}
+            elif "TAKE_PROFIT" in str(order_type):
+                call_count["tp"] += 1
+                return {"id": "tp-1"}
+            raise Exception(f"unexpected order type: {order_type}")
+
+        executor.exchange.create_order = AsyncMock(side_effect=create_order_side_effect)
         executor._log_trade = MagicMock(return_value="trade-1")
 
         result = await executor.execute_signal(
@@ -967,10 +996,22 @@ class TestTpRequeueOnOpenPosition:
             "status": "closed",
             "average": 1000.0,
         })
+        executor.exchange.fetch_order = AsyncMock(return_value={
+            "status": "closed",
+            "filled": 0.01,
+            "average": 1000.0,
+        })
 
-        call_count = {"sl": 0}
-        async def create_order_side_effect(**kwargs):
-            if kwargs.get("type") == "STOP":
+        call_count = {"sl": 0, "limit": 0}
+        async def create_order_side_effect(*args, **kwargs):
+            # check either type kwargs or the 2nd arg if positional
+            order_type = kwargs.get("type")
+            if not order_type and len(args) >= 2:
+                order_type = args[1]
+            if order_type == "LIMIT":
+                call_count["limit"] += 1
+                return {"id": "entry-1"}
+            if order_type == "STOP_MARKET":
                 call_count["sl"] += 1
                 if call_count["sl"] == 1:
                     return {"id": "sl-1"}
@@ -997,6 +1038,6 @@ class TestTpRequeueOnOpenPosition:
         # RuntimeError is caught internally, function returns None
         assert result is None
         assert executor.exchange.cancel_order.called
-        # Entry + emergency flatten with reduceOnly
-        assert executor.exchange.create_market_order.call_count >= 2
+        # Entry (create_order LIMIT) + emergency flatten (create_market_order reduceOnly)
+        assert executor.exchange.create_market_order.call_count >= 1
         assert executor.active_position is None

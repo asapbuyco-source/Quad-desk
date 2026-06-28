@@ -949,6 +949,17 @@ class TradingExecutor:
         if "WAIT" in verdict:
             return
 
+        # D FIX: Runtime cross-process risk halt — check aggregate drawdown
+        # across all running bot instances before placing any new order.
+        if not self.dry_run:
+            try:
+                from bot.global_risk import check_aggregate_exposure_or_halt
+                if check_aggregate_exposure_or_halt():
+                    logger.error("[GlobalRisk] Aggregate drawdown cap hit across processes. Blocking new entry.")
+                    return
+            except Exception as e:
+                logger.warning(f"[GlobalRisk] Runtime check failed (fail-open): {e}")
+
         # C3 FIX: Initialise sentinel values BEFORE the lock so they are always
         # defined if emergency_flatten is reached inside the locked block.
         fmt_size = 0.0
@@ -1338,12 +1349,22 @@ class TradingExecutor:
             fill_price = limit_price
             order_status = "open"
 
+            _fetch_err_count = 0
             while time.time() < deadline:
                 await asyncio.sleep(POLL_INTERVAL_S)
                 try:
                     updated = await self.exchange.fetch_order(order_id, ex_symbol)
+                    _fetch_err_count = 0  # reset on success
                 except Exception as fetch_err:
-                    logger.warning(f"[MakerEntry] fetch_order error: {fetch_err}. Retrying in next poll.")
+                    _fetch_err_count += 1
+                    logger.warning(f"[MakerEntry] fetch_order error #{_fetch_err_count}: {fetch_err}. Retrying in next poll.")
+                    if _fetch_err_count >= 10:
+                        logger.critical(f"[MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.")
+                        if self.notifier:
+                            await self.notifier.send_error_alert(
+                                f"[MakerEntry] 10 consecutive fetch_order failures for {order_id} on {ex_symbol}. "
+                                f"SL {stop_loss} IS active on exchange but fill status unknown."
+                            )
                     continue
 
                 order_status = updated.get("status", "open")

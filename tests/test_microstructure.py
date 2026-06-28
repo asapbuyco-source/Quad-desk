@@ -17,19 +17,19 @@ def _depth(bids=None, asks=None):
 def test_bid_disappearance_without_sell_trade_flags_ghost_wall():
     state = MarketState("BTCUSDT")
 
-    state.update_depth(_depth(bids=[(100.0, 20.0), (99.0, 5.0)], asks=[(101.0, 5.0)]))
+    state.update_depth(_depth(bids=[(100.0, 50.0), (99.0, 5.0)], asks=[(101.0, 5.0)]))
     state.update_depth(_depth(bids=[(100.0, 5.0), (99.0, 5.0)], asks=[(101.0, 5.0)]))
 
     assert state.ghost_wall_active is True
     assert state.ghost_wall_side == "SELL"
     assert state.ghost_wall_price == 100.0
-    assert state.ghost_cancel_rate == 0.75
+    assert state.ghost_cancel_rate == 0.90
 
 
 def test_full_wall_disappearance_flags_ghost_wall():
     state = MarketState("BTCUSDT")
 
-    state.update_depth(_depth(bids=[(100.0, 20.0)], asks=[(101.0, 5.0)]))
+    state.update_depth(_depth(bids=[(100.0, 50.0)], asks=[(101.0, 5.0)]))
     state.update_depth(_depth(bids=[], asks=[(101.0, 5.0)]))
 
     assert state.ghost_wall_active is True
@@ -40,12 +40,12 @@ def test_full_wall_disappearance_flags_ghost_wall():
 
 def test_bid_disappearance_matched_by_sell_trade_not_ghost():
     state = MarketState("BTCUSDT")
-    state.update_depth(_depth(bids=[(100.0, 20.0)], asks=[(101.0, 5.0)]))
+    state.update_depth(_depth(bids=[(100.0, 50.0)], asks=[(101.0, 5.0)]))
     state.recent_trades.append({
         "price": 100.0,
         "side": "SELL",
-        "size": 18.0,
-        "usd_volume": 1800.0,
+        "size": 45.0,
+        "usd_volume": 4500.0,
         "time": time.time() * 1000,
     })
 
@@ -56,12 +56,12 @@ def test_bid_disappearance_matched_by_sell_trade_not_ghost():
 
 def test_wrong_side_trade_does_not_mask_bid_ghost_wall():
     state = MarketState("BTCUSDT")
-    state.update_depth(_depth(bids=[(100.0, 20.0)], asks=[(101.0, 5.0)]))
+    state.update_depth(_depth(bids=[(100.0, 50.0)], asks=[(101.0, 5.0)]))
     state.recent_trades.append({
         "price": 100.0,
         "side": "BUY",
-        "size": 18.0,
-        "usd_volume": 1800.0,
+        "size": 45.0,
+        "usd_volume": 4500.0,
         "time": time.time() * 1000,
     })
 

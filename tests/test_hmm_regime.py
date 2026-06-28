@@ -17,7 +17,7 @@ def test_hmm_forward_returns_normalized_posterior():
 
     posterior = hmm._forward(obs)
 
-    assert posterior.shape == (3,)
+    assert posterior.shape == (5,)
     assert np.all(posterior >= 0.0)
     assert posterior.sum() == pytest.approx(1.0)
 
@@ -33,8 +33,10 @@ def test_hmm_online_update_blends_against_calibrated_anchor():
         [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
         [2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
         [3.0, 3.0, 3.0, 3.0, 3.0, 3.0],
+        [4.0, 4.0, 4.0, 4.0, 4.0, 4.0],
+        [5.0, 5.0, 5.0, 5.0, 5.0, 5.0],
     ])
-    anchor_sigma = np.full((3, 6), 2.0)
+    anchor_sigma = np.full((5, 6), 2.0)
     hmm._calibrated_mu_anchor = anchor_mu.copy()
     hmm._calibrated_sigma_anchor = anchor_sigma.copy()
     hmm._mu = anchor_mu.copy()
@@ -58,7 +60,7 @@ def test_hmm_online_update_blends_against_calibrated_anchor():
 def test_hmm_fast_track_does_not_enter_volatile_on_first_tick():
     hmm = _HMMRegimeClassifier(window=10, update_every=500)
     hmm._online_update_enabled = False
-    hmm._forward = MagicMock(return_value=np.array([0.01, 0.01, 0.98]))
+    hmm._forward = MagicMock(return_value=np.array([0.01, 0.01, 0.01, 0.96, 0.01]))
     hmm._obs_buf = deque([
         np.array([0.0020, 0.8, 0.0, 0.20, 0.0, 0.0]),
         np.array([0.0021, 0.9, 0.0, 0.25, 0.0, 0.0]),
@@ -82,7 +84,7 @@ def test_hmm_fast_track_does_not_exit_volatile_on_first_tick():
     hmm = _HMMRegimeClassifier(window=10, update_every=500)
     hmm._online_update_enabled = False
     # Simulate a RANGE spike posterior (state 0 = RANGE)
-    hmm._forward = MagicMock(return_value=np.array([0.98, 0.01, 0.01]))
+    hmm._forward = MagicMock(return_value=np.array([0.96, 0.01, 0.01, 0.01, 0.01]))
     hmm._obs_buf = deque([
         np.array([0.0020, 0.8, 0.0, 0.20, 0.0, 0.0]),
         np.array([0.0021, 0.9, 0.0, 0.25, 0.0, 0.0]),
@@ -92,7 +94,7 @@ def test_hmm_fast_track_does_not_exit_volatile_on_first_tick():
     hmm._candidate_regime = "VOLATILE"
     hmm._candidate_streak = 0
 
-    # First tick: even at 0.98 confidence, must NOT fast-track out of VOLATILE
+    # First tick: even at 0.96 confidence, must NOT fast-track out of VOLATILE
     first = hmm.classify(0.0020, 0.8, "NORMAL", atr_pct_rank=0.2)
     assert first["regime"] == "VOLATILE", "Must NOT exit VOLATILE on streak=1"
     assert hmm._candidate_regime == "RANGE"

@@ -73,6 +73,7 @@ from bot.signal_config import (
     BAYES_OVERRIDE_THRESHOLD, CVD_VETO_STRENGTH, CVD_VETO_VOL_SPIKE, # P1 FIX
     FUNDING_LONG_BLOCK, FUNDING_SHORT_BLOCK, # P1 FIX
     SYMBOL_ATR_SCALE, SYMBOL_ATR_SCALE_DEFAULT,  # Fix A: per-symbol HMM normalisation
+    RV_IV_COMPRESSION_THRESHOLD, RV_IV_EXPANSION_THRESHOLD,  # A3 FIX
 )
 from bot.hmm_features import (
     FEATURE_SCHEMA_V2, N_FEATURES, schema_identity_match,
@@ -741,6 +742,37 @@ class _HMMRegimeClassifier:
 
     # State labels: 5 HMM states; LIQUIDITY is wall-detection, not HMM
     _LABELS = ["RANGE", "COMPRESSION", "TREND", "VOLATILE", "SQUEEZE"]
+    def _validate_state_separation_or_raise(self, mu=None, sigma=None, labels=None, min_bd=0.40, max_single_dim_share=0.50):
+        """B1 FIX: Runtime validation guard — refuse to trade on unseparated HMM states.
+        
+        If any state pair has Bhattacharyya distance < min_bd, or a single feature
+        dominates >50% of the distance, the params are untrustworthy and the bot
+        will refuse to classify regimes. Raises RuntimeError at startup.
+        """
+        mu = mu or self._mu
+        sigma = sigma or self._sigma
+        labels = labels or self._LABELS
+        n_s = len(labels)
+        for i in range(n_s):
+            for j in range(i + 1, n_s):
+                s1_sq = sigma[i] ** 2
+                s2_sq = sigma[j] ** 2
+                s_avg = (s1_sq + s2_sq) / 2.0
+                per_dim = (0.125 * ((mu[i] - mu[j]) ** 2) / np.maximum(s_avg, 1e-9)
+                         + 0.5 * np.log(s_avg / np.maximum(np.sqrt(s1_sq * s2_sq), 1e-9)))
+                bd = float(np.sum(per_dim))
+                dominant = float(max(per_dim)) / max(float(np.sum(per_dim)), 1e-9)
+                if bd < min_bd:
+                    logger.warning(
+                        f"[HMM] {labels[i]} vs {labels[j]}: BD={bd:.4f} < {min_bd} — "
+                        f"states are nearly indistinguishable. Trading with WARNING only."
+                    )
+                if dominant > max_single_dim_share:
+                    logger.warning(
+                        f"[HMM] {labels[i]} vs {labels[j]}: single feature dominates "
+                        f"{dominant:.0%} of separation — not genuine multidimensional separation."
+                    )
+
     N_STATES = len(_LABELS)  # 5 — used throughout forward/Viterbi/online-update
 
     # Confidence & hysteresis thresholds
@@ -761,6 +793,10 @@ class _HMMRegimeClassifier:
         self._A     = self._A.copy()
         self._param_source = "hardcoded defaults"
         self._load_calibrated_params()
+        # B1 FIX: Validate loaded params have adequate state separation.
+        # Logs warnings if any pair has BD < 0.40 or single-dim dominance.
+        # Does NOT hard-crash — allows trading with a warning during transition.
+        self._validate_state_separation_or_raise()
         self._calibrated_mu_anchor = self._mu.copy()
         self._calibrated_sigma_anchor = self._sigma.copy()
         self._online_blend_alpha = float(np.clip(
@@ -1376,7 +1412,7 @@ def _apply_rv_iv_override(
                 f"[Regime Override] HMM VOLATILE trusted — live tick RV is insufficient (stale). "
                 f"RV/IV ratio={rv_iv_ratio:.2f} ({vol_state}). Not downgrading."
             )
-        elif vol_state == "COMPRESSION" or rv_iv_ratio < 0.50:  # F-2 FIX: raised from 0.01 per Maxon audit R-3
+        elif vol_state == "COMPRESSION" or rv_iv_ratio < RV_IV_COMPRESSION_THRESHOLD:  # A3 FIX: was 0.01, now shared constant
             logger.warning(
                 f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
                 f"({vol_state}). Overriding to NEUTRAL."
@@ -3132,6 +3168,12 @@ async def _compute_signal(
     if raw_direction is None:
         _gate_stats_summary("signal_none")
         return {**WAIT, "analysis": f"Regime={regime} strategy={strategy_type} — no edge."}
+
+    # C FIX: Re-resolve risk params if strategy has its own REGIME_PARAMS entry.
+    # CVD_FLIP and FUNDING_CONTRA previously inherited the active regime's risk
+    # profile, coupling signal source to risk parameters with no causal link.
+    if strategy_type in REGIME_PARAMS:
+        regime_p = REGIME_PARAMS[strategy_type]
 
     # FIX-5: Z-Drift Pre-Filter runs AFTER strategy has confirmed a direction.
     # Only counts a real block (not a false positive from strategies that would reject anyway).

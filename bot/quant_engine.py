@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from collections import deque
 from typing import Dict, Any, Optional
-from bot.signal_config import OFI_WARMUP_CYCLES
+from bot.signal_config import OFI_WARMUP_CYCLES, RV_IV_COMPRESSION_THRESHOLD, RV_IV_EXPANSION_THRESHOLD  # A3 FIX
 
 logger = logging.getLogger(__name__)
 
@@ -184,8 +184,8 @@ class QuantEngine:
         rv_iv_ratio = rv / iv_proxy if iv_proxy > 0 else 1.0
         vol_state = (
             "COMPRESSION"
-            if rv_iv_ratio < 0.01
-            else ("EXPANSION" if rv_iv_ratio > 1.2 else "NORMAL")
+            if rv_iv_ratio < RV_IV_COMPRESSION_THRESHOLD   # A3 FIX: was 0.01
+            else ("EXPANSION" if rv_iv_ratio > RV_IV_EXPANSION_THRESHOLD else "NORMAL")
         )
         return {
             "rv": rv,
@@ -453,22 +453,35 @@ class QuantEngine:
     # ------------------------------------------------------------------
     # O-04 FIX: Intra-bar tick signals — prevent alpha decay
     # ------------------------------------------------------------------
-    def _intrabar_z_ret(self, lookback_ticks: int = 200) -> float:
-        """Compute z_ret from tick-level log returns instead of candle closes.
+    def _intrabar_z_ret(self, lookback_ticks: int = 200, max_gap_ms: float = 10_000) -> float:
+        """O-04: Compute z_ret from tick-level log returns.
         
-        The edge in z_ret decays in 5-7 minutes; waiting for a 15-min candle
-        close loses 60-70% of the signal. Computing from the tick buffer gives
-        a real-time kinetic energy reading.
+        E FIX: Gap-aware rejection. A WebSocket reconnect leaves two ticks
+        adjacent in the buffer but minutes apart in real time. The multi-minute
+        price move would be fed into z-score as if it were a single tick,
+        creating a spurious signal. If the max tick gap exceeds 5× the median
+        gap, the buffer is rejected as untrustworthy.
         """
         if not self.state.recent_trades:
             return 0.0
-        prices = []
-        for t in list(self.state.recent_trades)[-lookback_ticks:]:
-            p = t.get("price")
-            if p is not None:
-                prices.append(float(p))
+        trades = list(self.state.recent_trades)[-lookback_ticks:]
+        if len(trades) < 10:
+            return 0.0
+        
+        times  = np.array([t.get("time", 0) for t in trades], dtype=float)
+        prices = np.array([t.get("price", np.nan) for t in trades], dtype=float)
+        valid  = np.isfinite(prices) & (times > 0)
+        times, prices = times[valid], prices[valid]
         if len(prices) < 10:
             return 0.0
+        
+        # E FIX: Gap rejection — reconnect artifacts dominate the signal
+        gaps_ms = np.diff(times)
+        median_gap = float(np.median(gaps_ms)) if len(gaps_ms) else max_gap_ms
+        gap_threshold = max(max_gap_ms, 5.0 * median_gap)
+        if len(gaps_ms) > 0 and np.max(gaps_ms) > gap_threshold:
+            return 0.0  # buffer untrustworthy after reconnect
+        
         log_rets = np.diff(np.log(prices))
         log_rets = log_rets[np.isfinite(log_rets)]
         if len(log_rets) < 5:
@@ -799,11 +812,13 @@ class QuantEngine:
             return 0.0
         vwap_session = self._vwap_num / self._vwap_den
 
-        # M-10 FIX: Adaptive sigma window — tighter when volatility is high.
-        # Previously `n_sig = max(10, int(atr_pct_rank * 40))` gave LARGER
-        # windows at high volatility, diluting the effect of volatile bars
-        # that should increase Z-score responsiveness. Invert: high rank → tight window.
-        n_sig = max(10, int((1.0 - atr_pct_rank) * 40 + 10))
+        # A2 FIX: Cap window at 25 to prevent compression-induced instability.
+        # At atr_pct_rank=0.05 (compression), n_sig = 48 bars. That many quiet bars
+        # produce tiny std, which feeds A1's quadrature floor — z-score still drifts
+        # toward zero on compressed variance, just more smoothly. Capping at 25
+        # keeps enough bars for a meaningful σ without drowning the signal.
+        MAX_N_SIG_COMPRESSED = 25
+        n_sig = max(10, min(MAX_N_SIG_COMPRESSED, int((1.0 - atr_pct_rank) * 40 + 10)))
         if len(closes) - 1 < n_sig:
             n_sig = max(10, len(closes) - 1)
 
@@ -823,10 +838,13 @@ class QuantEngine:
         vw_var = np.sum(vv * (tp_w - vwap_session)**2) / vol_sum
         std = np.sqrt(vw_var)
 
-        # P1-7 FIX: Guard against near-zero std during zero-volatility periods.
-        MIN_STD = current_price * 0.00005  # 0.005% of current price
-        if std < MIN_STD:
-            return 0.0
+        # A1 FIX: Quadrature floor — smooth, continuous denominator.
+        # Previous hard branch (if std < MIN_STD: return 0.0) created a 4-sigma
+        # discontinuity when tick noise swung std across 0.00005. Every downstream
+        # consumer (HMM, NEUTRAL gate, Bayesian fusion) inherited this instability.
+        # Quadrature: std = sqrt(std² + MIN_STD²) eliminates the hard jump.
+        MIN_STD = current_price * 0.00005
+        std = math.sqrt(std * std + MIN_STD * MIN_STD)
 
         # t-scale correction factor
         NU_FIXED = 6.0

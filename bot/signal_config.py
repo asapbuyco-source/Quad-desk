@@ -38,6 +38,12 @@ CVD_VETO_STRENGTH = 0.62
 CVD_VETO_VOL_SPIKE = 1.40
 MIN_SWEEP_CONFIRMS = 2
 
+# A3 FIX: RV/IV compression/expansion thresholds — single source of truth.
+# Both quant_engine.py (vol_state classification) and main.py (regime override)
+# import from here. Previously 0.01 and 0.50 were used in different files.
+RV_IV_COMPRESSION_THRESHOLD = 0.50
+RV_IV_EXPANSION_THRESHOLD   = 1.20
+
 # ── Per-Symbol ATR Normalisation Scale ─────────────────────────────────────────
 # The HMM emission matrices (_MU/_SIGMA) were calibrated on 1-year BTC 15m data.
 # SOL and ETH have structurally higher ATR% at the same market regime (e.g. SOL
@@ -226,6 +232,40 @@ REGIME_PARAMS = {
         "candle_gate_sec":    30,
         "htf_block":          False,
         "cascade_cooldown_s": 120,   # 2min — squeeze can repeat rapidly
+    },
+    # C FIX: Orthogonal strategy risk profiles — CVD_FLIP and FUNDING_CONTRA
+    # previously inherited the active regime's risk params (wrong causal link).
+    "CVD_FLIP": {
+        "z_threshold":        1.20,
+        "atr_multiplier_sl":  1.40,   # Moderate SL — institutional reversals are usually real
+        "ofi_bound":          0.12,
+        "min_confidence":     0.55,   # Lower bar — CVD flip is a high-conviction structural signal
+        "rr_target":          1.8,    # Moderate R:R — flips reverse fast, don't trend
+        "be_lock_trigger":    1.0,
+        "partial_take_r":     0.50,
+        "partial_take_pct":   0.50,
+        "time_exit_sec":      600,
+        "time_exit_hard_cap_s": 1200,
+        "panic_threshold":    10.0,
+        "candle_gate_sec":    60,
+        "htf_block":          False,
+        "cascade_cooldown_s": 120,
+    },
+    "FUNDING_CONTRA": {
+        "z_threshold":        1.50,
+        "atr_multiplier_sl":  1.60,   # Wide SL — funding-driven reversals can overshoot
+        "ofi_bound":          0.12,
+        "min_confidence":     0.60,   # Moderate — funding is a slow signal
+        "rr_target":          2.2,    # Good R:R — funding reversals have structural edge
+        "be_lock_trigger":    1.5,
+        "partial_take_r":     0.60,
+        "partial_take_pct":   0.50,
+        "time_exit_sec":      900,
+        "time_exit_hard_cap_s": 1800,
+        "panic_threshold":    10.0,
+        "candle_gate_sec":    120,   # Longer — funding changes slowly
+        "htf_block":          False,
+        "cascade_cooldown_s": 180,
     },
 }
 
