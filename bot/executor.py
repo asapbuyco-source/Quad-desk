@@ -1111,7 +1111,8 @@ class TradingExecutor:
                 return
 
             if raw_size * current_price < min_notional:
-                needed_acct = (min_notional * abs(current_price - stop_loss)) / (max_risk_pct / 100.0)
+                sl_dist_pct = abs(current_price - stop_loss) / current_price
+                needed_acct = (min_notional * sl_dist_pct) / (max_risk_pct / 100.0)
                 logger.error(
                     f"[Executor] Account ${equity:.0f} too small. "
                     f"Notional=${raw_size*current_price:.2f} < min ${min_notional:.2f}. "
