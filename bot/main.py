@@ -3847,7 +3847,7 @@ async def _daily_log_delivery_loop(notifier) -> None:
                 if callable(flush):
                     flush()
             upload_path = _prepare_log_text_file(LOG_FILE_PATH, DAILY_LOG_MAX_BYTES)
-            caption = f"Quad Desk bot log - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            caption = f"[LIVE] Quad Desk {SYMBOL} log - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             await notifier.send_document(str(upload_path), caption=caption, critical=True)
             logger.info(f"[DailyLog] Sent Telegram text log document: {upload_path}")
         except asyncio.CancelledError:

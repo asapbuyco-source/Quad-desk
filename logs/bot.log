@@ -34,40 +34,19 @@
 2026-06-28 11:31:50 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:31:50 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:31:50 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:31:50 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:31:50 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:31:50 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:31:50 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
-2026-06-28 11:31:53 | WARNING  | bot.executor | [MakerEntry] fetch_order error #1: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:31:56 | WARNING  | bot.executor | [MakerEntry] fetch_order error #2: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:31:59 | WARNING  | bot.executor | [MakerEntry] fetch_order error #3: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:32:02 | WARNING  | bot.executor | [MakerEntry] fetch_order error #4: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:32:05 | WARNING  | bot.executor | [MakerEntry] fetch_order error #5: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:32:08 | WARNING  | bot.executor | [MakerEntry] fetch_order error #6: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:32:11 | WARNING  | bot.executor | [MakerEntry] fetch_order error #7: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:32:14 | WARNING  | bot.executor | [MakerEntry] fetch_order error #8: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:32:17 | WARNING  | bot.executor | [MakerEntry] fetch_order error #9: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:32:20 | WARNING  | bot.executor | [MakerEntry] fetch_order error #10: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:20 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:23 | WARNING  | bot.executor | [MakerEntry] fetch_order error #11: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:23 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:26 | WARNING  | bot.executor | [MakerEntry] fetch_order error #12: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:26 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:29 | WARNING  | bot.executor | [MakerEntry] fetch_order error #13: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:29 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:32 | WARNING  | bot.executor | [MakerEntry] fetch_order error #14: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:32 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:35 | WARNING  | bot.executor | [MakerEntry] fetch_order error #15: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:35 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:38 | WARNING  | bot.executor | [MakerEntry] fetch_order error #16: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:38 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:41 | WARNING  | bot.executor | [MakerEntry] fetch_order error #17: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:41 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:44 | WARNING  | bot.executor | [MakerEntry] fetch_order error #18: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:44 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:47 | WARNING  | bot.executor | [MakerEntry] fetch_order error #19: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:47 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:32:50 | WARNING  | bot.executor | [MakerEntry] fetch_order error #20: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:32:50 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:32:50 | WARNING  | bot.executor | [MakerEntry] Not filled within TTL. Cancelling and aborting.
 2026-06-28 11:33:51 | WARNING  | bot.main | [HMM] RANGE vs COMPRESSION: single feature dominates 90% of separation — not genuine multidimensional separation.
@@ -94,7 +73,6 @@
 2026-06-28 11:33:52 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:33:52 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:33:52 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:33:52 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:33:52 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:33:52 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:33:52 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
@@ -132,36 +110,16 @@ RuntimeError: Bracket placement failed: SL leg rejected
 2026-06-28 11:34:08 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:34:08 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:34:08 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:34:11 | WARNING  | bot.executor | [MakerEntry] fetch_order error #1: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:14 | WARNING  | bot.executor | [MakerEntry] fetch_order error #2: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:17 | WARNING  | bot.executor | [MakerEntry] fetch_order error #3: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:20 | WARNING  | bot.executor | [MakerEntry] fetch_order error #4: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:23 | WARNING  | bot.executor | [MakerEntry] fetch_order error #5: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:26 | WARNING  | bot.executor | [MakerEntry] fetch_order error #6: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:29 | WARNING  | bot.executor | [MakerEntry] fetch_order error #7: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:32 | WARNING  | bot.executor | [MakerEntry] fetch_order error #8: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:35 | WARNING  | bot.executor | [MakerEntry] fetch_order error #9: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:34:38 | WARNING  | bot.executor | [MakerEntry] fetch_order error #10: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:38 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:34:41 | WARNING  | bot.executor | [MakerEntry] fetch_order error #11: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:41 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:34:44 | WARNING  | bot.executor | [MakerEntry] fetch_order error #12: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:44 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:34:47 | WARNING  | bot.executor | [MakerEntry] fetch_order error #13: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:47 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:34:50 | WARNING  | bot.executor | [MakerEntry] fetch_order error #14: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:50 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:34:53 | WARNING  | bot.executor | [MakerEntry] fetch_order error #15: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:53 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:34:56 | WARNING  | bot.executor | [MakerEntry] fetch_order error #16: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:56 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:34:59 | WARNING  | bot.executor | [MakerEntry] fetch_order error #17: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:34:59 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:35:02 | WARNING  | bot.executor | [MakerEntry] fetch_order error #18: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:35:02 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:35:05 | WARNING  | bot.executor | [MakerEntry] fetch_order error #19: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:35:05 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:35:08 | WARNING  | bot.executor | [MakerEntry] fetch_order error #20: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:35:08 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:35:08 | WARNING  | bot.executor | [MakerEntry] Not filled within TTL. Cancelling and aborting.
 2026-06-28 11:35:08 | WARNING  | bot.executor | [Executor] Limit order attempt 1/3 failed: TestTpRequeueOnOpenPosition.test_bracket_leg_failure_handles_internally.<locals>.create_order_side_effect() takes 0 positional arguments but 5 were given. Retrying...
@@ -244,7 +202,6 @@ TypeError: TestTpRequeueOnOpenPosition.test_bracket_leg_failure_handles_internal
 2026-06-28 11:45:36 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:45:36 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:45:36 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:45:36 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:45:36 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:45:36 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:45:36 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
@@ -281,16 +238,6 @@ RuntimeError: Bracket placement failed: SL leg rejected
 2026-06-28 11:45:50 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:45:50 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:45:50 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:45:53 | WARNING  | bot.executor | [MakerEntry] fetch_order error #1: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:45:56 | WARNING  | bot.executor | [MakerEntry] fetch_order error #2: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:45:59 | WARNING  | bot.executor | [MakerEntry] fetch_order error #3: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:46:02 | WARNING  | bot.executor | [MakerEntry] fetch_order error #4: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:46:05 | WARNING  | bot.executor | [MakerEntry] fetch_order error #5: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:46:08 | WARNING  | bot.executor | [MakerEntry] fetch_order error #6: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:46:11 | WARNING  | bot.executor | [MakerEntry] fetch_order error #7: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:46:14 | WARNING  | bot.executor | [MakerEntry] fetch_order error #8: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:46:17 | WARNING  | bot.executor | [MakerEntry] fetch_order error #9: object MagicMock can't be used in 'await' expression. Retrying in next poll.
-2026-06-28 11:46:20 | WARNING  | bot.executor | [MakerEntry] fetch_order error #10: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:20 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:22 | WARNING  | bot.main | [HMM] RANGE vs COMPRESSION: single feature dominates 90% of separation — not genuine multidimensional separation.
 2026-06-28 11:46:22 | WARNING  | bot.main | [HMM] RANGE vs TREND: single feature dominates 100% of separation — not genuine multidimensional separation.
@@ -316,16 +263,12 @@ RuntimeError: Bracket placement failed: SL leg rejected
 2026-06-28 11:46:22 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:46:22 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:46:22 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:46:22 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:46:22 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:46:22 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:46:22 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
-2026-06-28 11:46:23 | WARNING  | bot.executor | [MakerEntry] fetch_order error #11: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:23 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:26 | WARNING  | bot.executor | [Executor] Batch orders failed (batch failed). Trying individual orders...
-2026-06-28 11:46:26 | WARNING  | bot.executor | [MakerEntry] fetch_order error #12: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:26 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:46:29 | WARNING  | bot.executor | [MakerEntry] fetch_order error #13: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:29 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:30 | ERROR    | bot.executor | [Executor] SL failed after all attempts. Cancelling sibling TP (id=None) and flattening.
 2026-06-28 11:46:30 | ERROR    | bot.executor | [Executor] Live order / SL placement failed: Bracket placement failed: SL leg rejected
@@ -345,7 +288,6 @@ Traceback (most recent call last):
 RuntimeError: Bracket placement failed: SL leg rejected
 2026-06-28 11:46:30 | WARNING  | bot.executor | [Executor] load_markets attempt 1/3 failed: network down. Retrying in 1s…
 2026-06-28 11:46:31 | WARNING  | bot.executor | [Executor] load_markets attempt 2/3 failed: network down. Retrying in 2s…
-2026-06-28 11:46:32 | WARNING  | bot.executor | [MakerEntry] fetch_order error #14: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:32 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:33 | WARNING  | bot.executor | [Executor] load_markets attempt 3/3 failed: network down. All retries exhausted.
 2026-06-28 11:46:33 | WARNING  | bot.executor | [Executor] Could not load BINANCEUSDM markets after 3 attempts (network down). Injecting minimal market fallback — bot will attempt to continue.
@@ -354,7 +296,6 @@ RuntimeError: Bracket placement failed: SL leg rejected
 2026-06-28 11:46:33 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:46:33 | WARNING  | bot.executor | [Executor] load_markets attempt 1/3 failed: network down. Retrying in 1s…
 2026-06-28 11:46:34 | WARNING  | bot.executor | [Executor] load_markets attempt 2/3 failed: network down. Retrying in 2s…
-2026-06-28 11:46:35 | WARNING  | bot.executor | [MakerEntry] fetch_order error #15: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:35 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:36 | WARNING  | bot.executor | [Executor] load_markets attempt 3/3 failed: network down. All retries exhausted.
 2026-06-28 11:46:36 | WARNING  | bot.executor | [Executor] Could not load BINANCEUSDM markets after 3 attempts (network down). Injecting minimal market fallback — bot will attempt to continue.
@@ -363,13 +304,10 @@ RuntimeError: Bracket placement failed: SL leg rejected
 2026-06-28 11:46:36 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:46:36 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:46:36 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:46:38 | WARNING  | bot.executor | [MakerEntry] fetch_order error #16: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:38 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:39 | WARNING  | bot.executor | [Executor] Batch orders failed (batch unsupported). Trying individual orders...
-2026-06-28 11:46:41 | WARNING  | bot.executor | [MakerEntry] fetch_order error #17: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:41 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:43 | ERROR    | bot.executor | [Executor] TP failed after all attempts. Cancelling sibling SL (id=tp-1) and flattening.
-2026-06-28 11:46:43 | WARNING  | bot.executor | [Executor] Could not cancel SL: object MagicMock can't be used in 'await' expression
 2026-06-28 11:46:43 | ERROR    | bot.executor | [Executor] Live order / SL placement failed: Bracket placement failed: TP leg rejected
 Traceback (most recent call last):
   File "C:\Users\pc\Desktop\projects\Quad-desk\bot\executor.py", line 1567, in execute_signal
@@ -385,11 +323,8 @@ Traceback (most recent call last):
   File "C:\Users\pc\Desktop\projects\Quad-desk\bot\executor.py", line 1672, in execute_signal
     raise RuntimeError(f"Bracket placement failed: {failed_leg} leg rejected")
 RuntimeError: Bracket placement failed: TP leg rejected
-2026-06-28 11:46:44 | WARNING  | bot.executor | [MakerEntry] fetch_order error #18: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:44 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:46:47 | WARNING  | bot.executor | [MakerEntry] fetch_order error #19: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:47 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
-2026-06-28 11:46:50 | WARNING  | bot.executor | [MakerEntry] fetch_order error #20: object MagicMock can't be used in 'await' expression. Retrying in next poll.
 2026-06-28 11:46:50 | CRITICAL | bot.executor | [MakerEntry] 10 consecutive fetch_order failures — SL is still active but bot cannot monitor fill. Alerting.
 2026-06-28 11:46:50 | WARNING  | bot.executor | [MakerEntry] Not filled within TTL. Cancelling and aborting.
 2026-06-28 11:49:23 | WARNING  | bot.main | [HMM] RANGE vs COMPRESSION: single feature dominates 90% of separation — not genuine multidimensional separation.
@@ -416,7 +351,6 @@ RuntimeError: Bracket placement failed: TP leg rejected
 2026-06-28 11:49:23 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:49:23 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:49:23 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:49:23 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:49:23 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:49:23 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:49:23 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
@@ -494,7 +428,6 @@ RuntimeError: Bracket placement failed: TP leg rejected
 2026-06-28 11:51:57 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:51:57 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:51:57 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:51:57 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:51:57 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:51:57 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:51:57 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
@@ -572,7 +505,6 @@ RuntimeError: Bracket placement failed: TP leg rejected
 2026-06-28 11:53:20 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:53:20 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:53:20 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:53:20 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:53:20 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:53:20 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:53:20 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
@@ -650,7 +582,6 @@ RuntimeError: Bracket placement failed: TP leg rejected
 2026-06-28 11:59:48 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 11:59:48 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 11:59:48 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 11:59:48 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 11:59:48 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 11:59:48 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 11:59:48 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
@@ -728,7 +659,6 @@ Exception: order rejected
 2026-06-28 12:00:52 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 12:00:52 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 12:00:52 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 12:00:52 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 12:00:52 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 12:00:52 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 12:00:52 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
@@ -807,7 +737,6 @@ RuntimeError: Bracket placement failed: TP leg rejected
 2026-06-28 12:02:21 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
 2026-06-28 12:02:21 | WARNING  | bot.executor | [LiveExit] poll error: timeout
 2026-06-28 12:02:21 | WARNING  | bot.executor | [Executor] DRY-RUN mode: no real orders will be placed.
-2026-06-28 12:02:21 | WARNING  | bot.executor | [Executor] EMERGENCY FLATTEN triggered (test split close) for 0.005 BTC/USDT:USDT
 2026-06-28 12:02:21 | ERROR    | bot.executor | [Executor] ⚠️ Position too small: 0.000017 BTC < min 0.001. Need ~$144 equity at 1.0% risk. Current equity=$10. Deposit or raise BOT_MAX_RISK_PCT.
 2026-06-28 12:02:21 | ERROR    | bot.executor | [Executor] Account $100 too small. Notional=$4.95 < min $50.50. Needs ~$252500 account. ABORTING order.
 2026-06-28 12:02:21 | ERROR    | bot.executor | [Executor] Account $20 too small. Notional=$16.50 < min $50.50. Needs ~$252500 account. ABORTING order.
