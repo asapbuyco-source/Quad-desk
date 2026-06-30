@@ -1407,14 +1407,18 @@ def _apply_rv_iv_override(
     environments or misclassifying RANGE during expansion.
     """
     if regime == "VOLATILE":
-        if rv_data_stale:
+        # Trust HMM when RV data is stale OR tick buffer is too small for
+        # reliable realized volatility estimation. Quiet markets (Sunday,
+        # low tick volume) produce rv_iv_ratio=0.00 even when the HMM
+        # correctly identifies VOLATILE from candle-level features.
+        if rv_data_stale or (rv_iv_ratio < 0.001 and rv_iv_ratio >= -0.001):
             logger.info(
-                f"[Regime Override] HMM VOLATILE trusted — live tick RV is insufficient (stale). "
-                f"RV/IV ratio={rv_iv_ratio:.2f} ({vol_state}). Not downgrading."
+                f"[Regime Override] HMM VOLATILE trusted — live tick RV insufficient. "
+                f"RV/IV={rv_iv_ratio:.4f} ({vol_state}). Not downgrading."
             )
-        elif vol_state == "COMPRESSION" or rv_iv_ratio < RV_IV_COMPRESSION_THRESHOLD:  # A3 FIX: was 0.01, now shared constant
+        elif vol_state == "COMPRESSION" or rv_iv_ratio < RV_IV_COMPRESSION_THRESHOLD:
             logger.warning(
-                f"[Regime Override] HMM hallucinates VOLATILE but RV/IV ratio={rv_iv_ratio:.2f} "
+                f"[Regime Override] HMM VOLATILE downgraded — RV/IV={rv_iv_ratio:.4f} "
                 f"({vol_state}). Overriding to NEUTRAL."
             )
             return "NEUTRAL"
@@ -3108,12 +3112,14 @@ async def _compute_signal(
             _gate_stats_summary("regime_no_edge")
             return {**WAIT, "analysis": "RANGE skipped — no edge."}
         elif regime == "COMPRESSION":
-            # COMPRESSION is the launchpad: enter if transitioning to TREND (breakout),
-            # or trade mean-reversion if still coiling.
-            is_breakout = (regime == "COMPRESSION" and (
-                metrics.get("zScore_ret_intra", 0) > 1.0 or  # O-04: intra-bar tick signal
-                metrics.get("zScore_ret", 0) > 1.0            # fallback: candle-level
-            ))
+            # COMPRESSION is a coiling spring. Both MR and breakout entries can work
+            # if given enough time — the coil resolves slowly (94.4% self-persistence,
+            # ~4.5h avg). Live trade evidence: exit at 869s missed TP that was reached
+            # later. Fix: allow 3600s hold so trades can fully resolve.
+            is_breakout = (
+                metrics.get("zScore_ret_intra", 0) > 0.6 or
+                metrics.get("zScore_ret", 0) > 0.6
+            )
             if is_breakout:
                 strategy_type = "COMPRESSION_BREAKOUT"
                 raw_direction = _strategy_trend(metrics, z_min=regime_p["z_threshold"], quant=quant)
@@ -3123,9 +3129,9 @@ async def _compute_signal(
                 strategy_type = "MEAN_REVERSION"
                 raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
                 if raw_direction:
-                    logger.info(f"[MetaModel] → COMPRESSION MR")
+                    logger.info(f"[MetaModel] → COMPRESSION MR ({raw_direction})")
                 else:
-                    logger.info(f"[MetaModel] COMPRESSION — coiling, no edge yet.")
+                    logger.info(f"[MetaModel] COMPRESSION — no edge currently.")
         elif regime == "SQUEEZE":
             # SQUEEZE cascade: enter in squeeze direction with tight SL, wide TP.
             # Use trend strategy with SQUEEZE params for momentum capture.

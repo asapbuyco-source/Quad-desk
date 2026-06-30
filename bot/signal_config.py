@@ -129,17 +129,17 @@ REGIME_PARAMS = {
     "COMPRESSION": {
         # F-02 FIX: Compression = coiling spring — low micro-vol but tightening ATR rank.
         # This is the pre-breakout state where volatility is building but |z| is still low.
-        # Strategy: mean-reversion with tighter SL, ready to flip to TREND on breakout.
+        # Strategy: mean-reversion with moderate SL, achievable TP from coiling resolution.
         "z_threshold":        1.20,
-        "atr_multiplier_sl":  1.05,   # Tighter SL — compression tends to break, not revert slowly
+        "atr_multiplier_sl":  1.20,   # Moderate SL — compression is slow, needs breathing room
         "ofi_bound":          0.08,
         "min_confidence":     0.62,
-        "rr_target":          2.8,   # Higher R:R — compression breakouts are explosive
+        "rr_target":          1.8,   # Achievable R:R — live trade showed 2.8 was unreachable (TP=2.94×ATR, market moved 0.25%)
         "be_lock_trigger":    1.0,
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      600,   # Shorter hold — compression resolves fast
-        "time_exit_hard_cap_s": 1200,
+        "time_exit_sec":      3600,  # 1 hour — coil resolves slowly, needs time (was 600s)
+        "time_exit_hard_cap_s": 5400,  # 1.5h hard cap
         "panic_threshold":    10.0,
         "candle_gate_sec":    30,
         "htf_block":          False,
