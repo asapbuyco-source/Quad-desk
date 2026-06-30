@@ -1611,6 +1611,25 @@ def _detect_regime(
         f"V:{hmm_result['p_volatile']:.0%}] | "
         f"atr={atr_pct:.3%} z={z:.2f} tape={tape}"
     )
+
+    # Z-score + RSI bypass with velocity filter.
+    # Live evidence: BTC Z=-1.68 RSI=30.6 at $59,363 — market still dropping,
+    # price fell to $59,007. Z=-1.25 RSI=29.5 at $59,007 — true bottom,
+    # bounced $497 to $59,504. Missing both is wrong; entering early is a loss.
+    # Filter: only override when z_ret (velocity) is NOT confirming the extreme.
+    # A -2σ Z with z_ret < -0.5 = still falling (skip). Z=-1.2 with z_ret > -0.3 = decelerating (enter).
+    if regime in ("RANGE", "NEUTRAL") and abs(z) >= 1.2:
+        rsi = metrics.get("rsi", 50.0)
+        z_ret = metrics.get("zScore_ret", 0.0)
+        if z <= -1.2 and rsi < 40.0 and z_ret > -0.5:
+            _old = regime
+            regime = "COMPRESSION" if atr_pct < 0.005 else "VOLATILE"
+            logger.info(f"[ZRSI-Override] Z={z:.2f} RSI={rsi:.1f} z_ret={z_ret:.2f} ATR={atr_pct:.3%} → {regime} (was {_old})")
+        elif z >= 1.2 and rsi > 60.0 and z_ret < 0.5:
+            _old = regime
+            regime = "COMPRESSION" if atr_pct < 0.005 else "VOLATILE"
+            logger.info(f"[ZRSI-Override] Z={z:.2f} RSI={rsi:.1f} z_ret={z_ret:.2f} ATR={atr_pct:.3%} → {regime} (was {_old})")
+
     return regime
 
 
