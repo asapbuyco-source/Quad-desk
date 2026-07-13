@@ -3128,8 +3128,26 @@ async def _compute_signal(
                 raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
                 if raw_direction: logger.info(f"[MetaModel] VOLATILE — routed to MEAN_REVERSION")
         elif regime == "RANGE":
-            _gate_stats_summary("regime_no_edge")
-            return {**WAIT, "analysis": "RANGE skipped — no edge."}
+            # P10 FIX: RANGE is no longer an unconditional skip. The dead-market
+            # Z guard (Z < 0.30 for 5+ cycles) still fires above. Any RANGE cycle
+            # reaching here has Z > 0.30 — route to mean-reversion with RANGE's
+            # tighter z_threshold (1.06) from signal_config. If Z doesn't pass,
+            # the function returns None and the bot waits naturally.
+            strategy_type = "MEAN_REVERSION"
+            raw_direction = _strategy_mean_reversion(
+                metrics, z_threshold=regime_p["z_threshold"]
+            )
+            if raw_direction:
+                logger.info(
+                    f"[MetaModel] → RANGE MR ({raw_direction}) "
+                    f"z={metrics.get('zScore', 0.0):.2f} z_thr={regime_p['z_threshold']}"
+                )
+            else:
+                logger.info(
+                    f"[MetaModel] RANGE — z={metrics.get('zScore', 0.0):.2f} "
+                    f"below z_thr={regime_p['z_threshold']}, no edge."
+                )
+                _gate_stats_summary("regime_no_edge")
         elif regime == "COMPRESSION":
             # COMPRESSION is a coiling spring. Both MR and breakout entries can work
             # if given enough time — the coil resolves slowly (94.4% self-persistence,

@@ -647,6 +647,7 @@ class QuantEngine:
             "tapeDominant":      dominant_side,
             "wallContext":       wall_context,
             "allWalls":          all_walls_str,
+            "ghost_cancel_rate": getattr(self.state, "ghost_cancel_rate", 0.0),  # P10: pipe to ULIS
             "atr":               atr,
             "atr_pct":           atr / current_price if current_price > 0 else 0.0,
             "atr_pct_rank":      atr_pct_rank,   # P2: percentile rank in 30-day window

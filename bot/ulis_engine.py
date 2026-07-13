@@ -61,6 +61,10 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
     tape         = metrics.get("tapeSpeed", "NORMAL")
     dominant     = metrics.get("tapeDominant", "BALANCED")
     funding_rate = metrics.get("funding_rate", 0.0)   # NEW: independent signal
+    ghost_cancel_rate = metrics.get("ghost_cancel_rate", 0.0)  # P10: from data_feed via quant_engine
+    # If walls are ghosted (cancel_rate > 0.5), discount visible depth so
+    # ULIS doesn't treat spoofed liquidity as real order flow.
+    ghost_wall_discount = max(0.0, 1.0 - ghost_cancel_rate * 1.5)
 
     # NLF Score proxy: CVD direction (session buying pressure) + tape dominance
     # Deliberately does NOT use bayesianPosterior — it is already counted in Stage 5 and
@@ -98,7 +102,7 @@ def _build_scores_from_metrics(metrics: Dict[str, Any], bids: List, asks: List) 
 
     # Visible liquidity proxy from OFI depth
     # OFI is now in (-1, +1) after the Three-Stage Pipeline (tanh output)
-    visible_liquidity = _normalize(abs(ofi), 0.0, 0.6)
+    visible_liquidity = _normalize(abs(ofi), 0.0, 0.6) * ghost_wall_discount  # P10: ghost wall discount
 
     # Latent liquidity: inverse of reflexivity (stable market = more resting liquidity)
     latent_liquidity = _clamp(1.0 - reflexivity_score, 0.0, 1.0)
