@@ -25,6 +25,9 @@ import signal
 import threading
 import subprocess
 import time
+import asyncio
+from pathlib import Path
+from datetime import datetime
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -55,6 +58,11 @@ print(f"[Launcher] Starting {len(SYMBOLS)} bot instance(s): {', '.join(SYMBOLS)}
 _processes: list[subprocess.Popen] = []
 _shutdown_event = threading.Event()
 
+# ── Logging globals ───────────────────────────────────────────────────────────
+LOG_FILE_PATH = Path("logs/launcher_combined.log")
+LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+_log_lock = threading.Lock()
+
 
 def _send_tg_alert(message: str) -> None:
     """Send a synchronous Telegram alert on deep crashes."""
@@ -77,12 +85,17 @@ def _stream_output(proc: subprocess.Popen, prefix: str) -> None:
     """
     Forward every stdout/stderr line from `proc` to our stdout,
     prepending `prefix` so multi-coin logs are easy to distinguish.
+    Also append it to the shared log file.
     """
     assert proc.stdout is not None
     try:
         for raw_line in proc.stdout:
             line = raw_line.rstrip("\n").rstrip("\r")
-            print(f"{prefix} {line}", flush=True)
+            formatted = f"{prefix} {line}"
+            print(formatted, flush=True)
+            with _log_lock:
+                with LOG_FILE_PATH.open("a", encoding="utf-8") as f:
+                    f.write(formatted + "\n")
     except Exception:
         pass
 
@@ -92,6 +105,7 @@ def _start_bot(symbol: str) -> subprocess.Popen:
     # Inherit all current env vars but override the symbol-specific ones
     env = os.environ.copy()
     env["BOT_SYMBOL"] = symbol
+    env["SEND_DAILY_LOG_TO_TELEGRAM"] = "false"  # Disable child bot log spam
 
     # Use a sanitised tag for log prefixing: BTC/USDT → [BTC/USDT]
     tag = f"[{symbol}]"
@@ -129,27 +143,74 @@ def _shutdown(signum, frame) -> None:
             pass
 
 
+def _log_delivery_worker():
+    """Background thread that uploads the combined log to Telegram every 6 hours."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        print("[Launcher] Missing Telegram credentials, log delivery disabled.", flush=True)
+        return
+        
+    # Lazy import to avoid circular dependencies
+    from bot.notifier import Notifier
+    notifier = Notifier(token, chat_id)
+    
+    interval_hours = max(0.25, float(os.environ.get("BOT_LOG_SEND_INTERVAL_HOURS", "6")))
+    interval_seconds = int(interval_hours * 3600)
+    print(f"[Launcher] Log delivery enabled every {interval_hours}h.", flush=True)
+    
+    async def upload_log():
+        if not LOG_FILE_PATH.exists() or LOG_FILE_PATH.stat().st_size == 0:
+            return
+            
+        # Safely copy and truncate the log
+        with _log_lock:
+            log_data = LOG_FILE_PATH.read_bytes()
+            LOG_FILE_PATH.write_bytes(b"") # Truncate
+            
+        # If > 15MB, split into multiple parts
+        MAX_BYTES = 15 * 1024 * 1024
+        parts = [log_data[i:i + MAX_BYTES] for i in range(0, len(log_data), MAX_BYTES)]
+        
+        for i, part in enumerate(parts):
+            part_path = Path(f"logs/launcher_upload_part{i+1}.log")
+            part_path.write_bytes(part)
+            caption = f"[LIVE] Quad Desk {len(SYMBOLS)} Pairs - Part {i+1}/{len(parts)} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            await notifier.send_document(str(part_path), caption=caption, critical=True)
+            try:
+                part_path.unlink()
+            except OSError:
+                pass
+                
+    while not _shutdown_event.is_set():
+        # Sleep in small increments to allow fast shutdown
+        for _ in range(interval_seconds):
+            if _shutdown_event.is_set():
+                return
+            time.sleep(1)
+            
+        try:
+            asyncio.run(upload_log())
+        except Exception as e:
+            print(f"[Launcher] Log upload failed: {e}", flush=True)
+
 # ── Register signal handlers ──────────────────────────────────────────────────
 signal.signal(signal.SIGTERM, _shutdown)
 signal.signal(signal.SIGINT,  _shutdown)
 
-
 # ── Launch all bots ───────────────────────────────────────────────────────────
-# Each bot instance makes ~10+ REST calls on startup (load_markets, historical
-# candles, funding rate, positions, balance, open interest, klines, etc.).
-# With 3 symbols that's 30+ concurrent calls — guaranteed HTTP 418 IP ban.
-# A 30s stagger gives each bot time to complete its boot REST calls before
-# the next one starts, keeping us under Binance's 1200 req/min hard limit.
 _STARTUP_STAGGER_S = 30
 for i, sym in enumerate(SYMBOLS):
     _processes.append(_start_bot(sym))
-    if i < len(SYMBOLS) - 1:   # no sleep after the last symbol
+    if i < len(SYMBOLS) - 1:
         print(f"[Launcher] Waiting {_STARTUP_STAGGER_S}s before next symbol to avoid rate limits…", flush=True)
         time.sleep(_STARTUP_STAGGER_S)
 
+_log_thread = threading.Thread(target=_log_delivery_worker, daemon=True, name="launcher-log-delivery")
+_log_thread.start()
 
 # ── Monitor loop — restart any crashed child ──────────────────────────────────
-RESTART_DELAY = 15  # seconds to wait before restarting a crashed bot
+RESTART_DELAY = 15
 
 while not _shutdown_event.is_set():
     time.sleep(5)
