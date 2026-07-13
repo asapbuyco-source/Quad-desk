@@ -210,7 +210,7 @@ _log_thread = threading.Thread(target=_log_delivery_worker, daemon=True, name="l
 _log_thread.start()
 
 # ── Monitor loop — restart any crashed child ──────────────────────────────────
-RESTART_DELAY = 15
+RESTART_DELAY = 15  # seconds to wait before restarting a crashed bot
 
 while not _shutdown_event.is_set():
     time.sleep(5)
