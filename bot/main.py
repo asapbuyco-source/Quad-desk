@@ -3034,7 +3034,8 @@ async def _compute_signal(
     # When abs(zScore) < 0.30 for multiple consecutive cycles the market is
     # statically flat — no edge exists regardless of other indicators.
     # Skip signal evaluation to avoid burning cascade cooldown on a flat market.
-    if regime == "RANGE":
+    # P10 GUARD: quant may be None during early startup — skip assignment if so.
+    if regime == "RANGE" and quant is not None:
         _z = abs(metrics.get("zScore", 0.0))
         if _z < 0.30:
             _flat_cycles = getattr(quant, "_dead_market_cycles", 0) + 1
