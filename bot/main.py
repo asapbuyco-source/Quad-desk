@@ -3185,10 +3185,20 @@ async def _compute_signal(
             z_prev = metrics.get("zScore_prev", z_current)
             z_slope = z_current - z_prev
             rsi = metrics.get("rsi", 50.0)
-            rsi_prev = metrics.get("rsi_prev", rsi)
-            rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)
-            rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
-            rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
+            # P11 FIX: Use None defaults — when RSI history unavailable (first
+            # 2 cycles after regime transition), skip the RSI trough/peak gate
+            # and use z_slope alone. Old code defaulted to current rsi, which
+            # guaranteed rsi_trough/peak=FALSE, blocking ALL entries for 2 cycles.
+            rsi_prev = metrics.get("rsi_prev")
+            rsi_prev2 = metrics.get("rsi_prev2")
+            rsi_gate_ready = rsi_prev is not None and rsi_prev2 is not None
+            if rsi_gate_ready:
+                rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
+                rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
+            else:
+                rsi_trough = True   # skip gate — allow entry on Z+slope alone
+                rsi_peak = True
+
             z_thr = regime_p["z_threshold"]
             candidate = _strategy_mean_reversion(metrics, z_threshold=z_thr)
             if candidate == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):

@@ -21,7 +21,7 @@ EQUITY_RECOMMENDED     = 200.0  # Below this: warning logged at startup
 
 
 # ── Global Confidence Floor ───────────────────────────────────────────────────
-MIN_CONFIDENCE_GLOBAL  = 0.62   # Used as floor for MIN_CONFIDENCE env override
+MIN_CONFIDENCE_GLOBAL  = 0.60   # P11 FIX: was 0.62 — 38 signals were blocked just below threshold
 
 # ── Cooldowns ─────────────────────────────────────────────────────────────────
 POST_TRADE_COOLDOWN_S  = 90     # seconds after any exit before new entry allowed
@@ -147,7 +147,9 @@ REGIME_PARAMS = {
     },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
-        "z_threshold":        1.50,
+        # P11 FIX: z_threshold lowered 1.50→1.20 — exceeded once in 5 sessions.
+        # slope+RSI gate provides signal quality filtering, allowing lower Z threshold.
+        "z_threshold":        1.20,
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.10,
         "min_confidence":     0.65,
@@ -159,7 +161,7 @@ REGIME_PARAMS = {
         "time_exit_hard_cap_s": 2400,
         "panic_threshold":    10.0,
         "candle_gate_sec":    45,
-        "htf_block":          True,
+        "htf_block":          False,  # P11 FIX: was True — blocked 100% of entries when HTF was BULL/BEAR
         "cascade_cooldown_s": 180,
     },
     "TREND": {

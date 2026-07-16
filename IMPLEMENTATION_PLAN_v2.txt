@@ -1,0 +1,278 @@
+================================================================================
+QUAD-DESK BOT — DEEP AUDIT + IMPLEMENTATION PLAN v2
+================================================================================
+Date: July 16, 2026
+Based on: 58 log files (June 25 - July 16), full codebase audit, live trade data
+
+================================================================================
+SECTION 1: CURRENT STATE
+================================================================================
+
+TRADE PERFORMANCE (all-time):
+  Total trades tracked:     43
+  Win rate (COMPRESSION):    42-58% (per-symbol, rolling)
+  Cumulative PnL:           -$5.66
+  Drawdown:                 $49.50
+  Account equity:           ~$350 (estimated from Firestore data)
+  Leverage deployed:        10× (confirmed in logs) — CRITICAL
+
+DEPLOYED CODE:
+  The bot is running a MIX of old and new code. The claude branch (268 commits
+  ahead of main) has ALL fixes. The Railway deployment appears to be an older
+  version or main branch with some cherry-picks:
+    Maker-Only execution:    DEPLOYED ✅
+    RANGE routing fix:       DEPLOYED ✅ (regime_no_edge dropped 96%)
+    Partial TP disabled:     DEPLOYED ✅
+    BE+fees buffer:          DEPLOYED ✅ (confirmed in log)
+    Time exit deferral:      DEPLOYED ✅ (multiple deferrals in logs)
+    Bayesian per-regime prior: UNKNOWN — Bayes still at 50%
+    OFI penalty relaxed:     UNKNOWN
+    Panic threshold 5%:      DEPLOYED ✅
+    ghost_cancel_rate → ULIS: UNKNOWN
+    NEUTRAL slope+RSI gate:  DEPLOYED ✅
+
+GATE REJECTION BREAKDOWN (July 16 session):
+  signal_none:             4,092  (78.5%) — Z near 0, no edge to evaluate
+  regime_no_edge:            780  (15.0%) — Z didn't clear regime threshold
+  bayes_floor_veto:          106  ( 2.0%) — P(direction) < 50%
+  confidence_below_threshold: 38  ( 0.7%) — passed everything except 62% gate
+  derivatives_veto:           11  ( 0.2%) — OI/GEX blocking
+  cvd_divergence_veto:         4
+  post_trade_cooldown:         9
+  cascade_cooldown:            4
+  total_passed:                5  — 5 signals became trades
+
+================================================================================
+SECTION 2: BOTTLENECK ANALYSIS
+================================================================================
+
+PRIMARY BOTTLENECK: NEUTRAL z_threshold = 1.50
+  - Z exceeded 1.50 once across 5 observed sessions
+  - NEUTRAL gate sees Z=0.17-0.34 — never reaches threshold
+  - 780 regime_no_edge rejections all in NEUTRAL/LIQUIDITY
+  - This is the single largest impact fix available
+  - Bottom: NEUTRAL regime is effectively WALLED OFF from trading
+
+SECONDARY BOTTLENECK: Bayesian foundation
+  - Base Bayes at 50% — per-regime prior fix may not be deployed
+  - 106 cycles where P(direction) < 50% — coin flip territory
+  - 38 cycles where confidence reached gate but missed 62% by small margin
+  - With per-regime prior, Bayes would shift from 50% → 52-58%
+
+TERTIARY: HMM calibration
+  - 6D model has edge_sufficient=False, net_edge=-0.000645
+  - VOLATILE/SQUEEZE collapsed (BD=0.302)
+  - Hand-tuned params still in use — functional but suboptimal
+
+================================================================================
+SECTION 3: WHAT'S ALREADY WORKING (DO NOT CHANGE)
+================================================================================
+
+  ✅ RANGE routing fix — regime_no_edge dropped 96%
+  ✅ COMPRESSION regime — own params, time_exit=3600s, driving most trades
+  ✅ BE lock with fee buffer — prevents full losses (saved 2 trades on Jul 13)
+  ✅ Time exit with deferral — exits dead trades, keeps near-breakeven ones alive
+  ✅ Maker-Only execution — confirmed maker entries in logs
+  ✅ Partial TP disabled — no more emergency flattens
+  ✅ Panic threshold 5% — no false triggers
+  ✅ Ghost wall detection — suppressing LIQUIDITY correctly
+  ✅ CVD divergence — producing streak confirmations (3-16 streaks)
+
+================================================================================
+SECTION 4: IMPLEMENTATION PLAN — RANKED BY IMPACT
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ P0 — DEPLOY CLAUDE BRANCH TO RAILWAY (30 minutes, $0 code)                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PROBLEM: The deployed bot is running old code. claude branch has 268        │
+│ commits of fixes including Bayesian per-regime prior, OFI penalty,          │
+│ ghost_cancel_rate→ULIS pipe, and NEUTRAL slope+RSI gate.                    │
+│                                                                             │
+│ ACTION:                                                                     │
+│   1. Check Railway dashboard → Settings → which branch is deployed?         │
+│   2. If it's main: switch to claude branch OR merge claude → main           │
+│   3. Set Railway env vars:                                                  │
+│      BOT_LEVERAGE=2            (was 10× — this alone can blow the account)  │
+│      BOT_MAX_RISK_PCT=0.5      (keep, verify deployed)                      │
+│      BOT_MAX_DAILY_LOSS_PCT=2.0 (keep, verify deployed)                     │
+│      BOT_SYMBOL=BTC/USDT       (verify — was usdc/btc in audit)             │
+│   4. Deploy and monitor first 5 trades                                      │
+│                                                                             │
+│ EXPECTED IMPACT: All pending fixes become live. Bayes prior starts at       │
+│ 52-58% instead of 50%. Ghost walls no longer blind ULIS. NEUTRAL gate       │
+│ tightens signal quality.                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ P0 — RSI WARM-UP FIX (30 minutes)                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PROBLEM: NEUTRAL slope+RSI gate defaults rsi_prev=rsi, meaning the RSI      │
+│ trough/peak condition is always FALSE for the first 2 cycles after a        │
+│ regime transition. The bot is blind for ~20 seconds when entering NEUTRAL.  │
+│                                                                             │
+│ FILE: bot/main.py line ~3188-3189                                            │
+│                                                                             │
+│ CURRENT:                                                                    │
+│   rsi_prev = metrics.get("rsi_prev", rsi)                                   │
+│   rsi_prev2 = metrics.get("rsi_prev2", rsi_prev)                            │
+│                                                                             │
+│ FIX:                                                                        │
+│   rsi_prev = metrics.get("rsi_prev")                                        │
+│   rsi_prev2 = metrics.get("rsi_prev2")                                      │
+│   if rsi_prev is None or rsi_prev2 is None:                                 │
+│       candidate = None  # skip gate, not enough history                     │
+│   else:                                                                     │
+│       # existing RSI trough/peak logic                                      │
+│                                                                             │
+│ EXPECTED IMPACT: Prevents false-negative blocks during regime transitions.  │
+│ Small but correction — no more 2-cycle blind spot.                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ P1 — NEUTRAL z_threshold: 1.50 → 1.20 (2 hours)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PROBLEM: NEUTRAL z_threshold=1.50 has been exceeded once in 5 sessions.     │
+│ The slope+RSI gate already provides signal quality filtering — the           │
+│ threshold itself can be relaxed. COMPRESSION already uses z_thr=1.20.        │
+│                                                                             │
+│ FILE: bot/signal_config.py, REGIME_PARAMS["NEUTRAL"]                        │
+│                                                                             │
+│ CHANGE:                                                                     │
+│   "z_threshold": 1.50 → 1.20                                                │
+│                                                                             │
+│ RATIONALE:                                                                  │
+│   - COMPRESSION already uses 1.20 and produces profitable trades            │
+│   - NEUTRAL now has slope+RSI gate (new) which filters false signals         │
+│   - ZRSI-override catches Z≥1.20+RSI extreme, so this only adds Z=1.20-1.19  │
+│     with moderate RSI (the gap where NEUTRAL currently sleeps)               │
+│   - Jul 09 BTC Z=1.15 would have fired (HTF BULL 41%, not blocked)          │
+│                                                                             │
+│ RISK: Additional NEUTRAL trade frequency. Mitigated by slope+RSI gate       │
+│ and ULIS which still veto directional conflicts.                            │
+│                                                                             │
+│ ALTERNATIVE (more conservative): Use OU-calibrated dynamic bounds:          │
+│   z_lower = 0.603 (LONG entry at oversold extreme)                          │
+│   z_upper = 0.851 (SHORT entry at overbought extreme)                       │
+│ This is more aggressive — use 1.20 first, then calibrate.                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ P1 — LOWER MIN_CONFIDENCE: 0.62 → 0.60 (5 minutes)                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PROBLEM: 38 signals passed ALL gates except the 62% confidence threshold.   │
+│ These are signals the bot's own pipeline judged as having edge, just         │
+│ slightly below the arbitrary cutoff.                                         │
+│                                                                             │
+│ FILE: bot/main.py line ~120, or env var BOT_MIN_CONFIDENCE                   │
+│                                                                             │
+│ CHANGE:                                                                     │
+│   MIN_CONFIDENCE = 0.60 (from 0.62)                                         │
+│                                                                             │
+│ RATIONALE:                                                                   │
+│   - At 2.3-3.5 RR, lower win rate is profitable: even 38% win rate works    │
+│   - The ULIS gate still vetos directional conflicts (strongest safety)       │
+│   - Bayes floor (50%) still blocks random entries                            │
+│   - This captures the 38 borderline signals without degrading quality        │
+│                                                                             │
+│ RISK: Slightly more noise trades. Mitigated by RR > 2:1.                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ P1 — RECALIBRATE HMM ON 6-MONTH DATA (1-2 days, mostly compute)             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PROBLEM: 6D HMM has negative net edge. Current hand-tuned params work but    │
+│ are suboptimal. The HMM calibrator is built and tested — just needs data.    │
+│                                                                             │
+│ ACTION:                                                                     │
+│   1. Run: python -m bot.hmm_calibrate --multi --years 2 --patch              │
+│   2. Verify edge_sufficient=True in hmm_params.json before deploying         │
+│   3. If still insufficient: consider removing SQUEEZE as separate state      │
+│                                                                             │
+│ EXPECTED IMPACT: Better regime classification → better signal selection.     │
+│ The current HMM works but 90% of RANGE/COMPRESSION misses the mark.          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ P2 — REMOVE SQUEEZE REGIME (30 minutes)                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PROBLEM: VOLATILE/SQUEEZE separation collapsed (BD=0.302). If SQUEEZE is    │
+│ misclassified, the bot enters with sl_mult=0.50 (half normal SL) in a        │
+│ high-ATR environment — stopped out immediately.                              │
+│                                                                             │
+│ FILE: bot/main.py _HMMRegimeClassifier, bot/signal_config.py                 │
+│                                                                             │
+│ CHANGE: Remove SQUEEZE from HMM _LABELS and REGIME_PARAMS. Route to          │
+│ VOLATILE instead (which has normal SL and conservative routing).             │
+│                                                                             │
+│ This can wait until the HMM recalibration — if the 6-month calibration       │
+│ fixes the separation, SQUEEZE can stay. If not, remove it.                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ P2 — REDUCE TO BTC-ONLY (5 minutes)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PROBLEM: ETH and SOL containers dilute capital and attention. SOL had a      │
+│ 1-week drought. BTC is the most liquid, most predictable, and currently       │
+│ producing the most signals.                                                  │
+│                                                                             │
+│ ACTION: Shut down ETH and SOL containers on Railway. Leave only BTC.         │
+│ Re-add them after BTC proves profitable with 20+ trades.                     │
+│                                                                             │
+│ EXPECTED IMPACT: Simpler monitoring, less capital fragmentation, fewer        │
+│ moving parts. BTC alone can prove the strategy works.                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+SECTION 5: ROLLOUT SEQUENCE
+================================================================================
+
+PUSH 1 (today, 1 hour):
+  [ ] Deploy claude branch to Railway
+  [ ] Set BOT_LEVERAGE=2 in Railway env vars
+  [ ] Verify BOT_SYMBOL=BTC/USDT
+  [ ] RSI warm-up fix
+  [ ] Deploy, monitor 2 hours
+
+PUSH 2 (tomorrow, 3 hours):
+  [ ] NEUTRAL z_threshold: 1.50 → 1.20
+  [ ] MIN_CONFIDENCE: 0.62 → 0.60
+  [ ] Deploy, monitor 24 hours
+  [ ] Compare trade frequency vs. prior 24h
+  [ ] If win rate drops below 35%, revert NEUTRAL threshold
+
+PUSH 3 (next week, 2 days):
+  [ ] Run hmm_calibrate.py --years 2 --multi
+  [ ] If edge_sufficient=True: patch main.py and deploy
+  [ ] If still insufficient: remove SQUEEZE, redeploy
+  [ ] Evaluate: keep or remove ETH/SOL containers
+
+================================================================================
+SECTION 6: THINGS NOT TO DO
+================================================================================
+
+  ❌ Remove BE lock — data proves it prevents full losses on 50% of reversing trades
+  ❌ Remove time exit — deferral logic already handles near-breakeven cases
+  ❌ Lower NEUTRAL below 1.20 — slope+RSI gate needs SOME Z minimum
+  ❌ Deploy new 6D HMM until edge_sufficient=True
+  ❌ Deploy NSE as parallel engine — already rejected by both audits
+  ❌ Add SQUEEZE to live trading — sl_mult=0.50 is dangerous with current HMM
+
+================================================================================
+SECTION 7: SUCCESS METRICS
+================================================================================
+
+  Within 7 days of Push 2:
+    - Trade count increases from ~2/day to ~5-8/day
+    - Win rate stays ≥40%
+    - Cumulative PnL moves positive
+    - No drawdown halt triggered
+
+  Within 14 days:
+    - 50+ live trades on record
+    - Proven win rate with statistical significance
+    - Decision point: scale up risk or iterate parameters
+
+================================================================================
+END OF PLAN
+================================================================================
