@@ -201,7 +201,7 @@ REGIME_PARAMS = {
     },
     "LIQUIDITY": {
         # Wall-proximity sweeps
-        "z_threshold":        1.50,  # B3: raised from 1.22 (Student-t adj no longer applied)
+        "z_threshold":        1.10,  # P12 FIX: was 1.50 (raised from 1.22 — regression). 45% of BTC session in LIQUIDITY with unreachable threshold.
         "atr_multiplier_sl":  1.43,
         "ofi_bound":          0.12,
         "min_confidence":     0.62,  # FIX-P10: was 0.55 which == sweep neutralizer floor (no-op); raised to 0.62 so threshold is meaningful

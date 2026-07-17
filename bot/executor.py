@@ -1291,11 +1291,12 @@ class TradingExecutor:
                 return False
 
             # ── MAKER-ONLY ENTRY: postOnly limit order at best bid/ask ───
-            # Maker fee = 0.02% vs taker = 0.05%. That 3bp difference is the
-            # difference between profitability and loss. All regimes use maker
-            # orders; unfilled orders within TTL are cancelled (no taker fallback).
+            # P12 FIX: Price-chasing + market fallback. Old code parked at original
+            # bid/ask for 60s — 80% of signals expired in trending markets (Jul 17).
+            # New: chase best bid/ask every 15s, market order fallback at 45s.
             import asyncio
-            ORDER_TTL_SEC = 60
+            ORDER_TTL_SEC = 45
+            CHASE_INTERVAL_S = 15
             POLL_INTERVAL_S = 3.0
 
             try:
@@ -1349,6 +1350,8 @@ class TradingExecutor:
             filled = 0.0
             fill_price = limit_price
             order_status = "open"
+            last_chase_ts = time.time()
+            chases = 0
 
             _fetch_err_count = 0
             while time.time() < deadline:
@@ -1382,14 +1385,70 @@ class TradingExecutor:
                     self.pending_order = None
                     return False
 
+                # P12 FIX: Chase the price every 15s if not filled.
+                # In trending markets, the best bid moves away — parking at a
+                # stale price for the full TTL means the order never fills.
+                if filled <= 0.0 and (time.time() - last_chase_ts) >= CHASE_INTERVAL_S and time.time() < deadline - POLL_INTERVAL_S:
+                    chases += 1
+                    try:
+                        ob_chase = await self.exchange.fetch_order_book(ex_symbol, 1)
+                        if side == "buy":
+                            new_price = ob_chase['bids'][0][0] if ob_chase.get('bids') and ob_chase['bids'][0][0] > 0 else limit_price
+                        else:
+                            new_price = ob_chase['asks'][0][0] if ob_chase.get('asks') and ob_chase['asks'][0][0] > 0 else limit_price
+                    except Exception:
+                        new_price = limit_price
+                    if abs(new_price - limit_price) / max(limit_price, 1e-9) > 0.0001:
+                        logger.info(
+                            f"[MakerEntry] Chase #{chases}: {limit_price:.2f} → {new_price:.2f} "
+                            f"({deadline - time.time():.0f}s remaining)"
+                        )
+                        try:
+                            await self.exchange.cancel_order(order_id, ex_symbol)
+                        except Exception:
+                            pass
+                        limit_price = new_price
+                        try:
+                            lp = float(self.exchange.price_to_precision(ex_symbol, limit_price))
+                            order = await self.exchange.create_order(
+                                ex_symbol, "LIMIT", side, fmt_size, lp,
+                                params={"postOnly": True, "timeInForce": "GTC"}
+                            )
+                            order_id = order.get("id")
+                            self.pending_order["id"] = order_id
+                            self.pending_order["entry_price"] = limit_price
+                        except Exception as chase_err:
+                            logger.warning(f"[MakerEntry] Chase re-place failed: {chase_err}")
+                            break
+                        last_chase_ts = time.time()
+
             if filled <= 0.0:
-                logger.warning("[MakerEntry] Not filled within TTL. Cancelling and aborting.")
+                # P12 FIX: Market order fallback instead of aborting.
+                # After 45s + N chases, cancel limit and execute as market.
+                logger.info(
+                    f"[MakerEntry] Limit unfilled after {ORDER_TTL_SEC}s + {chases} chases. "
+                    "Falling back to MARKET order."
+                )
                 try:
                     await self.exchange.cancel_order(order_id, ex_symbol)
                 except Exception:
                     pass
-                self.pending_order = None
-                return False
+                try:
+                    mkt_params = {}
+                    if self.exchange_id == "coinbase" and not self.is_futures and side == "buy":
+                        mkt_params["createMarketBuyOrderRequiresPrice"] = False
+                    order = await self.exchange.create_market_order(
+                        ex_symbol, side, fmt_size, params=mkt_params
+                    )
+                    fill_price = float(order.get("average") or order.get("price") or current_price)
+                    filled = fmt_size
+                    logger.info(f"[MakerEntry] Market fallback filled: size={filled} avg={fill_price:.2f}")
+                    # Fee switches to taker on market fill
+                    entry_fee_est = abs(fill_price * fmt_size * self.TAKER_FEE)
+                except Exception as market_err:
+                    logger.error(f"[MakerEntry] Market fallback failed: {market_err}")
+                    self.pending_order = None
+                    return False
 
             # ── Partial Fill Handling ─────────────────────────────────────
             if filled < fmt_size:
@@ -1415,6 +1474,20 @@ class TradingExecutor:
                 f"(signal ~{current_price:.2f}, diff={fill_price-current_price:+.2f}) "
                 f"maker_fee_est={entry_fee_est:.4f}"
             )
+
+            # P12 FIX: Recalibrate SL/TP to fill price instead of signal price.
+            # _risk_engine computes SL/TP from the signal price (metrics mid), but
+            # the limit fill can be significantly different in fast markets
+            # (observed: $111 gap on Jul 17). Without this, SL is misaligned.
+            _price_offset = fill_price - current_price
+            if abs(_price_offset) > 0.01:
+                logger.info(
+                    f"[MakerEntry] SL/TP recalibrated: fill offset={_price_offset:+.2f}. "
+                    f"SL: {stop_loss:.2f}→{stop_loss + _price_offset:.2f} "
+                    f"TP: {take_profit:.2f}→{take_profit + _price_offset:.2f}"
+                )
+                stop_loss += _price_offset
+                take_profit += _price_offset
 
             fill_rr = self._effective_reward_risk(side, fill_price, stop_loss, take_profit)
             if fill_rr < min_live_rr:

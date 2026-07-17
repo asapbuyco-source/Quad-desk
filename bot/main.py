@@ -1530,10 +1530,15 @@ def _detect_regime(
     funding_rate = float(metrics.get("funding_rate", 0.0))
     hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic, cvd_momentum=cvd_momentum, z_ret=z_ret, funding_rate=funding_rate)
 
-    # HIGH-2 FIX: REGIME_REMAP removed — it was dead code (HMM state 2 is "NEUTRAL"
-    # in _LABELS, never "VOLATILE"). Keeping it was a hazard: renaming the label
-    # would silently reroute all high-vol periods to TREND strategy.
+    # HIGH-2 FIX: REGIME_REMAP removed — it was dead code.
     regime = hmm_result["regime"]
+    # P12 FIX: RANGE/COMPRESSION HMM collapse (BD=0.292) means the two most
+    # common regimes are indistinguishable. Until HMM is recalibrated, merge
+    # COMPRESSION into RANGE — RANGE has more conservative parameters and is
+    # safer than misapplying COMPRESSION's wider z_thr=1.20.
+    if regime == "COMPRESSION":
+        regime = "RANGE"
+        logger.debug(f"[HMM] COMPRESSION→RANGE merge (BD=0.292 collapse guard)")
     confidence = hmm_result["confidence"]
 
     # Inject probabilities into metrics for downstream observability
@@ -2711,6 +2716,10 @@ def _risk_engine(
     rank_scale = 1.0 + (atr_pct_rank - 0.5) * 0.4
     rank_scale = float(np.clip(rank_scale, 0.75, 1.25))
     adaptive_mult = sl_mult * vol_scale * rank_scale
+    # P12 FIX: Floor at 0.75 — when ATR rank is very low (e.g. 16%), the combined
+    # vol_scale * rank_scale stack can reduce effective SL to <0.6×ATR, leaving
+    # positions with essentially no stop-loss (observed Jul 17: -$2.98 on 0.77% move).
+    adaptive_mult = max(0.75, adaptive_mult)
 
     if strategy_type == "TREND":
         adaptive_mult = min(adaptive_mult, 2.50)
