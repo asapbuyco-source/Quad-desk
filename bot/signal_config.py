@@ -119,8 +119,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      900,
-        "time_exit_hard_cap_s": 1800,
+        "time_exit_sec":      1800,  # P13 FIX: was 900. Trades cut short before reaching TP. 30min base, deferral extends to 3600s.
+        "time_exit_hard_cap_s": 3600,  # P13 FIX: was 1800. Doubled to match extended time_exit.
         "panic_threshold":    10.0,
         "candle_gate_sec":    30,
         "htf_block":          False,
@@ -157,8 +157,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.5,
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      1200,
-        "time_exit_hard_cap_s": 2400,
+        "time_exit_sec":      1800,  # P13 FIX: was 1200. Match RANGE at 30min base.
+        "time_exit_hard_cap_s": 3600,  # P13 FIX: was 2400. Doubled to match RANGE.
         "panic_threshold":    10.0,
         "candle_gate_sec":    45,
         "htf_block":          False,  # P11 FIX: was True — blocked 100% of entries when HTF was BULL/BEAR
@@ -209,8 +209,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      900,
-        "time_exit_hard_cap_s": 1800,
+        "time_exit_sec":      1800,  # P13 FIX: was 900. All regimes need time to reach TP.
+        "time_exit_hard_cap_s": 3600,  # P13 FIX: was 1800.
         "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    45,
         "htf_block":          False,

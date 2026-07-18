@@ -469,6 +469,20 @@ def backtest_hybrid(df, config, symbol):
             rsi_short_gate = 55.0
             if curr_z >= 1.06 and curr_rsi > rsi_short_gate: raw_direction = "SELL"
             elif curr_z <= -1.06 and curr_rsi < rsi_long_gate: raw_direction = "BUY"
+        
+        elif regime == "NEUTRAL":
+            # P12 FIX: Match live bot NEUTRAL routing with z_threshold=1.20
+            # (was missing entirely — all NEUTRAL cycles were silently skipped)
+            strategy = "MEAN_REVERSION"
+            if curr_z >= 1.20 and curr_rsi > 55.0: raw_direction = "SELL"
+            elif curr_z <= -1.20 and curr_rsi < 45.0: raw_direction = "BUY"
+
+        elif regime == "LIQUIDITY":
+            # P12 FIX: LIQUIDITY can also use mean-reversion when no sweep
+            # z_threshold matches signal_config at 1.10
+            strategy = "MEAN_REVERSION"
+            if curr_z >= 1.10 and curr_rsi > 55.0: raw_direction = "SELL"
+            elif curr_z <= -1.10 and curr_rsi < 45.0: raw_direction = "BUY"
             
         if not raw_direction: continue
 
