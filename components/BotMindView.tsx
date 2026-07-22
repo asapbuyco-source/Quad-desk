@@ -108,13 +108,13 @@ const BotMindView: React.FC = () => {
         <span className="text-[10px] uppercase tracking-wider text-[#8b949e]">Live Market</span>
         <div className="grid grid-cols-4 gap-2 mt-2">
           <span className="text-[10px] text-[#8b949e]">Price</span>
-          <span className="text-[10px] font-mono text-white col-span-3">${metrics?.price?.toFixed(2) || '—'}</span>
-          <span className="text-[10px] text-[#8b949e]">CVD</span>
-          <span className="text-[10px] font-mono text-white col-span-3">{metrics?.cvd?.toFixed(0) || '—'}</span>
-          <span className="text-[10px] text-[#8b949e]">Tape</span>
-          <span className="text-[10px] font-mono text-white col-span-3">{metrics?.tapeSpeed || '—'} / {metrics?.tapeDominant || '—'}</span>
+          <span className="text-[10px] font-mono text-white col-span-3">${metrics?.price?.toFixed?.(2) || '—'}</span>
+          <span className="text-[10px] text-[#8b949e]">CVD Trend</span>
+          <span className="text-[10px] font-mono text-white col-span-3">{metrics?.cvdContext?.trend || '—'} ({metrics?.cvdContext?.value?.toFixed?.(0) || '—'})</span>
+          <span className="text-[10px] text-[#8b949e]">Divergence</span>
+          <span className="text-[10px] font-mono text-white col-span-3">{metrics?.cvdContext?.divergence || '—'}</span>
           <span className="text-[10px] text-[#8b949e]">Skew</span>
-          <span className="text-[10px] font-mono text-white col-span-3">{metrics?.skewness?.toFixed(3) || '—'}</span>
+          <span className="text-[10px] font-mono text-white col-span-3">{metrics?.skewness?.toFixed?.(3) || '—'}</span>
         </div>
       </div>
 
