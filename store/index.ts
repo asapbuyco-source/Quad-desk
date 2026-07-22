@@ -1498,6 +1498,14 @@ export const useStore = create<AppState>((set, get) => ({
             let lastHeartbeat = 0;
             let lastSignal = 'WAIT';
             let lastUlis = '—';
+            let lastAnalysis = '';
+            let currentZScore = 0;
+            let currentRegime = '';
+            let currentBayes = 0.5;
+            let currentRSI = 50;
+            let currentOFI = 0;
+            let currentATR = 0;
+            let gateStats: Record<string, number> = {};
             let exchange: BotSettingsState['exchange'] = 'binance';
             let tradingPair = '';
             let botMode = '';
@@ -1523,6 +1531,14 @@ export const useStore = create<AppState>((set, get) => ({
                     lastHeartbeat = hb;
                     lastSignal = data.lastSignal || 'WAIT';
                     lastUlis = data.lastUlis || '—';
+                    lastAnalysis = data.lastAnalysis || '';
+                    currentZScore = data.currentZScore ?? 0;
+                    currentRegime = data.currentRegime || '';
+                    currentBayes = data.currentBayes ?? 0.5;
+                    currentRSI = data.currentRSI ?? 50;
+                    currentOFI = data.currentOFI ?? 0;
+                    currentATR = data.currentATR ?? 0;
+                    gateStats = data.gateStats || {};
                     const rawExchange = String(data.exchange || '').toLowerCase();
                     exchange = rawExchange.includes('coinbase')
                         ? 'coinbase'
@@ -1551,6 +1567,14 @@ export const useStore = create<AppState>((set, get) => ({
                     totalTrades,
                     lastSignal,
                     lastUlis,
+                    lastAnalysis,
+                    currentZScore,
+                    currentRegime,
+                    currentBayes,
+                    currentRSI,
+                    currentOFI,
+                    currentATR,
+                    gateStats,
                     operatorPaused,
                     operatorLastCommand,
                     operatorLastCommandStatus,

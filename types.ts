@@ -269,14 +269,27 @@ export interface BotSettingsState {
   lastExecutionTime?: number;
   activePositions: number;
   // Live heartbeat fields — populated by Firestore onSnapshot
-  lastHeartbeat?: number;   // ms timestamp of last bot heartbeat
-  botMode?: string;         // 'DRY-RUN' | 'LIVE'
-  lastSignal?: string;      // e.g. 'BUY' | 'SELL' | 'WAIT'
-  lastUlis?: string;        // e.g. 'STRONG_LONG' | 'AVOID'
+  lastHeartbeat?: number;
+  botMode?: string;
+  lastSignal?: string;
+  lastUlis?: string;
   totalTrades?: number;
   operatorPaused?: boolean;
   operatorLastCommand?: string | null;
   operatorLastCommandStatus?: string | null;
+  // Bot Mind fields — per-cycle reasoning
+  lastAnalysis?: string;
+  currentZScore?: number;
+  currentRegime?: string;
+  currentBayes?: number;
+  currentRSI?: number;
+  currentOFI?: number;
+  currentATR?: number;
+  // Gate stats for debugging
+  gateStats?: Record<string, number>;
+  // Multi-symbol aggregated PnL
+  globalSessionPnl?: number;
+  globalDailyPnl?: number;
 }
 
 export interface LiquidityState {

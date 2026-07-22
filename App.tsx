@@ -20,6 +20,8 @@ import AlertEngine from './components/AlertEngine';
 import DarkPoolDiscovery from './components/DarkPoolDiscovery';
 import SentinelEdgePage from './components/SentinelEdgePage';
 import ULISView from './components/ULISView';
+import BotMindView from './components/BotMindView';
+import SettingsView from './components/SettingsView';
 import { ToastContainer } from './components/Toast';
 import { apiFetch } from './utils/apiClient';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -327,6 +329,8 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}
                                 {ui.activeTab === 'ai-tactical' && <AITacticalPage />}
+                                {ui.activeTab === 'bot-mind' && <BotMindView />}
+                                {ui.activeTab === 'settings' && <SettingsView />}
                                 {ui.activeTab === 'analytics' && <AnalyticsView />}
                                 {ui.activeTab === 'intel' && <IntelView />}
                                 {ui.activeTab === 'guide' && <GuideView />}

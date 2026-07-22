@@ -3,7 +3,7 @@ import { CandleData, OrderBookLevel, SentinelChecklist, MarketMetrics, NewsItem,
 export const APP_NAME = "QUANT DESK";
 
 const getApiUrl = () => {
-    let url = 'https://quant-desk-backend-production.up.railway.app';
+    let url = '';  // P13: Bot backend via Firestore only. Old backend disabled.
     if (typeof window !== 'undefined') {
         const stored = localStorage.getItem('VITE_API_URL');
         if (stored && stored.startsWith('http')) {

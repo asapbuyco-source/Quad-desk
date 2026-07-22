@@ -9,10 +9,14 @@ const adminApiKey = () => (import.meta as any).env?.VITE_ADMIN_API_KEY || backen
 
 const joinUrl = (path: string) => {
   if (path.startsWith('http')) return path;
+  if (!API_BASE_URL) return '';  // P13: no backend — skip silently
   return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
 };
 
 async function request(path: string, options: ApiFetchOptions = {}, admin = false) {
+  const url = joinUrl(path);
+  if (!url) return new Response(null, { status: 204 });  // P13: no backend — noop
+
   const { timeoutMs = 60000, headers, signal, ...rest } = options;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -30,7 +34,7 @@ async function request(path: string, options: ApiFetchOptions = {}, admin = fals
   }
 
   try {
-    const res = await fetch(joinUrl(path), {
+    const res = await fetch(url, {
       ...rest,
       headers: mergedHeaders,
       signal: controller.signal,

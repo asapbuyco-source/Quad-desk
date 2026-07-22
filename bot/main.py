@@ -4607,6 +4607,15 @@ async def execution_loop(
 
             stats["last_signal"] = action
             stats["last_ulis"]   = ulis_str
+            stats["last_analysis"] = analysis
+            # Live metrics for dashboard — updated every cycle
+            if metrics:
+                stats["current_zscore"]  = round(float(metrics.get("zScore", 0)), 2)
+                stats["current_regime"]  = metrics.get("_hmm_regime", regime) if "_hmm_regime" in metrics else regime
+                stats["current_bayes"]   = round(float(metrics.get("bayesianPosterior", 0)), 4)
+                stats["current_rsi"]     = round(float(metrics.get("rsi", 50)), 1)
+                stats["current_ofi"]     = round(float(metrics.get("ofi", 0)), 2)
+                stats["current_atr_pct"] = round(float(metrics.get("atr_pct", 0)), 4)
 
             # ── Panic trigger: ULIS AVOID/UNWIND while holding a position ──
             # MED-5 FIX: Use `had_position_before_exit` (cached before exit check),

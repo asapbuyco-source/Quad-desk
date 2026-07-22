@@ -21,6 +21,8 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
     { id: 'ulis', icon: Globe2, label: 'ULIS' },
     { id: 'bot-control', icon: Bot, label: 'Bot' },
     { id: 'ai-tactical', icon: BrainCircuit, label: 'Tactical' },
+    { id: 'bot-mind', icon: Bot, label: 'Bot Mind' },
+    { id: 'settings', icon: Settings, label: 'Settings' },
     { id: 'analytics', icon: BarChart2, label: 'Data' },
     { id: 'intel', icon: Radio, label: 'Intel' },
     { id: 'guide', icon: BookOpen, label: 'Guide' },
