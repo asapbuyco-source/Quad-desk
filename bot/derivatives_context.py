@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import math
+from bot.oi_analytics_engine import OIAnalyticsEngine  # P14: OI upgrade
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,7 @@ class DerivativesContext:
         self._rate_limit_backoff_s = self._rate_limit_initial_backoff_s
         self._rate_limit_max_backoff_s = float(os.environ.get("BOT_DERIVATIVES_RATE_LIMIT_MAX_BACKOFF_SEC", "3600"))
         self._last_rate_limit_log: float = 0.0
+        self._oi_engine = OIAnalyticsEngine(symbol=self.symbol, deriv_context_instance=self)  # P14: OI upgrade
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -498,6 +500,7 @@ class DerivativesContext:
             self.get_options_context(),
             self.get_taker_flow(),
             self.get_oi_velocity_divergence(),
+            self._oi_engine.get_full_oi_analytics(funding_rate=None),  # P14: OI upgrade (additive)
             return_exceptions=True
         )
         return {
@@ -506,4 +509,5 @@ class DerivativesContext:
             "options":              results[2] if not isinstance(results[2], Exception) else {},
             "taker_flow":           results[3] if not isinstance(results[3], Exception) else {},
             "oi_velocity_divergence": results[4] if not isinstance(results[4], Exception) else {},
+            "oi_analytics":         results[5] if not isinstance(results[5], Exception) else {},  # P14: OI upgrade (additive)
         }

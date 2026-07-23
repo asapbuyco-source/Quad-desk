@@ -12,9 +12,7 @@ const getApiUrl = () => {
         else if ((import.meta as any).env?.VITE_API_URL) {
             url = (import.meta as any).env.VITE_API_URL;
         }
-        else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            url = 'http://localhost:8000';
-        }
+        // P13: Old localhost backend removed. All data via Firestore.
     }
     return url.replace(/\/$/, "");
 };

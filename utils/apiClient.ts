@@ -15,7 +15,7 @@ const joinUrl = (path: string) => {
 
 async function request(path: string, options: ApiFetchOptions = {}, admin = false) {
   const url = joinUrl(path);
-  if (!url) return new Response(null, { status: 204 });  // P13: no backend — noop
+  if (!url) return new Response(JSON.stringify({ disabled: true, reason: 'backend_off' }), { status: 200, headers: { 'Content-Type': 'application/json' } });  // P13: no backend — return valid JSON so callers don't crash
 
   const { timeoutMs = 60000, headers, signal, ...rest } = options;
   const controller = new AbortController();

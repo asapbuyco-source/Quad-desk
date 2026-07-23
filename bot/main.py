@@ -601,6 +601,7 @@ async def _derivatives_gate(direction: str, deriv_context: dict) -> tuple[bool, 
     opts  = deriv_context.get("options", {})
     flow  = deriv_context.get("taker_flow", {})
     oi_v  = deriv_context.get("oi_velocity_divergence", {})
+    oi_adv = deriv_context.get("oi_analytics", {})  # P14: OI upgrade
 
     crowd          = tt.get("crowd_signal", "NEUTRAL")
     opts_signal    = opts.get("options_signal", "NEUTRAL")
@@ -629,6 +630,22 @@ async def _derivatives_gate(direction: str, deriv_context: dict) -> tuple[bool, 
     if oi_collapsing:
         oi_mom = oi.get("oi_momentum_1h", 0.0)
         veto_reasons.append(f"OI collapsing {oi_mom:.1f}% in 1h — deleveraging, no new trend")
+
+    # VETO 3b (P14): OI liquidation cascade — directional OI risk gate
+    # Upgrades the binary oi_collapsing with 4-state directional regime.
+    # LONG_LIQUIDATION = price↓ + OI↓ = forced exit cascade → block longs
+    # The composite risk score weights OI Z-score, percentile, funding, and regime.
+    price_oi_regime = oi_adv.get("price_oi_regime", "INDETERMINATE")
+    oi_risk_label = oi_adv.get("oi_composite_risk_label", "LOW_RISK")
+    if price_oi_regime == "LONG_LIQUIDATION" and oi_risk_label in ("EXTREME_RISK", "ELEVATED_RISK"):
+        veto_reasons.append(
+            f"OI cascade: {price_oi_regime} + {oi_risk_label} — blocking new entries"
+        )
+    # SHORT_BUILD_UP with extreme risk: new shorts piling in while price drops
+    if price_oi_regime == "SHORT_BUILD_UP" and oi_risk_label == "EXTREME_RISK" and is_long:
+        veto_reasons.append(
+            f"OI cascade: {price_oi_regime} + {oi_risk_label} — short momentum, blocking LONG"
+        )
 
     # VETO 4: GEX PIN zone — dealer hedging will dampen price movement
     # Fade the sweep in PIN zones (positive gamma = mean-reversion expected)
