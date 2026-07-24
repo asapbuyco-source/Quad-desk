@@ -8,15 +8,11 @@ import { apiFetch } from '../utils/apiClient';
 const motion = m as any;
 
 const AI_MODELS = [
-    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', desc: 'Most Powerful — Series 3 Preview' },
-    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', desc: 'Next Gen Fast — Series 3 Preview' },
-    { id: 'gemini-2.5-flash-preview', label: 'Gemini 2.5 Flash', desc: 'Fast & Advanced — Series 2.5 Preview' },
-    { id: 'gemini-2.5-pro-preview-03-25', label: 'Gemini 2.5 Pro', desc: 'Most Intelligent — Deep Reasoning' },
-    { id: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking', desc: 'Extended Reasoning (Complex Tasks)' },
-    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Fast & Balanced (Recommended)' },
-    { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', desc: 'Long Context Window (1M tokens)' },
-    { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', desc: 'Lightweight & Low Latency' },
-    { id: 'gemini-1.5-flash-8b', label: 'Gemini 1.5 Flash 8B', desc: 'Smallest — Ultra Fast' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Stable low-latency reasoning (Recommended)' },
+    { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', desc: 'Frontier Flash model for complex analysis' },
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', desc: 'Lowest cost for frequent updates' },
+    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', desc: 'Preview Flash model' },
+    { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', desc: 'Preview model for deeper reasoning' },
 ];
 
 const ProfileOverlay: React.FC = () => {

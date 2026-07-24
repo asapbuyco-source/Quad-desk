@@ -2,7 +2,7 @@
 
 import { initializeApp, getApps, getApp } from "firebase/app";
 import type { FirebaseApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, browserLocalPersistence, setPersistence } from "firebase/auth";
 import type { Auth } from "firebase/auth";
 import { getAnalytics, isSupported } from "firebase/analytics";
 import type { Analytics } from "firebase/analytics";
@@ -74,6 +74,8 @@ try {
 }
 
 const auth: Auth = getAuth(app);
+// P15: Force local persistence to avoid IndexedDB deadlock on repeated HMR/dev reloads
+setPersistence(auth, browserLocalPersistence).catch(() => {});
 const googleProvider = new GoogleAuthProvider();
 
 // Initialize Analytics (Async)
