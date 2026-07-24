@@ -23,7 +23,6 @@ import ULISView from './components/ULISView';
 import BotMindView from './components/BotMindView';
 import SettingsView from './components/SettingsView';
 import { ToastContainer } from './components/Toast';
-import { apiFetch } from './utils/apiClient';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
@@ -123,7 +122,7 @@ const App: React.FC = () => {
                 const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
                 const interval = intervalMapping[config.interval] || '1m';
                 const symbol = config.activeSymbol.toUpperCase();
-                
+
                 // Fetch directly from Binance API since the backend is disabled
                 const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=200`);
                 if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
@@ -139,6 +138,7 @@ const App: React.FC = () => {
                     const low = parseFloat(k[3]) || 0;
 
                     // Accurate delta using real taker buy volume from Binance (k[9])
+                    // delta = takerBuyVol * 2 - totalVol (same formula as live WebSocket stream)
                     const takerBuyVol = parseFloat(k[9]) || 0;
                     const delta = (2 * takerBuyVol) - vol;
                     runningCVD += delta;
