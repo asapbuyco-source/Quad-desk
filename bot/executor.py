@@ -1234,6 +1234,9 @@ class TradingExecutor:
                 "regime":           signal.get("regime", "NEUTRAL"),
                 "atr_at_entry":     signal.get("atr_at_entry", 0.0),
                 "entry_ts":         time.time(),
+                # P15: Adaptive Dynamic Z Engine — carried through to _process_exit
+                "z_score_at_entry": signal.get("z_score", 0.0),
+                "z_threshold_used": signal.get("z_threshold_used", 0.0),
                 # D2 FIX: Dry-run has no exchange bracket legs, but the
                 # simulated position is fully represented by local SL/TP logic.
                 "bracket_status":       "DRY_RUN",

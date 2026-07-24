@@ -120,7 +120,12 @@ const App: React.FC = () => {
         let retryTimer: ReturnType<typeof setTimeout>;
         const fetchHistory = async () => {
             try {
-                const res = await apiFetch(`/history?symbol=${config.activeSymbol}&interval=${config.interval}`);
+                const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
+                const interval = intervalMapping[config.interval] || '1m';
+                const symbol = config.activeSymbol.toUpperCase();
+                
+                // Fetch directly from Binance API since the backend is disabled
+                const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=200`);
                 if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
                 const data = await res.json();
                 if (!Array.isArray(data)) throw new Error("Invalid history data format");
@@ -133,9 +138,8 @@ const App: React.FC = () => {
                     const high = parseFloat(k[2]) || 0;
                     const low = parseFloat(k[3]) || 0;
 
-                    // Accurate delta using real taker buy volume from Binance (k[6])
-                    // delta = takerBuyVol * 2 - totalVol  (same formula as live WebSocket stream)
-                    const takerBuyVol = parseFloat(k[6]) || 0;
+                    // Accurate delta using real taker buy volume from Binance (k[9])
+                    const takerBuyVol = parseFloat(k[9]) || 0;
                     const delta = (2 * takerBuyVol) - vol;
                     runningCVD += delta;
 
@@ -158,6 +162,7 @@ const App: React.FC = () => {
                 setIsLoading(false);
                 setConnectionError(false);
             } catch (e: any) {
+                console.error("fetchHistory failed:", e);
                 setConnectionError(true);
                 setIsLoading(true);
                 retryTimer = setTimeout(fetchHistory, 5000);

@@ -78,6 +78,7 @@ from bot.signal_config import (
 from bot.hmm_features import (
     FEATURE_SCHEMA_V2, N_FEATURES, schema_identity_match,
 )
+from bot.dynamic_z_engine import dynamic_z_engine  # P15: Adaptive Dynamic Z Engine
 
 # ──────────────────────────────────────────────────────────────────────
 # Logging
@@ -1558,7 +1559,8 @@ def _detect_regime(
         logger.debug(f"[HMM] COMPRESSION→RANGE merge (BD=0.292 collapse guard)")
     confidence = hmm_result["confidence"]
 
-    # Inject probabilities into metrics for downstream observability
+    # Inject probabilities + regime into metrics for downstream observability
+    metrics["regime"] = regime  # P14: make regime available to heartbeat + OI gate
     metrics["regime_confidence"] = confidence
     metrics["regime_probs"] = {
         "RANGE":    hmm_result["p_range"],
@@ -3073,8 +3075,15 @@ async def _compute_signal(
         else:
             quant._dead_market_cycles = 0
 
+    # P15: Adaptive Dynamic Z Engine — Phase 1
+    # regime_p (REGIME_PARAMS) remains the static prior. z_threshold_effective
+    # is what every strategy branch actually routes on. It starts at the static
+    # value and slowly adapts within ±25% based on closed-trade outcomes.
+    z_threshold_effective = dynamic_z_engine.get_threshold(regime, regime_p["z_threshold"])
+
     logger.info(
         f"[RegimeParams] z_thr={regime_p['z_threshold']} "
+        f"z_thr_dyn={z_threshold_effective:.2f} "
         f"sl_mult={regime_p['atr_multiplier_sl']} "
         f"min_conf={regime_p['min_confidence']:.0%} "
         f"rr={regime_p['rr_target']} "
@@ -3083,6 +3092,8 @@ async def _compute_signal(
     )
     if metrics is not None:
         metrics["z_thr_regime"] = regime_p.get("z_threshold", 0.0)
+        metrics["z_thr_static"] = regime_p.get("z_threshold", 0.0)   # P15
+        metrics["z_thr_dynamic"] = z_threshold_effective              # P15
 
     # Stage 3: Sweep detection (already computed in Stage 1b — reuse)
     # Stage 3b: Candle-Close Freshness Gate (LIQUIDITY_SWEEP only)
@@ -3134,13 +3145,13 @@ async def _compute_signal(
     if raw_direction is None:
         if regime == "TREND":
             strategy_type = "TREND"
-            raw_direction = _strategy_trend(metrics, z_min=regime_p.get("z_threshold", 2.0), quant=quant)
+            raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant)
             if raw_direction:
                 logger.info("[MetaModel] → TREND strategy")
             else:
                 logger.info("[MetaModel] TREND — no edge.")
         elif regime == "VOLATILE":
-            vol_z_thr = regime_p.get("z_threshold", 1.75)
+            vol_z_thr = z_threshold_effective
             z_ret = metrics.get("zScore_ret", 0.0)
             tape = metrics.get("tapeSpeed", "NORMAL")
             vol_route = _route_volatile(z_ret, tape)
@@ -3186,12 +3197,12 @@ async def _compute_signal(
             )
             if is_breakout:
                 strategy_type = "COMPRESSION_BREAKOUT"
-                raw_direction = _strategy_trend(metrics, z_min=regime_p["z_threshold"], quant=quant)
+                raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant)  # P15: dynamic Z
                 if raw_direction:
                     logger.info(f"[MetaModel] COMPRESSION → BREAKOUT ({raw_direction})")
             if raw_direction is None:
                 strategy_type = "MEAN_REVERSION"
-                raw_direction = _strategy_mean_reversion(metrics, z_threshold=regime_p["z_threshold"])
+                raw_direction = _strategy_mean_reversion(metrics, z_threshold=z_threshold_effective)  # P15: dynamic Z
                 if raw_direction:
                     logger.info(f"[MetaModel] → COMPRESSION MR ({raw_direction})")
                 else:
@@ -3200,7 +3211,7 @@ async def _compute_signal(
             # SQUEEZE cascade: enter in squeeze direction with tight SL, wide TP.
             # Use trend strategy with SQUEEZE params for momentum capture.
             strategy_type = "SQUEEZE_CASCADE"
-            raw_direction = _strategy_trend(metrics, z_min=regime_p["z_threshold"], quant=quant)
+            raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant)
             if raw_direction:
                 logger.info(f"[MetaModel] → SQUEEZE CASCADE ({raw_direction})")
             else:
@@ -3225,7 +3236,7 @@ async def _compute_signal(
                 rsi_trough = True   # skip gate — allow entry on Z+slope alone
                 rsi_peak = True
 
-            z_thr = regime_p["z_threshold"]
+            z_thr = z_threshold_effective  # P15: dynamic Z
             candidate = _strategy_mean_reversion(metrics, z_threshold=z_thr)
             if candidate == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
                 candidate = None
@@ -3259,7 +3270,7 @@ async def _compute_signal(
     # Only counts a real block (not a false positive from strategies that would reject anyway).
     if regime == "VOLATILE":
         z_current = metrics.get("zScore", 0.0)
-        vol_z_thr = regime_p.get("z_threshold", 1.75)
+        vol_z_thr = z_threshold_effective  # P15: dynamic Z
         if abs(z_current) < 0.60 * vol_z_thr:
             BOT_STATS["gate_stats"]["z_drift_blocked"] += 1
             logger.info(f"[ZDrift] Blocked {raw_direction} — abs(z)={abs(z_current):.2f} < 0.60×{vol_z_thr:.2f}")
@@ -3628,6 +3639,10 @@ async def _compute_signal(
         "risk_multiplier": round(float(metrics.get("volatility_risk_multiplier", 1.0)), 4),
         "sweep_wick":     sweep_wick if sweep else 0.0,
         "strategy_type":  strategy_type,
+        # P15: Adaptive Dynamic Z Engine — carried through to executor
+        # so _process_exit can feed the outcome back into dynamic_z_engine.
+        "z_score":            round(metrics.get("zScore", 0.0), 4),
+        "z_threshold_used":   z_threshold_effective,
     }
 
 
@@ -3693,7 +3708,16 @@ async def _process_exit(
             strategy_type=pos.get("strategy_type", "UNKNOWN"),
             won=is_win,
         )
-        
+
+    # P15: Adaptive Dynamic Z Engine — Stage 6 (Bayesian Online Learning).
+    # Every closed trade feeds its outcome back so the engine learns the
+    # optimal Z threshold per regime. Never fatal to the trading loop.
+    try:
+        _z_entry = pos.get("z_score_at_entry", 0.0) if pos else 0.0
+        dynamic_z_engine.record_outcome(regime=regime, z_entry=_z_entry, pnl=pnl, won=is_win)
+    except Exception as _dz_err:
+        logger.warning(f"[DynamicZ] record_outcome error (non-fatal): {_dz_err}")
+
     stats["consecutive_losses"] = getattr(quant, "_consecutive_losses", 0)
 
     # P1-3: increment HMM trade counter so online updates are gated until
@@ -4628,7 +4652,7 @@ async def execution_loop(
             # Live metrics for dashboard — updated every cycle
             if metrics:
                 stats["current_zscore"]  = round(float(metrics.get("zScore", 0)), 2)
-                stats["current_regime"]  = metrics.get("_hmm_regime", regime) if "_hmm_regime" in metrics else regime
+                stats["current_regime"]  = str(metrics.get("regime", "UNKNOWN"))
                 stats["current_bayes"]   = round(float(metrics.get("bayesianPosterior", 0)), 4)
                 stats["current_rsi"]     = round(float(metrics.get("rsi", 50)), 1)
                 stats["current_ofi"]     = round(float(metrics.get("ofi", 0)), 2)
