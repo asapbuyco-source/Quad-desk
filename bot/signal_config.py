@@ -112,15 +112,15 @@ REGIME_PARAMS = {
     "RANGE": {
         # Low-volatility: small deviations are statistically meaningful
         "z_threshold":        1.06,  # M-02 FIX: was 1.3, Student-t adj (1.3×0.8165)
-        "atr_multiplier_sl":  1.14,   # Was 1.2 — 5% reduction post-Wilder compensation
+        "atr_multiplier_sl":  0.90,   # P16 FIX: was 1.14. Cut losses faster — if reversion doesn't happen in 0.9×ATR, it's a failed signal. Don't bleed to time exit.
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
         "rr_target":          2.3,   # 2.3:1 minimum R:R
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      1800,  # P13 FIX: was 900. Trades cut short before reaching TP. 30min base, deferral extends to 3600s.
-        "time_exit_hard_cap_s": 3600,  # P13 FIX: was 1800. Doubled to match extended time_exit.
+        "time_exit_sec":      14400,  # P16 FIX: was 1800. Mean-reversion needs time — observed reversion AFTER exits. 4h base, SL cuts losers.
+        "time_exit_hard_cap_s": 28800,  # P16 FIX: was 3600. 8h max — one full session.
         "panic_threshold":    10.0,
         "candle_gate_sec":    30,
         "htf_block":          False,
@@ -150,15 +150,15 @@ REGIME_PARAMS = {
         # P11 FIX: z_threshold lowered 1.50→1.20 — exceeded once in 5 sessions.
         # slope+RSI gate provides signal quality filtering, allowing lower Z threshold.
         "z_threshold":        1.20,
-        "atr_multiplier_sl":  1.43,
+        "atr_multiplier_sl":  1.10,  # P16 FIX: was 1.43. Cut losers fast — bleed is worse than being stopped.
         "ofi_bound":          0.10,
         "min_confidence":     0.65,
         "rr_target":          2.5,
         "be_lock_trigger":    1.5,
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      1800,  # P13 FIX: was 1200. Match RANGE at 30min base.
-        "time_exit_hard_cap_s": 3600,  # P13 FIX: was 2400. Doubled to match RANGE.
+        "time_exit_sec":      14400,  # P16 FIX: was 1800. Match RANGE — mean-reversion needs time.
+        "time_exit_hard_cap_s": 28800,  # P16 FIX: was 3600. 8h max.
         "panic_threshold":    10.0,
         "candle_gate_sec":    45,
         "htf_block":          False,  # P11 FIX: was True — blocked 100% of entries when HTF was BULL/BEAR
@@ -202,15 +202,15 @@ REGIME_PARAMS = {
     "LIQUIDITY": {
         # Wall-proximity sweeps
         "z_threshold":        1.10,  # P12 FIX: was 1.50 (raised from 1.22 — regression). 45% of BTC session in LIQUIDITY with unreachable threshold.
-        "atr_multiplier_sl":  1.43,
+        "atr_multiplier_sl":  1.10,  # P16 FIX: was 1.43. Match NEUTRAL.
         "ofi_bound":          0.12,
         "min_confidence":     0.62,  # FIX-P10: was 0.55 which == sweep neutralizer floor (no-op); raised to 0.62 so threshold is meaningful
         "rr_target":          2.5,
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      1800,  # P13 FIX: was 900. All regimes need time to reach TP.
-        "time_exit_hard_cap_s": 3600,  # P13 FIX: was 1800.
+        "time_exit_sec":      14400,  # P16 FIX: was 1800. Sweep fades need time to resolve.
+        "time_exit_hard_cap_s": 28800,  # P16 FIX: was 1800.
         "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
         "candle_gate_sec":    45,
         "htf_block":          False,

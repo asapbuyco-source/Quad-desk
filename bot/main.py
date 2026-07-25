@@ -3175,6 +3175,30 @@ async def _compute_signal(
             raw_direction = _strategy_mean_reversion(
                 metrics, z_threshold=regime_p["z_threshold"]
             )
+            # P16 FIX: RANGE exhaustion filter — same as NEUTRAL's slope+RSI gate.
+            # Without this, the bot enters mean-reversion while momentum is still
+            # trending (July 25: 3/3 RANGE trades faded trend, lost -$2.41).
+            # Requires Z to be DECELERATING and RSI to have formed a trough/peak
+            # before entering, proving the extreme is exhausting, not accelerating.
+            if raw_direction and regime_p.get("z_threshold", 0) < 1.5:
+                z_current = metrics.get("zScore", 0.0)
+                z_prev = metrics.get("zScore_prev", z_current)
+                z_slope = z_current - z_prev
+                rsi = metrics.get("rsi", 50.0)
+                rsi_prev = metrics.get("rsi_prev")
+                rsi_prev2 = metrics.get("rsi_prev2")
+                rsi_gate_ready = rsi_prev is not None and rsi_prev2 is not None
+                if rsi_gate_ready:
+                    rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
+                    rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
+                else:
+                    rsi_trough = True; rsi_peak = True  # skip if no history
+                if raw_direction == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
+                    logger.info(f"[RANGE Exhaust] LONG blocked — z_slope={z_slope:+.3f} (need <0), rsi_trough={rsi_trough}")
+                    raw_direction = None
+                if raw_direction == "MEAN_REVERSAL_SHORT" and (z_slope >= 0 or not rsi_peak):
+                    logger.info(f"[RANGE Exhaust] SHORT blocked — z_slope={z_slope:+.3f} (need >0), rsi_peak={rsi_peak}")
+                    raw_direction = None
             if raw_direction:
                 logger.info(
                     f"[MetaModel] → RANGE MR ({raw_direction}) "
@@ -3609,7 +3633,8 @@ async def _compute_signal(
     analysis = (
         f"Regime={regime} Strategy={strategy_type} | {verdict} @ {price:.2f} "
         f"| P={confidence:.2%} | SL={stop_loss} TP={take_profit} "
-        f"| Z={metrics['zScore']:.2f} RSI={metrics['rsi']:.1f} "
+        f"| Z={metrics['zScore']:.2f} z_prev={metrics.get('zScore_prev', 0):.2f} "
+        f"RSI={metrics['rsi']:.1f} "
         f"OFI={metrics['ofi']:.1f} CVD={metrics['cvd']:.0f} "
         f"ATR={atr:.2f} Tape={metrics['tapeSpeed']}/{metrics['tapeDominant']} "
         f"ULIS={ulis_verdict_str}"
