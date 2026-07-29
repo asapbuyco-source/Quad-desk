@@ -43,7 +43,7 @@ const AuthOverlay: React.FC = () => {
                 className="w-full max-w-md bg-[#09090b] border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative"
             >
                 {/* Background FX */}
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.05] mix-blend-overlay pointer-events-none"></div>
+                <div className="absolute inset-0 bg-[url('/noise.svg')] opacity-[0.05] mix-blend-overlay pointer-events-none"></div>
                 <div className="absolute top-0 right-0 w-64 h-64 bg-brand-accent/5 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/2" />
                 
                 <div className="p-8 flex flex-col items-center relative z-10">

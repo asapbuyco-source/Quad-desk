@@ -1,70 +1,47 @@
-
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time, MouseEventHandler } from 'lightweight-charts';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { CandleData, TradeSignal, PriceLevel, LiquidityState, RegimeState, PeriodType, BotTrade, BotSettingsState } from '../types';
-import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus, Activity, X, GripVertical, ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
+import { PanelRight, Rocket, Loader2, Clock, X, GripVertical, ChevronDown, ChevronUp, Maximize2, Minimize2, Bot } from 'lucide-react';
 import { useLightweightChart } from '../hooks/useChart';
-import { useStore } from '../store';
 
-/**
- * Props for the PriceChart component.
- */
 interface PriceChartProps {
-    /** Array of candlestick data points (OHLCV) */
     data: CandleData[];
-    /** Array of trade signal markers (Entry/Exit) */
     signals?: TradeSignal[];
-    /** Key price levels to display as horizontal lines */
     levels?: PriceLevel[];
-    /** Result from AI analysis containing support/resistance/pivot */
     aiScanResult?: any;
     liquidity?: LiquidityState;
-    /** Regime Analysis State */
     regime?: RegimeState;
-    /** Callback to trigger AI analysis */
     onScan?: () => void;
-    /** Loading state for AI analysis */
     isScanning?: boolean;
-    /** Toggle visibility of Z-Score bands */
     showZScore?: boolean;
-    /** Toggle visibility of Price Levels */
     showLevels?: boolean;
-    /** Toggle visibility of Signal Markers */
     showSignals?: boolean;
-    /** Optional children for header controls */
     children?: React.ReactNode;
-    /** Callback to toggle side panel */
     onToggleSidePanel?: () => void;
-    /** Side panel state */
     isSidePanelOpen?: boolean;
-    /** Current timeframe interval */
     interval?: string;
-    /** Callback to change timeframe */
     onIntervalChange?: (interval: string) => void;
-    /** Selected MA period type context */
     currentPeriod?: PeriodType;
-    /** Bot trade history from Firestore for chart markers */
     botTrades?: BotTrade[];
-    /** Live bot heartbeat data for reasoning overlay */
     botSettings?: BotSettingsState;
 }
 
-/**
- * PriceChart
- * 
- * A high-performance financial charting component based on TradingView's lightweight-charts.
- * Handles rendering of candles, volume, technical indicators (ADX, Z-Score Bands), 
- * and overlay primitives (Signal markers, Price lines).
- * 
- * Uses 'useLightweightChart' hook for lifecycle management.
- */
+const TEXT_MUTED = '#71717a';
+const TEXT_DIM = '#8b949e';
+const BORDER_COLOR = 'rgba(255,255,255,0.06)';
+const GRID_COLOR = 'rgba(255,255,255,0.04)';
+const UP_COLOR = '#10b981';
+const DOWN_COLOR = '#f43f5e';
+const UP_VOL = 'rgba(16,185,129,0.35)';
+const DOWN_VOL = 'rgba(244,63,94,0.30)';
+
+const isValid = (n: number | undefined | null): boolean => typeof n === 'number' && !isNaN(n);
+
 const PriceChart: React.FC<PriceChartProps> = ({
     data,
     signals = [],
     levels = [],
     aiScanResult,
     liquidity,
-    regime,
     botTrades = [],
     botSettings,
     onScan,
@@ -80,41 +57,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
     currentPeriod = '20-PERIOD'
 }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
+    const chart = useLightweightChart(chartContainerRef);
+    const prevDataLenRef = useRef(0);
 
-    // Performance Tracking Refs
-    const lastCandleCountRef = useRef(0);
-    const lastCandleTimeRef = useRef<Time | null>(null);
-
-    // Use Shared Hook - returns instance directly
-    const chart = useLightweightChart(chartContainerRef, {
-        leftPriceScale: {
-            visible: true,
-            borderColor: 'rgba(255, 255, 255, 0.1)',
-            scaleMargins: {
-                top: 0.7,
-                bottom: 0,
-            }
-        }
-    });
-
-    // Series Refs
-    const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-    const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const adxSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-
-    // Band Series Refs
-    const upper1SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const lower1SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const upper2SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const lower2SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-
-    const priceLinesRef = useRef<IPriceLine[]>([]);
-    const liquidityLinesRef = useRef<IPriceLine[]>([]); // New Ref for BOS/FVG lines
-
-    const [hoveredData, setHoveredData] = useState<any>(null);
-    const [currentAdx, setCurrentAdx] = useState<number>(0);
-
-    // --- Draggable AI Verdict Panel State ---
+    // Verdict panel state
     const [verdictVisible, setVerdictVisible] = useState(false);
     const [verdictCollapsed, setVerdictCollapsed] = useState(false);
     const [verdictExpanded, setVerdictExpanded] = useState(false);
@@ -123,14 +69,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const verdictPanelRef = useRef<HTMLDivElement>(null);
     const prevScanResultRef = useRef<any>(null);
 
-    // Show panel whenever a new scan result arrives
+    const [hoveredData, setHoveredData] = useState<any>(null);
+
     useEffect(() => {
         if (aiScanResult && aiScanResult !== prevScanResultRef.current) {
             prevScanResultRef.current = aiScanResult;
             setVerdictVisible(true);
             setVerdictCollapsed(false);
             setVerdictExpanded(false);
-            // Reset position to top-left of chart
             setVerdictPos({ x: 16, y: 60 });
         }
     }, [aiScanResult]);
@@ -156,809 +102,752 @@ const PriceChart: React.FC<PriceChartProps> = ({
         });
     }, []);
 
-    const stopDrag = useCallback((_e: React.PointerEvent<HTMLDivElement>) => {
-        dragRef.current = null;
-    }, []);
+    const stopDrag = useCallback(() => { dragRef.current = null; }, []);
 
-    // Helper to validate number (Handles null, undefined, NaN)
-    const isValid = (n: number | undefined | null): boolean => typeof n === 'number' && !isNaN(n);
-
-    // Initialize Series
+    // ECharts option builder
     useEffect(() => {
-        if (!chart) return;
+        if (!chart || data.length === 0) return;
 
-        let candlestickSeries: ISeriesApi<"Candlestick">;
-        let volumeSeries: ISeriesApi<"Histogram">;
-        let adxSeries: ISeriesApi<"Line">;
-        let upper1: ISeriesApi<"Line">;
-        let lower1: ISeriesApi<"Line">;
-        let upper2: ISeriesApi<"Line">;
-        let lower2: ISeriesApi<"Line">;
-        let crosshairHandler: MouseEventHandler<Time>;
+        const tsData = data.map(c => [c.time * 1000, c.open, c.close, c.low, c.high] as [number, number, number, number, number]);
+        const volData = data.map(c => [c.time * 1000, c.volume, c.close >= c.open ? 1 : -1] as [number, number, number]);
 
-        try {
-            candlestickSeries = chart.addSeries(CandlestickSeries, {
-                upColor: '#10b981',
-                downColor: '#f43f5e',
-                borderVisible: false,
-                wickUpColor: '#10b981',
-                wickDownColor: '#f43f5e',
-            });
+        const series: any[] = [
+            {
+                name: 'Price',
+                type: 'candlestick',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: tsData,
+                itemStyle: {
+                    color: UP_COLOR,
+                    color0: DOWN_COLOR,
+                    borderColor: UP_COLOR,
+                    borderColor0: DOWN_COLOR,
+                },
+                markPoint: {
+                    data: [] as any[],
+                    symbol: 'pin',
+                    symbolSize: 42,
+                    label: { show: true, fontSize: 9, color: '#e4e4e7', distance: 8, fontWeight: 'bold' },
+                    emphasis: { label: { fontSize: 12, fontWeight: 'bold' }, itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } },
+                },
+                markLine: {
+                    silent: true,
+                    symbol: 'none',
+                    data: [] as any[],
+                    lineStyle: { type: 'dashed', width: 1 },
+                },
+            },
+            {
+                name: 'Volume',
+                type: 'bar',
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                data: volData,
+                itemStyle: {
+                    color: (p: any) => (p.data?.[2] ?? 0) >= 0 ? UP_VOL : DOWN_VOL,
+                },
+            },
+        ];
 
-            volumeSeries = chart.addSeries(HistogramSeries, {
-                color: '#26a69a',
-                priceFormat: { type: 'volume' },
-                priceScaleId: '', // Overlay
-            });
-
-            volumeSeries.priceScale().applyOptions({
-                scaleMargins: { top: 0.85, bottom: 0 },
-            });
-
-            adxSeries = chart.addSeries(LineSeries, {
-                color: '#a855f7', // Purple
-                lineWidth: 2,
-                priceScaleId: 'left',
-                crosshairMarkerVisible: false,
-                lastValueVisible: false,
-            });
-
-            upper2 = chart.addSeries(LineSeries, {
-                color: 'rgba(244, 63, 94, 0.6)',
-                lineWidth: 1,
-                lineStyle: LineStyle.Solid,
-                crosshairMarkerVisible: false,
-                visible: !!showZScore
-            });
-            upper1 = chart.addSeries(LineSeries, {
-                color: 'rgba(249, 115, 22, 0.5)',
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
-                crosshairMarkerVisible: false,
-                visible: !!showZScore
-            });
-            lower1 = chart.addSeries(LineSeries, {
-                color: 'rgba(59, 130, 246, 0.5)',
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
-                crosshairMarkerVisible: false,
-                visible: !!showZScore
-            });
-            lower2 = chart.addSeries(LineSeries, {
-                color: 'rgba(16, 185, 129, 0.6)',
-                lineWidth: 1,
-                lineStyle: LineStyle.Solid,
-                crosshairMarkerVisible: false,
-                visible: !!showZScore
-            });
-
-            candlestickSeriesRef.current = candlestickSeries;
-            volumeSeriesRef.current = volumeSeries;
-            adxSeriesRef.current = adxSeries;
-            upper1SeriesRef.current = upper1;
-            lower1SeriesRef.current = lower1;
-            upper2SeriesRef.current = upper2;
-            lower2SeriesRef.current = lower2;
-
-            crosshairHandler = (param) => {
-                if (
-                    param.point === undefined ||
-                    !param.time ||
-                    !chartContainerRef.current ||
-                    param.point.x < 0 ||
-                    param.point.x > chartContainerRef.current.clientWidth ||
-                    param.point.y < 0 ||
-                    param.point.y > chartContainerRef.current.clientHeight
-                ) {
-                    setHoveredData(null);
-                } else {
-                    const candle = param.seriesData.get(candlestickSeries);
-                    const volume = param.seriesData.get(volumeSeries);
-                    const adx = param.seriesData.get(adxSeries);
-
-                    if (candle) {
-                        const c = candle as any;
-                        // Defensive check for candle data
-                        if (c && isValid(c.open) && isValid(c.close)) {
-                            const volVal = volume && (volume as any).value ? (volume as any).value : 0;
-                            const adxVal = adx && (adx as any).value ? (adx as any).value : 0;
-
-                            setHoveredData({
-                                ...c,
-                                volume: volVal,
-                                adx: adxVal,
-                                time: param.time
-                            });
-                        }
-                    }
-                }
-            };
-
-            chart.subscribeCrosshairMove(crosshairHandler);
-
-        } catch (e) {
-            console.error("Failed to initialize chart series:", e);
-        }
-
-        return () => {
-            if (chart) {
-                try {
-                    if (crosshairHandler) chart.unsubscribeCrosshairMove(crosshairHandler);
-                    if (candlestickSeries) chart.removeSeries(candlestickSeries);
-                    if (volumeSeries) chart.removeSeries(volumeSeries);
-                    if (adxSeries) chart.removeSeries(adxSeries);
-                    if (upper1) chart.removeSeries(upper1);
-                    if (lower1) chart.removeSeries(lower1);
-                    if (upper2) chart.removeSeries(upper2);
-                    if (lower2) chart.removeSeries(lower2);
-                } catch (e) {
-                    console.warn("Error cleaning up chart series:", e);
+        // Z-Score bands
+        if (showZScore) {
+            const bandOpts: Array<{ field: keyof CandleData; color: string; dash: boolean }> = [
+                { field: 'zScoreUpper2', color: 'rgba(244,63,94,0.5)', dash: false },
+                { field: 'zScoreUpper1', color: 'rgba(249,115,22,0.4)', dash: true },
+                { field: 'zScoreLower1', color: 'rgba(59,130,246,0.4)', dash: true },
+                { field: 'zScoreLower2', color: 'rgba(16,185,129,0.5)', dash: false },
+            ];
+            for (const b of bandOpts) {
+                const lineData = data
+                    .filter(c => isValid(c[b.field]) && (c[b.field] as number) > 0)
+                    .map(c => [c.time * 1000, c[b.field] as number]);
+                if (lineData.length > 0) {
+                    series.push({
+                        type: 'line',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        data: lineData,
+                        showSymbol: false,
+                        lineStyle: { color: b.color, width: 1, type: b.dash ? 'dashed' : 'solid' },
+                        silent: true,
+                    });
                 }
             }
-            candlestickSeriesRef.current = null;
-            volumeSeriesRef.current = null;
-            adxSeriesRef.current = null;
-            upper1SeriesRef.current = null;
-            lower1SeriesRef.current = null;
-            upper2SeriesRef.current = null;
-            lower2SeriesRef.current = null;
-            priceLinesRef.current = [];
-            liquidityLinesRef.current = [];
-            setHoveredData(null);
+        }
+
+        // ADX
+        const adxData = data.filter(c => isValid(c.adx)).map(c => [c.time * 1000, c.adx ?? 0]);
+        if (adxData.length > 0) {
+            series.push({
+                type: 'line',
+                xAxisIndex: 0,
+                yAxisIndex: 2,
+                data: adxData,
+                showSymbol: false,
+                lineStyle: { color: '#a855f7', width: 1.5 },
+                silent: true,
+            });
+        }
+
+        // Signals
+        if (showSignals && signals.length > 0) {
+            const markData = signals
+                .filter(s => isValid(s.price) && (typeof s.time === 'number' ? s.time > 0 : !!s.time))
+                .map(s => {
+                    const signalTime = typeof s.time === 'number' ? s.time * 1000 : new Date(s.time).getTime();
+                    const isBuy = s.type === 'ENTRY_LONG';
+                    const isExit = s.type === 'EXIT_PROFIT' || s.type === 'EXIT_LOSS';
+                    return {
+                        name: s.type,
+                        coord: [signalTime, s.price],
+                        value: s.type,
+                        symbol: isExit ? 'arrow' : 'triangle',
+                        symbolRotate: s.type === 'ENTRY_SHORT' || s.type === 'EXIT_LOSS' ? 180 : 0,
+                        itemStyle: {
+                            color: isBuy || s.type === 'EXIT_PROFIT' ? UP_COLOR : DOWN_COLOR,
+                        },
+                        label: {
+                            show: true,
+                            formatter: s.label?.substring(0, 4) || s.type.substring(0, 4),
+                            fontSize: 8,
+                            color: '#e4e4e7',
+                            distance: 6,
+                        },
+                    };
+                });
+            series[0].markPoint.data.push(...markData);
+        }
+
+        // Price levels
+        if (showLevels && levels.length > 0 && series[0]?.markLine) {
+            const levelLines = levels
+                .filter(l => isValid(l.price))
+                .map(l => ({
+                    yAxis: l.price,
+                    name: l.type,
+                    label: { show: true, formatter: l.type, fontSize: 9, color: '#e4e4e7' },
+                    lineStyle: {
+                        color: l.type === 'ENTRY' ? '#3b82f6' :
+                               l.type === 'STOP_LOSS' ? '#f43f5e' :
+                               l.type === 'TAKE_PROFIT' ? '#10b981' :
+                               l.type === 'SUPPORT' ? '#10b981' :
+                               l.type === 'RESISTANCE' ? '#f43f5e' : '#71717a',
+                        width: l.type === 'ENTRY' || l.type === 'STOP_LOSS' || l.type === 'TAKE_PROFIT' ? 2 : 1,
+                        type: l.type?.includes('TACTICAL') ? 'dotted' : 'dashed',
+                    },
+                }));
+            series[0].markLine.data.push(...levelLines);
+        }
+
+        // Liquidity sweeps
+        if (liquidity && liquidity.sweeps.length > 0) {
+            const sweepMarks = liquidity.sweeps
+                .map(s => {
+                    const st = typeof s.candleTime === 'number' ? s.candleTime : new Date(s.candleTime).getTime() / 1000;
+                    const matchCandle = data.find(c => Math.abs(c.time - st) < 1);
+                    const sweepPrice = s.price || (matchCandle?.close ?? 0);
+                    if (sweepPrice <= 0) return null;
+                    return {
+                        name: 'SWEEP',
+                        coord: [st * 1000, sweepPrice],
+                        symbol: 'arrow',
+                        symbolRotate: s.side === 'BUY' ? 0 : 180,
+                        symbolSize: 10,
+                        itemStyle: { color: s.side === 'BUY' ? '#059669' : '#e11d48' },
+                    };
+                })
+                .filter(Boolean) as any[];
+            series[0].markPoint.data.push(...sweepMarks);
+        }
+
+        // Bot trade markers
+        if (botTrades && botTrades.length > 0) {
+            const tradeMarks = botTrades
+                .filter(t => t.entry_price > 0 && t.ts_ms > 0)
+                .map(t => {
+                    const isWin = t.result === 'WIN';
+                    const isOpen = !t.result;
+                    return {
+                        name: t.verdict || 'trade',
+                        coord: [t.ts_ms, t.entry_price],
+                        symbol: 'circle',
+                        symbolSize: 10,
+                        itemStyle: { color: isOpen ? '#f59e0b' : isWin ? UP_COLOR : DOWN_COLOR },
+                        label: {
+                            show: true,
+                            formatter: isOpen ? '▶' : isWin ? '✓' : '✗',
+                            fontSize: 8,
+                            color: '#e4e4e7',
+                            position: 'top',
+                            distance: 3,
+                        },
+                    };
+                });
+            series[0].markPoint.data.push(...tradeMarks);
+        }
+
+        // BOS / FVG from liquidity
+        if (liquidity) {
+            const bosMarks: any[] = [];
+            for (const b of (liquidity.bos || [])) {
+                const bt = typeof b.candleTime === 'number' ? b.candleTime : new Date(b.candleTime).getTime() / 1000;
+                bosMarks.push({
+                    name: 'BOS',
+                    coord: [bt * 1000, b.price],
+                    symbol: 'triangle',
+                    symbolRotate: b.direction === 'BULLISH' ? 0 : 180,
+                    symbolSize: 8,
+                    itemStyle: { color: b.direction === 'BULLISH' ? '#10b981' : '#f43f5e' },
+                });
+            }
+            series[0].markPoint.data.push(...bosMarks);
+        }
+
+        const option: any = {
+            backgroundColor: 'transparent',
+            animation: data.length < 50,
+            dataZoom: [
+                {
+                    type: 'inside',
+                    xAxisIndex: [0, 1],
+                    start: data.length > 60 ? 50 : 0,
+                    end: 100,
+                    zoomOnMouseWheel: true,
+                    moveOnMouseMove: true,
+                    moveOnMouseWheel: false,
+                },
+                {
+                    type: 'slider',
+                    xAxisIndex: [0, 1],
+                    start: data.length > 60 ? 50 : 0,
+                    end: 100,
+                    height: 18,
+                    bottom: 6,
+                    borderColor: 'rgba(255,255,255,0.06)',
+                    fillerColor: 'rgba(59,130,246,0.1)',
+                    handleStyle: { color: '#3b82f6' },
+                    textStyle: { color: '#71717a', fontSize: 8 },
+                },
+            ],
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: { type: 'cross' },
+                backgroundColor: 'rgba(9,9,11,0.95)',
+                borderColor: BORDER_COLOR,
+                borderWidth: 1,
+                textStyle: { color: '#e4e4e7', fontFamily: 'JetBrains Mono', fontSize: 10 },
+                formatter: (params: any[]) => {
+                    if (!params || !params[0]) return '';
+                    const p = params[0];
+                    const values = p.data ?? p.value ?? [];
+                    const t = values[0] ? new Date(values[0]).toLocaleString() : '';
+                    const o = values[1]?.toFixed(2) ?? '—';
+                    const c = values[2]?.toFixed(2) ?? '—';
+                    const l = values[3]?.toFixed(2) ?? '—';
+                    const h = values[4]?.toFixed(2) ?? '—';
+                    const vol = params.find(x => x.seriesName === 'Volume')?.data?.[1];
+                    const z = botSettings?.currentZScore?.toFixed(2) ?? '—';
+                    const regime = botSettings?.currentRegime || '—';
+                    const b = ((botSettings?.currentBayes ?? 0.5) * 100).toFixed(0);
+                    const oiZ = botSettings?.oiZScore?.toFixed(1) ?? '—';
+                    const oiD = (botSettings?.oiDelta5mPct ?? 0).toFixed(2);
+                    const sig = botSettings?.lastSignal || 'WAIT';
+                    return [
+                        `<span style="color:${TEXT_DIM}">${t}</span>`,
+                        `<span style="color:#e4e4e7;font-weight:bold">O <span style="color:${TEXT_DIM}">${o}</span>  H <span style="color:#e4e4e7">${h}</span>  L <span style="color:#e4e4e7">${l}</span>  C <span style="color:${c >= o ? UP_COLOR : DOWN_COLOR};font-weight:bold">${c}</span></span>`,
+                        vol != null ? `<span style="color:${TEXT_DIM}">Vol ${(vol / 1000).toFixed(1)}K</span>` : '',
+                        `<span style="color:#484f58;font-size:9px">${regime} · Z ${z} · B ${b}% · OIZ ${oiZ} · Δ${oiD}% · ${sig}</span>`,
+                    ].filter(Boolean).join('<br/>');
+                },
+            },
+            grid: [
+                { left: 8, right: 12, top: 16, bottom: 36, height: '55%' },
+                { left: 8, right: 12, top: '68%', height: '14%' },
+            ],
+            graphic: (() => {
+                const g: any[] = [];
+                const lastC = data[data.length - 1];
+                const firstC = data[0];
+                const price = lastC?.close ?? 0;
+                const change = firstC?.close ? ((price - firstC.close) / firstC.close * 100) : 0;
+                const z = botSettings?.currentZScore ?? 0;
+                const b = (botSettings?.currentBayes ?? 0.5) * 100;
+                const regime = botSettings?.currentRegime || '';
+                const signal = botSettings?.lastSignal || 'WAIT';
+                const isBuySignal = signal.includes('BUY') || signal.includes('LONG');
+                const isSellSignal = signal.includes('SELL') || signal.includes('SHORT');
+                const pnl = botSettings?.globalSessionPnl ?? 0;
+
+                const rectStyle = (w: number, h: number, bg: string) => ({
+                    type: 'rect' as const,
+                    shape: { x: 0, y: 0, width: w, height: h },
+                    style: { fill: bg, stroke: 'rgba(255,255,255,0.08)', lineWidth: 1 },
+                });
+
+                const txt = (x: number, y: number, text: string, color: string, font: string) => ({
+                    type: 'text' as const,
+                    left: x, top: y,
+                    style: { text, fill: color, font },
+                });
+
+                const L = 8;
+                const W = 118;
+
+                // Price badge
+                g.push({
+                    type: 'group', left: L, top: 8,
+                    children: [
+                        rectStyle(W, 52, 'rgba(9,9,11,0.88)'),
+                        txt(8, 4, price.toFixed(1), '#e4e4e7', 'bold 13px "JetBrains Mono"'),
+                        txt(8, 22, `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`, change >= 0 ? UP_COLOR : DOWN_COLOR, 'bold 10px "JetBrains Mono"'),
+                        txt(8, 36, `ATR ${((botSettings?.currentATR || 0) * 100).toFixed(2)}%`, TEXT_DIM, '9px "JetBrains Mono"'),
+                    ],
+                });
+
+                // Bot bias
+                const biasColor = isBuySignal ? UP_COLOR : isSellSignal ? DOWN_COLOR : '#f59e0b';
+                g.push({
+                    type: 'group', left: L, top: 64,
+                    children: [
+                        rectStyle(W, 64, 'rgba(9,9,11,0.88)'),
+                        txt(8, 4, regime || 'REGIME', '#e4e4e7', 'bold 10px "JetBrains Mono"'),
+                        txt(8, 20, `Z ${z >= 0 ? '+' : ''}${z.toFixed(2)}  B ${b.toFixed(0)}%`, Math.abs(z) > 1.5 ? DOWN_COLOR : Math.abs(z) > 1.0 ? '#f59e0b' : UP_COLOR, 'bold 9px "JetBrains Mono"'),
+                        txt(8, 36, signal, biasColor, 'bold 9px "JetBrains Mono"'),
+                        txt(8, 50, `PnL ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? UP_COLOR : DOWN_COLOR, '9px "JetBrains Mono"'),
+                    ],
+                });
+
+                // OI panel — right side
+                const oiD = botSettings?.oiDelta5mPct ?? 0;
+                const oiZ = botSettings?.oiZScore ?? 0;
+                const oiRegime = (botSettings?.priceOIRegime || '').replace(/_/g, ' ');
+                const R = 8;
+                const RW = 110;
+                g.push({
+                    type: 'group', right: R, top: 8,
+                    children: [
+                        rectStyle(RW, 44, 'rgba(9,9,11,0.88)'),
+                        txt(8, 5, 'OI FLOW', TEXT_DIM, 'bold 8px "JetBrains Mono"'),
+                        txt(8, 18, `Z ${oiZ >= 0 ? '+' : ''}${oiZ.toFixed(1)}  Δ${oiD >= 0 ? '+' : ''}${oiD.toFixed(1)}%`, Math.abs(oiD) > 1 ? '#f59e0b' : TEXT_DIM, '9px "JetBrains Mono"'),
+                        txt(8, 31, oiRegime || '—', (oiRegime || '').includes('LONG_BUILD') ? UP_COLOR : (oiRegime || '').includes('SHORT_BUILD') ? DOWN_COLOR : TEXT_DIM, '8px "JetBrains Mono"'),
+                    ],
+                });
+
+                // Risk badge
+                const oiRisk = (botSettings?.oiRiskLabel || '').replace(/_/g, ' ');
+                if (oiRisk && oiRisk !== 'UNKNOWN') {
+                    const riskBg = oiRisk === 'EXTREME_RISK' ? 'rgba(244,63,94,0.2)' : oiRisk === 'ELEVATED_RISK' ? 'rgba(245,158,11,0.2)' : 'rgba(59,130,246,0.15)';
+                    g.push({
+                        type: 'group', right: R, top: 56,
+                        children: [
+                            { type: 'rect' as const, shape: { x: 0, y: 0, width: RW, height: 22 }, style: { fill: riskBg, stroke: oiRisk === 'EXTREME_RISK' ? 'rgba(244,63,94,0.4)' : 'rgba(245,158,11,0.25)', lineWidth: 1 } },
+                            txt(8, 5, `⚡ ${oiRisk}`, oiRisk === 'EXTREME_RISK' ? DOWN_COLOR : '#f59e0b', 'bold 9px "JetBrains Mono"'),
+                        ],
+                    });
+                }
+
+                // Gate stats
+                const gateStats = botSettings?.gateStats ?? {};
+                const gateEntries = Object.entries(gateStats)
+                    .filter(([, v]) => v > 0)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 5);
+                if (gateEntries.length > 0) {
+                    const totalRejections = gateEntries.reduce((s, [, v]) => s + v, 0);
+                    const gateTop = (oiRisk && oiRisk !== 'UNKNOWN') ? 82 : 56;
+                    const gateCh: any[] = [
+                        { type: 'rect' as const, shape: { x: 0, y: 0, width: RW, height: 14 + gateEntries.length * 13 }, style: { fill: 'rgba(9,9,11,0.88)', stroke: 'rgba(255,255,255,0.08)', lineWidth: 1 } },
+                        txt(8, 4, `GATES · ${totalRejections}`, '#484f58', 'bold 7px "JetBrains Mono"'),
+                    ];
+                    gateEntries.forEach(([name, count], i) => {
+                        gateCh.push(txt(8, 14 + i * 13, `${name.replace(/_/g, ' ')}  ${count}`, '#8b949e', '7px "JetBrains Mono"'));
+                    });
+                    g.push({ type: 'group', right: R, top: gateTop, children: gateCh });
+                }
+
+                return g;
+            })(),
+            xAxis: [
+                {
+                    type: 'time',
+                    gridIndex: 0,
+                    axisLine: { lineStyle: { color: BORDER_COLOR } },
+                    axisTick: { show: false },
+                    axisLabel: { color: TEXT_MUTED, fontSize: 9, fontFamily: 'JetBrains Mono' },
+                    splitLine: { show: false },
+                },
+                {
+                    type: 'time',
+                    gridIndex: 1,
+                    show: false,
+                },
+            ],
+            yAxis: [
+                {
+                    type: 'value',
+                    gridIndex: 0,
+                    position: 'right',
+                    axisLine: { show: false },
+                    axisTick: { show: false },
+                    axisLabel: { color: TEXT_MUTED, fontSize: 9, fontFamily: 'JetBrains Mono' },
+                    splitLine: { lineStyle: { color: GRID_COLOR } },
+                    scale: true,
+                },
+                {
+                    type: 'value',
+                    gridIndex: 1,
+                    axisLine: { show: false },
+                    axisTick: { show: false },
+                    axisLabel: { color: TEXT_MUTED, fontSize: 8, fontFamily: 'JetBrains Mono', formatter: (v: number) => v > 1000 ? (v / 1000).toFixed(0) + 'K' : v },
+                    splitLine: { show: false },
+                },
+                {
+                    type: 'value',
+                    gridIndex: 0,
+                    show: false,
+                    min: 0,
+                    max: 100,
+                },
+            ],
+            series,
         };
 
-    }, [chart]);
+        // Only full replace if data array changed significantly, else merge
+        const isFullReplace = data.length !== prevDataLenRef.current;
+        prevDataLenRef.current = data.length;
+        chart.setOption(option, { notMerge: !isFullReplace });
 
-    // Reset tracking on symbol/interval change to force full redraw
-    useEffect(() => {
-        lastCandleCountRef.current = 0;
-        lastCandleTimeRef.current = null;
-    }, [interval, currentPeriod]); // Trigger refresh on period change too
-
-    // Optimized Data Update (Incremental)
-    useEffect(() => {
-        if (!chart || !candlestickSeriesRef.current || data.length === 0) return;
-
-        const rafId = requestAnimationFrame(() => {
-            if (!chart || !candlestickSeriesRef.current || !volumeSeriesRef.current) return;
-
-            try {
-                const currentCount = data.length;
-                const lastCandle = data[data.length - 1];
-
-                // Ensure data is sorted by time and valid (needed for initial load)
-                const mapCandle = (d: CandleData) => ({
-                    time: d.time as Time,
-                    open: d.open,
-                    high: d.high,
-                    low: d.low,
-                    close: d.close
-                });
-
-                const mapVolume = (d: CandleData) => ({
-                    time: d.time as Time,
-                    value: isValid(d.volume) ? d.volume : 0,
-                    color: d.close > d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'
-                });
-
-                // CASE 1: Reset / First Load / Backtest Jump
-                if (lastCandleCountRef.current === 0 || currentCount < lastCandleCountRef.current || !lastCandleTimeRef.current) {
-                    performance.mark('chart-full-update-start');
-
-                    const validData = [...data].sort((a, b) => {
-                        if (typeof a.time === 'number' && typeof b.time === 'number') return a.time - b.time;
-                        return String(a.time).localeCompare(String(b.time));
+        // Tooltip listener
+        const onMouseOver = (params: any) => {
+            if (params.componentType === 'series' && params.seriesName === 'Price') {
+                const vals = params.data ?? params.value ?? [];
+                if (vals && vals.length >= 5) {
+                    setHoveredData({
+                        time: vals[0] / 1000,
+                        open: vals[1],
+                        close: vals[2],
+                        low: vals[3],
+                        high: vals[4],
                     });
-
-                    const candles = validData.map(mapCandle);
-                    const volumes = validData.map(mapVolume);
-
-                    // Full Bands & ADX update
-                    // Logic: Recalculate bands if period changed? For now, assume backend provides bands for default period
-                    // or frontend logic inside Store handles recalculation based on period selector
-                    // Here we just map what's in data.
-                    const adxData = validData.map(d => ({ time: d.time as Time, value: isValid(d.adx) ? (d.adx || 0) : 0 }));
-                    const u1Data = validData.filter(d => isValid(d.zScoreUpper1)).map(d => ({ time: d.time as Time, value: d.zScoreUpper1 }));
-                    const l1Data = validData.filter(d => isValid(d.zScoreLower1)).map(d => ({ time: d.time as Time, value: d.zScoreLower1 }));
-
-                    candlestickSeriesRef.current.setData(candles);
-                    volumeSeriesRef.current.setData(volumes);
-                    adxSeriesRef.current?.setData(adxData);
-                    upper1SeriesRef.current?.setData(u1Data);
-                    lower1SeriesRef.current?.setData(l1Data);
-                    upper2SeriesRef.current?.setData(validData.filter(d => isValid(d.zScoreUpper2)).map(d => ({ time: d.time as Time, value: d.zScoreUpper2 })));
-                    lower2SeriesRef.current?.setData(validData.filter(d => isValid(d.zScoreLower2)).map(d => ({ time: d.time as Time, value: d.zScoreLower2 })));
-
-                    if (validData.length > 0) {
-                        const lastAdx = validData[validData.length - 1].adx;
-                        setCurrentAdx(isValid(lastAdx) ? (lastAdx || 0) : 0);
-                    }
-
-                    performance.mark('chart-full-update-end');
-                    performance.measure('chart-full-update', 'chart-full-update-start', 'chart-full-update-end');
-
-                    lastCandleCountRef.current = currentCount;
-                    lastCandleTimeRef.current = lastCandle.time as Time;
-                    return;
                 }
-
-                // CASE 2: New Candle Added
-                if (lastCandle.time !== lastCandleTimeRef.current) {
-                    performance.mark('chart-new-candle-start');
-                    candlestickSeriesRef.current.update(mapCandle(lastCandle));
-                    volumeSeriesRef.current.update(mapVolume(lastCandle));
-                    // Update bands/indicators incrementally
-                    if (adxSeriesRef.current) adxSeriesRef.current.update({ time: lastCandle.time as Time, value: lastCandle.adx || 0 });
-                    if (upper1SeriesRef.current) upper1SeriesRef.current.update({ time: lastCandle.time as Time, value: lastCandle.zScoreUpper1 });
-                    if (lower1SeriesRef.current) lower1SeriesRef.current.update({ time: lastCandle.time as Time, value: lastCandle.zScoreLower1 });
-                    // ... Update others similarly if needed, or keep lightweight
-
-                    performance.mark('chart-new-candle-end');
-                    performance.measure('chart-new-candle', 'chart-new-candle-start', 'chart-new-candle-end');
-
-                    lastCandleTimeRef.current = lastCandle.time as Time;
-                    lastCandleCountRef.current = currentCount;
-                }
-                // CASE 3: Existing Candle Updated (Tick)
-                else {
-                    candlestickSeriesRef.current.update(mapCandle(lastCandle));
-                    volumeSeriesRef.current.update(mapVolume(lastCandle));
-                    lastCandleCountRef.current = currentCount;
-                }
-
-            } catch (err) {
-                console.warn("Chart Data Update Error:", err);
             }
-        });
+        };
+        const onMouseOut = () => setHoveredData(null);
 
-        return () => cancelAnimationFrame(rafId);
+        chart.on('mouseover', onMouseOver);
+        chart.on('mouseout', onMouseOut);
+        chart.on('globalout', onMouseOut);
 
-    }, [data, chart]); // Keep chart as dependency, but manage updates incrementally
+        return () => {
+            chart.off('mouseover', onMouseOver);
+            chart.off('mouseout', onMouseOut);
+            chart.off('globalout', onMouseOut);
+        };
+    }, [chart, data, showZScore, showSignals, showLevels, signals, levels, liquidity, botTrades, interval]);
 
-    useEffect(() => {
-        if (!upper1SeriesRef.current || !chart) return;
-        const visibility = !!showZScore;
-        try {
-            upper1SeriesRef.current?.applyOptions({ visible: visibility });
-            lower1SeriesRef.current?.applyOptions({ visible: visibility });
-            upper2SeriesRef.current?.applyOptions({ visible: visibility });
-            lower2SeriesRef.current?.applyOptions({ visible: visibility });
-        } catch (e) {
-            console.warn("Band visibility error", e);
-        }
-    }, [showZScore, chart]);
+    // Adapt hovered volume from original data for tooltip display
+    const hoveredWithVolume = useMemo(() => {
+        if (!hoveredData) return null;
+        const match = data.find(c => c.time === hoveredData.time);
+        return { ...hoveredData, volume: match?.volume ?? 0, adx: match?.adx ?? 0 };
+    }, [hoveredData, data]);
 
-    useEffect(() => {
-        if (!candlestickSeriesRef.current || !showLevels || !chart) return;
+    const clearHover = useCallback(() => setHoveredData(null), []);
 
-        try {
-            // Clear existing price lines
-            priceLinesRef.current.forEach(line => {
-                try {
-                    candlestickSeriesRef.current?.removePriceLine(line);
-                } catch (e) { }
-            });
-            priceLinesRef.current = [];
-
-            // Render levels (includes AI levels from store)
-            levels.forEach(l => {
-                if (!isValid(l.price)) return;
-
-                let color = '#71717a';
-                let lineStyle = LineStyle.Dashed;
-                let lineWidth: 1 | 2 | 3 | 4 = 1;
-
-                // Apply visual archetypes based on Level Type
-                if (l.type === 'ENTRY') {
-                    color = '#3b82f6'; // Blue
-                    lineWidth = 2;
-                    lineStyle = LineStyle.Solid;
-                }
-                else if (l.type === 'STOP_LOSS') {
-                    color = '#f43f5e'; // Rose
-                    lineWidth = 2;
-                    lineStyle = LineStyle.Solid;
-                }
-                else if (l.type === 'TAKE_PROFIT') {
-                    color = '#10b981'; // Emerald
-                    lineWidth = 2;
-                    lineStyle = LineStyle.Solid;
-                }
-                else if (l.type === 'SUPPORT') {
-                    color = '#10b981'; // Emerald (Support)
-                    lineStyle = LineStyle.Dashed;
-                }
-                else if (l.type === 'RESISTANCE') {
-                    color = '#f43f5e'; // Rose (Resistance)
-                    lineStyle = LineStyle.Dashed;
-                }
-                else if (l.type === 'TACTICAL_ENTRY') {
-                    color = '#f59e0b'; // Amber
-                    lineWidth = 2;
-                    lineStyle = LineStyle.Dotted;
-                }
-                else if (l.type === 'TACTICAL_STOP') {
-                    color = '#f43f5e'; // Rose
-                    lineWidth = 1;
-                    lineStyle = LineStyle.Dotted;
-                }
-                else if (l.type === 'TACTICAL_TARGET') {
-                    color = '#10b981'; // Emerald
-                    lineWidth = 1;
-                    lineStyle = LineStyle.Dotted;
-                }
-
-                try {
-                    const line = candlestickSeriesRef.current?.createPriceLine({
-                        price: l.price,
-                        color: color,
-                        lineWidth: lineWidth,
-                        lineStyle: lineStyle,
-                        axisLabelVisible: true,
-                        title: l.label,
-                    });
-                    if (line) priceLinesRef.current.push(line);
-                } catch (e) {
-                    console.warn("Failed to create price line", e);
-                }
-            });
-        } catch (e) {
-            console.warn("Price lines error", e);
-        }
-
-    }, [levels, showLevels, chart]);
-
-    // ── Dark Print POC Lines (Institutional Key Levels) ──────────────────────
-    const darkPoolStore = useStore((s: any) => s.darkPool);
-    const darkPrintLinesRef = useRef<IPriceLine[]>([]);
-    useEffect(() => {
-        if (!candlestickSeriesRef.current || !chart || !darkPoolStore) return;
-
-        // Clear old dark print lines
-        darkPrintLinesRef.current.forEach(l => {
-            try { candlestickSeriesRef.current?.removePriceLine(l); } catch (e) { }
-        });
-        darkPrintLinesRef.current = [];
-
-        // Only draw significant block trades (the filtered "dark prints")
-        const prints = (darkPoolStore.blockTrades || []).filter((p: any) => p.isSignificant);
-        prints.slice(0, 5).forEach((p: any) => {
-            try {
-                const color = p.side === 'BUY' ? 'rgba(16, 185, 129, 0.7)' : 'rgba(244, 63, 94, 0.7)';
-                const line = candlestickSeriesRef.current?.createPriceLine({
-                    price: p.price,
-                    color,
-                    lineWidth: 1,
-                    lineStyle: LineStyle.Dotted,
-                    axisLabelVisible: true,
-                    title: `⚡ Inst POC ${p.side} (${(p.priceImpactPct * 100).toFixed(3)}%)`,
-                });
-                if (line) darkPrintLinesRef.current.push(line);
-            } catch (e) { }
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [darkPoolStore?.blockTrades, chart]);
-
-
-
-    // --- Liquidity Integration: Sweeps & Lines ---
-    useEffect(() => {
-        if (!candlestickSeriesRef.current || !chart) return;
-        const series = candlestickSeriesRef.current as any;
-
-        try {
-            // 1. Clear old Liquidity Lines (BOS/FVG)
-            liquidityLinesRef.current.forEach(line => {
-                try {
-                    candlestickSeriesRef.current?.removePriceLine(line);
-                } catch (e) { }
-            });
-            liquidityLinesRef.current = [];
-
-            // 2. Render Markers (Signals + Sweeps)
-            let markers: any[] = [];
-
-            // Add standard signals
-            if (showSignals) {
-                markers = markers.concat(signals
-                    .filter(s => s.time && isValid(s.price))
-                    .map(s => ({
-                        time: s.time as Time,
-                        position: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'aboveBar' : 'belowBar',
-                        color: s.type.includes('ENTRY') ? '#3b82f6' : '#f59e0b',
-                        shape: (s.type.includes('SHORT') || s.type.includes('EXIT')) ? 'arrowDown' : 'arrowUp',
-                        text: s.label,
-                    }))
-                );
-            }
-
-            // Add Sweep Markers
-            if (liquidity && liquidity.sweeps.length > 0) {
-                markers = markers.concat(liquidity.sweeps.map(s => ({
-                    time: s.candleTime as Time,
-                    position: s.side === 'BUY' ? 'aboveBar' : 'belowBar',
-                    color: s.side === 'BUY' ? '#e11d48' : '#059669',
-                    shape: s.side === 'BUY' ? 'arrowDown' : 'arrowUp',
-                    text: 'SWEEP',
-                    size: 2
-                })));
-            }
-
-            // Add Bot Trade Markers (win/loss entries + reasoning)
-            if (botTrades && botTrades.length > 0) {
-                const tradeMarkers = botTrades
-                    .filter(t => t.entry_price > 0 && t.ts_ms > 0)
-                    .map(t => {
-                        const isWin = t.result === 'WIN';
-                        const isOpen = !t.result;
-                        const entryTime = (t.ts_ms / 1000) as Time;
-                        const verdictShort = (t.verdict || '').substring(0, 12);
-                        return {
-                            time: entryTime,
-                            position: t.side === 'buy' ? 'belowBar' : 'aboveBar',
-                            color: isOpen ? '#f59e0b' : isWin ? '#22c55e' : '#ef4444',
-                            shape: t.side === 'buy' ? 'arrowUp' : 'arrowDown',
-                            text: `${isOpen ? '▶' : isWin ? '✓' : '✗'} ${verdictShort}`,
-                            size: isOpen ? 2 : 3,
-                        };
-                    });
-                markers = markers.concat(tradeMarkers);
-            }
-
-            if (typeof series.setMarkers === 'function') {
-                series.setMarkers(markers.sort((a: any, b: any) => (a.time as number) - (b.time as number)));
-            }
-
-            // 3. Render Liquidity Lines (BOS)
-            // LIMIT: Only show last 2 BOS events to keep chart clean
-            if (liquidity && liquidity.bos.length > 0) {
-                liquidity.bos.slice(0, 2).forEach(b => {
-                    const line = candlestickSeriesRef.current?.createPriceLine({
-                        price: b.price,
-                        color: b.direction === 'BULLISH' ? 'rgba(16, 185, 129, 0.5)' : 'rgba(244, 63, 94, 0.5)',
-                        lineWidth: 1,
-                        lineStyle: LineStyle.Solid,
-                        axisLabelVisible: false,
-                        title: 'BOS',
-                    });
-                    if (line) liquidityLinesRef.current.push(line);
-                });
-
-                // Optional: Render FVG bounds as dashed lines (Last 2 only)
-                liquidity.fvg.slice(0, 2).forEach(f => {
-                    const startLine = candlestickSeriesRef.current?.createPriceLine({
-                        price: f.startPrice,
-                        color: 'rgba(245, 158, 11, 0.4)', // Amber low opacity
-                        lineWidth: 1,
-                        lineStyle: LineStyle.Dotted,
-                        axisLabelVisible: false,
-                        title: '', // Minimal title
-                    });
-                    const endLine = candlestickSeriesRef.current?.createPriceLine({
-                        price: f.endPrice,
-                        color: 'rgba(245, 158, 11, 0.4)',
-                        lineWidth: 1,
-                        lineStyle: LineStyle.Dotted,
-                        axisLabelVisible: false,
-                        title: 'FVG',
-                    });
-                    if (startLine) liquidityLinesRef.current.push(startLine);
-                    if (endLine) liquidityLinesRef.current.push(endLine);
-                });
-            }
-
-        } catch (e) {
-            console.warn("Liquidity markers error", e);
-        }
-    }, [signals, showSignals, chart, liquidity]);
-
-    // Determine Regime Color for Indicator
-    let regimeColor = "text-zinc-500";
-    let regimeLabel = "UNCERTAIN";
-    if (regime) {
-        if (regime.regimeType === 'TRENDING') {
-            if (regime.trendDirection === 'BULL') {
-                regimeColor = "text-emerald-500";
-                regimeLabel = "BULL TREND";
-            } else {
-                regimeColor = "text-rose-500";
-                regimeLabel = "BEAR TREND";
-            }
-        } else if (regime.regimeType === 'EXPANDING') {
-            regimeColor = "text-blue-500";
-            regimeLabel = "EXPANSION";
-        } else if (regime.regimeType === 'COMPRESSING') {
-            regimeColor = "text-zinc-300";
-            regimeLabel = "SQUEEZE";
-        } else if (regime.regimeType === 'RANGING') {
-            regimeColor = "text-amber-500";
-            regimeLabel = "RANGE";
-        }
-    }
+    // Verdict panel accent
+    const isEntry = aiScanResult?.verdict?.toUpperCase?.() === 'BUY' || aiScanResult?.verdict?.toUpperCase?.() === 'LONG';
+    const isExit = aiScanResult?.verdict?.toUpperCase?.() === 'SELL' || aiScanResult?.verdict?.toUpperCase?.() === 'SHORT';
+    const accentColor = isEntry ? 'text-emerald-400 border-emerald-500/30' : isExit ? 'text-rose-400 border-rose-500/30' : 'text-amber-400 border-amber-500/30';
+    const accentBg = isEntry ? 'bg-emerald-500/10' : isExit ? 'bg-rose-500/10' : 'bg-amber-500/10';
+    const dotColor = isEntry ? 'bg-emerald-500' : isExit ? 'bg-rose-500' : 'bg-amber-500';
+    const glow = isEntry ? 'shadow-[0_0_20px_rgba(16,185,129,0.15)]' : isExit ? 'shadow-[0_0_20px_rgba(244,63,94,0.15)]' : 'shadow-[0_0_20px_rgba(245,158,11,0.15)]';
 
     return (
         <div className="w-full h-full flex flex-col relative rounded-xl overflow-hidden bg-[#18181b]/50 select-none group">
-
-            {/* Header Bar - Scrollable on Mobile */}
             <div className="h-10 lg:h-12 flex items-center gap-2 px-2 border-b border-white/5 bg-white/[0.02] backdrop-blur-md z-20 shrink-0 w-full">
                 <div className="flex-1 overflow-x-auto scrollbar-hide flex items-center gap-2 pr-4 min-w-0">
-                    {/* Left Group */}
                     <div className="flex items-center gap-2 shrink-0">
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                            <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wide">BTC/USDT</span>
-                        </div>
-
-                        {/* ADX Trend Indicator - Compact on Mobile */}
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 rounded-full border border-white/5 shrink-0">
-                            {currentAdx > 25 ? (
-                                <TrendingUp size={10} className={currentAdx > 50 ? "text-rose-500" : "text-emerald-500"} />
-                            ) : (
-                                <Minus size={10} className="text-zinc-500" />
-                            )}
-                            <span className={`text-[9px] font-bold uppercase hidden sm:inline ${currentAdx > 50 ? "text-rose-500" :
-                                currentAdx > 25 ? "text-emerald-500" :
-                                    "text-zinc-500"
-                                }`}>
-                                {currentAdx > 50 ? "TREND" : "RNG"}
+                            <span className="text-xs font-bold text-white whitespace-nowrap">
+                                QUANT-DESK
                             </span>
                         </div>
-
-                        {/* Regime Indicator */}
-                        {regime && (
-                            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-black/40 rounded-full border border-white/5 shrink-0 hidden sm:flex">
-                                <Activity size={10} className={regimeColor} />
-                                <span className={`text-[9px] font-bold uppercase ${regimeColor}`}>
-                                    {regimeLabel}
-                                </span>
-                            </div>
-                        )}
-
-                        {/* Timeframe Selector */}
-                        {onIntervalChange && (
-                            <div className="flex items-center gap-0.5 bg-black/20 p-0.5 rounded-lg border border-white/5 shrink-0">
-                                {['1m', '5m', '15m', '1h', '4h'].map(tf => (
-                                    <button
-                                        key={tf}
-                                        onClick={() => onIntervalChange(tf)}
-                                        className={`
-                                        px-1.5 py-0.5 text-[9px] font-bold rounded-md transition-all uppercase
-                                        ${interval === tf ? 'bg-brand-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
-                                    `}
-                                    >
-                                        {tf}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
                     </div>
-
-                    {/* Middle Group - Controls */}
-                    <div className="flex items-center gap-2 shrink-0">
-                        {children}
+                    <div className="flex items-center gap-1.5 bg-zinc-900/50 p-0.5 rounded-full border border-white/5">
+                        {['1m', '5m', '15m', '1h', '4h', '1d'].map(tf => (
+                            <button
+                                key={tf}
+                                onClick={() => onIntervalChange?.(tf)}
+                                className={`
+                                    px-2.5 py-1 rounded-full text-[9px] font-bold transition-all whitespace-nowrap
+                                    ${interval === tf ? 'bg-brand-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                                `}
+                            >
+                                {tf}
+                            </button>
+                        ))}
                     </div>
+                    {children}
                 </div>
 
-                {/* Right Group - Sticky Actions */}
-                <div className="flex items-center gap-1.5 shrink-0 ml-auto bg-[#18181b] backdrop-blur-md pl-2 shadow-[-10px_0_10px_rgba(0,0,0,0.5)] md:shadow-none md:bg-transparent md:backdrop-blur-none border-l md:border-l-0 border-white/5 md:border-transparent">
-                    {/* AI Scan Button */}
+                <div className="flex items-center gap-1.5 shrink-0">
                     {onScan && (
                         <button
                             onClick={onScan}
                             disabled={isScanning}
                             className={`
-                            flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide transition-all border
-                            ${isScanning
+                                flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide transition-all border
+                                ${isScanning
                                     ? 'bg-purple-500/20 text-purple-400 border-purple-500/30 cursor-wait'
                                     : 'bg-brand-accent/10 text-brand-accent border-brand-accent/20 hover:bg-brand-accent hover:text-white'}
-                        `}
+                            `}
                         >
-                            {isScanning ? (
-                                <Loader2 size={10} className="animate-spin" />
-                            ) : (
-                                <Rocket size={10} />
-                            )}
+                            {isScanning ? <Loader2 size={10} className="animate-spin" /> : <Rocket size={10} />}
                             <span className="hidden sm:inline">{isScanning ? 'SCAN' : 'AI'}</span>
                         </button>
                     )}
-
                     {onToggleSidePanel && (
                         <button
                             onClick={onToggleSidePanel}
-                            className={`
-                            flex p-1.5 rounded-lg transition-colors border
-                            ${isSidePanelOpen
-                                    ? 'bg-purple-500/10 text-purple-400 border-purple-500/20 shadow-[0_0_10px_rgba(168,85,247,0.1)]'
-                                    : 'text-zinc-500 border-transparent hover:bg-white/5 hover:text-zinc-300'}
-                        `}
-                            title="Toggle Volume Profile"
+                            className={`p-1.5 rounded-full text-[9px] font-bold transition-all border ${isSidePanelOpen ? 'bg-brand-accent/20 text-brand-accent border-brand-accent/30' : 'text-zinc-500 hover:text-zinc-300 border-transparent hover:bg-white/5'}`}
                         >
-                            <PanelRight size={16} />
+                            <PanelRight size={14} />
                         </button>
                     )}
                 </div>
             </div>
 
-            {/* Chart Container */}
-            <div className="flex-1 w-full min-h-0 relative">
+            <div className="flex-1 w-full min-h-0 relative" onClick={clearHover}>
                 <div ref={chartContainerRef} className="w-full h-full" />
+                {chart && data.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-[#0d1117]/60 z-30">
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="w-5 h-5 border-2 border-brand-accent border-t-transparent rounded-full animate-spin" />
+                            <span className="text-[11px] font-mono text-zinc-400">Loading {interval}...</span>
+                        </div>
+                    </div>
+                )}
 
-                {/* Floating Tooltip - Responsive Position */}
-                {hoveredData && (
+                {/* Tooltip */}
+                {hoveredWithVolume && (
                     <div className="absolute top-2 left-2 z-50 pointer-events-none bg-[#09090b]/90 backdrop-blur-md border border-white/10 p-2 rounded-lg shadow-xl max-w-[140px] sm:max-w-none">
                         <div className="flex items-center gap-2 mb-1 border-b border-white/5 pb-1">
                             <Clock size={10} className="text-zinc-500" />
                             <span className="text-[10px] font-mono text-zinc-400">
-                                {hoveredData.time && typeof hoveredData.time === 'number'
-                                    ? new Date(hoveredData.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                {hoveredWithVolume.time && typeof hoveredWithVolume.time === 'number'
+                                    ? new Date(hoveredWithVolume.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                                     : '-'}
                             </span>
                         </div>
                         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono">
                             <span className="text-zinc-600">O</span>
-                            <span className={hoveredData.close >= hoveredData.open ? "text-emerald-400" : "text-rose-400"}>
-                                {isValid(hoveredData.open) ? hoveredData.open.toFixed(1) : '-'}
+                            <span className={hoveredWithVolume.close >= hoveredWithVolume.open ? "text-emerald-400" : "text-rose-400"}>
+                                {isValid(hoveredWithVolume.open) ? hoveredWithVolume.open.toFixed(1) : '-'}
                             </span>
                             <span className="text-zinc-600">H</span>
-                            <span className="text-zinc-400">{isValid(hoveredData.high) ? hoveredData.high.toFixed(1) : '-'}</span>
+                            <span className="text-zinc-400">{isValid(hoveredWithVolume.high) ? hoveredWithVolume.high.toFixed(1) : '-'}</span>
                             <span className="text-zinc-600">L</span>
-                            <span className="text-zinc-400">{isValid(hoveredData.low) ? hoveredData.low.toFixed(1) : '-'}</span>
+                            <span className="text-zinc-400">{isValid(hoveredWithVolume.low) ? hoveredWithVolume.low.toFixed(1) : '-'}</span>
                             <span className="text-zinc-600">C</span>
-                            <span className={hoveredData.close >= hoveredData.open ? "text-emerald-400" : "text-rose-400"}>
-                                {isValid(hoveredData.close) ? hoveredData.close.toFixed(1) : '-'}
+                            <span className={hoveredWithVolume.close >= hoveredWithVolume.open ? "text-emerald-400" : "text-rose-400"}>
+                                {isValid(hoveredWithVolume.close) ? hoveredWithVolume.close.toFixed(1) : '-'}
                             </span>
                             <span className="text-zinc-600">V</span>
-                            <span className="text-zinc-400">{hoveredData.volume ? (hoveredData.volume / 1000).toFixed(1) + 'K' : '-'}</span>
+                            <span className="text-zinc-400">{hoveredWithVolume.volume ? (hoveredWithVolume.volume / 1000).toFixed(1) + 'K' : '-'}</span>
                         </div>
-                        {/* Show Active Period Context in Tooltip */}
                         <div className="mt-1 pt-1 border-t border-white/5 text-[9px] text-zinc-600 font-mono text-right">
-                            MA: {currentPeriod}
+                            {currentPeriod}
                         </div>
                     </div>
                 )}
 
-                {/* Watermark */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-[0.03]">
-                    <span className="text-7xl lg:text-9xl font-black text-white tracking-tighter">BTC</span>
-                </div>
-
-                {/* === Draggable AI Verdict Overlay === */}
-                {aiScanResult && verdictVisible && (() => {
-                    const v = aiScanResult.verdict?.toUpperCase() ?? '';
-                    const isEntry = v === 'ENTRY' || v === 'LONG';
-                    const isExit = v === 'EXIT' || v === 'SHORT';
-                    const accentColor = isEntry ? 'text-emerald-400 border-emerald-500/30' : isExit ? 'text-rose-400 border-rose-500/30' : 'text-amber-400 border-amber-500/30';
-                    const accentBg = isEntry ? 'bg-emerald-500/10' : isExit ? 'bg-rose-500/10' : 'bg-amber-500/10';
-                    const dotColor = isEntry ? 'bg-emerald-500' : isExit ? 'bg-rose-500' : 'bg-amber-500';
-                    const glow = isEntry ? 'shadow-[0_0_20px_rgba(16,185,129,0.15)]' : isExit ? 'shadow-[0_0_20px_rgba(244,63,94,0.15)]' : 'shadow-[0_0_20px_rgba(245,158,11,0.15)]';
-                    return (
-                        <div
-                            ref={verdictPanelRef}
-                            style={{ left: verdictPos.x, top: verdictPos.y, width: verdictExpanded ? 340 : 260, zIndex: 60 }}
-                            className={`absolute select-none rounded-xl border border-white/10 bg-[#0a0a0f]/95 backdrop-blur-xl ${glow} flex flex-col overflow-hidden`}
-                        >
-                            {/* Drag Handle / Header */}
+                {/* AI Verdict Popup */}
+                {verdictVisible && aiScanResult && (
+                    (() => {
+                        return (
                             <div
-                                onPointerDown={startDrag}
-                                onPointerMove={onDrag}
-                                onPointerUp={stopDrag}
-                                style={{ touchAction: 'none', cursor: 'grab' }}
-                                className="flex items-center gap-2 px-2 py-1.5 bg-white/[0.04] border-b border-white/5 shrink-0"
+                                ref={verdictPanelRef}
+                                style={{ left: verdictPos.x, top: verdictPos.y, width: verdictExpanded ? 340 : 260, zIndex: 60 }}
+                                className={`absolute select-none rounded-xl border border-white/10 bg-[#0a0a0f]/95 backdrop-blur-xl ${glow} flex flex-col overflow-hidden`}
                             >
-                                <GripVertical size={12} className="text-zinc-600 shrink-0" />
-                                <div className={`w-1.5 h-1.5 rounded-full ${dotColor} animate-pulse shrink-0`} />
-                                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400 flex-1 truncate">AI VERDICT</span>
-                                <button onClick={() => setVerdictExpanded(p => !p)} className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 transition-colors">
-                                    {verdictExpanded ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-                                </button>
-                                <button onClick={() => setVerdictCollapsed(p => !p)} className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 transition-colors">
-                                    {verdictCollapsed ? <ChevronDown size={11} /> : <ChevronUp size={11} />}
-                                </button>
-                                <button onClick={() => setVerdictVisible(false)} className="p-0.5 rounded text-zinc-500 hover:text-rose-400 transition-colors">
-                                    <X size={11} />
-                                </button>
-                            </div>
-
-                            {/* Body */}
-                            {!verdictCollapsed && (
-                                <div className="overflow-y-auto p-3 space-y-2" style={{ maxHeight: verdictExpanded ? 480 : 220 }}>
-                                    {/* Verdict badge + confidence */}
-                                    <div className="flex items-center gap-2">
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${accentColor} ${accentBg}`}>
-                                            {aiScanResult.verdict}
-                                        </span>
-                                        {aiScanResult.confidence != null && (
-                                            <span className="text-[10px] font-mono text-zinc-400 ml-auto">
-                                                {(aiScanResult.confidence * 100).toFixed(0)}% conf
+                                <div
+                                    onPointerDown={startDrag}
+                                    onPointerMove={onDrag}
+                                    onPointerUp={stopDrag}
+                                    style={{ touchAction: 'none', cursor: 'grab' }}
+                                    className="flex items-center gap-2 px-2 py-1.5 bg-white/[0.04] border-b border-white/5 shrink-0"
+                                >
+                                    <GripVertical size={12} className="text-zinc-600 shrink-0" />
+                                    <div className={`w-1.5 h-1.5 rounded-full ${dotColor} animate-pulse shrink-0`} />
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400 flex-1 truncate">AI VERDICT</span>
+                                    <button onClick={() => setVerdictExpanded(p => !p)} className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 transition-colors">
+                                        {verdictExpanded ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+                                    </button>
+                                    <button onClick={() => setVerdictCollapsed(p => !p)} className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 transition-colors">
+                                        {verdictCollapsed ? <ChevronDown size={11} /> : <ChevronUp size={11} />}
+                                    </button>
+                                    <button onClick={() => setVerdictVisible(false)} className="p-0.5 rounded text-zinc-500 hover:text-rose-400 transition-colors">
+                                        <X size={11} />
+                                    </button>
+                                </div>
+                                {!verdictCollapsed && (
+                                    <div className="overflow-y-auto p-3 space-y-2" style={{ maxHeight: verdictExpanded ? 480 : 220 }}>
+                                        <div className="flex items-center gap-2">
+                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${accentColor} ${accentBg}`}>
+                                                {aiScanResult.verdict}
                                             </span>
-                                        )}
-                                    </div>
-
-                                    {/* Analysis text - scrollable */}
-                                    {aiScanResult.analysis && (
-                                        <p className="text-[10px] text-zinc-300 leading-relaxed italic border-l-2 border-white/10 pl-2">
-                                            {aiScanResult.analysis}
-                                        </p>
-                                    )}
-
-                                    {/* R:R + Levels */}
-                                    {(aiScanResult.risk_reward_ratio || aiScanResult.entry_price || aiScanResult.support) && (
-                                        <div className="space-y-1 pt-1 border-t border-white/5">
-                                            {aiScanResult.risk_reward_ratio && (
-                                                <div className="flex justify-between text-[10px]">
-                                                    <span className="text-zinc-500">R:R Ratio</span>
-                                                    <span className={`font-mono font-bold ${aiScanResult.risk_reward_ratio >= 2 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                        {aiScanResult.risk_reward_ratio.toFixed(2)}
-                                                    </span>
-                                                </div>
-                                            )}
-                                            {aiScanResult.entry_price && (
-                                                <div className="flex justify-between text-[10px]">
-                                                    <span className="text-zinc-500">Entry</span>
-                                                    <span className="font-mono text-zinc-200">{Number(aiScanResult.entry_price).toFixed(1)}</span>
-                                                </div>
-                                            )}
-                                            {aiScanResult.stop_loss && (
-                                                <div className="flex justify-between text-[10px]">
-                                                    <span className="text-zinc-500">Stop</span>
-                                                    <span className="font-mono text-rose-400">{Number(aiScanResult.stop_loss).toFixed(1)}</span>
-                                                </div>
-                                            )}
-                                            {aiScanResult.take_profit && (
-                                                <div className="flex justify-between text-[10px]">
-                                                    <span className="text-zinc-500">Target</span>
-                                                    <span className="font-mono text-emerald-400">{Number(aiScanResult.take_profit).toFixed(1)}</span>
-                                                </div>
-                                            )}
-                                            {aiScanResult.support && (
-                                                <div className="flex justify-between text-[10px]">
-                                                    <span className="text-zinc-500">Support</span>
-                                                    <span className="font-mono text-zinc-400">{Number(aiScanResult.support).toFixed(1)}</span>
-                                                </div>
-                                            )}
-                                            {aiScanResult.resistance && (
-                                                <div className="flex justify-between text-[10px]">
-                                                    <span className="text-zinc-500">Resistance</span>
-                                                    <span className="font-mono text-zinc-400">{Number(aiScanResult.resistance).toFixed(1)}</span>
-                                                </div>
+                                            {aiScanResult.confidence != null && (
+                                                <span className="text-[10px] font-mono text-zinc-400">
+                                                    {typeof aiScanResult.confidence === 'number' ? (aiScanResult.confidence * 100).toFixed(1) + '%' : aiScanResult.confidence}
+                                                </span>
                                             )}
                                         </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })()}
+                                        {aiScanResult.analysis && (
+                                            <p className="text-[10px] text-zinc-300 leading-relaxed italic border-l-2 border-white/10 pl-2">
+                                                {aiScanResult.analysis}
+                                            </p>
+                                        )}
+                                        {(aiScanResult.risk_reward_ratio || aiScanResult.entry_price || aiScanResult.support) && (
+                                            <div className="space-y-1 pt-1 border-t border-white/5">
+                                                {aiScanResult.risk_reward_ratio && (
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-zinc-500">R:R Ratio</span>
+                                                        <span className={`font-mono font-bold ${aiScanResult.risk_reward_ratio >= 2 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                            {aiScanResult.risk_reward_ratio.toFixed(2)}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {aiScanResult.entry_price && (
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-zinc-500">Entry</span>
+                                                        <span className="font-mono text-zinc-200">{Number(aiScanResult.entry_price).toFixed(1)}</span>
+                                                    </div>
+                                                )}
+                                                {aiScanResult.stop_loss && (
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-zinc-500">Stop</span>
+                                                        <span className="font-mono text-rose-400">{Number(aiScanResult.stop_loss).toFixed(1)}</span>
+                                                    </div>
+                                                )}
+                                                {aiScanResult.take_profit && (
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-zinc-500">Target</span>
+                                                        <span className="font-mono text-emerald-400">{Number(aiScanResult.take_profit).toFixed(1)}</span>
+                                                    </div>
+                                                )}
+                                                {aiScanResult.support && (
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-zinc-500">Support</span>
+                                                        <span className="font-mono text-zinc-400">{Number(aiScanResult.support).toFixed(1)}</span>
+                                                    </div>
+                                                )}
+                                                {aiScanResult.resistance && (
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-zinc-500">Resistance</span>
+                                                        <span className="font-mono text-zinc-400">{Number(aiScanResult.resistance).toFixed(1)}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()
+                )}
 
-                {/* Bot Reasoning Bar — live bot mind overlay */}
+                {/* Animated bot heartbeat icon */}
                 {botSettings && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-[#0d1117]/95 border-t border-[#21262d] px-3 py-1.5 z-20">
-                        <div className="flex items-center gap-3 text-[10px] font-mono">
-                            <span className={`w-1.5 h-1.5 rounded-full ${botSettings.status === 'ONLINE' ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
-                            <span className="text-[#8b949e]">
-                                Z={botSettings.currentZScore?.toFixed?.(2) ?? '—'}
-                                {' '}R={botSettings.currentRegime || '—'}
-                                {' '}B={(botSettings.currentBayes ? botSettings.currentBayes * 100 : 0).toFixed(0)}%
+                    <div className="absolute bottom-[68px] right-3 z-20 pointer-events-none">
+                        <div className="relative">
+                            <div
+                                className={`absolute -inset-1 rounded-full ${botSettings.status === 'ONLINE' ? 'bg-green-500/30' : 'bg-red-500/20'}`}
+                                style={botSettings.status === 'ONLINE' ? { animation: 'bot-ping 1.5s ease-out infinite' } : {}}
+                            />
+                            <div
+                                className={`absolute -inset-2 rounded-full border ${botSettings.status === 'ONLINE' ? 'border-green-500/30' : 'border-red-500/20'}`}
+                                style={botSettings.status === 'ONLINE' ? { animation: 'bot-ring 2s ease-out infinite' } : {}}
+                            />
+                            <Bot size={18} className={`relative z-10 ${botSettings.status === 'ONLINE' ? 'text-green-400 animate-pulse' : 'text-red-500'}`} />
+                        </div>
+                    </div>
+                )}
+
+                {/* Bot reasoning bar — 2-row decision panel */}
+                {botSettings && (
+                    <div className="absolute bottom-0 left-0 right-0 bg-[#0a0a0f]/97 border-t border-[#21262d] z-20">
+                        <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-mono border-b border-white/5">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${botSettings.status === 'ONLINE' ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
+                            <span className="font-bold text-white">{botSettings.currentRegime || '—'}</span>
+                            <span className={Math.abs(botSettings.currentZScore || 0) > 1.5 ? 'text-red-400' : Math.abs(botSettings.currentZScore || 0) > 1.0 ? 'text-yellow-400' : 'text-green-400'}>
+                                Z {(botSettings.currentZScore || 0) >= 0 ? '+' : ''}{botSettings.currentZScore?.toFixed(2) ?? '0.00'}
                             </span>
-                            <span className="text-[#8b949e]">
-                                OIZ={botSettings.oiZScore?.toFixed?.(1) ?? '—'}
-                                {' '}Δ={(botSettings.oiDelta5mPct ?? 0) >= 0 ? '+' : ''}{(botSettings.oiDelta5mPct ?? 0).toFixed(1)}%
-                                {' '}{(botSettings.oiUsdM ?? 0).toFixed(0)}M
+                            <span className={(botSettings.currentBayes || 0) * 100 > 65 ? 'text-green-400' : (botSettings.currentBayes || 0) * 100 > 50 ? 'text-yellow-400' : 'text-red-400'}>
+                                B {((botSettings.currentBayes ?? 0.5) * 100).toFixed(0)}%
                             </span>
-                            <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${
-                                (botSettings.priceOIRegime || '').includes('LONG_BUILD') ? 'text-green-400' :
-                                (botSettings.priceOIRegime || '').includes('SHORT_BUILD') ? 'text-red-400' :
-                                (botSettings.priceOIRegime || '').includes('COVERING') ? 'text-blue-400' :
-                                (botSettings.priceOIRegime || '').includes('LIQUIDATION') ? 'text-rose-400' :
-                                'text-[#484f58]'
-                            }`}>
-                                {botSettings.priceOIRegime || 'OI—'}
+                            <span className={botSettings.lastSignal === 'WAIT' ? 'text-[#8b949e]' : (botSettings.lastSignal || '').includes('BUY') || (botSettings.lastSignal || '').includes('LONG') ? 'text-green-400' : 'text-red-400'}>
+                                {botSettings.lastSignal || 'WAIT'}
                             </span>
-                            <span className="text-[#58a6ff] truncate flex-1">
+                            {botSettings.lastUlis && botSettings.lastUlis !== '—' && (
+                                <span className={`px-1 rounded text-[9px] font-bold ${
+                                    botSettings.lastUlis === 'AVOID' || botSettings.lastUlis === 'UNWIND' ? 'bg-red-900/60 text-red-400' :
+                                    botSettings.lastUlis === 'CAUTION' ? 'bg-yellow-900/60 text-yellow-400' :
+                                    'bg-green-900/60 text-green-400'
+                                }`}>
+                                    {botSettings.lastUlis}
+                                </span>
+                            )}
+                            <span className="text-[#58a6ff] truncate flex-1 ml-2">
                                 {botSettings.lastAnalysis || '—'}
                             </span>
+                        </div>
+                        <div className="flex items-center gap-2 px-3 py-1 text-[9px] font-mono">
                             <span className="text-[#484f58]">
-                                {botSettings.totalTrades || 0}t | ${(botSettings.globalSessionPnl || 0).toFixed(2)}
+                                OIZ {(botSettings.oiZScore || 0) >= 0 ? '+' : ''}{botSettings.oiZScore?.toFixed(1) ?? '—'}
+                            </span>
+                            <span className={Math.abs(botSettings.oiDelta5mPct || 0) > 1 ? 'text-yellow-400' : 'text-[#484f58]'}>
+                                Δ5 {(botSettings.oiDelta5mPct || 0) >= 0 ? '+' : ''}{botSettings.oiDelta5mPct?.toFixed(2) ?? '—'}%
+                            </span>
+                            <span className="text-[#484f58]">{(botSettings.oiUsdM || 0).toFixed(0)}M</span>
+                            {botSettings.priceOIRegime && (
+                                <span className={`px-1 rounded text-[8px] font-bold ${
+                                    (botSettings.priceOIRegime || '').includes('LONG_BUILD') ? 'bg-green-900/60 text-green-400' :
+                                    (botSettings.priceOIRegime || '').includes('SHORT_BUILD') ? 'bg-red-900/60 text-red-400' :
+                                    (botSettings.priceOIRegime || '').includes('COVERING') ? 'bg-blue-900/60 text-blue-400' :
+                                    (botSettings.priceOIRegime || '').includes('LIQUIDATION') ? 'bg-rose-900/60 text-rose-400' :
+                                    'text-[#484f58]'
+                                }`}>
+                                    {botSettings.priceOIRegime.replace(/_/g, ' ')}
+                                </span>
+                            )}
+                            {botSettings.oiRiskLabel && botSettings.oiRiskLabel !== 'UNKNOWN' && (
+                                <span className={`px-1 rounded text-[8px] font-bold ${
+                                    botSettings.oiRiskLabel === 'EXTREME_RISK' ? 'bg-red-900/60 text-red-400' :
+                                    botSettings.oiRiskLabel === 'ELEVATED_RISK' ? 'bg-yellow-900/60 text-yellow-400' :
+                                    'bg-blue-900/60 text-blue-400'
+                                }`}>
+                                    {botSettings.oiRiskLabel.replace(/_/g, ' ')}
+                                </span>
+                            )}
+                            {botSettings.fundingOISignal && botSettings.fundingOISignal !== 'NEUTRAL' && (
+                                <span className={`px-1 rounded text-[8px] font-bold ${
+                                    (botSettings.fundingOISignal || '').includes('CROWDED') ? 'bg-red-900/60 text-red-400' :
+                                    botSettings.fundingOISignal === 'SQUEEZE_SETUP' ? 'bg-purple-900/60 text-purple-400' :
+                                    'bg-green-900/60 text-green-400'
+                                }`}>
+                                    {botSettings.fundingOISignal.replace(/_/g, ' ')}
+                                </span>
+                            )}
+                            <span className="text-[#484f58] ml-auto">
+                                RSI {botSettings.currentRSI?.toFixed(0) ?? '—'}
+                                {' · '}OFI {botSettings.currentOFI?.toFixed(2) ?? '—'}
+                                {' · '}ATR {((botSettings.currentATR || 0) * 100).toFixed(2)}%
+                                {' · '}{botSettings.totalTrades || 0}t
+                                {' · '}PnL <span className={(botSettings.globalSessionPnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                    ${(botSettings.globalSessionPnl || 0).toFixed(2)}
+                                </span>
                             </span>
                         </div>
                     </div>

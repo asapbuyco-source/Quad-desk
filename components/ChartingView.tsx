@@ -5,8 +5,8 @@ import VolumeProfile from './VolumeProfile';
 import PeriodSelector from './PeriodSelector';
 import { motion as m, AnimatePresence } from 'framer-motion';
 import { useStore } from '../store';
-import { apiFetch } from '../utils/apiClient';
 import { PeriodType } from '../types';
+import { runGroqAnalysis } from '../utils/groq';
 
 const motion = m as any;
 
@@ -18,7 +18,7 @@ interface ChartingViewProps {
 const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentPeriod, onPeriodChange: propOnPeriodChange }) => {
   const { candles, signals, levels: marketLevels, metrics } = useStore(state => state.market);
   const { scanResult, isScanning, cooldownRemaining } = useStore(state => state.ai);
-  const { interval, activeSymbol, aiModel } = useStore(state => state.config);
+  const { interval, activeSymbol } = useStore(state => state.config);
   const { activePosition } = useStore(state => state.trading);
   const { liquidity, regime, aiTactical } = useStore(state => state);
   const botTrades = useStore(state => state.botTrades);
@@ -111,41 +111,49 @@ const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentP
       startAiScan();
       
       try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 60000);
-          
-          const response = await apiFetch(`/analyze?symbol=${activeSymbol}&model=${aiModel}`, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          
-          if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-          }
-
-          const data = await response.json();
-          
-          if (data && !data.error) {
-              completeAiScan(data);
-              addNotification({ 
-                  id: Date.now().toString(), 
-                  type: 'success', 
-                  title: 'Scan Complete', 
-                  message: `Analysis received for ${activeSymbol} using ${aiModel}.` 
-              });
-          } else {
-              throw new Error("Invalid response");
-          }
+          const result = await runGroqAnalysis({
+              symbol: activeSymbol,
+              price: metrics.price,
+              change24h: metrics.change,
+              regime: botSettings.currentRegime || 'UNKNOWN',
+              zScore: botSettings.currentZScore || 0,
+              bayesian: botSettings.currentBayes || 0.5,
+              rsi: botSettings.currentRSI || 50,
+              oiRegime: botSettings.priceOIRegime || 'UNKNOWN',
+              oiDelta: botSettings.oiDelta5mPct || 0,
+              oiRisk: botSettings.oiRiskLabel || 'UNKNOWN',
+              signal: botSettings.lastSignal || 'WAIT',
+              pnl: botSettings.globalSessionPnl || 0,
+              atr: botSettings.currentATR || 0,
+          });
+          completeAiScan({
+              verdict: result.verdict as any,
+              confidence: result.confidence,
+              entry_price: result.entry_price ?? undefined,
+              stop_loss: result.stop_loss ?? undefined,
+              take_profit: result.take_profit ?? undefined,
+              risk_reward_ratio: result.risk_reward_ratio ?? undefined,
+              support: result.support != null ? [result.support] : [],
+              resistance: result.resistance != null ? [result.resistance] : [],
+              analysis: result.analysis,
+              decision_price: result.entry_price ?? 0,
+          });
+          addNotification({ 
+              id: Date.now().toString(), 
+              type: 'success', 
+              title: 'Groq Analysis', 
+              message: result.analysis.substring(0, 80) + '...' 
+          });
       } catch (e: any) {
-          console.error("AI Scan Failed", e);
-          const errorMsg = e.name === 'AbortError' ? 'Request timed out (Backend Sleeping)' : e.message;
-          
+          console.error("Groq Analysis Failed", e);
           addNotification({ 
               id: Date.now().toString(), 
               type: 'error', 
               title: 'Analysis Failed', 
-              message: `${errorMsg}. Please try again later.` 
+              message: e.message?.substring(0, 100) || 'Unknown error'
           });
       }
-  }, [isScanning, cooldownRemaining, activeSymbol, metrics.price, aiModel, startAiScan, completeAiScan, addNotification]);
+  }, [isScanning, cooldownRemaining, activeSymbol, metrics.price, metrics.change, botSettings, startAiScan, completeAiScan, addNotification]);
 
   return (
     <motion.div 

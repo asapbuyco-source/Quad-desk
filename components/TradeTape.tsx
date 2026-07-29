@@ -10,12 +10,13 @@ interface TradeTapeProps {
   trades: RecentTrade[];
 }
 
-const TradeRow: React.FC<{ trade: RecentTrade }> = ({ trade }) => {
+const TradeRow = React.forwardRef<HTMLDivElement, { trade: RecentTrade }>(({ trade }, ref) => {
     const isBuy = trade.side === 'BUY';
     const isWhale = trade.isWhale;
 
     return (
         <motion.div 
+            ref={ref}
             layout
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -52,7 +53,7 @@ const TradeRow: React.FC<{ trade: RecentTrade }> = ({ trade }) => {
             </div>
         </motion.div>
     );
-};
+});
 
 const TradeTape: React.FC<TradeTapeProps> = ({ trades }) => {
   const [showWhalesOnly, setShowWhalesOnly] = useState(false);
