@@ -80,6 +80,65 @@ const BotMindView: React.FC = () => {
         <StatCard label="Regime" value={bot.currentRegime || 'NEUTRAL'} sub={`ATR: ${((bot.currentATR || 0) * 100).toFixed(2)}%`} />
       </div>
 
+      {/* Open Interest Analytics */}
+      <div className="bg-[#0d1117] border border-[#21262d] rounded-lg p-3">
+        <span className="text-[10px] uppercase tracking-wider text-[#8b949e]">Open Interest</span>
+        <div className="grid grid-cols-4 gap-1.5 mt-2">
+          <div className="flex flex-col">
+            <span className="text-[9px] text-[#484f58]">OI Z</span>
+            <span className={`text-xs font-mono font-bold ${(bot.oiZScore || 0) > 2 ? 'text-green-400' : (bot.oiZScore || 0) < -2 ? 'text-red-400' : 'text-[#c9d1d9]'}`}>
+              {bot.oiZScore?.toFixed(1) ?? '—'}
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-[#484f58]">Δ1m%</span>
+            <span className={`text-xs font-mono ${(bot.oiDelta1mPct || 0) > 0.5 ? 'text-green-400' : (bot.oiDelta1mPct || 0) < -0.5 ? 'text-red-400' : 'text-[#c9d1d9]'}`}>
+              {(bot.oiDelta1mPct || 0) >= 0 ? '+' : ''}{bot.oiDelta1mPct?.toFixed(2) ?? '—'}
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-[#484f58]">Δ5m%</span>
+            <span className={`text-xs font-mono ${(bot.oiDelta5mPct || 0) > 1 ? 'text-green-400' : (bot.oiDelta5mPct || 0) < -1 ? 'text-red-400' : 'text-[#c9d1d9]'}`}>
+              {(bot.oiDelta5mPct || 0) >= 0 ? '+' : ''}{bot.oiDelta5mPct?.toFixed(2) ?? '—'}
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-[#484f58]">Vel%</span>
+            <span className={`text-xs font-mono ${(bot.oiVelocityPct || 0) > 0.3 ? 'text-green-400' : (bot.oiVelocityPct || 0) < -0.3 ? 'text-red-400' : 'text-[#c9d1d9]'}`}>
+              {(bot.oiVelocityPct || 0) >= 0 ? '+' : ''}{bot.oiVelocityPct?.toFixed(2) ?? '—'}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 mt-2 pt-2 border-t border-white/5 text-[10px]">
+          <span className="text-[#484f58]">{(bot.oiUsdM || 0).toFixed(0)}M USD</span>
+          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+            (bot.priceOIRegime || '').includes('LONG_BUILD') ? 'bg-green-900 text-green-400' :
+            (bot.priceOIRegime || '').includes('SHORT_BUILD') ? 'bg-red-900 text-red-400' :
+            (bot.priceOIRegime || '').includes('COVERING') ? 'bg-blue-900 text-blue-400' :
+            (bot.priceOIRegime || '').includes('LIQUIDATION') ? 'bg-rose-900 text-rose-400' :
+            'bg-[#21262d] text-[#8b949e]'
+          }`}>
+            {bot.priceOIRegime || '—'}
+          </span>
+          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+            bot.oiRiskLabel === 'EXTREME_RISK' ? 'bg-red-900 text-red-400' :
+            bot.oiRiskLabel === 'ELEVATED_RISK' ? 'bg-yellow-900 text-yellow-400' :
+            bot.oiRiskLabel === 'MODERATE_RISK' ? 'bg-blue-900 text-blue-400' :
+            'bg-[#21262d] text-[#8b949e]'
+          }`}>
+            {bot.oiRiskLabel || '—'}
+          </span>
+          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+            bot.fundingOISignal === 'CROWDED_LONG_RISK' || bot.fundingOISignal === 'CROWDED_SHORT_RISK' ? 'bg-red-900 text-red-400' :
+            bot.fundingOISignal === 'SQUEEZE_SETUP' ? 'bg-purple-900 text-purple-400' :
+            bot.fundingOISignal === 'EXPANSION_CONFIRMED' ? 'bg-green-900 text-green-400' :
+            'bg-[#21262d] text-[#8b949e]'
+          }`}>
+            {bot.fundingOISignal || '—'}
+          </span>
+        </div>
+      </div>
+
       {/* Bot Reasoning */}
       <div className="bg-[#0d1117] border border-[#21262d] rounded-lg p-3">
         <span className="text-[10px] uppercase tracking-wider text-[#8b949e]">Bot Reasoning</span>

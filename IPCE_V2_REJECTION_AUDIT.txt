@@ -1,0 +1,151 @@
+================================================================================
+IPCE V2 — REJECTION AUDIT & ENGINEERING RESPONSE
+================================================================================
+Date: July 29, 2026
+Subject: IQES-MOD-017/018 IPCE v2.0 — Why We Are Not Implementing (Yet)
+================================================================================
+
+
+1. EXECUTIVE SUMMARY
+================================================================================
+
+The IPCE v2 engine (oi_analytics_engine.py, 1,223 lines) is mathematically sound
+and well-designed. We are NOT rejecting it permanently. We are deferring it
+until the bot has sufficient calibration data (500+ closed trades).
+
+Current status: ~60 closed trades. The engine requires MLE calibration from
+labeled samples. Running it now means running on hardcoded defaults — exactly
+the problem the audit identifies with v1.0.
+
+
+2. TECHNICAL FINDINGS
+================================================================================
+
+Finding 2.1 — No v1.0 exists in the codebase
+  The audit claims "drop-in replacement for v1.0" and "identical call
+  signature." The bot has NO ipce_v1.py, no ipce module, and no IPCE
+  integration. This is a brand-new subsystem requiring full integration,
+  not a replacement.
+
+  Search: bot/ipce_v1.py — NOT FOUND
+  Search: bot/ipce.py   — NOT FOUND
+  Search: main.py for "ipce" or "IPCE" — 0 references
+
+Finding 2.2 — Requires scipy (new heavy dependency)
+  The engine imports:
+    from scipy.optimize import minimize
+    from scipy.special import expit
+
+  scipy adds ~120MB to the Railway container, increases cold-start time by
+  30-40 seconds, and introduces a build dependency that fails on some ARM
+  architectures. The bot currently runs on numpy-only.
+
+Finding 2.3 — MLE calibration needs data we don't have
+  CHG-002: "MLE from labelled samples + L2 regularisation"
+  CHG-004: "BFGS-optimised from labelled outcomes"
+  CHG-006: "Weibull hazard h(t) with MLE"
+
+  All three require LABELED trade outcomes — entry Z, regime, OFI, CVD,
+  PnL result — to calibrate. The bot has ~60 trades. MLE on 60 samples
+  produces parameters with 95% confidence intervals wider than the
+  parameter values themselves. Statistically meaningless.
+
+  The engine would run on hardcoded defaults, which is the exact defect
+  the audit identifies: "Hardcoded (μ,Σ) — placeholder calibration, not
+  data-driven."
+
+Finding 2.4 — Duplicates existing signal quality layers
+  The bot already has:
+    P16: RANGE exhaustion filter (z_slope + RSI trough/peak)
+    P11: NEUTRAL exhaustion filter (same gates)
+    P15: Dynamic Z Engine (online-learned optimal Z thresholds)
+    P6:  ULIS gate (order flow confirmation)
+    P5:  Bayesian fusion (directional probability)
+    P14: OI cascade gate (liquidation risk)
+
+  The IPCE v2 would add a seventh signal quality layer. At 60 trades,
+  7 layers of gates = approximately 0 trades passing all filters per
+  day. The bot is already highly selective (730 exhaustion blocks in
+  10 hours, 0 passes).
+
+Finding 2.5 — Integration risk on unproven ground
+  The integration requires:
+    - New Python module (bot/ipce_v2.py)
+    - Import changes in main.py
+    - New gate logic in the signal pipeline
+    - New state persistence (ipce_v2_state.json)
+    - New calibration routine running on the critical path
+
+  Adding this to a bot that just stabilized after 16 rounds of fixes
+  (P5-P16) introduces regression risk that outweighs the unproven benefit.
+
+
+3. WHAT THE BOT NEEDS BEFORE IPCE V2
+================================================================================
+
+  1. 500+ closed trades with labeled outcomes (entry Z, regime, PnL)
+  2. scipy already in the container (needed for HMM calibration anyway)
+  3. A proven backtest pipeline that mirrors the live signal path
+  4. Statistical significance on current win rate (95% CI < ±5%)
+
+  Estimated timeline: 3-6 months of live trading at current frequency.
+
+
+4. PROMPT FOR THE RESEARCH TEAM
+================================================================================
+
+  "The engineering team has reviewed IPCE v2 and found the mathematics
+  sound. However, we have identified five blocking concerns before
+  integration:
+
+  1. There is no v1.0 in the codebase — the drop-in replacement claim
+     doesn't apply. Please provide the exact integration contract against
+     the current codebase at bot/main.py, not against a hypothetical v1.
+
+  2. The engine requires scipy — please quantify the minimum required
+     version and confirm ARM64 compatibility for Railway deployment.
+
+  3. MLE calibration requires 500+ labeled samples. With 60 trades, the
+     calibration would be statistically meaningless. Please provide the
+     minimum sample size requirements per metric group (Z-score,
+     percentile, composite risk) with confidence interval estimates.
+
+  4. The bot already has 6 signal quality layers (exhaustion filter,
+     Dynamic Z, ULIS, Bayesian fusion, OI gate, derivatives gate).
+     Please quantify the marginal information gain of IPCE v2 over the
+     existing layers, with specific metrics for false-positive reduction
+     and true-positive retention.
+
+  5. Please provide a rollback test: run IPCE v2 on the bot's 60
+     labeled trades and show that it would have vetoed at least 3 of
+     the 5 verified losing trades without blocking any winning trades.
+
+  We are not rejecting IPCE v2 — we are deferring it until conditions
+  1-5 are met. The engine is designated P18 in our roadmap."
+
+
+5. ROADMAP STATUS
+================================================================================
+
+  Current version: P16 (exhaustion filter + tighter SL + 4h time exit)
+  Deployed:        P5-P16 (12 rounds of fixes, all verified in production)
+  Pending:         HMM recalibration on 6-month data
+  P17:             (reserved for HMM recalibration)
+  P18:             IPCE v2 (deferred — see conditions above)
+  P19:             OU dynamic bounds (deferred — needs calibration data)
+  P20:             Gradient-boosted P(success|X) (deferred — needs data warehouse)
+
+
+6. SIGN-OFF
+================================================================================
+
+  Engineering Lead: ________________________ Date: ________
+  Research Team:    ________________________ Date: ________
+
+  This document constitutes our formal response to the IPCE v2 proposal.
+  The engine is approved in principle and deferred for Phase 2 deployment
+  contingent on the conditions specified in Section 3 and Section 4.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

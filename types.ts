@@ -290,6 +290,15 @@ export interface BotSettingsState {
   // Multi-symbol aggregated PnL
   globalSessionPnl?: number;
   globalDailyPnl?: number;
+  // Open Interest analytics — surfaced from oi_analytics_engine
+  oiZScore?: number;
+  oiDelta1mPct?: number;
+  oiDelta5mPct?: number;
+  oiVelocityPct?: number;
+  priceOIRegime?: string;
+  oiRiskLabel?: string;
+  fundingOISignal?: string;
+  oiUsdM?: number;
 }
 
 export interface LiquidityState {

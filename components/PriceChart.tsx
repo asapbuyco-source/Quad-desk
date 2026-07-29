@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { ISeriesApi, LineStyle, IPriceLine, CandlestickSeries, HistogramSeries, LineSeries, Time, MouseEventHandler } from 'lightweight-charts';
-import { CandleData, TradeSignal, PriceLevel, LiquidityState, RegimeState, PeriodType } from '../types';
+import { CandleData, TradeSignal, PriceLevel, LiquidityState, RegimeState, PeriodType, BotTrade, BotSettingsState } from '../types';
 import { PanelRight, Rocket, Loader2, Clock, TrendingUp, Minus, Activity, X, GripVertical, ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
 import { useLightweightChart } from '../hooks/useChart';
 import { useStore } from '../store';
@@ -43,6 +43,10 @@ interface PriceChartProps {
     onIntervalChange?: (interval: string) => void;
     /** Selected MA period type context */
     currentPeriod?: PeriodType;
+    /** Bot trade history from Firestore for chart markers */
+    botTrades?: BotTrade[];
+    /** Live bot heartbeat data for reasoning overlay */
+    botSettings?: BotSettingsState;
 }
 
 /**
@@ -61,11 +65,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
     aiScanResult,
     liquidity,
     regime,
+    botTrades = [],
+    botSettings,
     onScan,
     isScanning,
     showLevels = true,
     showSignals = true,
-    showZScore = true,
+    showZScore = false,
     children,
     onToggleSidePanel,
     isSidePanelOpen,
@@ -570,12 +576,33 @@ const PriceChart: React.FC<PriceChartProps> = ({
             if (liquidity && liquidity.sweeps.length > 0) {
                 markers = markers.concat(liquidity.sweeps.map(s => ({
                     time: s.candleTime as Time,
-                    position: s.side === 'BUY' ? 'aboveBar' : 'belowBar', // Bearish sweep above, Bullish below
-                    color: s.side === 'BUY' ? '#e11d48' : '#059669', // Rose/Emerald
+                    position: s.side === 'BUY' ? 'aboveBar' : 'belowBar',
+                    color: s.side === 'BUY' ? '#e11d48' : '#059669',
                     shape: s.side === 'BUY' ? 'arrowDown' : 'arrowUp',
                     text: 'SWEEP',
                     size: 2
                 })));
+            }
+
+            // Add Bot Trade Markers (win/loss entries + reasoning)
+            if (botTrades && botTrades.length > 0) {
+                const tradeMarkers = botTrades
+                    .filter(t => t.entry_price > 0 && t.ts_ms > 0)
+                    .map(t => {
+                        const isWin = t.result === 'WIN';
+                        const isOpen = !t.result;
+                        const entryTime = (t.ts_ms / 1000) as Time;
+                        const verdictShort = (t.verdict || '').substring(0, 12);
+                        return {
+                            time: entryTime,
+                            position: t.side === 'buy' ? 'belowBar' : 'aboveBar',
+                            color: isOpen ? '#f59e0b' : isWin ? '#22c55e' : '#ef4444',
+                            shape: t.side === 'buy' ? 'arrowUp' : 'arrowDown',
+                            text: `${isOpen ? '▶' : isWin ? '✓' : '✗'} ${verdictShort}`,
+                            size: isOpen ? 2 : 3,
+                        };
+                    });
+                markers = markers.concat(tradeMarkers);
             }
 
             if (typeof series.setMarkers === 'function') {
@@ -902,6 +929,40 @@ const PriceChart: React.FC<PriceChartProps> = ({
                         </div>
                     );
                 })()}
+
+                {/* Bot Reasoning Bar — live bot mind overlay */}
+                {botSettings && (
+                    <div className="absolute bottom-0 left-0 right-0 bg-[#0d1117]/95 border-t border-[#21262d] px-3 py-1.5 z-20">
+                        <div className="flex items-center gap-3 text-[10px] font-mono">
+                            <span className={`w-1.5 h-1.5 rounded-full ${botSettings.status === 'ONLINE' ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
+                            <span className="text-[#8b949e]">
+                                Z={botSettings.currentZScore?.toFixed?.(2) ?? '—'}
+                                {' '}R={botSettings.currentRegime || '—'}
+                                {' '}B={(botSettings.currentBayes ? botSettings.currentBayes * 100 : 0).toFixed(0)}%
+                            </span>
+                            <span className="text-[#8b949e]">
+                                OIZ={botSettings.oiZScore?.toFixed?.(1) ?? '—'}
+                                {' '}Δ={(botSettings.oiDelta5mPct ?? 0) >= 0 ? '+' : ''}{(botSettings.oiDelta5mPct ?? 0).toFixed(1)}%
+                                {' '}{(botSettings.oiUsdM ?? 0).toFixed(0)}M
+                            </span>
+                            <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${
+                                (botSettings.priceOIRegime || '').includes('LONG_BUILD') ? 'text-green-400' :
+                                (botSettings.priceOIRegime || '').includes('SHORT_BUILD') ? 'text-red-400' :
+                                (botSettings.priceOIRegime || '').includes('COVERING') ? 'text-blue-400' :
+                                (botSettings.priceOIRegime || '').includes('LIQUIDATION') ? 'text-rose-400' :
+                                'text-[#484f58]'
+                            }`}>
+                                {botSettings.priceOIRegime || 'OI—'}
+                            </span>
+                            <span className="text-[#58a6ff] truncate flex-1">
+                                {botSettings.lastAnalysis || '—'}
+                            </span>
+                            <span className="text-[#484f58]">
+                                {botSettings.totalTrades || 0}t | ${(botSettings.globalSessionPnl || 0).toFixed(2)}
+                            </span>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

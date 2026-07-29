@@ -4682,6 +4682,17 @@ async def execution_loop(
                 stats["current_rsi"]     = round(float(metrics.get("rsi", 50)), 1)
                 stats["current_ofi"]     = round(float(metrics.get("ofi", 0)), 2)
                 stats["current_atr_pct"] = round(float(metrics.get("atr_pct", 0)), 4)
+            # P17: Surface OI analytics to dashboard
+            oi_adv = _CACHED_DERIV_CONTEXT.get("oi_analytics", {})
+            if oi_adv:
+                stats["oi_zscore"]         = round(float(oi_adv.get("oi_zscore", 0)), 2)
+                stats["oi_delta_1m_pct"]   = round(float(oi_adv.get("oi_delta_1m_pct", 0)), 4)
+                stats["oi_delta_5m_pct"]   = round(float(oi_adv.get("oi_delta_5m_pct", 0)), 4)
+                stats["oi_velocity_pct"]   = round(float(oi_adv.get("oi_velocity_pct", 0)), 4)
+                stats["price_oi_regime"]   = str(oi_adv.get("price_oi_regime", "INDETERMINATE"))
+                stats["oi_risk_label"]     = str(oi_adv.get("oi_composite_risk_label", "UNKNOWN"))
+                stats["funding_oi_signal"] = str(oi_adv.get("funding_oi_signal", "NEUTRAL"))
+                stats["oi_usd_M"]          = round(float(oi_adv.get("oi_usd_M", 0)), 1)
 
             # ── Panic trigger: ULIS AVOID/UNWIND while holding a position ──
             # MED-5 FIX: Use `had_position_before_exit` (cached before exit check),

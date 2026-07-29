@@ -1505,6 +1505,14 @@ export const useStore = create<AppState>((set, get) => ({
             let currentRSI = 50;
             let currentOFI = 0;
             let currentATR = 0;
+            let oiZScore = 0;
+            let oiDelta1mPct = 0;
+            let oiDelta5mPct = 0;
+            let oiVelocityPct = 0;
+            let priceOIRegime = '';
+            let oiRiskLabel = '';
+            let fundingOISignal = '';
+            let oiUsdM = 0;
             let gateStats: Record<string, number> = {};
             let exchange: BotSettingsState['exchange'] = 'binance';
             let tradingPair = '';
@@ -1538,6 +1546,14 @@ export const useStore = create<AppState>((set, get) => ({
                     currentRSI = data.currentRSI ?? 50;
                     currentOFI = data.currentOFI ?? 0;
                     currentATR = data.currentATR ?? 0;
+                    oiZScore = data.oiZScore ?? 0;
+                    oiDelta1mPct = data.oiDelta1mPct ?? 0;
+                    oiDelta5mPct = data.oiDelta5mPct ?? 0;
+                    oiVelocityPct = data.oiVelocityPct ?? 0;
+                    priceOIRegime = data.priceOIRegime || '';
+                    oiRiskLabel = data.oiRiskLabel || '';
+                    fundingOISignal = data.fundingOISignal || '';
+                    oiUsdM = data.oiUsdM ?? 0;
                     gateStats = data.gateStats || {};
                     const rawExchange = String(data.exchange || '').toLowerCase();
                     exchange = rawExchange.includes('coinbase')
@@ -1574,6 +1590,14 @@ export const useStore = create<AppState>((set, get) => ({
                     currentRSI,
                     currentOFI,
                     currentATR,
+                    oiZScore,
+                    oiDelta1mPct,
+                    oiDelta5mPct,
+                    oiVelocityPct,
+                    priceOIRegime,
+                    oiRiskLabel,
+                    fundingOISignal,
+                    oiUsdM,
                     gateStats,
                     operatorPaused,
                     operatorLastCommand,

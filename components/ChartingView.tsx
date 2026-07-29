@@ -21,6 +21,8 @@ const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentP
   const { interval, activeSymbol, aiModel } = useStore(state => state.config);
   const { activePosition } = useStore(state => state.trading);
   const { liquidity, regime, aiTactical } = useStore(state => state);
+  const botTrades = useStore(state => state.botTrades);
+  const botSettings = useStore(state => state.botSettings);
   
   // Local state if not provided by props (for standalone usage if needed)
   const [localPeriod, setLocalPeriod] = useState<PeriodType>('20-PERIOD');
@@ -36,7 +38,7 @@ const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentP
   } = useStore();
 
   const [layers, setLayers] = useState({
-    zScore: true,
+    zScore: false,
     levels: true,
     signals: true,
     volumeProfile: false 
@@ -161,6 +163,8 @@ const ChartingView: React.FC<ChartingViewProps> = ({ currentPeriod: propCurrentP
                 aiScanResult={scanResult}
                 liquidity={liquidity}
                 regime={regime}
+                botTrades={botTrades}
+                botSettings={botSettings}
                 onScan={handleAiScan}
                 isScanning={isScanning || cooldownRemaining > 0}
                 showZScore={layers.zScore}
