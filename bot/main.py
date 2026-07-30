@@ -43,6 +43,7 @@ from logging.handlers import TimedRotatingFileHandler
 import os
 import re
 import signal
+import sys
 import threading
 import time
 import numpy as np
@@ -3979,6 +3980,70 @@ async def _daily_log_delivery_loop(notifier) -> None:
             logger.warning(f"[DailyLog] Failed to send Telegram log document: {e}")
 
 
+# ── Auto-Reload Watcher ─────────────────────────────────────────────────────
+# Monitors key bot source files for changes. When a change is detected,
+# the process replaces itself via os.execv to reload all Python modules
+# without losing the process ID (important for launcher.py supervision).
+_AUTO_RELOAD_INTERVAL_SEC = 30
+_AUTO_RELOAD_FILES: List[Path] = []
+_AUTO_RELOAD_MTIMES: Dict[str, float] = {}
+_AUTO_RELOAD_LAST_CHECK = 0.0
+_AUTO_RELOAD_KILLSWITCH = False  # set True once to suppress immediate recheck after exec
+
+
+def _init_auto_reload() -> None:
+    """Register the key bot modules to watch for changes."""
+    global _AUTO_RELOAD_FILES, _AUTO_RELOAD_MTIMES
+    bot_dir = Path(__file__).resolve().parent
+    watch_files = [
+        bot_dir / "main.py",
+        bot_dir / "signal_config.py",
+        bot_dir / "executor.py",
+        bot_dir / "quant_engine.py",
+        bot_dir / "dynamic_z_engine.py",
+        bot_dir / "oi_analytics_engine.py",
+        bot_dir / "ulis_engine.py",
+        bot_dir / "heartbeat.py",
+        bot_dir / "derivatives_context.py",
+        bot_dir / "global_risk.py",
+    ]
+    _AUTO_RELOAD_FILES = [f for f in watch_files if f.exists()]
+    for f in _AUTO_RELOAD_FILES:
+        _AUTO_RELOAD_MTIMES[str(f)] = f.stat().st_mtime
+    logger.info(f"[AutoReload] Watching {len(_AUTO_RELOAD_FILES)} files for hot-reload (interval={_AUTO_RELOAD_INTERVAL_SEC}s)")
+
+
+def _check_auto_reload() -> None:
+    """Check if any watched file changed. If so, execv the bot process to reload."""
+    global _AUTO_RELOAD_LAST_CHECK, _AUTO_RELOAD_KILLSWITCH
+    if _AUTO_RELOAD_KILLSWITCH:
+        return
+    now = time.time()
+    if now - _AUTO_RELOAD_LAST_CHECK < _AUTO_RELOAD_INTERVAL_SEC:
+        return
+    _AUTO_RELOAD_LAST_CHECK = now
+
+    for fp in _AUTO_RELOAD_FILES:
+        try:
+            cur_mtime = fp.stat().st_mtime
+        except OSError:
+            continue
+        prev = _AUTO_RELOAD_MTIMES.get(str(fp), 0)
+        if cur_mtime != prev:
+            _AUTO_RELOAD_MTIMES[str(fp)] = cur_mtime
+            changed_files = [str(f.name) for f in _AUTO_RELOAD_FILES if f.stat().st_mtime != _AUTO_RELOAD_MTIMES.get(str(f), 0)]
+            logger.warning(f"[AutoReload] Source changed: {changed_files} — restarting bot with execv...")
+            # Mark killswitch so the new process doesn't immediately re-trigger
+            _AUTO_RELOAD_KILLSWITCH = True
+            try:
+                # Flush all handlers before replacing the process
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+            except Exception:
+                pass
+            os.execv(sys.executable, [sys.executable, "-m", "bot.main"])
+
+
 async def execution_loop(
     feed,
     quant: QuantEngine,
@@ -4000,6 +4065,9 @@ async def execution_loop(
             logger.info(f"[Main] Futures leverage confirmed: {LEVERAGE}× on {ccxt_symbol} ✓")
         except Exception as e:
             logger.warning(f"[Main] Could not set leverage (will continue with account default): {e}")
+
+    # P17: Initialize auto-reload watcher — hot-restarts bot on source file changes
+    _init_auto_reload()
 
     global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_CANDLE_TS, LAST_TRADE_WAS_SL
     global _CYCLE_ERROR_COUNT, _LAST_CYCLE_ERROR
@@ -4066,6 +4134,9 @@ async def execution_loop(
 
     while True:
         try:
+            # P17: Check for source file changes — hot-restart via os.execv
+            _check_auto_reload()
+
             # ── Event-driven execution (Phase 6) ───────────────────────────
             # D1 FIX: Use adaptive polling interval
             # Fast (2-5s) for active positions or TREND/VOLATILE/LIQUIDITY/SQUEEZE regimes
