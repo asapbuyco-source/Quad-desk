@@ -3534,6 +3534,21 @@ async def _compute_signal(
 
     confidence = _enforce_cvd_confidence_cap(confidence, _cvd_adj, "ULIS")
 
+    # P17: OI Risk Score — continuous confidence penalty instead of binary veto.
+    # At 60 trades with 6 gates producing 0 passes, adding another binary gate
+    # would paralyze the bot. A proportional confidence reduction is more
+    # information-efficient and preserves execution rate while protecting capital.
+    oi_analytics = _CACHED_DERIV_CONTEXT.get("oi_analytics", {})
+    oi_risk_score = oi_analytics.get("oi_composite_risk_score", 0.0)
+    if oi_risk_score > 0.60:
+        oi_penalty = (oi_risk_score - 0.60) * 0.20
+        confidence_before_oi = confidence
+        confidence = max(0.0, confidence - oi_penalty)
+        logger.info(
+            f"[OI Risk] Confidence reduced {confidence_before_oi:.2%} → {confidence:.2%} "
+            f"(-{oi_penalty:.2%}) | oi_risk={oi_risk_score:.2f}"
+        )
+
     # FIX: Check threshold AFTER ULIS gate using boosted confidence
     # P0: Use regime-adaptive min_confidence instead of global MIN_CONFIDENCE
     # PHASE-5.1: Apply cold-start discount (few trades = slightly lower bar)
