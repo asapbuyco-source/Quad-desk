@@ -1562,6 +1562,8 @@ class TradingExecutor:
                     "take_profit":      take_profit,
                     "entry_direction":  verdict,
                     "strategy_type":     signal.get("strategy_type", "UNKNOWN"),
+                    "z_score_at_entry":  signal.get("z_score", 0.0),
+                    "z_threshold_used":  signal.get("z_threshold_used", 0.0),
                     "order_id":         order.get("id"),
                     "sl_order_id":      sl_order_id,
                     "tp_order_id":      current_tp_order_id,

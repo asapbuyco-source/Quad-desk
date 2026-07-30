@@ -3232,12 +3232,42 @@ async def _compute_signal(
                     logger.info(f"[MetaModel] → COMPRESSION MR ({raw_direction})")
                 else:
                     logger.info(f"[MetaModel] COMPRESSION — no edge currently.")
+            # AUDIT FIX: COMPRESSION exhaustion filter — same as RANGE slope+RSI gate.
+            # Without this, compression MR entries fire while coil is still winding tighter.
+            if raw_direction:
+                z_current = metrics.get("zScore", 0.0)
+                z_prev = metrics.get("zScore_prev", z_current)
+                z_slope = z_current - z_prev
+                rsi = metrics.get("rsi", 50.0)
+                rsi_prev = metrics.get("rsi_prev", rsi)
+                rsi_trough = rsi < 45 and rsi >= rsi_prev
+                rsi_peak = rsi > 55 and rsi <= rsi_prev
+                is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
+                if is_long and (z_slope > 0.0 or rsi_trough):
+                    logger.info(f"[COMP Exhaust] LONG blocked — z_slope={z_slope:+.3f}, rsi={rsi:.0f}")
+                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope>0 or RSI trough)"}
+                if not is_long and (z_slope < 0.0 or rsi_peak):
+                    logger.info(f"[COMP Exhaust] SHORT blocked — z_slope={z_slope:+.3f}, rsi={rsi:.0f}")
+                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope<0 or RSI peak)"}
         elif regime == "SQUEEZE":
             # SQUEEZE cascade: enter in squeeze direction with tight SL, wide TP.
             # Use trend strategy with SQUEEZE params for momentum capture.
             strategy_type = "SQUEEZE_CASCADE"
             raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant)
             if raw_direction:
+                # AUDIT FIX: SQUEEZE exhaustion — guard against late entries.
+                # A squeeze that has persisted 3+ candles is likely exhausting.
+                squeeze_streak = int(metrics.get("regime_streak", 0) or 0)
+                if squeeze_streak >= 3:
+                    # Check if RSI confirms the squeeze is still accelerating
+                    rsi = metrics.get("rsi", 50.0)
+                    is_long = raw_direction in ("BUY", "TREND_LONG")
+                    if is_long and rsi > 65:
+                        logger.info(f"[SQZ Exhaust] LONG blocked — squeeze streak={squeeze_streak}, RSI={rsi:.0f} (late entry)")
+                        return {**WAIT, "analysis": "SQUEEZE late-entry blocked — streak≥3, RSI overbought"}
+                    if not is_long and rsi < 35:
+                        logger.info(f"[SQZ Exhaust] SHORT blocked — squeeze streak={squeeze_streak}, RSI={rsi:.0f} (late entry)")
+                        return {**WAIT, "analysis": "SQUEEZE late-entry blocked — streak≥3, RSI oversold"}
                 logger.info(f"[MetaModel] → SQUEEZE CASCADE ({raw_direction})")
             else:
                 logger.info(f"[MetaModel] SQUEEZE — no direction confirmed.")
@@ -3735,7 +3765,7 @@ async def _process_exit(
     # showed all Time Exits lost ~$0.06 to $1.17.
     # We will assume a loss > -1.5 is a micro-loss for now, or just use the
     # fact that it's a TIME_EXIT with a tiny negative PnL.
-    is_micro_loss = not is_win and exit_type == "TIME_EXIT" and pnl > -1.5
+    is_micro_loss = not is_win and pnl > -1.5
     
     if is_micro_loss:
         logger.info(f"[_process_exit] Micro-loss forgiveness: ignoring {pnl:.2f} time-exit fee bleed.")

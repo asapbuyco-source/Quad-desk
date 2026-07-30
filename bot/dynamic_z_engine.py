@@ -221,7 +221,7 @@ class DynamicZEngine:
                         alpha = 0.20  # EWMA smoothing — regime memory adapts gradually
                         delta = new_z - mem.optimal_z_mean
                         mem.optimal_z_mean += alpha * delta
-                        mem.optimal_z_var = (1 - alpha) * (mem.optimal_z_var + alpha * delta ** 2)
+                        mem.optimal_z_var = (1 - alpha) * mem.optimal_z_var + alpha * delta ** 2
                     mem.n_recomputes += 1
                     logger.info(
                         f"[DynamicZ] Recomputed {regime}: optimal_z={mem.optimal_z_mean:.3f} "

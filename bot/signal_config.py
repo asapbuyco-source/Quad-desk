@@ -143,7 +143,7 @@ REGIME_PARAMS = {
         "panic_threshold":    10.0,
         "candle_gate_sec":    30,
         "htf_block":          False,
-        "cascade_cooldown_s": 120,
+        "cascade_cooldown_s": 180,   # AUDIT FIX: was 120 — resolves slowly (~4.5h), needs longer cooldown
     },
     "NEUTRAL": {
         # Normal-volatility: balanced thresholds
@@ -221,15 +221,15 @@ REGIME_PARAMS = {
         # HMM state 2 (SQUEEZE) maps to LIQUIDITY for backwards compat (_LABELS[2]="LIQUIDITY").
         # This entry provides the tighter SL / wider TP strategy for when SQUEEZE fires.
         "z_threshold":        1.50,
-        "atr_multiplier_sl":  0.50,   # TIGHTER SL: 0.5×ATR — vacuum can extend further
+        "atr_multiplier_sl":  1.10,   # AUDIT FIX: was 0.50 — normal noise hits this before vacuum resolves
         "ofi_bound":          0.12,
         "min_confidence":     0.65,   # Higher bar — squeeze entries are risky
         "rr_target":          3.5,   # WIDER TP: squeeze snaps back violently
         "be_lock_trigger":    1.0,   # Lock BE faster — squeeze resolves in 3-8 candles
         "partial_take_r":     0.50,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      600,
-        "time_exit_hard_cap_s": 1200,
+        "time_exit_sec":      1800,  # AUDIT FIX: was 600 — 3 candles for squeeze resolution
+        "time_exit_hard_cap_s": 3600,  # AUDIT FIX: was 1200 — 6 candles max
         "panic_threshold":    5.0,   # Tighter panic — squeeze moves fast
         "candle_gate_sec":    30,
         "htf_block":          False,
