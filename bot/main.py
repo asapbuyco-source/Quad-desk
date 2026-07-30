@@ -3174,14 +3174,14 @@ async def _compute_signal(
             # the function returns None and the bot waits naturally.
             strategy_type = "MEAN_REVERSION"
             raw_direction = _strategy_mean_reversion(
-                metrics, z_threshold=regime_p["z_threshold"]
+                metrics, z_threshold=z_threshold_effective
             )
             # P16 FIX: RANGE exhaustion filter — same as NEUTRAL's slope+RSI gate.
             # Without this, the bot enters mean-reversion while momentum is still
             # trending (July 25: 3/3 RANGE trades faded trend, lost -$2.41).
             # Requires Z to be DECELERATING and RSI to have formed a trough/peak
             # before entering, proving the extreme is exhausting, not accelerating.
-            if raw_direction and regime_p.get("z_threshold", 0) < 1.5:
+            if raw_direction and z_threshold_effective < 1.5:
                 z_current = metrics.get("zScore", 0.0)
                 z_prev = metrics.get("zScore_prev", z_current)
                 z_slope = z_current - z_prev
