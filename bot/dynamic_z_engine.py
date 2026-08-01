@@ -259,7 +259,18 @@ class DynamicZEngine:
         if added > 0:
             for regime, mem in self._regimes.items():
                 if len(mem.trades) >= MIN_SAMPLES_PER_REGIME:
-                    self._recompute(regime, mem)
+                    new_z = self._score_candidates(mem)
+                    if new_z is not None:
+                        if mem.optimal_z_mean is None:
+                            mem.optimal_z_mean = new_z
+                            mem.optimal_z_var = 0.0
+                        else:
+                            alpha = 0.20
+                            delta = new_z - mem.optimal_z_mean
+                            mem.optimal_z_mean += alpha * delta
+                            mem.optimal_z_var = (1 - alpha) * mem.optimal_z_var + alpha * delta ** 2
+                        mem.n_recomputes += 1
+                        mem.n_since_recompute = 0
             logger.info(f"[DynamicZ] Seeded {added} historical trades across {len(self._regimes)} regimes")
             self._save()
 
