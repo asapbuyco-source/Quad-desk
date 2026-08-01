@@ -111,7 +111,8 @@ OFI_WARMUP_CYCLES = 20
 REGIME_PARAMS = {
     "RANGE": {
         # Low-volatility: small deviations are statistically meaningful
-        "z_threshold":        0.80,  # AUDIT FIX: was 1.06. Z=0.64-0.68 never triggers in current VWAP band. Lowered to 0.80 — P16 exhaustion filter guards against bad entries.
+        "z_threshold":        0.80,  # AUDIT FIX: was 1.06. Z=0.64-0.68 never triggers in current VWAP band.
+        "z_scale_base":       0.96,  # Near-Gaussian — range-bound distributions have light tails
         "atr_multiplier_sl":  0.90,   # P16 FIX: was 1.14. Cut losses faster — if reversion doesn't happen in 0.9×ATR, it's a failed signal. Don't bleed to time exit.
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold
@@ -131,6 +132,7 @@ REGIME_PARAMS = {
         # This is the pre-breakout state where volatility is building but |z| is still low.
         # Strategy: mean-reversion with moderate SL, achievable TP from coiling resolution.
         "z_threshold":        1.20,
+        "z_scale_base":       0.98,  # Gaussian — compression is tight, light tails
         "atr_multiplier_sl":  1.20,   # Moderate SL — compression is slow, needs breathing room
         "ofi_bound":          0.08,
         "min_confidence":     0.62,
@@ -150,6 +152,7 @@ REGIME_PARAMS = {
         # P11 FIX: z_threshold lowered 1.50→1.20 — exceeded once in 5 sessions.
         # slope+RSI gate provides signal quality filtering, allowing lower Z threshold.
         "z_threshold":        1.20,
+        "z_scale_base":       0.97,  # Near-Gaussian — NEUTRAL is transitional, light tails
         "atr_multiplier_sl":  1.10,  # P16 FIX: was 1.43. Cut losers fast — bleed is worse than being stopped.
         "ofi_bound":          0.10,
         "min_confidence":     0.65,
@@ -167,6 +170,7 @@ REGIME_PARAMS = {
     "TREND": {
         # High-volatility: trend-following
         "z_threshold":        2.0,
+        "z_scale_base":       0.84,  # Heavy tails — trend distributions are fat-tailed
         "atr_multiplier_sl":  2.09,
         "ofi_bound":          0.20,
         "min_confidence":     0.65,
@@ -185,6 +189,7 @@ REGIME_PARAMS = {
         # Elevated ATR but no clean sweep. Prefer trend continuation; allow
         # stricter mean reversion only when tape is not screaming.
         "z_threshold":        1.75,
+        "z_scale_base":       0.78,  # Heaviest tails — volatile distributions need strongest dampening
         "atr_multiplier_sl":  1.65,
         "ofi_bound":          0.20,
         "min_confidence":     0.65,
@@ -201,7 +206,8 @@ REGIME_PARAMS = {
     },
     "LIQUIDITY": {
         # Wall-proximity sweeps
-        "z_threshold":        1.10,  # P12 FIX: was 1.50 (raised from 1.22 — regression). 45% of BTC session in LIQUIDITY with unreachable threshold.
+        "z_threshold":        1.10,  # P12 FIX: was 1.50
+        "z_scale_base":       0.97,  # Near-Gaussian — liquidity sweeps have light tails
         "atr_multiplier_sl":  1.10,  # P16 FIX: was 1.43. Match NEUTRAL.
         "ofi_bound":          0.12,
         "min_confidence":     0.62,  # FIX-P10: was 0.55 which == sweep neutralizer floor (no-op); raised to 0.62 so threshold is meaningful
@@ -221,6 +227,7 @@ REGIME_PARAMS = {
         # HMM state 2 (SQUEEZE) maps to LIQUIDITY for backwards compat (_LABELS[2]="LIQUIDITY").
         # This entry provides the tighter SL / wider TP strategy for when SQUEEZE fires.
         "z_threshold":        1.50,
+        "z_scale_base":       0.82,  # Heavy tails — squeeze distributions are fat-tailed
         "atr_multiplier_sl":  1.10,   # AUDIT FIX: was 0.50 — normal noise hits this before vacuum resolves
         "ofi_bound":          0.12,
         "min_confidence":     0.65,   # Higher bar — squeeze entries are risky

@@ -2214,8 +2214,8 @@ Moved Stop Loss to {be_price:.2f} (entry={entry_price:.2f} + fee buffer) for {sy
                 await self.notifier.send_error_alert(f"Partial TP failed for {symbol}: {e}")
 
     async def check_breakeven_and_partials(self, current_price: float, atr: float, metrics: dict = None) -> None:
-        """Check if breakeven stop should be locked, based on be_lock_trigger threshold.
-        Partial TP is DISABLED — trades run to full TP/SL. Only BE lock is active."""
+        """Breakeven lock DISABLED — P16 tighter SL + longer time exit make it redundant."""
+        return
         if not self.active_position:
             return
         pos = self.active_position

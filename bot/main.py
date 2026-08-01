@@ -3082,9 +3082,22 @@ async def _compute_signal(
     # value and slowly adapts within ±25% based on closed-trade outcomes.
     z_threshold_effective = dynamic_z_engine.get_threshold(regime, regime_p["z_threshold"])
 
+    # Regime-aware adaptive Z scaling — replaces the removed blanket t-scale (×0.8165).
+    # Each regime has a base scale factor (z_scale_base) representing its tail heaviness:
+    #   RANGE/NEUTRAL ~0.96-0.97 : near-Gaussian, nearly full signal
+    #   TREND ~0.84, VOLATILE ~0.78 : heavy-tailed, stronger dampening
+    # HMM confidence interpolates: when the HMM is very sure about the regime,
+    # the scale moves toward the base value. When uncertain, it moves toward 1.0
+    # (gentler dampening — give the signal a chance).
+    z_scale_base = float(regime_p.get("z_scale_base", 1.0))
+    hmm_conf = float(metrics.get("regime_confidence", 0.5) if metrics else 0.5)
+    z_scale = z_scale_base + hmm_conf * (1.0 - z_scale_base) * 0.4
+    z_threshold_effective = z_threshold_effective / max(z_scale, 0.60)
+
     logger.info(
         f"[RegimeParams] z_thr={regime_p['z_threshold']} "
         f"z_thr_dyn={z_threshold_effective:.2f} "
+        f"z_scale={z_scale:.2f} (base={z_scale_base:.2f} conf={hmm_conf:.0%}) "
         f"sl_mult={regime_p['atr_multiplier_sl']} "
         f"min_conf={regime_p['min_confidence']:.0%} "
         f"rr={regime_p['rr_target']} "
