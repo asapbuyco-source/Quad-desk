@@ -847,11 +847,8 @@ class QuantEngine:
         MIN_STD = current_price * 0.00005
         std = math.sqrt(std * std + MIN_STD * MIN_STD)
 
-        # t-scale correction factor
-        NU_FIXED = 6.0
-        t_scale = math.sqrt((NU_FIXED - 2.0) / NU_FIXED)  # = sqrt(4/6) = 0.8165
         z = (current_price - vwap_session) / std
-        return float(np.clip(z * t_scale, -4.0, 4.0))
+        return float(np.clip(z, -4.0, 4.0))
 
     # ------------------------------------------------------------------
     # 3. RSI (14 period) — Wilder EMA smoothing (Fix #7 from audit)
