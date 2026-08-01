@@ -232,6 +232,37 @@ class DynamicZEngine:
         except Exception as e:
             logger.warning(f"[DynamicZ] record_outcome failed (non-fatal, ignored): {e}")
 
+    # ── Seed from historical data (bypasses cold-start when deployed) ──────
+    def seed_from_history(self, trades: list) -> None:
+        """
+        Pre-populate regime memories from historical trade data.
+        Accepts a list of (regime, abs_z_entry, pnl) tuples.
+        This bypasses the 30-trade cold-start minimum and lets the engine
+        begin with data-driven thresholds from day 1.
+        """
+        if not DYNAMIC_Z_ENABLED:
+            return
+        added = 0
+        for regime, abs_z, pnl in trades:
+            try:
+                abs_z = float(abs_z)
+                pnl = float(pnl)
+            except (TypeError, ValueError):
+                continue
+            mem = self._regimes.get(regime)
+            if mem is None:
+                mem = _RegimeMemory()
+                self._regimes[regime] = mem
+            mem.trades.append((abs_z, pnl))
+            mem.n_since_recompute += 1
+            added += 1
+        if added > 0:
+            for regime, mem in self._regimes.items():
+                if len(mem.trades) >= MIN_SAMPLES_PER_REGIME:
+                    self._recompute(regime, mem)
+            logger.info(f"[DynamicZ] Seeded {added} historical trades across {len(self._regimes)} regimes")
+            self._save()
+
     # ── Query (used by main.py in place of static regime_p["z_threshold"]) ─
     def get_threshold(self, regime: str, static_default: float) -> float:
         """

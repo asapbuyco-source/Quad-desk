@@ -111,7 +111,7 @@ OFI_WARMUP_CYCLES = 20
 REGIME_PARAMS = {
     "RANGE": {
         # Low-volatility: small deviations are statistically meaningful
-        "z_threshold":        1.06,  # M-02 FIX: was 1.3, Student-t adj (1.3×0.8165)
+        "z_threshold":        0.80,  # AUDIT FIX: was 1.06. Z=0.64-0.68 never triggers in current VWAP band. Lowered to 0.80 — P16 exhaustion filter guards against bad entries.
         "atr_multiplier_sl":  0.90,   # P16 FIX: was 1.14. Cut losses faster — if reversion doesn't happen in 0.9×ATR, it's a failed signal. Don't bleed to time exit.
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
         "min_confidence":     0.62,  # was 0.55 — raised to match LIQUIDITY threshold

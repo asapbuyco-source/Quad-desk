@@ -4114,6 +4114,25 @@ async def execution_loop(
     # P17: Initialize auto-reload watcher — hot-restarts bot on source file changes
     _init_auto_reload()
 
+    # P17: Seed Dynamic Z Engine with historical replay data so it starts
+    # with real per-regime thresholds instead of waiting for 30 cold-start trades.
+    # Without this, Z=0.64-0.68 never triggers RANGE (z_thr=0.80), so the engine
+    # gets no data and stays frozen at static defaults forever.
+    _seed_trades = [
+        # (regime, abs_z_entry, pnl) from historical replay — 19 labelled trades
+        ("VOLATILE", 1.08, -0.35),  ("VOLATILE", 0.90, 0.17),
+        ("VOLATILE", 1.06, 0.30),   ("VOLATILE", 0.98, -0.34),
+        ("VOLATILE", 0.61, -2.05),  ("VOLATILE", 1.08, -0.42),
+        ("VOLATILE", 0.78, -0.91),  ("VOLATILE", 0.77, 0.77),
+        ("VOLATILE", 0.52, -0.29),  ("VOLATILE", 0.53, 0.42),
+        ("VOLATILE", 0.81, 0.14),   ("VOLATILE", 1.43, 0.00),
+        ("VOLATILE", 0.82, -0.25),  ("VOLATILE", 1.11, -0.27),
+        ("VOLATILE", 1.73, -0.02),  ("VOLATILE", 1.09, -0.01),
+        ("VOLATILE", 0.91, 0.07),   ("RANGE",    1.73, -0.23),
+        ("RANGE",    1.64, -0.16),
+    ]
+    dynamic_z_engine.seed_from_history(_seed_trades)
+
     global ACCOUNT_SIZE, LAST_CVD, LAST_CASCADE_TIME, LAST_ANY_TRADE_CLOSE_TIME, LAST_CANDLE_TS, LAST_TRADE_WAS_SL
     global _CYCLE_ERROR_COUNT, _LAST_CYCLE_ERROR
 
