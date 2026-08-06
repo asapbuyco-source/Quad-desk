@@ -3306,9 +3306,12 @@ async def _compute_signal(
 
             z_thr = z_threshold_effective  # P15: dynamic Z
             candidate = _strategy_mean_reversion(metrics, z_threshold=z_thr)
-            if candidate == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
+            # P16 exhaustion filter: require Z to be decelerating and RSI to have formed
+            # a trough/peak. Small tolerance (0.02) allows entry at the exact reversal
+            # point where slope ≈ 0 (Z peaked and is about to reverse).
+            if candidate == "MEAN_REVERSAL_LONG" and (z_slope < -0.02 or not rsi_trough):
                 candidate = None
-            if candidate == "MEAN_REVERSAL_SHORT" and (z_slope >= 0 or not rsi_peak):
+            if candidate == "MEAN_REVERSAL_SHORT" and (z_slope > 0.02 or not rsi_peak):
                 candidate = None
             raw_direction = candidate
             if raw_direction:
@@ -4315,10 +4318,10 @@ async def execution_loop(
                 "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
             }.get(CANDLE_INTERVAL, 900)
             _last_candle_age = time.time() - float(feed.state.candles[-1]["time"])
-            if _last_candle_age > _interval_secs * 1.1:
+            if _last_candle_age > _interval_secs * 2.0:
                 logger.warning(
                     f"[Main] ⚠️ Candle feed STALE ({_last_candle_age:.0f}s old, "
-                    f">{_interval_secs * 1.1:.0f}s threshold). "
+                    f">{_interval_secs * 2.0:.0f}s threshold). "
                     f"Triggering REST prefetch and skipping cycle."
                 )
                 # FIX-STALE: Force WS reconnect so dead socket is replaced.
