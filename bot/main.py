@@ -3252,9 +3252,17 @@ async def _compute_signal(
                 z_prev = metrics.get("zScore_prev", z_current)
                 z_slope = z_current - z_prev
                 rsi = metrics.get("rsi", 50.0)
-                rsi_prev = metrics.get("rsi_prev", rsi)
-                rsi_trough = rsi < 45 and rsi >= rsi_prev
-                rsi_peak = rsi > 55 and rsi <= rsi_prev
+                # Use None defaults matching NEUTRAL/RANGE — when RSI history
+                # unavailable, skip the gate rather than false-blocking.
+                rsi_prev = metrics.get("rsi_prev")
+                rsi_prev2 = metrics.get("rsi_prev2")
+                rsi_gate_ready = rsi_prev is not None and rsi_prev2 is not None
+                if rsi_gate_ready:
+                    rsi_trough = rsi < 45 and rsi >= rsi_prev
+                    rsi_peak = rsi > 55 and rsi <= rsi_prev
+                else:
+                    rsi_trough = True
+                    rsi_peak = True
                 is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
                 if is_long and (z_slope > 0.0 or rsi_trough):
                     logger.info(f"[COMP Exhaust] LONG blocked — z_slope={z_slope:+.3f}, rsi={rsi:.0f}")
