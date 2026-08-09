@@ -685,10 +685,10 @@ class TradingExecutor:
                 "ulis_verdict":   ulis_verdict,
                 "ts_ms":          int(time.time() * 1000),
                 # Signal attribution chain (5.6)
-                "regime":         m.get("regime",            "UNKNOWN"),
+                "regime":         s.get("regime",            "UNKNOWN"),
                 "strategy_type":  s.get("strategy_type",     "UNKNOWN"),
-                "z_score":        round(m.get("zScore",       0.0), 4),
-                "rsi":            round(m.get("rsi",          50.0), 2),
+                "z_score":        round(float(s.get("z_score",       0.0) or 0), 4),
+                "rsi":            round(float(s.get("rsi",          50.0) or 50), 2),
                 "ofi_tanh":       round(m.get("ofi",          0.0), 4),  # tanh (-1,+1)
                 "bayesian":       round(m.get("bayesianPosterior", 0.5), 4),
                 "confidence":     round(float(s.get("confidence", 0.0)), 4),

@@ -120,8 +120,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    0.8,   # Move SL to break-even after 0.8×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      14400,  # P16 FIX: was 1800. Mean-reversion needs time — observed reversion AFTER exits. 4h base, SL cuts losers.
-        "time_exit_hard_cap_s": 28800,  # P16 FIX: was 3600. 8h max — one full session.
+        "time_exit_sec":      86400,  # REMOVED: was 14400. Trades run to SL or TP.
+        "time_exit_hard_cap_s": 86400,  # REMOVED: was 28800. 24h safety net only.
         "panic_threshold":    10.0,
         "candle_gate_sec":    30,
         "htf_block":          False,
@@ -140,8 +140,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.0,
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      3600,  # 1 hour — coil resolves slowly, needs time (was 600s)
-        "time_exit_hard_cap_s": 5400,  # 1.5h hard cap
+        "time_exit_sec":      86400,  # REMOVED: was 7200. Trades run to SL or TP.
+        "time_exit_hard_cap_s": 86400,  # REMOVED: was 10800. 24h safety net only.
         "panic_threshold":    10.0,
         "candle_gate_sec":    30,
         "htf_block":          False,
@@ -160,8 +160,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.5,
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      14400,  # P16 FIX: was 1800. Match RANGE — mean-reversion needs time.
-        "time_exit_hard_cap_s": 28800,  # P16 FIX: was 3600. 8h max.
+        "time_exit_sec":      86400,  # REMOVED: was 14400. Trades run to SL or TP.
+        "time_exit_hard_cap_s": 86400,  # REMOVED: was 28800. 24h safety net only.
         "panic_threshold":    10.0,
         "candle_gate_sec":    45,
         "htf_block":          False,  # P11 FIX: was True — blocked 100% of entries when HTF was BULL/BEAR
@@ -178,8 +178,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    2.0,
         "partial_take_r":     0.75,
         "partial_take_pct":   0.40,
-        "time_exit_sec":      5400,
-        "time_exit_hard_cap_s": 10800,
+        "time_exit_sec":      86400,
+        "time_exit_hard_cap_s": 86400,
         "panic_threshold":    10.0,
         "candle_gate_sec":    60,
         "htf_block":          True,
@@ -197,8 +197,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    2.0,
         "partial_take_r":     0.75,
         "partial_take_pct":   0.40,
-        "time_exit_sec":      900,
-        "time_exit_hard_cap_s": 1200,
+        "time_exit_sec":      86400,
+        "time_exit_hard_cap_s": 86400,
         "panic_threshold":    10.0,
         "candle_gate_sec":    60,
         "htf_block":          True,
@@ -215,9 +215,9 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.5,  # widened: move SL to BE only after 1.5×ATR profit
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      14400,  # P16 FIX: was 1800. Sweep fades need time to resolve.
-        "time_exit_hard_cap_s": 28800,  # P16 FIX: was 1800.
-        "panic_threshold":    10.0,  # FIX-R4: was 5.0 — unify with ATR panic gate at 0.90
+        "time_exit_sec":      86400,  # REMOVED: was 14400. Trades run to SL or TP.
+        "time_exit_hard_cap_s": 86400,  # REMOVED: was 28800. 24h safety net only.
+        "panic_threshold":    10.0,
         "candle_gate_sec":    45,
         "htf_block":          False,
         "cascade_cooldown_s": 180,   # STRATEGY-B: 3min (sweep may repeat next candle)
@@ -235,8 +235,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.0,   # Lock BE faster — squeeze resolves in 3-8 candles
         "partial_take_r":     0.50,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      1800,  # AUDIT FIX: was 600 — 3 candles for squeeze resolution
-        "time_exit_hard_cap_s": 3600,  # AUDIT FIX: was 1200 — 6 candles max
+        "time_exit_sec":      86400,  # AUDIT FIX: was 600 — 3 candles for squeeze resolution
+        "time_exit_hard_cap_s": 86400,  # AUDIT FIX: was 1200 — 6 candles max
         "panic_threshold":    5.0,   # Tighter panic — squeeze moves fast
         "candle_gate_sec":    30,
         "htf_block":          False,
@@ -253,8 +253,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.0,
         "partial_take_r":     0.50,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      600,
-        "time_exit_hard_cap_s": 1200,
+        "time_exit_sec":      86400,
+        "time_exit_hard_cap_s": 86400,
         "panic_threshold":    10.0,
         "candle_gate_sec":    60,
         "htf_block":          False,
@@ -269,8 +269,8 @@ REGIME_PARAMS = {
         "be_lock_trigger":    1.5,
         "partial_take_r":     0.60,
         "partial_take_pct":   0.50,
-        "time_exit_sec":      900,
-        "time_exit_hard_cap_s": 1800,
+        "time_exit_sec":      86400,
+        "time_exit_hard_cap_s": 86400,
         "panic_threshold":    10.0,
         "candle_gate_sec":    120,   # Longer — funding changes slowly
         "htf_block":          False,

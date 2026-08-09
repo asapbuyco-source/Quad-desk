@@ -1897,8 +1897,9 @@ def _strategy_mean_reversion(metrics: Dict[str, Any], z_threshold: float = 1.5) 
     z = metrics.get("zScore", 0.0)
     rsi = metrics.get("rsi", 50.0)
     z_ret = metrics.get("zScore_ret", 0.0)
-    rsi_long_gate = 45.0
-    rsi_short_gate = 55.0
+    # RSI gates lowered to match reduced Z thresholds (0.80 in RANGE vs old 1.06)
+    rsi_long_gate = 48.0   # was 45
+    rsi_short_gate = 52.0  # was 55
     MOMENTUM_REJECT_THRESHOLD = 0.5
 
     if z >= z_threshold and rsi > rsi_short_gate:
@@ -3737,6 +3738,7 @@ async def _compute_signal(
         # P15: Adaptive Dynamic Z Engine — carried through to executor
         # so _process_exit can feed the outcome back into dynamic_z_engine.
         "z_score":            round(metrics.get("zScore", 0.0), 4),
+        "rsi":                round(metrics.get("rsi", 50.0), 1),
         "z_threshold_used":   z_threshold_effective,
     }
 
