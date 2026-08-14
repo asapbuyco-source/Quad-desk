@@ -2448,6 +2448,22 @@ Moved Stop Loss to {be_price:.2f} (entry={entry_price:.2f} + fee buffer) for {sy
                 pos["_hard_time_exit_deferred_logged"] = True
             return False, 0.0
 
+        # Conditional extension: at the hard cap, a trade in profit but below TP
+        # gets ONE 12h extension — dead trades (PnL <= 0) still die at the cap.
+        if (
+            age >= hard_time_exit_sec
+            and est_pnl > min_time_exit_profit
+            and not pos.get("_profit_extension_used")
+            and not self.dry_run
+        ):
+            pos["_profit_extension_used"] = True
+            pos["time_exit_hard_cap_s"] = float(hard_time_exit_sec) + 43200.0  # +12h
+            logger.info(
+                f"[Executor] Time exit EXTENDED +12h: age={age:.0f}s, "
+                f"PnL=${est_pnl:.2f} in profit below TP — giving trade room to hit target."
+            )
+            return False, 0.0
+
         logger.warning(
             f"[Executor] TIME EXIT: age={age:.0f}s >= {time_exit_sec:.0f}s "
             f"for {pos.get('symbol')} | estimated PnL=${est_pnl:.2f}"
