@@ -1296,10 +1296,10 @@ class TradingExecutor:
             # ── MAKER-ONLY ENTRY: postOnly limit order at best bid/ask ───
             # P12 FIX: Price-chasing + market fallback. Old code parked at original
             # bid/ask for 60s — 80% of signals expired in trending markets (Jul 17).
-            # New: chase best bid/ask every 15s, market order fallback at 45s.
+            # New: chase best bid/ask every 10s, market order fallback at 25s.
             import asyncio
-            ORDER_TTL_SEC = 45
-            CHASE_INTERVAL_S = 15
+            ORDER_TTL_SEC = 25
+            CHASE_INTERVAL_S = 10
             POLL_INTERVAL_S = 3.0
 
             try:
