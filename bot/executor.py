@@ -1644,8 +1644,26 @@ class TradingExecutor:
                 # Attempt 1: Batch orders (preferred for atomicity)
                 try:
                     batch_result = await self.exchange.create_orders(batch_orders)
-                    sl_order_id = batch_result[0].get("id")
-                    tp_order_id = batch_result[1].get("id")
+                    sl_order_id = batch_result[0].get("id") if isinstance(batch_result, list) and len(batch_result) > 0 else None
+                    tp_order_id = batch_result[1].get("id") if isinstance(batch_result, list) and len(batch_result) > 1 else None
+
+                    # CRITICAL FIX: Batch orders return per-order error objects
+                    # ({"code": -XXXX, "msg": "..."}) instead of raising. A rejected
+                    # leg parses to a dict WITHOUT "id". Previously the code read
+                    # id=None, set sl_placed=True anyway, and the bot traded NAKED
+                    # with zero exchange-side protection. Now: validate both legs.
+                    sl_err_msg = None
+                    tp_err_msg = None
+                    if not sl_order_id and isinstance(batch_result, list) and len(batch_result) > 0:
+                        sl_err_msg = batch_result[0].get("msg") or f"code={batch_result[0].get('code')}" if isinstance(batch_result[0], dict) else "no id in response"
+                    if not tp_order_id and isinstance(batch_result, list) and len(batch_result) > 1:
+                        tp_err_msg = batch_result[1].get("msg") or f"code={batch_result[1].get('code')}" if isinstance(batch_result[1], dict) else "no id in response"
+
+                    if not sl_order_id or not tp_order_id:
+                        raise RuntimeError(
+                            f"Batch leg rejected: SL={sl_err_msg or 'ok'} TP={tp_err_msg or 'ok'}"
+                        )
+
                     sl_placed = True
                     tp_placed = True
                     bracket_accepted = True
@@ -1673,8 +1691,10 @@ class TradingExecutor:
                                     "reduceOnly": True,
                                 },
                             )
-                            sl_placed = True
                             sl_order_id = sl_order.get("id")
+                            if not sl_order_id:
+                                raise RuntimeError(f"SL order returned no id: {sl_order}")
+                            sl_placed = True
                             # O-08 FIX: Register position IMMEDIATELY after SL confirmed.
                             # The position is now protected by a stop on the exchange.
                             # TP will be updated separately after it's placed.
@@ -1714,8 +1734,10 @@ class TradingExecutor:
                                     symbol=ex_symbol, type=tp_type, side=sl_side,
                                     amount=fmt_size, params=tp_params,
                                 )
-                            tp_placed = True
                             tp_order_id = tp_order.get("id")
+                            if not tp_order_id:
+                                raise RuntimeError(f"TP order returned no id: {tp_order}")
+                            tp_placed = True
                             # O-08 FIX: Update active_position with TP info now that it's confirmed.
                             if self.active_position:
                                 self.active_position["tp_order_id"] = tp_order_id
@@ -1796,6 +1818,8 @@ class TradingExecutor:
                 if not sl_placed:
                     raise RuntimeError(f"SL placement failed after 3 attempts: {_sl_last_err}")
                 sl_order_id = sl_order.get("id")
+                if not sl_order_id:
+                    raise RuntimeError(f"SL order returned no id: {sl_order}")
                 _activate_position()
                 logger.info(f"[Executor] SL attached at {stop_loss} (id={sl_order_id}) ✓")
 
@@ -1830,6 +1854,9 @@ class TradingExecutor:
                     tp_order_id = None
                 else:
                     tp_order_id = tp_order.get("id")
+                    if not tp_order_id:
+                        logger.error("[Executor] TP order returned no id — position has SL but NO take-profit!")
+                        tp_order_id = None
                     logger.info(f"[Executor] TP attached at {take_profit} (id={tp_order_id}) ✓")
 
             # BUG-1 FIX: Use actual exchange fill price, not signal price.
