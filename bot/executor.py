@@ -1335,6 +1335,8 @@ class TradingExecutor:
                     await asyncio.sleep(0.5)
 
             order_id = order.get("id")
+            if not order_id:
+                raise RuntimeError(f"Entry order returned no id: {order}")
             logger.info(
                 f"[MakerEntry] LIMIT {side.upper()} {fmt_size} {ex_symbol} "
                 f"@ {limit_price:.2f} | id={order_id} | postOnly=True | TTL={ORDER_TTL_SEC}s"
@@ -1418,6 +1420,8 @@ class TradingExecutor:
                                 params={"postOnly": True, "timeInForce": "GTC"}
                             )
                             order_id = order.get("id")
+                            if not order_id:
+                                raise RuntimeError(f"Chase order returned no id: {order}")
                             self.pending_order["id"] = order_id
                             self.pending_order["entry_price"] = limit_price
                         except Exception as chase_err:
@@ -1968,9 +1972,12 @@ class TradingExecutor:
                     "reduceOnly": True
                 }
             )
+            new_sl_id = new_order.get("id")
+            if not new_sl_id:
+                raise RuntimeError(f"BE SL order returned no id: {new_order}")
             logger.info("[Executor] Phase 1 Success: New Breakeven+fees SL safely placed on exchange.")
             self.active_position["stop_loss"] = be_price
-            self.active_position["sl_order_id"] = new_order.get("id")
+            self.active_position["sl_order_id"] = new_sl_id
             self.active_position["sl_placed"] = True
             
             # Phase 2: Now that new SL is secure, cancel the OLD Stop Loss
