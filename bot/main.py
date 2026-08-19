@@ -3209,10 +3209,10 @@ async def _compute_signal(
                 else:
                     rsi_trough = True; rsi_peak = True  # skip if no history
                 if raw_direction == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
-                    logger.info(f"[RANGE Exhaust] LONG blocked — z_slope={z_slope:+.3f} (need <0), rsi_trough={rsi_trough}")
+                    logger.info(f"[RANGE Exhaust] LONG blocked — z_slope={z_slope:+.3f} (need >0), rsi_trough={rsi_trough}")
                     raw_direction = None
                 if raw_direction == "MEAN_REVERSAL_SHORT" and (z_slope >= 0 or not rsi_peak):
-                    logger.info(f"[RANGE Exhaust] SHORT blocked — z_slope={z_slope:+.3f} (need >0), rsi_peak={rsi_peak}")
+                    logger.info(f"[RANGE Exhaust] SHORT blocked — z_slope={z_slope:+.3f} (need <0), rsi_peak={rsi_peak}")
                     raw_direction = None
             if raw_direction:
                 logger.info(
@@ -3222,7 +3222,7 @@ async def _compute_signal(
             else:
                 logger.info(
                     f"[MetaModel] RANGE — z={metrics.get('zScore', 0.0):.2f} "
-                    f"below z_thr={regime_p['z_threshold']}, no edge."
+                    f"z_thr={regime_p['z_threshold']}, no edge (threshold or exhaustion filter)."
                 )
                 _gate_stats_summary("regime_no_edge")
         elif regime == "COMPRESSION":
@@ -3259,18 +3259,18 @@ async def _compute_signal(
                 rsi_prev2 = metrics.get("rsi_prev2")
                 rsi_gate_ready = rsi_prev is not None and rsi_prev2 is not None
                 if rsi_gate_ready:
-                    rsi_trough = rsi < 45 and rsi >= rsi_prev
-                    rsi_peak = rsi > 55 and rsi <= rsi_prev
+                    rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
+                    rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
                 else:
                     rsi_trough = True
                     rsi_peak = True
                 is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
-                if is_long and (z_slope > 0.0 or rsi_trough):
+                if is_long and (z_slope <= 0.0 or rsi_trough):
                     logger.info(f"[COMP Exhaust] LONG blocked — z_slope={z_slope:+.3f}, rsi={rsi:.0f}")
-                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope>0 or RSI trough)"}
-                if not is_long and (z_slope < 0.0 or rsi_peak):
+                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope<=0 or RSI trough)"}
+                if not is_long and (z_slope >= 0.0 or rsi_peak):
                     logger.info(f"[COMP Exhaust] SHORT blocked — z_slope={z_slope:+.3f}, rsi={rsi:.0f}")
-                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope<0 or RSI peak)"}
+                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope>=0 or RSI peak)"}
         elif regime == "SQUEEZE":
             # SQUEEZE cascade: enter in squeeze direction with tight SL, wide TP.
             # Use trend strategy with SQUEEZE params for momentum capture.
