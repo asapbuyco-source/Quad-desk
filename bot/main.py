@@ -3265,12 +3265,12 @@ async def _compute_signal(
                     rsi_trough = True
                     rsi_peak = True
                 is_long = raw_direction in ("BUY", "MEAN_REVERSAL_LONG")
-                if is_long and (z_slope <= 0.0 or rsi_trough):
+                if is_long and (z_slope <= 0.0 or not rsi_trough):
                     logger.info(f"[COMP Exhaust] LONG blocked — z_slope={z_slope:+.3f}, rsi={rsi:.0f}")
-                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope<=0 or RSI trough)"}
-                if not is_long and (z_slope >= 0.0 or rsi_peak):
+                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope<=0 or RSI trough missing)"}
+                if not is_long and (z_slope >= 0.0 or not rsi_peak):
                     logger.info(f"[COMP Exhaust] SHORT blocked — z_slope={z_slope:+.3f}, rsi={rsi:.0f}")
-                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope>=0 or RSI peak)"}
+                    return {**WAIT, "analysis": "COMPRESSION MR blocked — coil still winding (z_slope>=0 or RSI peak missing)"}
         elif regime == "SQUEEZE":
             # SQUEEZE cascade: enter in squeeze direction with tight SL, wide TP.
             # Use trend strategy with SQUEEZE params for momentum capture.
