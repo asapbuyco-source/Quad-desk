@@ -873,10 +873,10 @@ def run_multi(interval: str = "15m", years_back: int = 1,
 def _print_paste_block(mu, sigma, A, labels):
     """Print the exact arrays to paste into main.py."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    print(f"\n{'─'*60}")
+    print(f"\n{'='*60}")
     print(f"  PASTE BLOCK — copy into _HMMRegimeClassifier in main.py")
     print(f"  Generated: {ts}")
-    print(f"{'─'*60}")
+    print(f"{'='*60}")
 
     print("    _MU = np.array([")
     for i, lab in enumerate(labels):
