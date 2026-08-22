@@ -661,6 +661,10 @@ class QuantEngine:
             "zScore_ret":        z_ret,
             "zScore_ret_intra":  _zr_intra,
             "ofi_intra":         _ofi_intra,
+            # f6 HMM feature: SIGNED displacement from 100-bar SMA — the only
+            # feature that detects directional trends (a +22% rally reads +0.15
+            # here while VWAP z-score stays ~0 because VWAP follows price).
+            "sma_disp":          float(np.clip((current_price - float(np.mean(closes[-100:])) ) / max(float(np.mean(closes[-100:])), 1e-9), -0.30, 0.30)) if len(closes) >= 20 else 0.0,
             # PHASE 3: RV/IV fields
             "rv_iv_ratio":       rv_iv_ratio,
             "vol_state":         vol_state,

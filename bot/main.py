@@ -726,18 +726,18 @@ class _HMMRegimeClassifier:
     # Defaults are fallback seeds — replace with calibrated values from
     # `python -m bot.hmm_calibrate --multi --years 1` for production.
     _MU = np.array([
-        [0.002143, 1.110, 0.00, 0.199, 0.15, 0.05],   # RANGE — quiet, no edge
-        [0.002500, 0.950, 0.00, 0.350, 0.20, 0.04],   # COMPRESSION — coiling spring
-        [0.003256, 1.858, 1.00, 0.554, 1.50, 0.10],   # TREND — momentum
-        [0.003691, 1.020, 0.00, 0.652, 0.50, 0.05],   # VOLATILE — choppy, noisy
-        [0.005000, 2.500, 1.00, 0.850, 2.50, 0.15],   # SQUEEZE — vacuum cascade
+        [0.002143, 1.110, 0.00, 0.199, 0.15, 0.05, 0.000],   # RANGE — quiet, no edge
+        [0.002500, 0.950, 0.00, 0.350, 0.20, 0.04, 0.005],   # COMPRESSION — coiling spring
+        [0.003256, 1.858, 1.00, 0.554, 1.50, 0.10, 0.080],   # TREND — momentum
+        [0.003691, 1.020, 0.00, 0.652, 0.50, 0.05, 0.010],   # VOLATILE — choppy, noisy
+        [0.005000, 2.500, 1.00, 0.850, 2.50, 0.15, 0.020],   # SQUEEZE — vacuum cascade
     ], dtype=float)
     _SIGMA = np.array([
-        [0.001650, 0.759, 0.0015, 0.119, 0.50, 0.20],  # RANGE
-        [0.001800, 0.670, 0.0010, 0.140, 0.45, 0.18],  # COMPRESSION
-        [0.005409, 0.923, 0.0053, 0.269, 1.20, 0.30],  # TREND
-        [0.001988, 0.683, 0.0017, 0.160, 0.80, 0.20],  # VOLATILE
-        [0.006000, 0.950, 0.0060, 0.200, 1.50, 0.35],  # SQUEEZE
+        [0.001650, 0.759, 0.0015, 0.119, 0.50, 0.20, 0.02],  # RANGE
+        [0.001800, 0.670, 0.0010, 0.140, 0.45, 0.18, 0.02],  # COMPRESSION
+        [0.005409, 0.923, 0.0053, 0.269, 1.20, 0.30, 0.05],  # TREND
+        [0.001988, 0.683, 0.0017, 0.160, 0.80, 0.20, 0.03],  # VOLATILE
+        [0.006000, 0.950, 0.0060, 0.200, 1.50, 0.35, 0.04],  # SQUEEZE
     ], dtype=float)
 
     # --- 5-state transition matrix (rows = from-state, cols = to-state) ---
@@ -1168,7 +1168,8 @@ class _HMMRegimeClassifier:
                  t_kinetic: float = 0.5,
                  cvd_momentum: float = 0.0,
                  z_ret: float = 0.0,
-                 funding_rate: float = 0.0) -> dict:
+                 funding_rate: float = 0.0,
+                 sma_disp: float = 0.0) -> dict:
         """
         Main entry: add one observation and return regime probability vector.
 
@@ -1195,6 +1196,7 @@ class _HMMRegimeClassifier:
             float(np.clip(atr_pct_rank,  0.0,  1.0)),    # f3: atr percentile rank
             float(np.clip(abs(z_ret),    0.0,  6.0)),     # f4: |z_ret| — kinetic energy (F-01)
             float(np.clip(funding_rate * 1000.0, -3.0, 3.0)),  # f5: funding_rate × 1000 (F-01)
+            float(np.clip(sma_disp,      -0.30, 0.30)),  # f6: signed SMA100 displacement — trend direction
         ], dtype=float)
 
         self._obs_buf.append(obs)
@@ -1547,7 +1549,7 @@ def _detect_regime(
     cvd_momentum = float(metrics.get("cvd_delta", 0.0) or 0.0)
     z_ret = float(metrics.get("zScore_ret", 0.0))
     funding_rate = float(metrics.get("funding_rate", 0.0))
-    hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic, cvd_momentum=cvd_momentum, z_ret=z_ret, funding_rate=funding_rate)
+    hmm_result = _hmm_classifier.classify(_atr_pct_normalised, z, tape, atr_pct_rank, amihud_rank, t_kinetic, cvd_momentum=cvd_momentum, z_ret=z_ret, funding_rate=funding_rate, sma_disp=float(metrics.get("sma_disp", 0.0) or 0.0))
 
     # HIGH-2 FIX: REGIME_REMAP removed — it was dead code.
     regime = hmm_result["regime"]

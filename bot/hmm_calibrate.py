@@ -120,13 +120,14 @@ def _calc_atr_rank(atr_pct, window=2880):
 
 def build_feature_matrix(df, symbol: str = "BTCUSDT", start_idx: int = 50):
     """
-    F-01 FIX: Build 6-column observation matrix matching FEATURE_SCHEMA_V2.
+    F-01 FIX: Build 7-column observation matrix matching FEATURE_SCHEMA_V2.
       f0: atr_pct / atr_scale         — normalised volatility level
       f1: |z_score|                   — VWAP deviation magnitude
       f2: tape_bin (binary)           — volume spike indicator
       f3: atr_pct_rank                — ATR percentile in 30-day window
       f4: |z_ret|                     — log-return velocity (kinetic energy)
       f5: funding_rate × 1000         — funding rate scaled and bounded
+      f6: sma_disp                    — SIGNED (close - SMA100)/SMA100 — trend direction
     """
     close  = df['close'].values.astype(float)
     high   = df['high'].values.astype(float)
@@ -148,13 +149,21 @@ def build_feature_matrix(df, symbol: str = "BTCUSDT", start_idx: int = 50):
 
     funding_rate = df['funding_rate'].values.astype(float)
 
+    # f6: SIGNED displacement from 100-bar SMA — catches directional trends.
+    # A 22% rally puts price ~+10-20% above SMA100; a range oscillates near 0.
+    import pandas as pd
+    sma100 = pd.Series(close).rolling(100, min_periods=20).mean().fillna(pd.Series(close)).values
+    sma_disp = np.where(sma100 > 0, (close - sma100) / sma100, 0.0)
+    sma_disp = np.clip(sma_disp, -0.30, 0.30)
+
     X = np.column_stack([
         np.clip(atr_pct[start_idx:],  0.0, 0.03),   # f0
         np.clip(abs_z[start_idx:],    0.0, 4.0),     # f1
         tape_bin[start_idx:],                        # f2
         np.clip(atr_rank[start_idx:], 0.0, 1.0),    # f3
-        np.clip(abs_zr[start_idx:],   0.0, 4.0),    # f4  ← NEW velocity feature
-        np.clip(funding_rate[start_idx:] * 1000, -2.0, 2.0), # f5: funding rate
+        np.clip(abs_zr[start_idx:],   0.0, 4.0),    # f4
+        np.clip(funding_rate[start_idx:] * 1000, -2.0, 2.0), # f5
+        sma_disp[start_idx:],                        # f6
     ])
     valid = np.all(np.isfinite(X), axis=1)
     return X[valid], valid

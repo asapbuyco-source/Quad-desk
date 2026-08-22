@@ -18,9 +18,10 @@ FEATURE_SCHEMA_V2 = (
     "atr_rank",           # f3  — ATR percentile rank [0,1]
     "abs_zret",           # f4  — absolute Z-score return (kinetic energy proxy)
     "funding_rate_x1000", # f5  — funding_rate × 1000 (bounded -3,+3)
+    "sma_disp",           # f6  — SIGNED displacement from 100-bar SMA (directional trend strength)
 )
 
-N_FEATURES = len(FEATURE_SCHEMA_V2)  # 6
+N_FEATURES = len(FEATURE_SCHEMA_V2)  # 7
 
 
 def schema_identity_match(expected_schema, actual_schema):
