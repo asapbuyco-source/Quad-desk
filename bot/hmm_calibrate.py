@@ -85,6 +85,9 @@ def _calc_atr(high, low, close, period=14):
 
 
 def _calc_vwap_zscore(close, high, low, volume, period=20):
+    """Legacy 20-bar VWAP Z — kept for backward compatibility.
+    The runtime bot uses session_vwap_z (24h rolling). Calibration now uses
+    the SAME 24h definition via _calc_session_vwap_z to avoid feature mismatch."""
     import pandas as pd
     tp   = (high + low + close) / 3.0
     vol  = pd.Series(volume)
@@ -93,6 +96,34 @@ def _calc_vwap_zscore(close, high, low, volume, period=20):
     std  = tp_s.rolling(period).std(ddof=0)
     z    = (pd.Series(close) - vwap) / std
     return z.fillna(0).values
+
+
+def _calc_session_vwap_z(close, high, low, volume, atr_pct_rank):
+    """Replicate runtime quant_engine._session_vwap_z: 24h rolling VWAP,
+    n_sig-bar std window, quadrature floor, clipped to [-4, 4]."""
+    n = len(close)
+    z = np.zeros(n)
+    WINDOW_BARS = 96  # 24h of 15m
+    for i in range(50, n):
+        s = max(0, i - WINDOW_BARS)
+        tp = (high[s:i + 1] + low[s:i + 1] + close[s:i + 1]) / 3.0
+        v = volume[s:i + 1]
+        vwap = np.sum(tp * v) / max(np.sum(v), 1e-9)
+        n_sig = max(10, min(25, int((1.0 - atr_pct_rank[i]) * 40 + 10)))
+        lo = max(0, i - n_sig)
+        h = high[lo:i]
+        l = low[lo:i]
+        c = close[lo:i]
+        vv = volume[lo:i]
+        if len(h) < 5 or np.sum(vv) <= 0:
+            continue
+        tp_w = (h + l + c) / 3.0
+        vw_var = np.sum(vv * (tp_w - vwap) ** 2) / np.sum(vv)
+        std = np.sqrt(vw_var)
+        min_std = close[i] * 0.00005
+        std = np.sqrt(std * std + min_std * min_std)
+        z[i] = (close[i] - vwap) / std
+    return np.clip(z, -4.0, 4.0)
 
 
 def _calc_zret(close, period=20):
@@ -138,14 +169,15 @@ def build_feature_matrix(df, symbol: str = "BTCUSDT", start_idx: int = 50):
 
     atr     = _calc_atr(high, low, close, period=14)
     atr_pct = np.where(close > 0, atr / close, 0.0) / atr_scale
-    zscore  = _calc_vwap_zscore(close, high, low, volume, period=20)
+    atr_rank = _calc_atr_rank(atr_pct, window=2880)
+    # FIX: use the SAME 24h VWAP Z as the runtime bot (feature mismatch fix)
+    zscore  = _calc_session_vwap_z(close, high, low, volume, atr_rank)
     abs_z   = np.abs(zscore)
     z_ret   = _calc_zret(close, period=20)
     abs_zr  = np.abs(z_ret)
 
     vol_sma  = df['volume'].shift(1).rolling(60, min_periods=1).mean().fillna(0).values
     tape_bin = np.where(volume > vol_sma * 3.0, 1.0, 0.0)
-    atr_rank = _calc_atr_rank(atr_pct, window=2880)
 
     funding_rate = df['funding_rate'].values.astype(float)
 
