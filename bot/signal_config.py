@@ -111,7 +111,7 @@ OFI_WARMUP_CYCLES = 20
 REGIME_PARAMS = {
     "RANGE": {
         # Low-volatility: small deviations are statistically meaningful
-        "z_threshold":        0.80,  # AUDIT FIX: was 1.06. Z=0.64-0.68 never triggers in current VWAP band.
+        "z_threshold":        1.65,  # DATA-DRIVEN: 5yr backtest sweep — breakeven floor; Dynamic Z learned 2.0 as optimal. Was 0.80 (losing).
         "z_scale_base":       0.96,  # Near-Gaussian — range-bound distributions have light tails
         "atr_multiplier_sl":  0.90,   # P16 FIX: was 1.14. Cut losses faster — if reversion doesn't happen in 0.9×ATR, it's a failed signal. Don't bleed to time exit.
         "ofi_bound":          0.08,  # Was 0.10. Needs less order flow to enter
@@ -192,7 +192,7 @@ REGIME_PARAMS = {
         "z_scale_base":       0.78,  # Heaviest tails — volatile distributions need strongest dampening
         "atr_multiplier_sl":  1.65,
         "ofi_bound":          0.20,
-        "min_confidence":     0.65,
+        "min_confidence":     0.68,  # DATA-DRIVEN: was 0.65 — 5yr backtest WR 32% needs ~34%; tighter floor cuts weak entries
         "rr_target":          2.30,
         "be_lock_trigger":    2.0,
         "partial_take_r":     0.75,

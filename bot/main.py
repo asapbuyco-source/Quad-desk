@@ -1553,13 +1553,12 @@ def _detect_regime(
 
     # HIGH-2 FIX: REGIME_REMAP removed — it was dead code.
     regime = hmm_result["regime"]
-    # P12 FIX: RANGE/COMPRESSION HMM collapse (BD=0.292) means the two most
-    # common regimes are indistinguishable. Until HMM is recalibrated, merge
-    # COMPRESSION into RANGE — RANGE has more conservative parameters and is
-    # safer than misapplying COMPRESSION's wider z_thr=1.20.
-    if regime == "COMPRESSION":
-        regime = "RANGE"
-        logger.debug(f"[HMM] COMPRESSION→RANGE merge (BD=0.292 collapse guard)")
+    # P12 MERGE REMOVED (Aug 22): the merge was a guard for the OLD HMM's
+    # RANGE/COMPRESSION collapse (BD=0.292). The 5-year recalibrated HMM
+    # separates them cleanly (BD=183 on BTC, 157 on SOL), so COMPRESSION
+    # now keeps its own strategy: breakout detection via zScore_ret.
+    # Merging it into RANGE was converting breakout signals into
+    # counter-trend mean-reversion fades during rallies.
     confidence = hmm_result["confidence"]
 
     # Inject probabilities + regime into metrics for downstream observability
@@ -3228,26 +3227,26 @@ async def _compute_signal(
                 )
                 _gate_stats_summary("regime_no_edge")
         elif regime == "COMPRESSION":
-            # COMPRESSION is a coiling spring. Both MR and breakout entries can work
-            # if given enough time — the coil resolves slowly (94.4% self-persistence,
-            # ~4.5h avg). Live trade evidence: exit at 869s missed TP that was reached
-            # later. Fix: allow 3600s hold so trades can fully resolve.
-            is_breakout = (
-                metrics.get("zScore_ret_intra", 0) > 0.6 or
-                metrics.get("zScore_ret", 0) > 0.6
-            )
-            if is_breakout:
-                strategy_type = "COMPRESSION_BREAKOUT"
-                raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant)  # P15: dynamic Z
-                if raw_direction:
-                    logger.info(f"[MetaModel] COMPRESSION → BREAKOUT ({raw_direction})")
-            if raw_direction is None:
-                strategy_type = "MEAN_REVERSION"
-                raw_direction = _strategy_mean_reversion(metrics, z_threshold=z_threshold_effective)  # P15: dynamic Z
-                if raw_direction:
-                    logger.info(f"[MetaModel] → COMPRESSION MR ({raw_direction})")
-                else:
-                    logger.info(f"[MetaModel] COMPRESSION — no edge currently.")
+            # DATA-DRIVEN DISABLE (Aug 22): 5-year backtest showed COMPRESSION
+            # loses in BOTH modes — breakout -$161 and MR fallback, totaling
+            # -$223 across 2,422 trades (WR 37% but negative expectancy).
+            # COMPRESSION is now a no-trade regime like LIQUIDITY until a
+            # profitable entry condition is found via further research.
+            strategy_type = "NO_TRADE"
+            raw_direction = None
+            _gate_stats_summary("regime_no_edge")
+            return {**WAIT, "analysis": "COMPRESSION regime — no-trade (backtest: both modes lose)."}
+            # Original logic preserved below for future re-enable:
+            # is_breakout = (
+            #     metrics.get("zScore_ret_intra", 0) > 0.6 or
+            #     metrics.get("zScore_ret", 0) > 0.6
+            # )
+            # if is_breakout:
+            #     strategy_type = "COMPRESSION_BREAKOUT"
+            #     raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant)
+            # if raw_direction is None:
+            #     strategy_type = "MEAN_REVERSION"
+            #     raw_direction = _strategy_mean_reversion(metrics, z_threshold=z_threshold_effective)
             # AUDIT FIX: COMPRESSION exhaustion filter — same as RANGE slope+RSI gate.
             # Without this, compression MR entries fire while coil is still winding tighter.
             if raw_direction:
