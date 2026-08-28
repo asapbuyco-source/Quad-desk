@@ -830,6 +830,12 @@ class _HMMRegimeClassifier:
         self._committed_regime = "RANGE"   # currently committed regime
         self._candidate_regime = "RANGE"   # regime the HMM is suggesting
         self._candidate_streak = 0         # consecutive candles suggesting candidate
+        # DATA-DRIVEN (Aug 28): trend_prefer commitment. 5yr backtest on 3 symbols:
+        # committing TREND whenever a raw TREND appears in the recent window is the
+        # only profitable configuration (+$1500 net, ~2 trades/day). Majority voting
+        # suppresses TREND (5% of raw bars -> 2% committed) and TREND is the only
+        # +EV regime (RANGE/VOLATILE/COMPRESSION all lose at every threshold tested).
+        self._raw_label_hist: deque = deque(maxlen=8)
 
         # DIM 5 FIX: CVD memory kernel buffer for non-Markovian regime detection
         # Klint audit: CVD lag-2=0.223 → statistically significant persistence.
@@ -1253,6 +1259,25 @@ class _HMMRegimeClassifier:
         raw_label  = self._LABELS[best_state]
         raw_conf   = float(posterior[best_state])
 
+        # DATA-DRIVEN (Aug 28): trend_prefer commitment. 5yr backtest (3 symbols):
+        # majority-vote commitment suppresses TREND (1-2% of committed bars vs 4-5%
+        # raw) and TREND is the only +EV regime. Committing TREND as soon as a raw
+        # TREND appears in the last 8 bars was the winning config: +$1500 net over
+        # 5yr across BTC/ETH/SOL at ~2 trades/day. Entry quality is still gated
+        # downstream by the TREND strategy (score, sma_disp, z_ret, direction
+        # confidence) and the router's confidence gate.
+        self._raw_label_hist.append(raw_label)
+        if "TREND" in self._raw_label_hist and self._committed_regime != "TREND":
+            old = self._committed_regime
+            self._prev_committed_regime = old
+            self._committed_regime = "TREND"
+            self._candidate_regime = "TREND"
+            self._candidate_streak = 1
+            logger.info(
+                f"[HMM] Regime TRANSITION (TREND-PREFER): {old} → TREND "
+                f"(raw_conf={raw_conf:.1%})"
+            )
+
         # ── DIM 5 FIX: CVD Memory Kernel (NHHMM feed-forward) ────────────
         # Non-Markovian memory: CVD exhibits statistically significant lag-2
         # persistence (r=0.223, Klint audit). When CVD maintains directional
@@ -1329,6 +1354,7 @@ class _HMMRegimeClassifier:
         return {
             "regime":      self._committed_regime,
             "confidence":  committed_conf,
+            "raw_conf":    raw_conf,
             "p_range":       float(posterior[0]),
             "p_compression": float(posterior[1]),
             "p_trend":       float(posterior[2]),
@@ -1622,9 +1648,15 @@ def _detect_regime(
     # If the HMM isn't confident enough, fall back to NEUTRAL.
     # This prevents the bot from committing to TREND or MEAN_REVERSION
     # when the regime is genuinely ambiguous (e.g. P(TREND)=0.52).
-    if confidence < _HMMRegimeClassifier.MIN_CONFIDENCE and regime != "SQUEEZE":
+    # DATA-DRIVEN FIX (Aug 28): gate on max(committed, raw) confidence.
+    # The committed regime's posterior is ~0% during a regime transition
+    # (raw says TREND 100%, committed is still RANGE with P=0%) which made
+    # TREND entries structurally impossible live — observed Aug 27 08:30:
+    # P=[R:0% T:100% V:0%] got demoted to NEUTRAL with conf=0%.
+    _gate_conf = max(confidence, float(hmm_result.get("raw_conf", confidence)))
+    if _gate_conf < _HMMRegimeClassifier.MIN_CONFIDENCE and regime != "SQUEEZE":
         logger.info(
-            f"[HMM] Regime={hmm_result['raw_regime']}→NEUTRAL (conf={confidence:.0%} "
+            f"[HMM] Regime={hmm_result['raw_regime']}→NEUTRAL (conf={_gate_conf:.0%} "
             f"< {_HMMRegimeClassifier.MIN_CONFIDENCE:.0%} gate) | "
             f"P=[R:{hmm_result['p_range']:.0%} T:{hmm_result['p_trend']:.0%} "
             f"V:{hmm_result['p_volatile']:.0%}]"
@@ -1632,29 +1664,18 @@ def _detect_regime(
         return "NEUTRAL"
 
     logger.info(
-        f"[HMM] Regime={regime} conf={confidence:.0%} | "
+        f"[HMM] Regime={regime} conf={_gate_conf:.0%} | "
         f"P=[R:{hmm_result['p_range']:.0%} T:{hmm_result['p_trend']:.0%} "
         f"V:{hmm_result['p_volatile']:.0%}] | "
         f"atr={atr_pct:.3%} z={z:.2f} tape={tape}"
     )
 
-    # Z-score + RSI bypass with velocity filter.
-    # Live evidence: BTC Z=-1.68 RSI=30.6 at $59,363 — market still dropping,
-    # price fell to $59,007. Z=-1.25 RSI=29.5 at $59,007 — true bottom,
-    # bounced $497 to $59,504. Missing both is wrong; entering early is a loss.
-    # Filter: only override when z_ret (velocity) is NOT confirming the extreme.
-    # A -2σ Z with z_ret < -0.5 = still falling (skip). Z=-1.2 with z_ret > -0.3 = decelerating (enter).
-    if regime in ("RANGE", "NEUTRAL") and abs(z) >= 1.2:
-        rsi = metrics.get("rsi", 50.0)
-        z_ret = metrics.get("zScore_ret", 0.0)
-        if z <= -1.2 and rsi < 40.0 and z_ret > -0.5:
-            _old = regime
-            regime = "COMPRESSION" if atr_pct < 0.005 else "VOLATILE"
-            logger.info(f"[ZRSI-Override] Z={z:.2f} RSI={rsi:.1f} z_ret={z_ret:.2f} ATR={atr_pct:.3%} → {regime} (was {_old})")
-        elif z >= 1.2 and rsi > 60.0 and z_ret < 0.5:
-            _old = regime
-            regime = "COMPRESSION" if atr_pct < 0.005 else "VOLATILE"
-            logger.info(f"[ZRSI-Override] Z={z:.2f} RSI={rsi:.1f} z_ret={z_ret:.2f} ATR={atr_pct:.3%} → {regime} (was {_old})")
+    # DATA-DRIVEN REMOVAL (Aug 28): ZRSI-Override deleted. It flipped
+    # RANGE/NEUTRAL → COMPRESSION/VOLATILE at |Z|≥1.2 with extreme RSI.
+    # Both target regimes are now NO_TRADE (5yr backtest: -EV at every
+    # threshold/confidence swept), so the override was a silent kill-switch
+    # on every RANGE mean-reversion setup (17 flips observed Aug 27 alone,
+    # each converting a tradeable RANGE signal into a no-trade regime).
 
     return regime
 
@@ -1790,7 +1811,8 @@ def _strategy_cvd_flip(metrics: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0, quant=None) -> Optional[str]:
+def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0, quant=None,
+                    use_directional_gate: bool = False) -> Optional[str]:
     bayes      = metrics["bayesianPosterior"]
     ofi        = metrics["ofi"]
     cvd        = metrics["cvd"]
@@ -1856,8 +1878,18 @@ def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0, quant=None) -> 
 
     if score >= 1.5:
         # Intended LONG
+        # DATA-DRIVEN FIX (Aug 28): the VWAP-Z gate below is structurally wrong
+        # for trends — VWAP follows price, so |Z| stays low while trending and
+        # the gate can never open. 5yr backtest on 3 symbols confirmed the
+        # replacement: directional sma_disp + z_ret gates produce the ONLY
+        # profitable regime (+$564 across 536 TREND trades; everything else -EV).
         z = metrics.get("zScore", 0.0)
-        if abs(z) < z_min:
+        if use_directional_gate:
+            sma_disp = float(metrics.get("sma_disp", 0.0) or 0.0)
+            if not (sma_disp > 0.02 and z_ret > 0.3):
+                logger.debug(f"[TrendStrategy] BUY rejected — sma_disp={sma_disp:+.3f} z_ret={z_ret:+.2f} (no directional momentum)")
+                return None
+        elif abs(z) < z_min:
             logger.debug(f"[TrendStrategy] BUY rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
             return None
         if ofi < 0:
@@ -1874,7 +1906,12 @@ def _strategy_trend(metrics: Dict[str, Any], z_min: float = 1.0, quant=None) -> 
     if score <= -1.5:
         # Intended SHORT
         z = metrics.get("zScore", 0.0)
-        if abs(z) < z_min:
+        if use_directional_gate:
+            sma_disp = float(metrics.get("sma_disp", 0.0) or 0.0)
+            if not (sma_disp < -0.02 and z_ret < -0.3):
+                logger.debug(f"[TrendStrategy] SELL rejected — sma_disp={sma_disp:+.3f} z_ret={z_ret:+.2f} (no directional momentum)")
+                return None
+        elif abs(z) < z_min:
             logger.debug(f"[TrendStrategy] SELL rejected — Z={z:.2f} < z_min={z_min:.2f} (no momentum)")
             return None
         if ofi > 0:
@@ -3161,71 +3198,33 @@ async def _compute_signal(
     if raw_direction is None:
         if regime == "TREND":
             strategy_type = "TREND"
-            raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant)
+            # DATA-DRIVEN (Aug 28): directional gate replaces VWAP-Z gate
+            raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant,
+                                            use_directional_gate=True)
             if raw_direction:
                 logger.info("[MetaModel] → TREND strategy")
             else:
                 logger.info("[MetaModel] TREND — no edge.")
         elif regime == "VOLATILE":
-            vol_z_thr = z_threshold_effective
-            z_ret = metrics.get("zScore_ret", 0.0)
-            tape = metrics.get("tapeSpeed", "NORMAL")
-            vol_route = _route_volatile(z_ret, tape)
-            if vol_route == "BLOCK":
-                raw_direction = None; strategy_type = "VOLATILE"
-            elif vol_route == "TREND":
-                strategy_type = "TREND"
-                raw_direction = _strategy_trend(metrics, z_min=vol_z_thr, quant=quant)
-                if raw_direction: logger.info(f"[MetaModel] VOLATILE — routed to TREND")
-            elif vol_route == "MEAN_REVERSION":
-                strategy_type = "MEAN_REVERSION"
-                raw_direction = _strategy_mean_reversion(metrics, z_threshold=vol_z_thr)
-                if raw_direction: logger.info(f"[MetaModel] VOLATILE — routed to MEAN_REVERSION")
+            # DATA-DRIVEN DISABLE (Aug 28): 5yr backtest (3 symbols) swept
+            # min_confidence 0.68 → 0.80 — VOLATILE loses at EVERY level
+            # (-$679 across 2,080 trades at the base config). Disabling it
+            # flipped total 5yr PnL from -$328 to +$410. No-trade until a
+            # profitable VOLATILE condition exists.
+            strategy_type = "NO_TRADE"
+            raw_direction = None
+            _gate_stats_summary("regime_no_edge")
+            return {**WAIT, "analysis": "VOLATILE regime — no-trade (backtest: -EV at every confidence)."}
         elif regime == "RANGE":
-            # P10 FIX: RANGE is no longer an unconditional skip. The dead-market
-            # Z guard (Z < 0.30 for 5+ cycles) still fires above. Any RANGE cycle
-            # reaching here has Z > 0.30 — route to mean-reversion with RANGE's
-            # tighter z_threshold (1.06) from signal_config. If Z doesn't pass,
-            # the function returns None and the bot waits naturally.
-            strategy_type = "MEAN_REVERSION"
-            raw_direction = _strategy_mean_reversion(
-                metrics, z_threshold=z_threshold_effective
-            )
-            # P16 FIX: RANGE exhaustion filter — same as NEUTRAL's slope+RSI gate.
-            # Without this, the bot enters mean-reversion while momentum is still
-            # trending (July 25: 3/3 RANGE trades faded trend, lost -$2.41).
-            # Requires Z to be DECELERATING and RSI to have formed a trough/peak
-            # before entering, proving the extreme is exhausting, not accelerating.
-            if raw_direction and z_threshold_effective < 1.5:
-                z_current = metrics.get("zScore", 0.0)
-                z_prev = metrics.get("zScore_prev", z_current)
-                z_slope = z_current - z_prev
-                rsi = metrics.get("rsi", 50.0)
-                rsi_prev = metrics.get("rsi_prev")
-                rsi_prev2 = metrics.get("rsi_prev2")
-                rsi_gate_ready = rsi_prev is not None and rsi_prev2 is not None
-                if rsi_gate_ready:
-                    rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
-                    rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
-                else:
-                    rsi_trough = True; rsi_peak = True  # skip if no history
-                if raw_direction == "MEAN_REVERSAL_LONG" and (z_slope <= 0 or not rsi_trough):
-                    logger.info(f"[RANGE Exhaust] LONG blocked — z_slope={z_slope:+.3f} (need >0), rsi_trough={rsi_trough}")
-                    raw_direction = None
-                if raw_direction == "MEAN_REVERSAL_SHORT" and (z_slope >= 0 or not rsi_peak):
-                    logger.info(f"[RANGE Exhaust] SHORT blocked — z_slope={z_slope:+.3f} (need <0), rsi_peak={rsi_peak}")
-                    raw_direction = None
-            if raw_direction:
-                logger.info(
-                    f"[MetaModel] → RANGE MR ({raw_direction}) "
-                    f"z={metrics.get('zScore', 0.0):.2f} z_thr={regime_p['z_threshold']}"
-                )
-            else:
-                logger.info(
-                    f"[MetaModel] RANGE — z={metrics.get('zScore', 0.0):.2f} "
-                    f"z_thr={regime_p['z_threshold']}, no edge (threshold or exhaustion filter)."
-                )
-                _gate_stats_summary("regime_no_edge")
+            # DATA-DRIVEN DISABLE (Aug 28): 5yr backtest (3 symbols) swept
+            # z_threshold 1.65 → 2.10 — RANGE mean-reversion is negative EV
+            # at every level (-$155 across 214 trades at 1.65, the best case).
+            # Only TREND trades are +EV. No-trade until a profitable RANGE
+            # condition exists.
+            strategy_type = "NO_TRADE"
+            raw_direction = None
+            _gate_stats_summary("regime_no_edge")
+            return {**WAIT, "analysis": "RANGE regime — no-trade (backtest: -EV at every Z threshold)."}
         elif regime == "COMPRESSION":
             # DATA-DRIVEN DISABLE (Aug 22): 5-year backtest showed COMPRESSION
             # loses in BOTH modes — breakout -$161 and MR fallback, totaling
@@ -3295,40 +3294,15 @@ async def _compute_signal(
             else:
                 logger.info(f"[MetaModel] SQUEEZE — no direction confirmed.")
         elif regime == "NEUTRAL":
-            strategy_type = "MEAN_REVERSION"
-            z_current = metrics.get("zScore", 0.0)
-            z_prev = metrics.get("zScore_prev", z_current)
-            z_slope = z_current - z_prev
-            rsi = metrics.get("rsi", 50.0)
-            # P11 FIX: Use None defaults — when RSI history unavailable (first
-            # 2 cycles after regime transition), skip the RSI trough/peak gate
-            # and use z_slope alone. Old code defaulted to current rsi, which
-            # guaranteed rsi_trough/peak=FALSE, blocking ALL entries for 2 cycles.
-            rsi_prev = metrics.get("rsi_prev")
-            rsi_prev2 = metrics.get("rsi_prev2")
-            rsi_gate_ready = rsi_prev is not None and rsi_prev2 is not None
-            if rsi_gate_ready:
-                rsi_trough = (rsi > rsi_prev) and (rsi_prev < rsi_prev2)
-                rsi_peak = (rsi < rsi_prev) and (rsi_prev > rsi_prev2)
-            else:
-                rsi_trough = True   # skip gate — allow entry on Z+slope alone
-                rsi_peak = True
-
-            z_thr = z_threshold_effective  # P15: dynamic Z
-            candidate = _strategy_mean_reversion(metrics, z_threshold=z_thr)
-            # P16 exhaustion filter: require Z to be decelerating and RSI to have formed
-            # a trough/peak. Small tolerance (0.02) allows entry at the exact reversal
-            # point where slope ≈ 0 (Z peaked and is about to reverse).
-            if candidate == "MEAN_REVERSAL_LONG" and (z_slope < -0.02 or not rsi_trough):
-                candidate = None
-            if candidate == "MEAN_REVERSAL_SHORT" and (z_slope > 0.02 or not rsi_peak):
-                candidate = None
-            raw_direction = candidate
-            if raw_direction:
-                logger.info(f"[MetaModel] NEUTRAL -> {strategy_type} ({raw_direction}) "
-                            f"z={z_current:.2f} slope={z_slope:.3f}")
-            else:
-                logger.info(f"[MetaModel] NEUTRAL — no edge (z={z_current:.2f} slope={z_slope:.3f})")
+            # DATA-DRIVEN DISABLE (Aug 28): NEUTRAL mean-reversion at z_thr≈1.2
+            # is looser than RANGE's 1.65 — and RANGE MR lost at EVERY swept
+            # threshold (1.65→2.10). The winning 5yr backtest config trades
+            # TREND only. NEUTRAL is now a wait state: when the HMM is unsure,
+            # the bot waits for a confident TREND commitment.
+            strategy_type = "NO_TRADE"
+            raw_direction = None
+            _gate_stats_summary("regime_no_edge")
+            return {**WAIT, "analysis": "NEUTRAL regime — no-trade (backtest: MR -EV at every Z threshold)."}
         elif regime == "LIQUIDITY":
             # LIQUIDITY from wall-proximity (no sweep detected this cycle).
             # Not a tradable edge — the wall is there but price hasn't pierced it.
@@ -5134,6 +5108,11 @@ async def main():
 
             _hmm_classifier._candidate_streak = _hmm_classifier.HYSTERESIS_CANDLES
             _hmm_classifier._obs_buf.clear()
+            # DATA-DRIVEN (Aug 28): clear the raw-label window used by trend_prefer
+            # commitment. Seeding calls classify() on historical candles, which would
+            # otherwise leave stale TREND labels in the window and force a TREND
+            # commitment on the very first live cycle regardless of market state.
+            _hmm_classifier._raw_label_hist.clear()
             logger.info(
                 f"[HMM] Post-seed hysteresis reset: committed={_hmm_classifier._committed_regime}, "
                 f"streak={_hmm_classifier._candidate_streak} (obs buffer cleared)"

@@ -32,6 +32,12 @@ Z_SCALE_BASE = {"RANGE": 0.96, "NEUTRAL": 0.97, "COMPRESSION": 0.98,
 # COMP breakout parameters - tunable for sweeps
 COMP_ZRET_MIN = 0.6
 COMP_Z_MIN = None  # if set, overrides regime thr for COMP entries
+COMP_NO_TRADE = True  # align with live: COMPRESSION disabled (backtest proved -EV)
+VOL_NO_TRADE = False  # sweep flag: disable VOLATILE entirely
+RANGE_NO_TRADE = False  # sweep flag: disable RANGE entirely
+COMMIT_MODE = "majority"  # "majority" (8-bar vote) | "trend_prefer" (TREND if seen in window)
+Z_THR_OVERRIDE = {}  # {"RANGE": 1.9} style overrides for sweeps
+TREND_MIN_CONF = 0.65  # min_confidence override for TREND sweeps
 
 
 def load_params():
@@ -229,7 +235,11 @@ def run_symbol(symbol):
         if len(label_hist) > 8:
             label_hist.pop(0)
         from collections import Counter
-        committed = Counter(label_hist).most_common(1)[0][0]
+        if COMMIT_MODE == "trend_prefer":
+            counts = Counter(label_hist)
+            committed = "TREND" if counts.get("TREND", 0) > 0 else counts.most_common(1)[0][0]
+        else:
+            committed = Counter(label_hist).most_common(1)[0][0]
 
         if open_pos is not None:
             p = open_pos
@@ -275,6 +285,18 @@ def run_symbol(symbol):
 
         regime = committed
         p = REGIME_PARAMS.get(regime, REGIME_PARAMS["NEUTRAL"])
+        if COMP_NO_TRADE and regime == "COMPRESSION":
+            equity_curve.append(equity)
+            continue
+        if VOL_NO_TRADE and regime == "VOLATILE":
+            equity_curve.append(equity)
+            continue
+        if RANGE_NO_TRADE and regime == "RANGE":
+            equity_curve.append(equity)
+            continue
+        p = dict(p)
+        if regime in Z_THR_OVERRIDE:
+            p["z_threshold"] = Z_THR_OVERRIDE[regime]
         thr = (p["z_threshold"] /
                max(Z_SCALE_BASE.get(regime, 1.0) + conf * (1.0 - Z_SCALE_BASE.get(regime, 1.0)) * 0.4, 0.60))
         z = zscore[idx]
@@ -367,7 +389,8 @@ def run_symbol(symbol):
         # Real Bayesian fusion: P(bull) -> P(direction) with flow multipliers
         p_bull = bayesian_pbull(r, z, skew[idx], ofi_now, zr, regime)
         conf_sig = confidence_direction(p_bull, direction, ofi_now, cvd_d)
-        if conf_sig < p["min_confidence"]:
+        conf_min = TREND_MIN_CONF if regime == "TREND" else p["min_confidence"]
+        if conf_sig < conf_min:
             equity_curve.append(equity)
             continue
 
@@ -399,11 +422,13 @@ def run_symbol(symbol):
         if notional > equity * 2.0:
             size = (equity * 2.0) / entry_px
 
+        sub = "MR" if regime != "COMPRESSION" else ("BO" if abs(zr) > COMP_ZRET_MIN else "MR")
         open_pos = {
             "entry": entry_px, "side": side, "sl": sl, "tp": tp,
             "size": size, "age_bars": 0, "entry_regime": regime,
             "time_cap": p.get("time_exit_hard_cap_s", 86400),
             "entry_z": abs(z),
+            "sub": sub,
         }
         equity -= notional * MAKER_FEE
         equity_curve.append(equity)
