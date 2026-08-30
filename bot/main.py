@@ -1267,16 +1267,6 @@ class _HMMRegimeClassifier:
         # downstream by the TREND strategy (score, sma_disp, z_ret, direction
         # confidence) and the router's confidence gate.
         self._raw_label_hist.append(raw_label)
-        if "TREND" in self._raw_label_hist and self._committed_regime != "TREND":
-            old = self._committed_regime
-            self._prev_committed_regime = old
-            self._committed_regime = "TREND"
-            self._candidate_regime = "TREND"
-            self._candidate_streak = 1
-            logger.info(
-                f"[HMM] Regime TRANSITION (TREND-PREFER): {old} → TREND "
-                f"(raw_conf={raw_conf:.1%})"
-            )
 
         # ── DIM 5 FIX: CVD Memory Kernel (NHHMM feed-forward) ────────────
         # Non-Markovian memory: CVD exhibits statistically significant lag-2
@@ -1335,6 +1325,23 @@ class _HMMRegimeClassifier:
                 f"[HMM] Regime TRANSITION ({'FAST' if _fast else 'normal'}): "
                 f"{old} → {self._committed_regime} "
                 f"(conf={raw_conf:.1%}, streak={self._candidate_streak})"
+            )
+
+        # TREND-PREFER override (post-hysteresis): while any raw TREND remains in
+        # the recent window, keep TREND committed — mirrors the backtest's window
+        # semantics. Without this the hysteresis exits TREND after 2 non-TREND
+        # candles even with TREND still in the window (observed live Aug 29-30:
+        # TREND↔RANGE ping-pong every ~2 min), cutting TREND exposure to ~1/3 of
+        # the validated backtest behavior.
+        if "TREND" in self._raw_label_hist and self._committed_regime != "TREND":
+            old = self._committed_regime
+            self._prev_committed_regime = old
+            self._committed_regime = "TREND"
+            self._candidate_regime = "TREND"
+            self._candidate_streak = 1
+            logger.info(
+                f"[HMM] Regime TRANSITION (TREND-PREFER): {old} → TREND "
+                f"(raw_conf={raw_conf:.1%})"
             )
 
         # The committed regime's confidence is its actual posterior probability
