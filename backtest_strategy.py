@@ -38,6 +38,7 @@ RANGE_NO_TRADE = False  # sweep flag: disable RANGE entirely
 COMMIT_MODE = "majority"  # "majority" (8-bar vote) | "trend_prefer" (TREND if seen in window)
 Z_THR_OVERRIDE = {}  # {"RANGE": 1.9} style overrides for sweeps
 TREND_MIN_CONF = 0.65  # min_confidence override for TREND sweeps
+LIVE_GATES = False  # True = model live-only gates (tape score, OFI veto, micro-confirms, HTF block, exhaustion, Kyle, funding)
 
 
 def load_params():
@@ -186,6 +187,11 @@ def run_symbol(symbol):
     cvd = np.cumsum(delta)
     cvd_delta = np.diff(cvd, prepend=cvd[0])
     cvd_delta[:50] = 0.0
+    # Live tape proxies: dominant side + SCREAMING flag (live uses tick tape)
+    tape_dom = np.where(taker_buy > volume * 0.5, "BUY", "SELL")
+    tape_sc = tape_bin == 1.0
+    # HTF (4H) direction proxy: 16-bar (4h) price change sign
+    htf_bear = close < pd.Series(close).shift(16).bfill().values
 
     # Skewness proxy: z_ret sign asymmetry over 60 bars (live uses trade skew)
     skew = pd.Series(z_ret).rolling(60, min_periods=10).skew().fillna(0).values
@@ -372,6 +378,12 @@ def run_symbol(symbol):
                 score -= 0.75
             elif zr < -0.8:
                 score -= 0.30
+            if LIVE_GATES:
+                # Live also scores tape dominance (BUY/SELL ±0.5 or ±1.0)
+                if "BUY" in tape_dom[idx]:
+                    score += 1.0 if tape_sc[idx] else 0.5
+                elif "SELL" in tape_dom[idx]:
+                    score -= 1.0 if tape_sc[idx] else 0.5
             if score >= 1.5:
                 # FIX: trend entries gated by DIRECTIONAL metrics, not VWAP Z.
                 # VWAP Z stays low during trends (VWAP follows price), so a Z
@@ -381,6 +393,46 @@ def run_symbol(symbol):
             elif score <= -1.5:
                 if sma_disp[idx] < -0.02 and zr < -0.3:
                     direction = "SHORT"
+            if direction and LIVE_GATES:
+                # Live-only gates in order (main.py _strategy_trend + router):
+                is_long = direction == "LONG"
+                # 1. OFI structural veto
+                if is_long and ofi_now < 0:
+                    direction = None
+                elif not is_long and ofi_now > 0:
+                    direction = None
+                # 2. Micro-confirms: 2/3 (OFI, CVD, tape) or score>=3 or OFI+CVD aligned
+                if direction:
+                    ofi_ok = (ofi_now > 0.15) if is_long else (ofi_now < -0.15)
+                    cvd_ok = (cvd[idx] > 0) if is_long else (cvd[idx] < 0)
+                    tape_ok = ("BUY" in tape_dom[idx]) if is_long else ("SELL" in tape_dom[idx])
+                    n_conf = sum([ofi_ok, cvd_ok, tape_ok])
+                    aligned = (ofi_now > 0.15 and cvd[idx] > 0) if is_long else (ofi_now < -0.15 and cvd[idx] < 0)
+                    if n_conf < 2 and abs(score) < 3.0 and not aligned:
+                        direction = None
+                # 3. ExhaustionGate
+                if direction:
+                    if is_long and (r > 70.0 or z >= 1.20):
+                        if not (zr >= 0.80 and ofi_now >= 0.15 and cvd_delta[idx] >= 0.0 and "BUY" in tape_dom[idx]):
+                            direction = None
+                    elif not is_long and (r < 30.0 or z <= -1.20):
+                        if not (zr <= -0.80 and ofi_now <= -0.15 and cvd_delta[idx] <= 0.0 and "SELL" in tape_dom[idx]):
+                            direction = None
+                # 4. Kyle adverse-selection gate
+                if direction and abs(ofi_now) > 0.75:
+                    direction = None
+                # 5. HTF counter-trend block (TREND regime only)
+                if direction and regime == "TREND":
+                    if htf_bear[idx] and is_long:
+                        direction = None
+                    elif not htf_bear[idx] and not is_long:
+                        direction = None
+                # 6. Funding anti-squeeze (TREND only)
+                if direction and regime == "TREND":
+                    if is_long and funding[idx] > 0.0008:
+                        direction = None
+                    elif not is_long and funding[idx] < -0.0005:
+                        direction = None
 
         if direction is None:
             equity_curve.append(equity)

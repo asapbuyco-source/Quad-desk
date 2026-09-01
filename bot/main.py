@@ -3208,6 +3208,20 @@ async def _compute_signal(
             # DATA-DRIVEN (Aug 28): directional gate replaces VWAP-Z gate
             raw_direction = _strategy_trend(metrics, z_min=z_threshold_effective, quant=quant,
                                             use_directional_gate=True)
+            # TrendDiag (Aug 31): INFO-level score components — the rejection
+            # reasons inside _strategy_trend log at DEBUG, invisible in prod
+            # logs. This line reveals which gate kills each TREND window
+            # (score vs directional gate vs micro-confirms vs OFI veto).
+            logger.info(
+                f"[TrendDiag] bayes={float(metrics.get('bayesianPosterior', 0) or 0):.0%} "
+                f"ofi={float(metrics.get('ofi', 0) or 0):+.2f} "
+                f"cvd={float(metrics.get('cvd', 0) or 0):.0f} "
+                f"tape={str(metrics.get('tapeDominant', '?'))} "
+                f"sma_disp={float(metrics.get('sma_disp', 0) or 0):+.3f} "
+                f"z_ret={float(metrics.get('zScore_ret', 0) or 0):+.2f} "
+                f"z={float(metrics.get('zScore', 0) or 0):+.2f} "
+                f"rsi={float(metrics.get('rsi', 50) or 50):.0f} → {raw_direction or 'None'}"
+            )
             if raw_direction:
                 logger.info("[MetaModel] → TREND strategy")
             else:
