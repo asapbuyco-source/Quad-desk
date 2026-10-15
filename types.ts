@@ -20,9 +20,15 @@ export interface RecentTrade {
   id: string;
   price: number;
   size: number;
+  /** Taker/aggressor side — buyer-initiated (BUY) or seller-initiated (SELL). */
   side: 'BUY' | 'SELL';
+  /** Exchange execution timestamp (ms). */
   time: number;
   isWhale: boolean;
+  /** Venue the print came from. */
+  exchange?: string;
+  /** Instrument class — spot or perpetual futures. */
+  market?: 'SPOT' | 'PERP';
 }
 
 export interface CandleData {

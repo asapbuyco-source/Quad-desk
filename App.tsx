@@ -24,6 +24,7 @@ import BotMindView from './components/BotMindView';
 import SettingsView from './components/SettingsView';
 import MacroView from './components/MacroView';
 import DerivativesView from './components/DerivativesView';
+import OrderFlowPage from './components/OrderFlowPage';
 import { ToastContainer } from './components/Toast';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
@@ -51,6 +52,7 @@ const App: React.FC = () => {
 
     const lastDispatchedBookRef = useRef<{ asks: Map<number, number>, bids: Map<number, number> }>({ asks: new Map(), bids: new Map() });
     const wsRef = useRef<WebSocket | null>(null);
+    const perpWsRef = useRef<WebSocket | null>(null);
     // Holds the latest fetchHistory fn so the WS reconnect handler can call it
     // without creating a closure dependency cycle between the two useEffects.
     const fetchHistoryFnRef = useRef<(() => Promise<void>) | null>(null);
@@ -180,112 +182,117 @@ const App: React.FC = () => {
     useEffect(() => {
         if (connectionError || isLoading) return;
 
-        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-        let retryCount = 0;
         const MAX_RETRIES = 10;
+        const symbol = config.activeSymbol.toLowerCase();
+        const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
+        const interval = intervalMapping[config.interval] || '1m';
 
-        const connect = () => {
-            if (wsRef.current) wsRef.current.close();
+        // Shared message handler. `market` tags every print with its venue class so
+        // spot and perp aggressive flow can be measured separately.
+        const handleMessage = (event: MessageEvent, market: 'SPOT' | 'PERP') => {
+            let payload: any;
+            try { payload = JSON.parse(event.data); } catch { return; }
+            const stream: string = payload.stream || '';
+            const data = payload.data ?? payload;
+            if (!data) return;
 
-            const symbol = config.activeSymbol.toLowerCase();
-            const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
-            const interval = intervalMapping[config.interval] || '1m';
-
-            const streams = [
-                `${symbol}@kline_${interval}`,
-                `${symbol}@trade`,
-                `${symbol}@depth20@100ms`
-            ].join('/');
-
-            const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-            wsRef.current = ws;
-
-            ws.onopen = () => {
-                // Detect reconnections (first connect has retryCount still at 0 before this runs)
-                const isReconnect = retryCount > 0;
-                retryCount = 0;
-                console.log(`✅ WebSocket Connected: ${streams}`);
-
-                // State reconciliation: on reconnect, re-fetch REST history to re-anchor
-                // CVD baseline and Z-Score bands that may have drifted during the gap.
-                if (isReconnect && fetchHistoryFnRef.current) {
-                    console.warn('🔄 WS reconnected — backfilling candle history to re-anchor CVD & metrics...');
-                    fetchHistoryFnRef.current();
-                }
-            };
-
-            ws.onmessage = (event) => {
-                const payload = JSON.parse(event.data);
-                const stream = payload.stream;
-                const data = payload.data;
-
-                if (stream.includes('@kline')) {
-                    const k = data.k;
-                    const tick = {
-                        t: k.t,
-                        o: parseFloat(k.o),
-                        h: parseFloat(k.h),
-                        l: parseFloat(k.l),
-                        c: parseFloat(k.c),
-                        v: parseFloat(k.v)
-                    };
-                    const buyVol = parseFloat(k.V);
-                    const totalVol = parseFloat(k.v);
-                    const klineDelta = (2 * buyVol) - totalVol;
-                    processWsTick(tick, klineDelta);
-                }
-                else if (stream.includes('@trade')) {
-                    const trade: RecentTrade = {
-                        id: data.t.toString(),
-                        price: parseFloat(data.p),
-                        size: parseFloat(data.q),
-                        side: data.m ? 'SELL' : 'BUY',
-                        time: data.T,
-                        isWhale: (parseFloat(data.p) * parseFloat(data.q)) > 50000
-                    };
-                    processTradeTick(trade);
-                }
-                else if (stream.includes('@depth')) {
-                    const rawAsks = data.asks || data.a || [];
-                    const rawBids = data.bids || data.b || [];
-
-                    const asks: OrderBookLevel[] = rawAsks.map((a: any) => {
-                        const price = parseFloat(a[0]);
-                        const size = parseFloat(a[1]);
-                        const prevSize = lastDispatchedBookRef.current.asks.get(price) ?? size;
-                        return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
-                    });
-                    const bids: OrderBookLevel[] = rawBids.map((b: any) => {
-                        const price = parseFloat(b[0]);
-                        const size = parseFloat(b[1]);
-                        const prevSize = lastDispatchedBookRef.current.bids.get(price) ?? size;
-                        return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
-                    });
-
-                    rawAsks.forEach((a: any) => lastDispatchedBookRef.current.asks.set(parseFloat(a[0]), parseFloat(a[1])));
-                    rawBids.forEach((b: any) => lastDispatchedBookRef.current.bids.set(parseFloat(b[0]), parseFloat(b[1])));
-
-                    processDepthUpdate({ asks, bids, metrics: {} });
-                }
-            };
-
-            ws.onclose = () => {
-                if (retryCount < MAX_RETRIES) {
-                    const delay = Math.min(1000 * Math.pow(1.5, retryCount), 15000);
-                    retryCount++;
-                    reconnectTimer = setTimeout(connect, delay);
-                }
-            };
-
-            ws.onerror = (e) => {
-                console.error("WebSocket Error:", e);
-            };
+            if (stream.includes('@kline')) {
+                const k = data.k;
+                if (!k) return;
+                const tick = { t: k.t, o: parseFloat(k.o), h: parseFloat(k.h), l: parseFloat(k.l), c: parseFloat(k.c), v: parseFloat(k.v) };
+                const klineDelta = (2 * parseFloat(k.V)) - parseFloat(k.v);
+                processWsTick(tick, klineDelta);
+            } else if (stream.includes('@trade')) {
+                // Binance `m` = "buyer is the maker" → m=true means the SELLER
+                // crossed the spread. This is true taker-side (aggressor)
+                // classification, not price-tick direction.
+                const trade: RecentTrade = {
+                    id: (data.a ?? data.t).toString(),
+                    price: parseFloat(data.p),
+                    size: parseFloat(data.q),
+                    side: data.m ? 'SELL' : 'BUY',
+                    time: data.T,
+                    isWhale: (parseFloat(data.p) * parseFloat(data.q)) > 50000,
+                    exchange: 'BINANCE',
+                    market,
+                };
+                processTradeTick(trade);
+            } else if (stream.includes('@depth')) {
+                const rawAsks = data.asks || data.a || [];
+                const rawBids = data.bids || data.b || [];
+                const asks: OrderBookLevel[] = rawAsks.map((a: any) => {
+                    const price = parseFloat(a[0]);
+                    const size = parseFloat(a[1]);
+                    const prevSize = lastDispatchedBookRef.current.asks.get(price) ?? size;
+                    return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
+                });
+                const bids: OrderBookLevel[] = rawBids.map((b: any) => {
+                    const price = parseFloat(b[0]);
+                    const size = parseFloat(b[1]);
+                    const prevSize = lastDispatchedBookRef.current.bids.get(price) ?? size;
+                    return { price, size, total: 0, delta: size - prevSize, classification: 'NORMAL' };
+                });
+                rawAsks.forEach((a: any) => lastDispatchedBookRef.current.asks.set(parseFloat(a[0]), parseFloat(a[1])));
+                rawBids.forEach((b: any) => lastDispatchedBookRef.current.bids.set(parseFloat(b[0]), parseFloat(b[1])));
+                // SPOT book drives the visible depth engine; PERP depth is
+                // consumed only for the order-flow page's liquidity log.
+                if (market === 'SPOT') processDepthUpdate({ asks, bids, metrics: {} });
+            }
         };
 
-        connect();
+        // One reconnectable socket per venue. Spot is primary (drives chart/CVD).
+        const openSocket = (url: string, market: 'SPOT' | 'PERP') => {
+            let retryCount = 0;
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            let torn = false;
+
+            const connect = () => {
+                const ws = new WebSocket(url);
+                if (market === 'SPOT') wsRef.current = ws; else perpWsRef.current = ws;
+
+                ws.onopen = () => {
+                    const wasReconnect = retryCount > 0;
+                    retryCount = 0;
+                    console.log(`✅ ${market} WS connected`);
+                    if (market === 'SPOT' && wasReconnect && fetchHistoryFnRef.current) {
+                        console.warn('🔄 SPOT WS reconnected — backfilling candle history…');
+                        fetchHistoryFnRef.current();
+                    }
+                };
+                ws.onmessage = (e) => handleMessage(e, market);
+                ws.onclose = () => {
+                    if (torn) return;
+                    if (retryCount < MAX_RETRIES) {
+                        const delay = Math.min(1000 * Math.pow(1.5, retryCount), 15000);
+                        retryCount++;
+                        timer = setTimeout(connect, delay);
+                    }
+                };
+                ws.onerror = (e) => console.error(`${market} WebSocket error:`, e);
+            };
+            connect();
+            return () => { torn = true; if (timer) clearTimeout(timer); };
+        };
+
+        const spotUrl = `wss://stream.binance.com:9443/stream?streams=${[
+            `${symbol}@kline_${interval}`,
+            `${symbol}@trade`,
+            `${symbol}@depth20@100ms`,
+        ].join('/')}`;
+
+        const perpUrl = `wss://fstream.binance.com/stream?streams=${[
+            `${symbol}@aggTrade`,
+            `${symbol}@depth20@100ms`,
+        ].join('/')}`;
+
+        const stopSpot = openSocket(spotUrl, 'SPOT');
+        const stopPerp = openSocket(perpUrl, 'PERP');
+
         return () => {
+            stopSpot();
+            stopPerp();
             if (wsRef.current) wsRef.current.close();
-            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (perpWsRef.current) perpWsRef.current.close();
         };
     }, [config.interval, config.activeSymbol, connectionError, isLoading]);
 
@@ -335,6 +342,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'macro-strategy' && <MacroStrategyView />}
                                 {ui.activeTab === 'macro' && <MacroView />}
                                 {ui.activeTab === 'funding' && <DerivativesView />}
+                                {ui.activeTab === 'order-flow' && <OrderFlowPage />}
                                 {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}
                                 {ui.activeTab === 'ai-tactical' && <AITacticalPage />}

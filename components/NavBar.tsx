@@ -38,6 +38,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Derivatives',
     items: [
+      { id: 'order-flow', icon: Activity, label: 'Order Flow', hint: 'Prints, rolling flow, price impact' },
       { id: 'funding', icon: Gauge, label: 'Funding & OI', hint: 'Cross-venue funding, OI, premium' },
     ],
   },

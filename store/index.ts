@@ -585,7 +585,9 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
     processTradeTick: (trade) => set(state => {
-        const trades = [trade, ...state.market.recentTrades].slice(0, 50);
+        // Keep a deep buffer so 1s/5s/15s/60s rolling-flow windows have enough
+        // samples in busy markets. The Trade Tape renders only the newest slice.
+        const trades = [trade, ...state.market.recentTrades].slice(0, 600);
         return {
             market: { ...state.market, recentTrades: trades }
         };
