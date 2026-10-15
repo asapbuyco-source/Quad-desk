@@ -12,12 +12,19 @@ interface SettingRowProps {
 }
 
 const SettingRow: React.FC<SettingRowProps> = ({ label, value, description }) => (
-  <div className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+  <div className="flex items-center justify-between py-2 border-b border-[#21262d] last:border-0">
     <div>
-      <span className="text-xs text-zinc-300 font-medium">{label}</span>
-      {description && <p className="text-[10px] text-zinc-500">{description}</p>}
+      <span className="text-xs text-[#c9d1d9]">{label}</span>
+      {description && <p className="text-[10px] text-[#484f58]">{description}</p>}
     </div>
-    <span className="text-xs font-mono text-brand-accent font-bold">{value}</span>
+    <span className="text-xs font-mono text-[#58a6ff]">{value}</span>
+  </div>
+);
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="bg-[#0d1117] border border-[#21262d] rounded-lg p-4">
+    <span className="text-[10px] uppercase tracking-wider text-[#8b949e]">{title}</span>
+    <div className="mt-2">{children}</div>
   </div>
 );
 
@@ -31,13 +38,20 @@ const SettingsView: React.FC = () => {
     { label: 'Symbol', value: bot.tradingPair || 'BTC/USDT' },
     { label: 'Mode', value: bot.botMode || 'LIVE' },
     { label: 'Environment', value: bot.environment === 'live' ? 'LIVE' : 'TESTNET' },
-    { label: 'Status', value: bot.status, desc: bot.operatorPaused ? 'Paused by operator' : 'Active' },
+    { label: 'Status', value: bot.status, description: bot.operatorPaused ? 'Paused by operator' : 'Active' },
     { label: 'Active Positions', value: String(bot.activePositions || 0) },
     { label: 'Total Trades', value: String(bot.totalTrades || 0) },
     { label: 'P&L (Session)', value: `$${(bot.globalSessionPnl || 0).toFixed(2)}` },
     { label: 'P&L (Daily)', value: `$${(bot.globalDailyPnl || 0).toFixed(2)}` },
     { label: 'ULIS Gate', value: 'Enabled' },
     { label: 'Last Heartbeat', value: bot.lastHeartbeat ? `${Math.round((Date.now() - bot.lastHeartbeat) / 1000)}s ago` : '—' },
+  ];
+
+  const thresholds = [
+    { label: 'RANGE', value: 'z≥1.06  sl=1.14×  rr=2.3:1  exit=30m' },
+    { label: 'NEUTRAL', value: 'z≥1.20  sl=1.43×  rr=2.5:1  exit=30m' },
+    { label: 'LIQUIDITY', value: 'z≥1.10  sl=1.43×  rr=2.5:1  exit=30m' },
+    { label: 'TREND', value: 'z≥2.00  sl=2.09×  rr=3.0:1  exit=1.5h' },
   ];
 
   const handlePause = async () => {
@@ -67,49 +81,39 @@ const SettingsView: React.FC = () => {
     >
       <h2 className="text-base font-bold text-white tracking-wide uppercase">Bot Settings &amp; Execution</h2>
 
-      <div className="fintech-card p-4">
-        <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Configuration</span>
-        <div className="mt-2 divide-y divide-white/5">
+      <Section title="Configuration">
+        <div>
           {params.map(p => (
             <SettingRow key={p.label} {...p} />
           ))}
         </div>
-      </div>
+      </Section>
 
-      {/* Operator Controls */}
-      <div className="fintech-card p-4">
-        <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Operator Controls</span>
-        <p className="text-[10px] text-zinc-400 mt-1">
+      <Section title="Operator Controls">
+        <p className="text-[10px] text-[#8b949e]">
           Pause/resume bot entries. Existing positions remain managed. Changes take effect within 60s.
         </p>
         <button
           onClick={handlePause}
           disabled={saving}
-          className={`mt-3 w-full py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md ${
-            saving ? 'bg-zinc-800 text-zinc-500' :
-            bot.operatorPaused ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30' :
-            'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30'
+          className={`mt-3 w-full py-2 rounded text-xs font-semibold transition-colors ${
+            saving ? 'bg-[#21262d] text-[#484f58]' :
+            bot.operatorPaused ? 'bg-green-900 text-green-400 hover:bg-green-800' :
+            'bg-yellow-900 text-yellow-400 hover:bg-yellow-800'
           }`}
         >
-          {saving ? 'Transmitting...' : bot.operatorPaused ? '▶ Resume Entries' : '⏸ Pause Entries'}
+          {saving ? 'Sending...' : bot.operatorPaused ? '▶ Resume Entries' : '⏸ Pause Entries'}
         </button>
-        {msg && <p className="text-[10px] text-brand-accent mt-2 font-mono">{msg}</p>}
-      </div>
+        {msg && <p className="text-[10px] text-[#58a6ff] mt-2 font-mono">{msg}</p>}
+      </Section>
 
-      {/* Threshold Reference */}
-      <div className="fintech-card p-4">
-        <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Z-Score Thresholds (Current)</span>
-        <div className="mt-2 space-y-1 divide-y divide-white/5">
-          {[
-            { label: 'RANGE', value: 'z≥1.06  sl=1.14×  rr=2.3:1  exit=30m' },
-            { label: 'NEUTRAL', value: 'z≥1.20  sl=1.43×  rr=2.5:1  exit=30m' },
-            { label: 'LIQUIDITY', value: 'z≥1.10  sl=1.43×  rr=2.5:1  exit=30m' },
-            { label: 'TREND', value: 'z≥2.00  sl=2.09×  rr=3.0:1  exit=1.5h' },
-          ].map(p => (
+      <Section title="Z-Score Thresholds (Current)">
+        <div>
+          {thresholds.map(p => (
             <SettingRow key={p.label} {...p} />
           ))}
         </div>
-      </div>
+      </Section>
     </motion.div>
   );
 };
