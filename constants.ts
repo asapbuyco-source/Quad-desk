@@ -52,6 +52,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
         requiredRegime: ['MEAN_REVERTING', 'HIGH_VOLATILITY'],
         details: {
             formula: "Z = (P - μ) / σ",
+            invalidation: "Z re-converges toward 0 while price holds the level (dislocation absorbed), or |z_ret| keeps expanding in the trend direction — the fade has no edge.",
             explanation: "Measures statistical deviation from the VWAP mean. Scores > ±2.0 imply extreme dislocation.",
             variables: [
                 { label: "P (Price)", value: "--", unit: "USD", description: "Current execution price" },
@@ -73,6 +74,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
         requiredRegime: ['TRENDING'],
         details: {
             formula: "P(A|B) = [P(B|A) * P(A)] / P(B)",
+            invalidation: "Posterior holds above 0.5 but OFI and CVD flip against the direction, or the HMM regime leaves TREND — continuation thesis is void.",
             explanation: "Updates the probability of trend continuation based on momentum and volume confirmation.",
             variables: [
                 { label: "P(A) Prior", value: "0.50", unit: "", description: "Initial belief" },
@@ -93,6 +95,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
         value: 'WAIT',
         details: {
             formula: "RSI(14) Proxy",
+            invalidation: "RSI recovers back through 40/60 without a fresh sweep, or price makes a new extreme — exhaustion read is stale.",
             explanation: "Uses RSI extremes to identify retail exhaustion points before institutional sweeps.",
             variables: [
                 { label: "RSI", value: "--", unit: "", description: "Momentum Oscillator" },
@@ -114,6 +117,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
         requiredRegime: ['HIGH_VOLATILITY', 'TRENDING'],
         details: {
             formula: "γ = E[(X - μ)/σ]^3",
+            invalidation: "Sample window < 30 returns, or skew flips sign on the next bucket — tail-risk read is unstable.",
             explanation: "Measures asymmetry of return distribution. Negative skew identifies tail risk hazards.",
             variables: [
                 { label: "Returns", value: "30", unit: "periods", description: "Sample Size" },
@@ -133,6 +137,7 @@ export const CHECKLIST_ITEMS: SentinelChecklist[] = [
         value: 'WAIT',
         details: {
             formula: "E[X] = (P_win * $Win) - (P_loss * $Loss)",
+            invalidation: "Realised R:R falls below the target after fees/slippage, or stop distance is under ~1.1×ATR — expectancy no longer holds.",
             explanation: "Mathematical expectancy of the setup based on targeted risk/reward profile.",
             variables: [
                 { label: "P_win", value: "--", unit: "%", description: "Estimated Win Probability" },

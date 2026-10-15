@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, ArrowDown, ArrowUp, Zap, Radio, Layers, Gauge } from 'lucide-react';
 import { useStore } from '../store';
 import type { RecentTrade } from '../types';
@@ -61,15 +61,12 @@ function diagnose(r15: Roll, r60: Roll): { label: string; tone: string } | null 
   return { label: 'selling with modest impact', tone: 'text-slate-400' };
 }
 
-interface LiqEvent { id: string; price: number; delta: number; kind: 'EXECUTED' | 'CANCELLED' | 'REPLENISHED'; side: 'BID' | 'ASK'; at: number }
-
 const OrderFlowPage: React.FC = () => {
   const recentTrades = useStore(s => s.market.recentTrades);
-  const asks = useStore(s => s.market.asks);
-  const bids = useStore(s => s.market.bids);
+  // Event-level liquidity changes are derived in the store from the diff-depth
+  // stream (sequenced by update id), not from top-20 snapshots.
+  const liqEvents = useStore(s => s.liquidityEvents);
   const [, forceTick] = useState(0);
-  const [liqEvents, setLiqEvents] = useState<LiqEvent[]>([]);
-  const lastEventRef = useRef<Map<string, number>>(new Map());
 
   // Keep rolling windows fresh even when no new print arrives.
   useEffect(() => {
@@ -82,38 +79,6 @@ const OrderFlowPage: React.FC = () => {
     SPOT: Object.fromEntries(WINDOWS.map(w => [w.label, roll(recentTrades, 'SPOT', w.ms, now)])) as Record<string, Roll>,
     PERP: Object.fromEntries(WINDOWS.map(w => [w.label, roll(recentTrades, 'PERP', w.ms, now)])) as Record<string, Roll>,
   }), [recentTrades, now]);
-
-  // Liquidity event log — classify resting-liquidity changes at the top of book
-  // and correlate size removed with recent prints (executed) vs no print (cancelled).
-  useEffect(() => {
-    const nowTs = Date.now();
-    const events: LiqEvent[] = [];
-    const tradeAt = (price: number, side: 'BID' | 'ASK') => {
-      const target = side === 'BID' ? 'SELL' : 'BUY'; // resting bid consumed → seller aggressor
-      return recentTrades.some(t =>
-        Math.abs(t.price - price) < 0.5 &&
-        t.side === target &&
-        nowTs - t.time < 2500
-      );
-    };
-    const scan = (levels: typeof asks, side: 'BID' | 'ASK') => {
-      levels.slice(0, 12).forEach(l => {
-        const d = l.delta ?? 0;
-        if (Math.abs(d) < 1) return;
-        const kind: LiqEvent['kind'] = d > 0 ? 'REPLENISHED' : (tradeAt(l.price, side) ? 'EXECUTED' : 'CANCELLED');
-        const key = `${side}-${l.price}-${kind}`;
-        const last = lastEventRef.current.get(key) ?? 0;
-        if (nowTs - last < 4000) return; // dedupe burst
-        lastEventRef.current.set(key, nowTs);
-        events.push({ id: key + nowTs, price: l.price, delta: d, kind, side, at: nowTs });
-      });
-    };
-    scan(bids, 'BID');
-    scan(asks, 'ASK');
-    if (events.length) {
-      setLiqEvents(prev => [...events, ...prev].slice(0, 40));
-    }
-  }, [asks, bids, recentTrades]);
 
   const impact = useMemo(() => {
     const out: Record<Market, { movePct: number | null; impactPerBtc: number | null; dx: ReturnType<typeof diagnose> }> = {
@@ -299,14 +264,14 @@ const OrderFlowPage: React.FC = () => {
               <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
                 <Layers size={13} className="text-brand-accent" /> Liquidity events
               </span>
-              <span className="font-mono text-[10px] text-slate-600">heuristic</span>
+              <span className="font-mono text-[10px] text-slate-600">diff-depth · seq</span>
             </div>
             <div className="max-h-[420px] overflow-y-auto scrollbar-hide p-2 space-y-1">
               {liqEvents.map(e => (
                 <div key={e.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-white/[0.03]">
                   <div className="min-w-0">
                     <div className="font-mono text-[11px] text-slate-300">{e.price.toFixed(1)}</div>
-                    <div className="font-mono text-[9px] text-slate-600">{e.side} · {new Date(e.at).toLocaleTimeString([], { hour12: false })}</div>
+                    <div className="font-mono text-[9px] text-slate-600">{e.side} · {new Date(e.ts).toLocaleTimeString([], { hour12: false })} · u={e.seq}</div>
                   </div>
                   <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
                     e.kind === 'EXECUTED' ? 'bg-rose-500/15 text-rose-300'
@@ -324,7 +289,7 @@ const OrderFlowPage: React.FC = () => {
               )}
             </div>
             <div className="border-t border-white/5 px-3 py-2 font-mono text-[9px] text-slate-600">
-              size removed with a matching print ≈ executed · without ≈ cancelled · added ≈ replenished
+              diff-depth: size removed with a matching print ≈ executed · without ≈ cancelled · added ≈ replenished
             </div>
           </div>
         </div>

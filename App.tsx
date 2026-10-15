@@ -70,6 +70,7 @@ const App: React.FC = () => {
         processWsTick,
         processTradeTick,
         processDepthUpdate,
+        processDepthDiff,
         refreshHeatmap,
         refreshRegimeAnalysis,
         refreshTacticalAnalysis,
@@ -217,6 +218,13 @@ const App: React.FC = () => {
                     market,
                 };
                 processTradeTick(trade);
+            } else if (stream.includes('@depth') && data.e === 'depthUpdate') {
+                // Diff-depth: absolute new sizes per changed level. `u` is the final
+                // update id, which sequences the event against the book.
+                const changes: { price: number; qty: number; side: 'BID' | 'ASK' }[] = [];
+                (data.b || []).forEach((l: any) => changes.push({ price: parseFloat(l[0]), qty: parseFloat(l[1]), side: 'BID' }));
+                (data.a || []).forEach((l: any) => changes.push({ price: parseFloat(l[0]), qty: parseFloat(l[1]), side: 'ASK' }));
+                processDepthDiff({ changes, seq: Number(data.u) || 0, ts: Number(data.E) || Date.now() });
             } else if (stream.includes('@depth')) {
                 const rawAsks = data.asks || data.a || [];
                 const rawBids = data.bids || data.b || [];
@@ -277,7 +285,8 @@ const App: React.FC = () => {
         const spotUrl = `wss://stream.binance.com:9443/stream?streams=${[
             `${symbol}@kline_${interval}`,
             `${symbol}@trade`,
-            `${symbol}@depth20@100ms`,
+            `${symbol}@depth20@100ms`,   // top-20 snapshot → visible Depth Engine
+            `${symbol}@depth@100ms`,     // diff-depth → event-level liquidity log
         ].join('/')}`;
 
         const perpUrl = `wss://fstream.binance.com/stream?streams=${[

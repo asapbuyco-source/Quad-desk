@@ -31,6 +31,21 @@ export interface RecentTrade {
   market?: 'SPOT' | 'PERP';
 }
 
+/** Event-level change in resting book liquidity, derived from the diff-depth stream. */
+export interface LiquidityEvent {
+  id: string;
+  price: number;
+  side: 'BID' | 'ASK';
+  before: number;
+  after: number;
+  delta: number;
+  /** REPLENISHED = size added · EXECUTED = size removed with a matching print · CANCELLED = removed without one. */
+  kind: 'EXECUTED' | 'CANCELLED' | 'REPLENISHED';
+  ts: number;
+  /** Binance final update id (u) — ties the event to a sequenced book update. */
+  seq: number;
+}
+
 export interface CandleData {
   time: number; // Changed from string | number to number for type safety
   open: number;
@@ -63,6 +78,8 @@ export interface CalculationDetails {
     warning: string;
     fail: string;
   };
+  /** Conditions that void this signal — shown to the operator before acting. */
+  invalidation?: string;
 }
 
 export interface SentinelChecklist {

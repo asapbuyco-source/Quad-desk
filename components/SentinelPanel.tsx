@@ -506,6 +506,17 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                     </div>
                                 </div>
 
+                                {/* Invalidation — what voids this signal */}
+                                {selectedItem.details.invalidation && (
+                                    <div className="bg-rose-950/30 p-4 rounded-xl border border-rose-500/20 text-xs space-y-1">
+                                        <div className="flex items-center gap-2 text-xs font-bold text-rose-300/80 uppercase tracking-widest mb-2">
+                                            <AlertTriangle size={14} className="text-rose-400" />
+                                            Invalidation Conditions
+                                        </div>
+                                        <p className="text-slate-300 leading-relaxed">{selectedItem.details.invalidation}</p>
+                                    </div>
+                                )}
+
                             </div>
                         </motion.div>
                     </div>

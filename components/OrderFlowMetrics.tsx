@@ -57,6 +57,22 @@ const CvdCard: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
     const ctx = metrics.cvdContext?.value || 0;
     const interp = metrics.cvdContext?.interpretation || 'NEUTRAL';
     const div = metrics.cvdContext?.divergence || 'NONE';
+    const candles = useStore(s => s.market.candles);
+    const cvdResetAt = useStore(s => s.cvdResetAt);
+
+    // Reset anchor — the running total is meaningless without knowing where it started.
+    const resetLabel = cvdResetAt
+        ? new Date(cvdResetAt).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })
+        : '—';
+
+    // Rolling-window delta (last 4 candles) so the cumulative number has context.
+    const rollingDelta = (() => {
+        if (!candles || candles.length < 5) return null;
+        const last = candles[candles.length - 1]?.cvd;
+        const back = candles[candles.length - 5]?.cvd;
+        if (last === undefined || back === undefined) return null;
+        return last - back;
+    })();
 
     let sc = 'text-slate-400'; let sb = 'bg-slate-500/10'; let si = <Activity size={10} />;
     if (interp === 'REAL STRENGTH') { sc = 'text-emerald-400'; sb = 'bg-emerald-500/10'; si = <TrendingUp size={10} />; }
@@ -89,6 +105,16 @@ const CvdCard: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
             <BiBar value={ctx} />
             <div className="flex justify-between text-[8px] font-mono text-slate-700 mt-0.5">
                 <span>Sell</span><span>Buy</span>
+            </div>
+
+            {/* Provenance: unit, anchor (reset point) and rolling-window delta */}
+            <div className="mt-1 flex items-center justify-between border-t border-white/5 pt-1 text-[8px] font-mono text-slate-600">
+                <span title="Running total since the last reset anchor">BTC · since {resetLabel}</span>
+                {rollingDelta !== null && (
+                    <span className={rollingDelta >= 0 ? 'text-emerald-500/80' : 'text-rose-500/80'}>
+                        Δ4: {rollingDelta >= 0 ? '+' : ''}{rollingDelta.toFixed(1)}
+                    </span>
+                )}
             </div>
         </MetricCard>
     );
@@ -131,6 +157,7 @@ const RegimeCard: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
 
 // ── 3. OFI / Book Imbalance ───────────────────────────────────────────────────
 const OfiCard: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
+    const depthLevels = useStore(s => s.market.asks.length + s.market.bids.length);
     const ofiColor = metrics.ofi > 0 ? 'text-trade-bid' : metrics.ofi < 0 ? 'text-trade-ask' : 'text-slate-500';
     const ofiBg = metrics.ofi > 0 ? 'bg-trade-bid' : metrics.ofi < 0 ? 'bg-trade-ask' : 'bg-slate-500';
     const domLabel = Math.abs(metrics.ofi) > 50 ? (metrics.ofi > 0 ? 'Agg. Buying' : 'Agg. Selling') : 'Balanced';
@@ -165,6 +192,14 @@ const OfiCard: React.FC<{ metrics: MarketMetrics }> = ({ metrics }) => {
                     <Skull size={9} className="text-zinc-500" />
                     <span className="text-[8px] font-mono text-zinc-600">TOX:{metrics.toxicity}</span>
                 </div>
+            </div>
+
+            {/* Depth range + exact composite formula */}
+            <div
+                className="mt-1 border-t border-white/5 pt-1 font-mono text-[8px] text-slate-600"
+                title={"OFI = 0.6 x proximity-weighted depth imbalance (weights decay 18% per level) + 0.4 x delta-OFI (Cont et al.)"}
+            >
+                OFI = 0.6·depth + 0.4·ΔOFI · top {depthLevels} lvls
             </div>
         </MetricCard>
     );
