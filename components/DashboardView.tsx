@@ -32,6 +32,7 @@ const item = {
 const DashboardView: React.FC = () => {
   const { metrics, asks, bids, recentTrades } = useStore(state => state.market);
   const { scanResult } = useStore(state => state.ai);
+  const [mobileTab, setMobileTab] = React.useState<'book' | 'tape'>('book');
 
   return (
     <motion.div
@@ -42,25 +43,52 @@ const DashboardView: React.FC = () => {
                  flex flex-col gap-3
                  lg:grid lg:grid-cols-12 lg:grid-rows-[168px_minmax(0,1fr)] lg:gap-3"
     >
-      {/* Row 1 — order-flow metrics strip (fixed 168px) */}
-      <motion.div variants={item} className="order-1 lg:col-span-12 h-[168px] shrink-0">
+      {/* Row 1 — order-flow metrics strip (responsive on mobile, fixed 168px on desktop) */}
+      <motion.div variants={item} className="order-1 lg:col-span-12 shrink-0 lg:h-[168px]">
         <OrderFlowMetrics metrics={metrics} />
       </motion.div>
 
       {/* Row 2 — book + tape (8 cols) and sentinel (4 cols) */}
       <motion.div
         variants={item}
-        className="order-2 lg:col-span-8 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-3"
+        className="order-2 lg:col-span-8 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3"
       >
-        <div className="min-h-0 h-[380px] md:h-full">
+        {/* Mobile View Toggle (hidden on md and above) */}
+        <div className="flex md:hidden items-center p-1 rounded-xl bg-white/[0.03] border border-white/5 shrink-0">
+          <button
+            onClick={() => setMobileTab('book')}
+            className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
+              mobileTab === 'book'
+                ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Order Book
+          </button>
+          <button
+            onClick={() => setMobileTab('tape')}
+            className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded-lg transition-all ${
+              mobileTab === 'tape'
+                ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Trade Tape
+          </button>
+        </div>
+
+        {/* Order Book Panel */}
+        <div className={`min-h-0 h-[420px] md:h-full ${mobileTab === 'book' ? 'block' : 'hidden md:block'}`}>
           <OrderBook asks={asks} bids={bids} />
         </div>
-        <div className="hidden md:block min-h-0 h-[380px] md:h-full">
+
+        {/* Trade Tape Panel */}
+        <div className={`min-h-0 h-[420px] md:h-full ${mobileTab === 'tape' ? 'block' : 'hidden md:block'}`}>
           <TradeTape trades={recentTrades} />
         </div>
       </motion.div>
 
-      <motion.div variants={item} className="order-3 lg:col-span-4 min-h-0 h-[440px] lg:h-full" style={{ minHeight: 0 }}>
+      <motion.div variants={item} className="order-3 lg:col-span-4 min-h-0 h-[460px] lg:h-full" style={{ minHeight: 0 }}>
         <SentinelPanel
           checklist={CHECKLIST_ITEMS}
           aiScanResult={scanResult}

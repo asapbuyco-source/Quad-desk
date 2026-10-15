@@ -272,12 +272,14 @@ const MtfCard: React.FC = () => {
 
 // ── Main Export ───────────────────────────────────────────────────────────────
 const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 auto-rows-[minmax(150px,auto)] lg:auto-rows-auto lg:h-[168px]">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3 auto-rows-[minmax(145px,auto)] lg:auto-rows-auto lg:h-[168px]">
         <CvdCard metrics={metrics} />
         <RegimeCard metrics={metrics} />
         <OfiCard metrics={metrics} />
         <CofiCard />
-        <MtfCard />
+        <div className="col-span-2 sm:col-span-1 lg:col-span-1 h-full">
+            <MtfCard />
+        </div>
     </div>
 );
 

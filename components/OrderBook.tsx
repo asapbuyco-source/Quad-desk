@@ -146,18 +146,18 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
           Depth Engine
         </h3>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
           {Math.abs(netDelta) > 0.1 && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/10">
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/10 shrink-0">
               <Zap size={10} className={netDelta > 0 ? 'text-emerald-400' : 'text-rose-400'} />
               <span className={`text-[10px] font-mono font-bold ${netDelta > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {netDelta > 0 ? '+' : ''}{netDelta.toFixed(1)}
               </span>
             </div>
           )}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-[10px] text-slate-500 font-mono uppercase">Liquidity Flux</span>
+            <span className="text-[10px] text-slate-500 font-mono uppercase hidden xs:inline sm:inline">Flux</span>
           </div>
         </div>
       </div>

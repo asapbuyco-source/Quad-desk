@@ -208,8 +208,8 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                         </div>
                     </div>
                     {currentRegime && (
-                        <div className="px-2 py-1 rounded bg-white/5 border border-white/5 text-[9px] font-mono text-slate-400">
-                            REGIME: <span className="text-white font-bold">{currentRegime}</span>
+                        <div className="px-2 py-1 rounded bg-white/5 border border-white/5 text-[9px] font-mono text-slate-400 shrink-0 truncate max-w-[130px] sm:max-w-none text-right">
+                            <span className="hidden xs:inline sm:inline">REGIME: </span><span className="text-white font-bold">{currentRegime.replace('_', ' ')}</span>
                         </div>
                     )}
                 </div>
