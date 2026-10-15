@@ -271,7 +271,10 @@ const OrderFlowPage: React.FC = () => {
                 <div key={e.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-white/[0.03]">
                   <div className="min-w-0">
                     <div className="font-mono text-[11px] text-slate-300">{e.price.toFixed(1)}</div>
-                    <div className="font-mono text-[9px] text-slate-600">{e.side} · {new Date(e.ts).toLocaleTimeString([], { hour12: false })} · u={e.seq}</div>
+                    <div className="font-mono text-[9px] text-slate-600">
+                      <span className={e.market === 'PERP' ? 'text-purple-400/70' : 'text-slate-500'}>{e.market}</span>
+                      {' '}{e.side} · {new Date(e.ts).toLocaleTimeString([], { hour12: false })} · u={e.seq}
+                    </div>
                   </div>
                   <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
                     e.kind === 'EXECUTED' ? 'bg-rose-500/15 text-rose-300'

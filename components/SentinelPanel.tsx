@@ -180,9 +180,20 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
         }
     });
 
+    // Auto-evaluated invalidation — does the void condition currently hold?
+    // The operator still sees the written reason; this just flags it live.
+    const invalidatedById: Record<string, boolean> = {
+        '1': Math.abs(metrics.zScore) < 1.5,                                     // dislocation gone
+        '2': metrics.regime !== 'TRENDING' || (metrics.bayesianPosterior ?? 0.5) < 0.4,
+        '3': (metrics.retailSentiment ?? 50) >= 40 && (metrics.retailSentiment ?? 50) <= 60,
+        '4': Math.abs(metrics.skewness ?? 0) < 0.5,                              // no meaningful skew
+        '5': !!expectedValue && expectedValue.rrRatio < 1.5,                     // edge below floor
+    };
+    const evaluated = dynamicChecklist.map(i => ({ ...i, invalidated: !!invalidatedById[i.id] }));
+
     const selectedItem = useMemo(() =>
-        selectedItemId ? dynamicChecklist.find(i => i.id === selectedItemId) || null : null,
-        [selectedItemId, dynamicChecklist]
+        selectedItemId ? evaluated.find(i => i.id === selectedItemId) || null : null,
+        [selectedItemId, evaluated]
     );
 
     const handleKeyDown = (e: React.KeyboardEvent, id: string) => {
@@ -327,7 +338,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                     )}
 
                     {/* Checklist Items */}
-                    {dynamicChecklist.map((item) => {
+                    {evaluated.map((item) => {
                         // Determine if this item is locked for the current regime
                         const isLocked = item.requiredRegime && !item.requiredRegime.includes(currentRegime);
 
@@ -365,11 +376,21 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                         {isLocked ? (
                                             <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">REGIME LOCK</span>
                                         ) : (
-                                            <span className={`text-xs font-mono font-bold ${item.status === 'pass' ? 'text-trade-bid' :
-                                                item.status === 'fail' ? 'text-trade-ask' : 'text-trade-warn'
-                                                }`}>
-                                                {item.value}
-                                            </span>
+                                            <>
+                                                {item.invalidated && (
+                                                    <span
+                                                        className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-rose-300"
+                                                        title="Invalidation condition currently holds — signal is void"
+                                                    >
+                                                        Void
+                                                    </span>
+                                                )}
+                                                <span className={`text-xs font-mono font-bold ${item.status === 'pass' ? 'text-trade-bid' :
+                                                    item.status === 'fail' ? 'text-trade-ask' : 'text-trade-warn'
+                                                    }`}>
+                                                    {item.value}
+                                                </span>
+                                            </>
                                         )}
                                         {!isLocked && <ChevronRight size={13} className="text-slate-600 group-hover:text-white transition-colors" />}
                                     </div>
@@ -508,10 +529,21 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
 
                                 {/* Invalidation — what voids this signal */}
                                 {selectedItem.details.invalidation && (
-                                    <div className="bg-rose-950/30 p-4 rounded-xl border border-rose-500/20 text-xs space-y-1">
-                                        <div className="flex items-center gap-2 text-xs font-bold text-rose-300/80 uppercase tracking-widest mb-2">
-                                            <AlertTriangle size={14} className="text-rose-400" />
-                                            Invalidation Conditions
+                                    <div className={`p-4 rounded-xl border text-xs space-y-1 ${
+                                        selectedItem.invalidated
+                                            ? 'bg-rose-500/10 border-rose-500/50 shadow-[0_0_20px_-8px_rgba(244,63,94,0.6)]'
+                                            : 'bg-rose-950/30 border-rose-500/20'
+                                    }`}>
+                                        <div className="mb-2 flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-2 text-xs font-bold text-rose-300/80 uppercase tracking-widest">
+                                                <AlertTriangle size={14} className="text-rose-400" />
+                                                Invalidation Conditions
+                                            </div>
+                                            {selectedItem.invalidated && (
+                                                <span className="shrink-0 rounded border border-rose-500/50 bg-rose-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-rose-200">
+                                                    Active — signal void
+                                                </span>
+                                            )}
                                         </div>
                                         <p className="text-slate-300 leading-relaxed">{selectedItem.details.invalidation}</p>
                                     </div>

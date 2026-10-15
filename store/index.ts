@@ -23,14 +23,6 @@ export const SKEW_SIGNIFICANT = 0.3;
 // ── Module-level refs (not reactive, used for inter-frame coordination) ──────
 /** Most recent OFI value written by processDepthUpdate, read by processWsTick Bayesian calc */
 let _latestOfi = 0;
-
-/**
- * Last-known resting quantity per book level, keyed `${side}:${price}`.
- * The diff-depth stream reports absolute new sizes, so the delta against this
- * map is the exact size that was executed, cancelled or replenished.
- */
-const _bookQty = new Map<string, number>();
-export const clearBookQty = () => _bookQty.clear();
 /** Timestamp of the last Z-Score divergence notification, to throttle spam */
 let _lastZDivAlertMs = 0;
 const Z_DIV_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
@@ -136,8 +128,13 @@ interface AppState {
     processWsTick: (tick: any, realDelta?: number) => void;
     processTradeTick: (trade: RecentTrade) => void;
     processDepthUpdate: (data: { asks: OrderBookLevel[], bids: OrderBookLevel[], metrics: any }) => void;
-    /** Apply a diff-depth update and derive event-level liquidity changes. */
-    processDepthDiff: (data: { changes: { price: number, qty: number, side: 'BID' | 'ASK' }[], seq: number, ts: number }) => void;
+    /** Record sequenced, already-diffed book changes as liquidity events. */
+    processDepthDiff: (data: {
+        changes: { price: number, before: number, after: number, side: 'BID' | 'ASK' }[],
+        seq: number,
+        ts: number,
+        market: 'SPOT' | 'PERP',
+    }) => void;
     refreshHeatmap: () => Promise<void>;
     resetCvd: () => void;
 
@@ -338,9 +335,6 @@ export const useStore = create<AppState>((set, get) => ({
         // Bug Fix #4: Reset CVD baseline and COFI on every symbol/interval change
         // so stale baseline from a previous symbol doesn't pollute the new feed.
         _latestOfi = 0;
-
-        // New symbol/interval → the resting-size map no longer refers to this book.
-        clearBookQty();
 
         // Compute RSI (retailSentiment) and VPIN (toxicity) from the initial historical data
         const closes = candles.map(c => c.close);
@@ -691,11 +685,11 @@ export const useStore = create<AppState>((set, get) => ({
         };
     }),
 
-    // ── Diff-depth → event-level liquidity changes ──────────────────────────
-    // The stream reports absolute new sizes, so delta vs the last known size is
-    // exactly what left/entered the book. A size decrease with a matching print
-    // nearby is a fill (EXECUTED); without one it was a cancel.
-    processDepthDiff: ({ changes, seq, ts }) => set(state => {
+    // ── Sequenced book changes → liquidity events ───────────────────────────
+    // The BookSync layer already computed exact before/after sizes. A size
+    // decrease with a matching print nearby is a fill (EXECUTED); without one it
+    // was a cancel. Additions are replenishments.
+    processDepthDiff: ({ changes, seq, ts, market }) => set(state => {
         const recent = state.market.recentTrades;
         const hadPrint = (price: number, side: 'BID' | 'ASK') => {
             const target = side === 'BID' ? 'SELL' : 'BUY'; // resting bid consumed by an aggressor seller
@@ -708,18 +702,15 @@ export const useStore = create<AppState>((set, get) => ({
 
         const events: LiquidityEvent[] = [];
         for (const c of changes) {
-            const key = `${c.side}:${c.price}`;
-            const before = _bookQty.get(key) ?? 0;
-            const after = c.qty;
-            if (Math.abs(after - before) < 1e-9) continue;
-            _bookQty.set(key, after);
-            const delta = after - before;
+            const delta = c.after - c.before;
+            if (Math.abs(delta) < 1e-9) continue;
             const kind: LiquidityEvent['kind'] =
                 delta > 0 ? 'REPLENISHED'
                 : (hadPrint(c.price, c.side) ? 'EXECUTED' : 'CANCELLED');
             events.push({
-                id: `${key}:${seq}:${Math.round(ts)}`,
-                price: c.price, side: c.side, before, after, delta, kind, ts, seq,
+                id: `${market}:${c.side}:${c.price}:${seq}`,
+                price: c.price, side: c.side, before: c.before, after: c.after,
+                delta, kind, ts, seq, market,
             });
         }
         if (!events.length) return {};

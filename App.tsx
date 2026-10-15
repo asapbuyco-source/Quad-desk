@@ -33,6 +33,7 @@ import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX, calculateZScoreBands } from './utils/analytics';
+import { BookSync } from './utils/bookSync';
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -188,6 +189,9 @@ const App: React.FC = () => {
         const intervalMapping: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
         const interval = intervalMapping[config.interval] || '1m';
 
+        // Book-sync instances (one per venue) — created below, referenced here.
+        const syncs: Record<'SPOT' | 'PERP', BookSync | null> = { SPOT: null, PERP: null };
+
         // Shared message handler. `market` tags every print with its venue class so
         // spot and perp aggressive flow can be measured separately.
         const handleMessage = (event: MessageEvent, market: 'SPOT' | 'PERP') => {
@@ -219,12 +223,16 @@ const App: React.FC = () => {
                 };
                 processTradeTick(trade);
             } else if (stream.includes('@depth') && data.e === 'depthUpdate') {
-                // Diff-depth: absolute new sizes per changed level. `u` is the final
-                // update id, which sequences the event against the book.
-                const changes: { price: number; qty: number; side: 'BID' | 'ASK' }[] = [];
-                (data.b || []).forEach((l: any) => changes.push({ price: parseFloat(l[0]), qty: parseFloat(l[1]), side: 'BID' }));
-                (data.a || []).forEach((l: any) => changes.push({ price: parseFloat(l[0]), qty: parseFloat(l[1]), side: 'ASK' }));
-                processDepthDiff({ changes, seq: Number(data.u) || 0, ts: Number(data.E) || Date.now() });
+                // Hand the raw diff to the book-sync layer, which validates the
+                // U/u sequence against a REST snapshot before emitting changes.
+                syncs[market]?.push({
+                    U: Number(data.U) || 0,
+                    u: Number(data.u) || 0,
+                    pu: data.pu !== undefined ? Number(data.pu) : undefined,
+                    b: data.b || [],
+                    a: data.a || [],
+                    E: Number(data.E) || Date.now(),
+                });
             } else if (stream.includes('@depth')) {
                 const rawAsks = data.asks || data.a || [];
                 const rawBids = data.bids || data.b || [];
@@ -292,7 +300,24 @@ const App: React.FC = () => {
         const perpUrl = `wss://fstream.binance.com/stream?streams=${[
             `${symbol}@aggTrade`,
             `${symbol}@depth20@100ms`,
+            `${symbol}@depth@100ms`,     // diff-depth → perp liquidity events
         ].join('/')}`;
+
+        // Snapshot + sequence validation per venue.
+        const spotSync = new BookSync({
+            symbol,
+            restUrl: 'https://api.binance.com/api/v3/depth',
+            onChanges: (changes, seq, ts) => processDepthDiff({ changes, seq, ts, market: 'SPOT' }),
+        });
+        const perpSync = new BookSync({
+            symbol,
+            restUrl: 'https://fapi.binance.com/fapi/v1/depth',
+            onChanges: (changes, seq, ts) => processDepthDiff({ changes, seq, ts, market: 'PERP' }),
+        });
+        syncs.SPOT = spotSync;
+        syncs.PERP = perpSync;
+        void spotSync.start();
+        void perpSync.start();
 
         const stopSpot = openSocket(spotUrl, 'SPOT');
         const stopPerp = openSocket(perpUrl, 'PERP');
@@ -300,6 +325,8 @@ const App: React.FC = () => {
         return () => {
             stopSpot();
             stopPerp();
+            spotSync.stop();
+            perpSync.stop();
             if (wsRef.current) wsRef.current.close();
             if (perpWsRef.current) perpWsRef.current.close();
         };

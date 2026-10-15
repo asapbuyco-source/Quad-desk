@@ -44,6 +44,8 @@ export interface LiquidityEvent {
   ts: number;
   /** Binance final update id (u) — ties the event to a sequenced book update. */
   seq: number;
+  /** Venue whose book produced the event. */
+  market: 'SPOT' | 'PERP';
 }
 
 export interface CandleData {
