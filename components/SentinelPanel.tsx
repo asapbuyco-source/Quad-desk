@@ -197,10 +197,10 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
             <div className="fintech-card h-full flex flex-col bg-slate-900/40 relative">
 
                 {/* Header */}
-                <div className="p-5 border-b border-white/5 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
-                            <Shield size={18} />
+                <div className="p-4 border-b border-white/5 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                        <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
+                            <Shield size={16} />
                         </div>
                         <div>
                             <h2 className="text-sm font-bold text-white">Sentinel System</h2>
@@ -215,11 +215,11 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                 </div>
 
                 {/* Checklist */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
 
                     {/* ── Anti-Liquidation Shield ── */}
                     {darkPoolBlocked && (
-                        <div className="mb-3 p-3 rounded-xl border border-rose-500/50 bg-rose-500/10 flex items-start gap-3 animate-pulse">
+                        <div className="mb-2.5 p-3 rounded-xl border border-rose-500/50 bg-rose-500/10 flex items-start gap-3 animate-pulse">
                             <div className="shrink-0 p-1.5 bg-rose-500/20 rounded-lg mt-0.5">
                                 <AlertTriangle size={14} className="text-rose-400" />
                             </div>
@@ -242,7 +242,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                 <Activity size={12} className="text-slate-400" />
                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cross-Asset Dislocation</span>
                             </div>
-                            <div className="grid grid-cols-3 gap-2">
+                            <div className="grid grid-cols-3 gap-1.5">
                                 {heatmap.map(item => (
                                     <ZScoreCell key={item.pair} item={item} />
                                 ))}
@@ -339,7 +339,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                 onClick={() => !isLocked && setSelectedItemId(item.id)}
                                 onKeyDown={(e) => !isLocked && handleKeyDown(e, item.id)}
                                 className={`
-                            group flex flex-col p-3 rounded-xl transition-all border relative overflow-hidden focus:outline-none 
+                            group flex flex-col p-2.5 rounded-xl transition-all border relative overflow-hidden focus:outline-none 
                             ${isLocked
                                         ? 'bg-zinc-900/50 border-white/5 cursor-not-allowed opacity-60'
                                         : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10 hover:shadow-lg cursor-pointer focus:ring-1 focus:ring-brand-accent'
@@ -347,21 +347,21 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                         `}
                             >
                                 <div className="flex items-center justify-between w-full relative z-10">
-                                    <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-2.5">
                                         {isLocked ? (
-                                            <Lock size={16} className="text-slate-600 shrink-0" />
+                                            <Lock size={14} className="text-slate-600 shrink-0" />
                                         ) : (
                                             <>
-                                                {item.status === 'pass' && <CheckCircle2 size={16} className="text-trade-bid shrink-0" />}
-                                                {item.status === 'fail' && <XCircle size={16} className="text-trade-ask shrink-0" />}
-                                                {item.status === 'warning' && <AlertTriangle size={16} className="text-trade-warn shrink-0" />}
+                                                {item.status === 'pass' && <CheckCircle2 size={14} className="text-trade-bid shrink-0" />}
+                                                {item.status === 'fail' && <XCircle size={14} className="text-trade-ask shrink-0" />}
+                                                {item.status === 'warning' && <AlertTriangle size={14} className="text-trade-warn shrink-0" />}
                                             </>
                                         )}
-                                        <span className={`text-sm font-medium transition-colors ${isLocked ? 'text-slate-500 line-through decoration-slate-600' : 'text-slate-300 group-hover:text-white'}`}>
+                                        <span className={`text-xs font-medium transition-colors ${isLocked ? 'text-slate-500 line-through decoration-slate-600' : 'text-slate-300 group-hover:text-white'}`}>
                                             {item.label}
                                         </span>
                                     </div>
-                                    <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-2.5">
                                         {isLocked ? (
                                             <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">REGIME LOCK</span>
                                         ) : (
@@ -371,7 +371,7 @@ const SentinelPanel: React.FC<SentinelPanelProps> = ({ checklist, aiScanResult, 
                                                 {item.value}
                                             </span>
                                         )}
-                                        {!isLocked && <ChevronRight size={14} className="text-slate-600 group-hover:text-white transition-colors" />}
+                                        {!isLocked && <ChevronRight size={13} className="text-slate-600 group-hover:text-white transition-colors" />}
                                     </div>
                                 </div>
                             </div>

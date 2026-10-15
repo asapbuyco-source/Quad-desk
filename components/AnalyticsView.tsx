@@ -332,25 +332,25 @@ const AnalyticsView: React.FC = () => {
                             </div>
                             <div className="flex-1 w-full min-h-0 p-2">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <ComposedChart data={timeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                    <ComposedChart data={timeData} margin={{ top: 10, right: 35, left: -10, bottom: 0 }}>
                                         <defs>
                                             <linearGradient id="gradBuy" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
-                                                <stop offset="100%" stopColor="#10b981" stopOpacity={0.1} />
+                                                <stop offset="0%" stopColor="#10b981" stopOpacity={0.5} />
+                                                <stop offset="100%" stopColor="#10b981" stopOpacity={0.15} />
                                             </linearGradient>
                                             <linearGradient id="gradSell" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.1} />
-                                                <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.4} />
+                                                <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.15} />
+                                                <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.5} />
                                             </linearGradient>
                                         </defs>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
                                         <XAxis dataKey="time" stroke="#52525b" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} minTickGap={30} />
                                         <YAxis yAxisId="vol" stroke="#52525b" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} tickFormatter={(val) => Math.abs(val).toLocaleString()} />
-                                        <YAxis yAxisId="cvd" orientation="right" stroke="#fbbf24" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} hide />
+                                        <YAxis yAxisId="cvd" orientation="right" stroke="#fbbf24" opacity={0.6} tick={{ fontSize: 8, fill: '#fbbf24' }} tickLine={false} axisLine={false} tickFormatter={(v) => Math.abs(v) >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
                                         <Tooltip content={<CustomTooltip />} cursor={{ fill: '#ffffff05' }} />
                                         <ReferenceLine y={0} yAxisId="vol" stroke="#3f3f46" />
-                                        <Bar yAxisId="vol" dataKey="buyVol" fill="url(#gradBuy)" barSize={6} radius={[2, 2, 0, 0]} name="Buy Vol" />
-                                        <Bar yAxisId="vol" dataKey="sellVol" fill="url(#gradSell)" barSize={6} radius={[0, 0, 2, 2]} name="Sell Vol" />
+                                        <Bar yAxisId="vol" dataKey="buyVol" fill="url(#gradBuy)" barSize={8} radius={[2, 2, 0, 0]} name="Buy Vol" />
+                                        <Bar yAxisId="vol" dataKey="sellVol" fill="url(#gradSell)" barSize={8} radius={[0, 0, 2, 2]} name="Sell Vol" />
                                         <Line yAxisId="cvd" type="monotone" dataKey="cvd" stroke="#fbbf24" strokeWidth={2} dot={false} name="CVD" />
                                     </ComposedChart>
                                 </ResponsiveContainer>

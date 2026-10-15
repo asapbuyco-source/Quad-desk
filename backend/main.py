@@ -61,6 +61,8 @@ NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WHALE_ALERT_API_KEY = os.getenv("WHALE_ALERT_API_KEY")
+MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY")   # financial news + sentiment
+FRED_API_KEY = os.getenv("FRED_API_KEY")             # macro economic series
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://quandesk.netlify.app")
 BACKEND_API_KEY = os.getenv("BACKEND_API_KEY")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
@@ -771,13 +773,73 @@ async def analyze_strategy(req: MacroStrategyRequest):
         "model_used": "quad-algo-v1",
     }
 
+# ── Marketaux financial news (entity-tagged + sentiment) ───────────────────
+MARKETAUX_BASE = "https://api.marketaux.com/v1/news/all"
+
+
+def _marketaux_symbols(symbol: str = "") -> str:
+    """Map an internal pair (BTC/USDT, ETHUSDT…) to Marketaux entity symbols."""
+    base = (symbol or "").upper().replace("/", "").replace("-", "")
+    for quote in ("USDT", "USDC", "BUSD", "USD"):
+        if base.endswith(quote):
+            base = base[: -len(quote)]
+            break
+    return f"{base}USD" if base else "BTCUSD,ETHUSD,SOLUSD"
+
+
+async def fetch_marketaux_news(symbol: str = "", limit: int = 6) -> list:
+    """Fetch sentiment-tagged news and normalise to the NewsArticle shape the
+    frontend already renders (with optional sentiment/entities extras)."""
+    if not MARKETAUX_API_KEY:
+        return []
+    params = {
+        "api_token": MARKETAUX_API_KEY,
+        "symbols": _marketaux_symbols(symbol),
+        "filter_entities": "true",
+        "language": "en",
+        "limit": limit,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(MARKETAUX_BASE, params=params)
+            r.raise_for_status()
+            payload = r.json()
+    except Exception as e:
+        logger.warning(f"[Marketaux] fetch failed: {e}")
+        return []
+
+    out = []
+    for a in payload.get("data", []):
+        entities = a.get("entities") or []
+        scores = [e.get("sentiment_score") for e in entities
+                  if isinstance(e.get("sentiment_score"), (int, float))]
+        out.append({
+            "source": {"id": None, "name": a.get("source") or "Marketaux"},
+            "author": None,
+            "title": a.get("title") or "",
+            "description": a.get("snippet") or a.get("description") or "",
+            "url": a.get("url") or "",
+            "urlToImage": a.get("image_url"),
+            "publishedAt": a.get("published_at") or "",
+            "content": a.get("snippet") or "",
+            "sentiment": round(sum(scores) / len(scores), 3) if scores else 0.0,
+            "entities": [
+                {"symbol": e.get("symbol"), "name": e.get("name"),
+                 "sentiment": e.get("sentiment_score")}
+                for e in entities[:5]
+            ],
+        })
+    return out
+
+
 @app.get("/market-intelligence")
-async def get_market_intel(model: str = DEFAULT_MODEL):
+async def get_market_intel(model: str = DEFAULT_MODEL, symbol: str = ""):
     now = datetime.now().timestamp() * 1000
     cache = state["market_intel_cache"]
     if cache["data"] and (now - cache["timestamp"] < 600000): return cache["data"]
-    articles = []
-    if newsapi:
+    # Prefer Marketaux (sentiment-tagged); fall back to NewsAPI if unavailable.
+    articles = await fetch_marketaux_news(symbol=symbol)
+    if not articles and newsapi:
         try:
             response = newsapi.get_everything(q="crypto market", language="en", sort_by="publishedAt", page_size=5)
             articles = response.get('articles', [])
@@ -816,6 +878,265 @@ async def get_market_intel(model: str = DEFAULT_MODEL):
     result = {"articles": articles, "intelligence": intelligence, "timestamp": now}
     state["market_intel_cache"] = {"data": result, "timestamp": now}
     return result
+
+
+# ── Macro data (FRED) ──────────────────────────────────────────────────────
+FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
+FRED_SERIES = {
+    "fed_funds":    "DFF",        # Effective Fed Funds Rate
+    "us10y":        "DGS10",      # 10-Year Treasury yield
+    "us2y":         "DGS2",       # 2-Year Treasury yield
+    "spread_10y2y": "T10Y2Y",     # 10Y-2Y spread (recession signal)
+    "cpi":          "CPIAUCSL",   # CPI index (monthly)
+    "unemployment": "UNRATE",     # Unemployment rate
+    "dollar_index": "DTWEXBGS",   # Broad USD index
+    "vix":          "VIXCLS",     # Equity volatility
+}
+_macro_cache = {"data": None, "ts": 0.0}
+
+
+async def _fred_series(series_id: str, limit: int = 14) -> list:
+    params = {
+        "series_id": series_id,
+        "api_key": FRED_API_KEY,
+        "file_type": "json",
+        "sort_order": "desc",
+        "limit": limit,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(FRED_BASE, params=params)
+        r.raise_for_status()
+        return r.json().get("observations", [])
+
+
+@app.get("/macro")
+async def get_macro():
+    """
+    Macro snapshot from FRED: latest value + change per series, plus YoY CPI
+    and the 10Y-2Y spread. Cached 15 minutes.
+    """
+    now = time.time()
+    if _macro_cache["data"] and (now - _macro_cache["ts"] < 900):
+        return _macro_cache["data"]
+    if not FRED_API_KEY:
+        return {"series": {}, "note": "FRED_API_KEY not configured"}
+
+    series_out = {}
+    for name, sid in FRED_SERIES.items():
+        try:
+            obs = [o for o in await _fred_series(sid) if o.get("value") not in (None, ".")]
+            if not obs:
+                continue
+            latest = float(obs[0]["value"])
+            prev = float(obs[1]["value"]) if len(obs) > 1 else latest
+            entry = {
+                "id": sid,
+                "value": round(latest, 3),
+                "prev": round(prev, 3),
+                "change": round(latest - prev, 3),
+                "date": obs[0].get("date"),
+            }
+            if sid == "CPIAUCSL" and len(obs) >= 13:
+                entry["yoy_pct"] = round((latest / float(obs[12]["value"]) - 1.0) * 100.0, 2)
+            series_out[name] = entry
+        except Exception as e:
+            logger.warning(f"[FRED] {sid} fetch failed: {e}")
+
+    result = {"series": series_out, "timestamp": now}
+    _macro_cache.update({"data": result, "ts": now})
+    return result
+
+
+# ── FX rates (Frankfurter — ECB reference rates, no key) ───────────────────
+# NOTE: host moved from api.frankfurter.app (301) to api.frankfurter.dev/v1
+FRANKFURTER_BASE = "https://api.frankfurter.dev/v1"
+
+
+@app.get("/fx")
+async def get_fx(base: str = "USD", symbols: str = "EUR,GBP,JPY,CHF,CAD,AUD"):
+    """Latest ECB reference rates via Frankfurter (no API key required)."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(f"{FRANKFURTER_BASE}/latest",
+                                 params={"base": base, "symbols": symbols})
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        logger.warning(f"[Frankfurter] fetch failed: {e}")
+        return {"base": base, "rates": {}, "note": "fx unavailable"}
+
+
+# ── Cross-venue derivatives (Binance / OKX / Bybit — public, no key) ───────
+OKX_BASE = "https://www.okx.com"
+BYBIT_BASE = "https://api.bybit.com"
+COINBASE_BASE = "https://api.exchange.coinbase.com"
+
+
+def _norm_symbol(symbol: str, default: str = "BTCUSDT") -> str:
+    return (symbol or default).upper().replace("/", "").replace("-", "")
+
+
+def _okx_inst(symbol: str) -> str:
+    base = _norm_symbol(symbol)
+    for q in ("USDT", "USDC", "USD"):
+        if base.endswith(q):
+            base = base[: -len(q)]
+            break
+    return f"{base}-USDT-SWAP"
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+@app.get("/cross-venue")
+async def cross_venue(symbol: str = "BTCUSDT"):
+    """Mark price + funding + open interest across Binance / OKX / Bybit."""
+    sym = _norm_symbol(symbol)
+    out = {"symbol": sym, "as_of": _now_iso(), "venues": {}}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # Binance USDM
+        try:
+            pi = (await client.get("https://fapi.binance.com/fapi/v1/premiumIndex",
+                                   params={"symbol": sym})).json()
+            oi = (await client.get("https://fapi.binance.com/fapi/v1/openInterest",
+                                   params={"symbol": sym})).json()
+            out["venues"]["binance"] = {
+                "price": float(pi["markPrice"]),
+                "funding_rate": float(pi["lastFundingRate"]),
+                "open_interest": float(oi["openInterest"]),
+                "source": "binance-fapi",
+            }
+        except Exception as e:
+            out["venues"]["binance"] = {"error": str(e)}
+        # OKX
+        inst = _okx_inst(sym)
+        try:
+            fr = (await client.get(f"{OKX_BASE}/api/v5/public/funding-rate",
+                                   params={"instId": inst})).json()
+            oi = (await client.get(f"{OKX_BASE}/api/v5/public/open-interest",
+                                   params={"instType": "SWAP", "instId": inst})).json()
+            d = fr["data"][0]
+            o = oi["data"][0]
+            out["venues"]["okx"] = {
+                "funding_rate": float(d["fundingRate"]),
+                "open_interest": float(o.get("oiCcy") or 0),
+                "source": "okx-v5",
+            }
+        except Exception as e:
+            out["venues"]["okx"] = {"error": str(e)}
+        # Bybit
+        try:
+            t = (await client.get(f"{BYBIT_BASE}/v5/market/tickers",
+                                  params={"category": "linear", "symbol": sym})).json()
+            d = t["result"]["list"][0]
+            out["venues"]["bybit"] = {
+                "price": float(d["lastPrice"]),
+                "funding_rate": float(d["fundingRate"]),
+                "open_interest": float(d.get("openInterestValue") or 0),
+                "source": "bybit-v5",
+            }
+        except Exception as e:
+            out["venues"]["bybit"] = {"error": str(e)}
+    return out
+
+
+@app.get("/premium")
+async def coinbase_premium(symbol: str = "BTCUSDT"):
+    """Coinbase USD spot vs Binance USDT spot — US bid/ask pressure proxy."""
+    sym = _norm_symbol(symbol)
+    base = sym[:-4] if sym.endswith("USDT") else sym
+    out = {"symbol": sym, "as_of": _now_iso(), "source": "coinbase+binance"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            cb = (await client.get(f"{COINBASE_BASE}/products/{base}-USD/ticker")).json()
+            bn = (await client.get("https://api.binance.com/api/v3/ticker/price",
+                                   params={"symbol": sym})).json()
+        cb_px = float(cb["price"])
+        bn_px = float(bn["price"])
+        out.update({
+            "coinbase": cb_px,
+            "binance": bn_px,
+            "premium_pct": round((cb_px / bn_px - 1.0) * 100.0, 4),
+        })
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
+@app.get("/funding-heatmap")
+async def funding_heatmap(limit: int = 12):
+    """Current funding across all Binance USDM perpetuals — highest / lowest."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            data = (await client.get("https://fapi.binance.com/fapi/v1/premiumIndex")).json()
+    except Exception as e:
+        return {"error": str(e), "as_of": _now_iso()}
+    rows = []
+    for d in data:
+        s = d.get("symbol", "")
+        if not s.endswith("USDT"):
+            continue
+        try:
+            rows.append({
+                "symbol": s,
+                "funding_rate": float(d.get("lastFundingRate") or 0.0),
+                "mark_price": float(d.get("markPrice") or 0.0),
+                "next_funding_time": d.get("nextFundingTime"),
+            })
+        except Exception:
+            continue
+    rows.sort(key=lambda r: r["funding_rate"], reverse=True)
+    return {
+        "as_of": _now_iso(),
+        "source": "binance-fapi",
+        "count": len(rows),
+        "highest": rows[:limit],
+        "lowest": rows[-limit:][::-1],
+    }
+
+
+OI_WATCHLIST = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+    "DOGEUSDT", "LINKUSDT", "ADAUSDT", "AVAXUSDT", "TONUSDT",
+]
+
+
+@app.get("/oi-leaderboard")
+async def oi_leaderboard(limit: int = 12):
+    """Open interest + 24h OI change + 24h price change for majors (Binance)."""
+    out = {"as_of": _now_iso(), "source": "binance-fapi", "rows": []}
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        async def one(sym: str):
+            try:
+                hist = (await client.get(
+                    "https://fapi.binance.com/futures/data/openInterestHist",
+                    params={"symbol": sym, "period": "1h", "limit": 24},
+                )).json()
+                if not hist:
+                    return None
+                cur = float(hist[-1]["sumOpenInterestValue"])
+                old = float(hist[0]["sumOpenInterestValue"])
+                chg = (cur / old - 1.0) * 100.0 if old else 0.0
+                tick = (await client.get(
+                    "https://fapi.binance.com/fapi/v1/ticker/24hr",
+                    params={"symbol": sym},
+                )).json()
+                return {
+                    "symbol": sym,
+                    "oi_usd": cur,
+                    "oi_change_24h_pct": round(chg, 2),
+                    "price_change_24h_pct": round(float(tick["priceChangePercent"]), 2),
+                }
+            except Exception:
+                return None
+
+        rows = [r for r in await asyncio.gather(*[one(s) for s in OI_WATCHLIST]) if r]
+
+    rows.sort(key=lambda r: r["oi_change_24h_pct"], reverse=True)
+    out["rows"] = rows[:limit]
+    return out
+
 
 @app.get("/alerts/status")
 async def alerts_status():

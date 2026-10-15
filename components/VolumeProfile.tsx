@@ -28,7 +28,7 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
     switch (type) {
       case 'POC': return '#f59e0b'; // Amber
       case 'HVN': return '#3b82f6'; // Blue
-      case 'LVN': return '#27272a'; // Zinc 800
+      case 'LVN': return 'rgba(244,63,94,0.35)'; // Rose (Low Liquidity / Danger)
       default: return '#52525b'; // Zinc 600
     }
   };
@@ -52,7 +52,7 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
                 <BarChart 
                     layout="vertical" 
                     data={chartData} 
-                    margin={{ top: 10, right: 10, left: 0, bottom: 5 }}
+                    margin={{ top: 8, right: 8, left: 4, bottom: 4 }}
                     barGap={0}
                     barCategoryGap={1}
                 >
@@ -76,9 +76,9 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
                                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                                                 d.type === 'POC' ? 'bg-amber-500/20 text-amber-500' :
                                                 d.type === 'HVN' ? 'bg-blue-500/20 text-blue-500' :
-                                                d.type === 'LVN' ? 'bg-red-500/10 text-red-500' : 'bg-zinc-800 text-zinc-400'
+                                                d.type === 'LVN' ? 'bg-rose-500/20 text-rose-400' : 'bg-zinc-800 text-zinc-400'
                                             }`}>
-                                                {d.type === 'LVN' ? 'LIQ HOLE' : d.type}
+                                                {d.type === 'LVN' ? 'LVN (HOLE)' : d.type}
                                             </span>
                                         </div>
                                     </div>
@@ -98,23 +98,23 @@ const VolumeProfile: React.FC<VolumeProfileProps> = ({ data }) => {
             </ResponsiveContainer>
         </div>
 
-        {/* Footer / Legend */}
-        <div className="px-3 py-2 border-t border-white/5 bg-white/[0.02] flex flex-wrap gap-x-4 gap-y-2 justify-center shrink-0">
+        {/* Footer / Streamlined Legend */}
+        <div className="px-3 py-2 border-t border-white/5 bg-white/[0.02] flex items-center justify-between text-[9px] font-mono shrink-0">
              <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 bg-amber-500 rounded-sm"></div>
-                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">POC</span>
+                <span className="text-slate-400 font-bold">POC</span>
             </div>
             <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 bg-blue-500 rounded-sm"></div>
-                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">HVN</span>
+                <span className="text-slate-400 font-bold">HVN</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-rose-500/60 rounded-sm"></div>
+                <span className="text-rose-400 font-bold">LVN</span>
             </div>
              <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 bg-zinc-600 rounded-sm"></div>
-                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">VOL</span>
-            </div>
-             <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 bg-zinc-800 rounded-sm border border-zinc-700"></div>
-                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wide">LOW LIQ</span>
+                <span className="text-zinc-500 font-bold">VOL</span>
             </div>
         </div>
     </div>

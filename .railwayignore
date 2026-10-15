@@ -1,0 +1,27 @@
+# Keep `railway up` uploads small and secret-free.
+# (Railway also honours .gitignore; this trims heavy local artifacts.)
+
+.git
+.github
+.pytest_cache
+__pycache__
+node_modules
+dist
+data
+logs
+reports
+scratch
+tests
+
+*.pyc
+*.pkl
+*.zip
+*.pdf
+*.csv
+*.log
+*.out
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example

@@ -5,10 +5,10 @@ import { useStore } from '../store';
 const motion = m as any;
 
 const StatCard: React.FC<{ label: string; value: string | number; color?: string; sub?: string }> = ({ label, value, color, sub }) => (
-  <div className="bg-[#0d1117] border border-[#21262d] rounded-lg p-3 flex flex-col gap-1">
-    <span className="text-[10px] uppercase tracking-wider text-[#8b949e]">{label}</span>
+  <div className="fintech-card p-3 flex flex-col gap-1">
+    <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">{label}</span>
     <span className={`text-lg font-mono font-bold ${color || 'text-white'}`}>{value}</span>
-    {sub && <span className="text-[10px] text-[#8b949e]">{sub}</span>}
+    {sub && <span className="text-[10px] text-zinc-500 font-mono">{sub}</span>}
   </div>
 );
 
@@ -16,11 +16,11 @@ const GateBar: React.FC<{ name: string; count: number; max: number }> = ({ name,
   const pct = max > 0 ? Math.min(count / max * 100, 100) : 0;
   return (
     <div className="flex items-center gap-2 text-[10px]">
-      <span className="w-32 text-[#8b949e] truncate">{name}</span>
-      <div className="flex-1 bg-[#21262d] rounded-full h-2">
-        <div className="bg-[#58a6ff] h-2 rounded-full" style={{ width: `${pct}%` }} />
+      <span className="w-32 text-zinc-400 truncate">{name}</span>
+      <div className="flex-1 bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
+        <div className="bg-brand-accent h-2 rounded-full" style={{ width: `${pct}%` }} />
       </div>
-      <span className="w-8 text-right font-mono text-[#c9d1d9]">{count}</span>
+      <span className="w-8 text-right font-mono text-zinc-300 font-bold">{count}</span>
     </div>
   );
 };

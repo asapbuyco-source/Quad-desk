@@ -7,3 +7,6 @@ data/
 *.pkl
 logs/
 bot/hmm_calibration_report.txt
+*.tsbuildinfo
+.railway/
+*.log

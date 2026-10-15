@@ -140,7 +140,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
 
   return (
     <div className="fintech-card h-full flex flex-col overflow-hidden">
-      <div className="px-5 py-4 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+      <div className="px-4 py-3 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
         <h3 className="text-sm font-bold text-white tracking-wide font-sans flex items-center gap-2">
           <ArrowDownUp size={16} className="text-brand-accent" />
           Depth Engine
@@ -163,12 +163,13 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
       </div>
 
       <div className="flex-1 overflow-y-auto font-mono scrollbar-hide py-2">
-        <div className="flex justify-between px-4 pb-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider border-b border-white/5 mb-1">
-          <span>Price (USD)</span>
-          <div className="absolute left-1/2 -translate-x-1/2 text-zinc-600">Power</div>
-          <div className="flex gap-4">
+      {/* Column headers — mirrors OrderRow's flex zones so columns line up */}
+        <div className="relative flex items-center justify-between px-4 pb-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider border-b border-white/5 mb-1">
+          <span className="w-24">Price (USD)</span>
+          <span className="absolute left-1/2 -translate-x-1/2 text-zinc-600">Power</span>
+          <div className="flex items-center justify-end gap-3 min-w-[100px]">
             <span>Flux</span>
-            <span>Size</span>
+            <span className="w-12 text-right">Size</span>
           </div>
         </div>
 

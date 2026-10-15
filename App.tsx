@@ -22,6 +22,8 @@ import SentinelEdgePage from './components/SentinelEdgePage';
 import ULISView from './components/ULISView';
 import BotMindView from './components/BotMindView';
 import SettingsView from './components/SettingsView';
+import MacroView from './components/MacroView';
+import DerivativesView from './components/DerivativesView';
 import { ToastContainer } from './components/Toast';
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
@@ -331,6 +333,8 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'liquidity' && <LiquidityPage />}
                                 {ui.activeTab === 'regime' && <RegimePage />}
                                 {ui.activeTab === 'macro-strategy' && <MacroStrategyView />}
+                                {ui.activeTab === 'macro' && <MacroView />}
+                                {ui.activeTab === 'funding' && <DerivativesView />}
                                 {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}
                                 {ui.activeTab === 'ai-tactical' && <AITacticalPage />}

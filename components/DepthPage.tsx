@@ -180,7 +180,7 @@ const DepthPage: React.FC = () => {
     }, [asks, bids]);
 
     return (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full flex flex-col px-4 lg:px-8 pb-24 lg:pb-8 pt-6 max-w-7xl mx-auto overflow-hidden">
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full flex flex-col px-4 lg:px-8 pb-28 lg:pb-8 pt-6 max-w-7xl mx-auto overflow-y-auto">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-6 shrink-0">
                 <div><h1 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3"><div className="p-2 bg-indigo-500/20 rounded-xl text-indigo-400"><Mountain size={28} /></div>Market Depth</h1><p className="text-zinc-400 text-sm mt-1 ml-1">Liquidity Structure for <span className="text-white font-mono font-bold">{activeSymbol}</span></p></div>
                 <div className="flex flex-col items-end gap-2 w-full md:w-auto"><div className="flex items-center gap-2"><Scale size={14} className="text-zinc-500" /><span className="text-xs font-bold text-zinc-400 uppercase tracking-wide">Book Imbalance</span><span className={`text-sm font-mono font-bold ${imbalance > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{imbalance > 0 ? '+' : ''}{imbalance.toFixed(1)}%</span></div><div className="w-full md:w-64 h-2 bg-zinc-800 rounded-full overflow-hidden relative"><div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/20 z-10" /><motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(Math.abs(imbalance), 50)}%`, left: imbalance > 0 ? '50%' : 'auto', right: imbalance < 0 ? '50%' : 'auto' }} className={`h-full absolute top-0 ${imbalance > 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} /></div></div>

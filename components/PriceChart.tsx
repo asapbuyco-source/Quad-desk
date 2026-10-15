@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { CandleData, TradeSignal, PriceLevel, LiquidityState, RegimeState, PeriodType, BotTrade, BotSettingsState } from '../types';
 import { PanelRight, Rocket, Loader2, Clock, X, GripVertical, ChevronDown, ChevronUp, Maximize2, Minimize2, Bot } from 'lucide-react';
 import { useLightweightChart } from '../hooks/useChart';
+import { useChartDrawings, DrawingPoint } from '../hooks/useChartDrawings';
+import { DrawingToolbar } from './DrawingToolbar';
+import { DrawingCanvasOverlay } from './DrawingCanvasOverlay';
 
 interface PriceChartProps {
     data: CandleData[];
@@ -31,8 +34,8 @@ const BORDER_COLOR = 'rgba(255,255,255,0.06)';
 const GRID_COLOR = 'rgba(255,255,255,0.04)';
 const UP_COLOR = '#10b981';
 const DOWN_COLOR = '#f43f5e';
-const UP_VOL = 'rgba(16,185,129,0.35)';
-const DOWN_VOL = 'rgba(244,63,94,0.30)';
+const UP_VOL = 'rgba(16,185,129,0.55)';
+const DOWN_VOL = 'rgba(244,63,94,0.50)';
 
 const isValid = (n: number | undefined | null): boolean => typeof n === 'number' && !isNaN(n);
 
@@ -64,12 +67,65 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const [verdictVisible, setVerdictVisible] = useState(false);
     const [verdictCollapsed, setVerdictCollapsed] = useState(false);
     const [verdictExpanded, setVerdictExpanded] = useState(false);
-    const [verdictPos, setVerdictPos] = useState({ x: 16, y: 60 });
+    const [verdictPos, setVerdictPos] = useState({ x: 16, y: 130 });
     const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
     const verdictPanelRef = useRef<HTMLDivElement>(null);
     const prevScanResultRef = useRef<any>(null);
 
+    // Drawing state
+    const {
+        drawings,
+        activeTool,
+        setActiveTool,
+        selectedId,
+        setSelectedId,
+        activeColor,
+        setActiveColor,
+        inProgress,
+        startDrawing,
+        previewDrawing,
+        completeDrawing,
+        deleteSelected,
+        clearAll,
+        isDrawing
+    } = useChartDrawings();
+
     const [hoveredData, setHoveredData] = useState<any>(null);
+
+    // Convert mouse event coordinates to time & price using ECharts
+    const getChartPoint = useCallback((e: React.MouseEvent<HTMLDivElement>): DrawingPoint | null => {
+        if (!chart || !chartContainerRef.current) return null;
+        const rect = chartContainerRef.current.getBoundingClientRect();
+        const px = e.clientX - rect.left;
+        const py = e.clientY - rect.top;
+
+        try {
+            const dataCoord = chart.convertFromPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [px, py]);
+            if (!dataCoord || isNaN(dataCoord[0]) || isNaN(dataCoord[1])) return null;
+            return { time: dataCoord[0], price: dataCoord[1] };
+        } catch {
+            return null;
+        }
+    }, [chart]);
+
+    const handleChartMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (activeTool === 'select') return;
+        const pt = getChartPoint(e);
+        if (!pt) return;
+
+        if (!isDrawing) {
+            startDrawing(pt);
+        } else {
+            completeDrawing(pt);
+        }
+    }, [activeTool, isDrawing, getChartPoint, startDrawing, completeDrawing]);
+
+    const handleChartMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (!isDrawing) return;
+        const pt = getChartPoint(e);
+        if (!pt) return;
+        previewDrawing(pt);
+    }, [isDrawing, getChartPoint, previewDrawing]);
 
     useEffect(() => {
         if (aiScanResult && aiScanResult !== prevScanResultRef.current) {
@@ -77,7 +133,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
             setVerdictVisible(true);
             setVerdictCollapsed(false);
             setVerdictExpanded(false);
-            setVerdictPos({ x: 16, y: 60 });
+            setVerdictPos({ x: 16, y: 130 });
         }
     }, [aiScanResult]);
 
@@ -619,8 +675,35 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 </div>
             </div>
 
-            <div className="flex-1 w-full min-h-0 relative" onClick={clearHover}>
+            <div 
+                className={`flex-1 w-full min-h-0 relative ${activeTool !== 'select' ? 'cursor-crosshair' : ''}`} 
+                onClick={clearHover}
+                onMouseDown={handleChartMouseDown}
+                onMouseMove={handleChartMouseMove}
+            >
                 <div ref={chartContainerRef} className="w-full h-full" />
+
+                {/* Drawing Toolbar (TradingView style) */}
+                <DrawingToolbar
+                    activeTool={activeTool}
+                    onSelectTool={setActiveTool}
+                    activeColor={activeColor}
+                    onSelectColor={setActiveColor}
+                    selectedId={selectedId}
+                    onDeleteSelected={deleteSelected}
+                    onClearAll={clearAll}
+                    drawingCount={drawings.length}
+                />
+
+                {/* Interactive Drawing Overlay Canvas */}
+                <DrawingCanvasOverlay
+                    drawings={drawings}
+                    inProgress={inProgress}
+                    selectedId={selectedId}
+                    onSelectDrawing={setSelectedId}
+                    chart={chart}
+                />
+
                 {chart && data.length === 0 && (
                     <div className="absolute inset-0 flex items-center justify-center bg-[#0d1117]/60 z-30">
                         <div className="flex flex-col items-center gap-2">
@@ -630,9 +713,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
                     </div>
                 )}
 
-                {/* Tooltip */}
+                {/* Tooltip - positioned top-2 right-2 to avoid clashing with price/bias graphics */}
                 {hoveredWithVolume && (
-                    <div className="absolute top-2 left-2 z-50 pointer-events-none bg-[#09090b]/90 backdrop-blur-md border border-white/10 p-2 rounded-lg shadow-xl max-w-[140px] sm:max-w-none">
+                    <div className="absolute top-2 right-2 z-50 pointer-events-none bg-[#09090b]/90 backdrop-blur-md border border-white/10 p-2 rounded-lg shadow-xl max-w-[140px] sm:max-w-none">
                         <div className="flex items-center gap-2 mb-1 border-b border-white/5 pb-1">
                             <Clock size={10} className="text-zinc-500" />
                             <span className="text-[10px] font-mono text-zinc-400">
@@ -775,80 +858,57 @@ const PriceChart: React.FC<PriceChartProps> = ({
                     </div>
                 )}
 
-                {/* Bot reasoning bar — 2-row decision panel */}
+                {/* Bot reasoning bar — Redesigned with actionable pills and collapsible diagnostics */}
                 {botSettings && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-[#0a0a0f]/97 border-t border-[#21262d] z-20">
+                    <div className="absolute bottom-0 left-0 right-0 bg-[#09090b]/95 backdrop-blur-md border-t border-white/10 z-20 shadow-lg">
+                        {/* Primary Actionable Row */}
                         <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-mono border-b border-white/5">
-                            <span className={`w-2 h-2 rounded-full shrink-0 ${botSettings.status === 'ONLINE' ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
-                            <span className="font-bold text-white">{botSettings.currentRegime || '—'}</span>
-                            <span className={Math.abs(botSettings.currentZScore || 0) > 1.5 ? 'text-red-400' : Math.abs(botSettings.currentZScore || 0) > 1.0 ? 'text-yellow-400' : 'text-green-400'}>
-                                Z {(botSettings.currentZScore || 0) >= 0 ? '+' : ''}{botSettings.currentZScore?.toFixed(2) ?? '0.00'}
-                            </span>
-                            <span className={(botSettings.currentBayes || 0) * 100 > 65 ? 'text-green-400' : (botSettings.currentBayes || 0) * 100 > 50 ? 'text-yellow-400' : 'text-red-400'}>
-                                B {((botSettings.currentBayes ?? 0.5) * 100).toFixed(0)}%
-                            </span>
-                            <span className={botSettings.lastSignal === 'WAIT' ? 'text-[#8b949e]' : (botSettings.lastSignal || '').includes('BUY') || (botSettings.lastSignal || '').includes('LONG') ? 'text-green-400' : 'text-red-400'}>
+                            <div className="flex items-center gap-1.5 shrink-0 bg-white/5 px-2 py-0.5 rounded-full border border-white/5">
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${botSettings.status === 'ONLINE' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                                <span className="font-bold text-white uppercase text-[9px]">{botSettings.currentRegime || 'IDLE'}</span>
+                            </div>
+
+                            <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                                botSettings.lastSignal === 'WAIT' ? 'bg-zinc-800 text-zinc-400' :
+                                (botSettings.lastSignal || '').includes('BUY') || (botSettings.lastSignal || '').includes('LONG') ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 
+                                'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                            }`}>
                                 {botSettings.lastSignal || 'WAIT'}
                             </span>
+
                             {botSettings.lastUlis && botSettings.lastUlis !== '—' && (
-                                <span className={`px-1 rounded text-[9px] font-bold ${
-                                    botSettings.lastUlis === 'AVOID' || botSettings.lastUlis === 'UNWIND' ? 'bg-red-900/60 text-red-400' :
-                                    botSettings.lastUlis === 'CAUTION' ? 'bg-yellow-900/60 text-yellow-400' :
-                                    'bg-green-900/60 text-green-400'
+                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold border ${
+                                    botSettings.lastUlis === 'AVOID' || botSettings.lastUlis === 'UNWIND' ? 'bg-rose-950/60 text-rose-400 border-rose-800/50' :
+                                    botSettings.lastUlis === 'CAUTION' ? 'bg-amber-950/60 text-amber-400 border-amber-800/50' :
+                                    'bg-emerald-950/60 text-emerald-400 border-emerald-800/50'
                                 }`}>
                                     {botSettings.lastUlis}
                                 </span>
                             )}
-                            <span className="text-[#58a6ff] truncate flex-1 ml-2">
-                                {botSettings.lastAnalysis || '—'}
+
+                            <span className="text-[#38bdf8] truncate flex-1 ml-1 text-[10px] font-sans">
+                                {botSettings.lastAnalysis || 'Analyzing order flow dynamics...'}
                             </span>
+
+                            <div className="flex items-center gap-2 ml-auto shrink-0">
+                                <span className="text-[10px] font-bold">
+                                    PnL <span className={(botSettings.globalSessionPnl || 0) >= 0 ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}>
+                                        ${(botSettings.globalSessionPnl || 0).toFixed(2)}
+                                    </span>
+                                </span>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2 px-3 py-1 text-[9px] font-mono">
-                            <span className="text-[#484f58]">
-                                OIZ {(botSettings.oiZScore || 0) >= 0 ? '+' : ''}{botSettings.oiZScore?.toFixed(1) ?? '—'}
-                            </span>
-                            <span className={Math.abs(botSettings.oiDelta5mPct || 0) > 1 ? 'text-yellow-400' : 'text-[#484f58]'}>
-                                Δ5 {(botSettings.oiDelta5mPct || 0) >= 0 ? '+' : ''}{botSettings.oiDelta5mPct?.toFixed(2) ?? '—'}%
-                            </span>
-                            <span className="text-[#484f58]">{(botSettings.oiUsdM || 0).toFixed(0)}M</span>
-                            {botSettings.priceOIRegime && (
-                                <span className={`px-1 rounded text-[8px] font-bold ${
-                                    (botSettings.priceOIRegime || '').includes('LONG_BUILD') ? 'bg-green-900/60 text-green-400' :
-                                    (botSettings.priceOIRegime || '').includes('SHORT_BUILD') ? 'bg-red-900/60 text-red-400' :
-                                    (botSettings.priceOIRegime || '').includes('COVERING') ? 'bg-blue-900/60 text-blue-400' :
-                                    (botSettings.priceOIRegime || '').includes('LIQUIDATION') ? 'bg-rose-900/60 text-rose-400' :
-                                    'text-[#484f58]'
-                                }`}>
-                                    {botSettings.priceOIRegime.replace(/_/g, ' ')}
-                                </span>
-                            )}
-                            {botSettings.oiRiskLabel && botSettings.oiRiskLabel !== 'UNKNOWN' && (
-                                <span className={`px-1 rounded text-[8px] font-bold ${
-                                    botSettings.oiRiskLabel === 'EXTREME_RISK' ? 'bg-red-900/60 text-red-400' :
-                                    botSettings.oiRiskLabel === 'ELEVATED_RISK' ? 'bg-yellow-900/60 text-yellow-400' :
-                                    'bg-blue-900/60 text-blue-400'
-                                }`}>
-                                    {botSettings.oiRiskLabel.replace(/_/g, ' ')}
-                                </span>
-                            )}
-                            {botSettings.fundingOISignal && botSettings.fundingOISignal !== 'NEUTRAL' && (
-                                <span className={`px-1 rounded text-[8px] font-bold ${
-                                    (botSettings.fundingOISignal || '').includes('CROWDED') ? 'bg-red-900/60 text-red-400' :
-                                    botSettings.fundingOISignal === 'SQUEEZE_SETUP' ? 'bg-purple-900/60 text-purple-400' :
-                                    'bg-green-900/60 text-green-400'
-                                }`}>
-                                    {botSettings.fundingOISignal.replace(/_/g, ' ')}
-                                </span>
-                            )}
-                            <span className="text-[#484f58] ml-auto">
-                                RSI {botSettings.currentRSI?.toFixed(0) ?? '—'}
-                                {' · '}OFI {botSettings.currentOFI?.toFixed(2) ?? '—'}
-                                {' · '}ATR {((botSettings.currentATR || 0) * 100).toFixed(2)}%
-                                {' · '}{botSettings.totalTrades || 0}t
-                                {' · '}PnL <span className={(botSettings.globalSessionPnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                    ${(botSettings.globalSessionPnl || 0).toFixed(2)}
-                                </span>
-                            </span>
+
+                        {/* Secondary Context & Metrics Row */}
+                        <div className="flex items-center gap-3 px-3 py-1 text-[9px] font-mono text-zinc-400 overflow-x-auto scrollbar-hide">
+                            <span className="text-zinc-500">Z <span className={Math.abs(botSettings.currentZScore || 0) > 1.5 ? 'text-rose-400' : Math.abs(botSettings.currentZScore || 0) > 1.0 ? 'text-amber-400' : 'text-emerald-400'}>{(botSettings.currentZScore || 0) >= 0 ? '+' : ''}{botSettings.currentZScore?.toFixed(2) ?? '0.00'}</span></span>
+                            <span>B <span className="text-white font-bold">{((botSettings.currentBayes ?? 0.5) * 100).toFixed(0)}%</span></span>
+                            <span>OIZ <span className="text-zinc-300">{(botSettings.oiZScore || 0) >= 0 ? '+' : ''}{botSettings.oiZScore?.toFixed(1) ?? '—'}</span></span>
+                            <span>Δ5 <span className={Math.abs(botSettings.oiDelta5mPct || 0) > 1 ? 'text-amber-400' : 'text-zinc-400'}>{(botSettings.oiDelta5mPct || 0) >= 0 ? '+' : ''}{botSettings.oiDelta5mPct?.toFixed(2) ?? '—'}%</span></span>
+                            <span>RSI <span className="text-zinc-300">{botSettings.currentRSI?.toFixed(0) ?? '—'}</span></span>
+                            <span>OFI <span className="text-zinc-300">{botSettings.currentOFI?.toFixed(2) ?? '—'}</span></span>
+                            <span>ATR <span className="text-zinc-300">{((botSettings.currentATR || 0) * 100).toFixed(2)}%</span></span>
+                            <span className="ml-auto text-zinc-500">{botSettings.totalTrades || 0} trades</span>
                         </div>
                     </div>
                 )}

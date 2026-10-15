@@ -63,7 +63,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             >
                 <div className="flex items-center gap-2">
                     <Hexagon size={24} className="text-white fill-white/10" />
-                    <span className="font-bold text-white tracking-widest text-sm">VANTAGE</span>
+                    <span className="font-bold text-white tracking-widest text-sm">QUANT DESK</span>
                 </div>
                 <div className="hidden md:flex gap-8 text-xs font-mono text-zinc-400">
                     <span className="hover:text-white cursor-pointer transition-colors">PLATFORM</span>
