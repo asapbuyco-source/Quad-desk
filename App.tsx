@@ -1,31 +1,34 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, Suspense } from 'react';
 import Header from './components/Header';
 import NavBar from './components/NavBar';
 import DashboardView from './components/DashboardView';
-import AnalyticsView from './components/AnalyticsView';
-import IntelView from './components/IntelView';
-import ChartingView from './components/ChartingView';
-import GuideView from './components/GuideView';
-import BiasMatrixView from './components/BiasMatrixView';
-import LiquidityPage from './components/LiquidityPage';
-import MacroStrategyView from './components/MacroStrategyView';
-import DepthPage from './components/DepthPage';
-import AdminBotControl from './components/AdminBotControl';
-import RegimePage from './components/RegimePage';
-import AITacticalPage from './components/AITacticalPage';
 import LandingPage from './components/LandingPage';
 import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine';
-import DarkPoolDiscovery from './components/DarkPoolDiscovery';
-import SentinelEdgePage from './components/SentinelEdgePage';
-import ULISView from './components/ULISView';
-import BotMindView from './components/BotMindView';
-import SettingsView from './components/SettingsView';
-import MacroView from './components/MacroView';
-import DerivativesView from './components/DerivativesView';
-import OrderFlowPage from './components/OrderFlowPage';
 import { ToastContainer } from './components/Toast';
+
+// ── Route-level code splitting ───────────────────────────────────────────────
+// The shell + Desk load eagerly; every other tab is fetched on first visit so
+// the initial JS payload stays small (the old single bundle was ~1.8 MB).
+const AnalyticsView = React.lazy(() => import('./components/AnalyticsView'));
+const IntelView = React.lazy(() => import('./components/IntelView'));
+const ChartingView = React.lazy(() => import('./components/ChartingView'));
+const GuideView = React.lazy(() => import('./components/GuideView'));
+const BiasMatrixView = React.lazy(() => import('./components/BiasMatrixView'));
+const LiquidityPage = React.lazy(() => import('./components/LiquidityPage'));
+const MacroStrategyView = React.lazy(() => import('./components/MacroStrategyView'));
+const DepthPage = React.lazy(() => import('./components/DepthPage'));
+const AdminBotControl = React.lazy(() => import('./components/AdminBotControl'));
+const RegimePage = React.lazy(() => import('./components/RegimePage'));
+const AITacticalPage = React.lazy(() => import('./components/AITacticalPage'));
+const SentinelEdgePage = React.lazy(() => import('./components/SentinelEdgePage'));
+const ULISView = React.lazy(() => import('./components/ULISView'));
+const BotMindView = React.lazy(() => import('./components/BotMindView'));
+const SettingsView = React.lazy(() => import('./components/SettingsView'));
+const MacroView = React.lazy(() => import('./components/MacroView'));
+const DerivativesView = React.lazy(() => import('./components/DerivativesView'));
+const OrderFlowPage = React.lazy(() => import('./components/OrderFlowPage'));
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
@@ -369,6 +372,11 @@ const App: React.FC = () => {
                         <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                             <Header />
                             <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
+                                <Suspense fallback={
+                                    <div className="flex h-full w-full items-center justify-center">
+                                        <Loader2 size={30} className="animate-spin text-brand-accent" />
+                                    </div>
+                                }>
                                 {ui.activeTab === 'dashboard' && <DashboardView />}
                                 {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
                                 {ui.activeTab === 'depth' && <DepthPage />}
@@ -387,8 +395,8 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'analytics' && <AnalyticsView />}
                                 {ui.activeTab === 'intel' && <IntelView />}
                                 {ui.activeTab === 'guide' && <GuideView />}
-                                {ui.activeTab === 'dark-pool' && <DarkPoolDiscovery />}
                                 {ui.activeTab === 'ulis' && <ULISView />}
+                                </Suspense>
                             </main>
                         </div>
                     </motion.div>

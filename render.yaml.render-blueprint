@@ -1,0 +1,105 @@
+# ============================================================================
+# Render blueprint — FRONTEND (static) + BACKEND (FastAPI) only.
+# The trading bot is intentionally NOT included.
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> connect this repo -> Apply.
+# Secrets marked `sync: false` are prompted for in the dashboard and must be
+# entered there (never commit them).
+# ============================================================================
+
+services:
+  # ── 1. Backend API ────────────────────────────────────────────────────────
+  - type: web
+    name: quant-desk-backend
+    repo: https://github.com/asapbuyco-source/Quad-desk
+    branch: claude
+    runtime: python
+    rootDir: backend
+    # plan: free is US-only and sleeps after 15 min — Binance returns HTTP 451
+    # from US IPs, so the Binance-backed endpoints need a non-US region.
+    plan: starter
+    region: frankfurt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Required by main.py at startup. Render generates a strong value.
+      - key: BACKEND_API_KEY
+        generateValue: true
+      # ADMIN_API_KEY intentionally omitted — the code falls back to
+      # BACKEND_API_KEY when it is not set.
+      # CORS origin = the deployed static site's URL.
+      - key: FRONTEND_URL
+        fromService:
+          type: web
+          name: quant-desk-frontend
+          envVarKey: RENDER_EXTERNAL_URL
+      # ---- secrets (entered in the Render dashboard) ----
+      - key: MARKETAUX_API_KEY
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      - key: WHALE_ALERT_API_KEY
+        sync: false
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+
+  # ── 2. Frontend (static site, free) ───────────────────────────────────────
+  - type: web
+    name: quant-desk-frontend
+    repo: https://github.com/asapbuyco-source/Quad-desk
+    branch: claude
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    autoDeploy: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    envVars:
+      # Backend public URL, injected at build time (Vite bakes VITE_* in).
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: quant-desk-backend
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_BACKEND_API_KEY
+        fromService:
+          type: web
+          name: quant-desk-backend
+          envVarKey: BACKEND_API_KEY
+      # ---- Firebase web config (public values, but kept out of git) ----
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false
+      - key: VITE_FIREBASE_MEASUREMENT_ID
+        sync: false
+      - key: VITE_GROQ_API_KEY
+        sync: false

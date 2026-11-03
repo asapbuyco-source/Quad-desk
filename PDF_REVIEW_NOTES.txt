@@ -1,0 +1,127 @@
+================================================================================
+QUANT DESK — ORDER-FLOW REVIEW NOTES (source: review PDF, 8 pages)
+Captured: 2026-10-15
+================================================================================
+
+WHAT THE PDF WAS
+  An 8-page review of the order-flow / tape / depth (pages 1 and 6-8 were blank
+  or images; the substance was pages 2-5). It is a trading-microstructure
+  critique with a prescribed build order, not a generic UI review.
+
+  Its thesis: the tape and depth show PRICES and SIZES but not WHO was
+  aggressive or WHAT happened to resting liquidity — so you cannot distinguish
+  absorption from genuine progress.
+
+--------------------------------------------------------------------------------
+THE FIVE SECTIONS
+--------------------------------------------------------------------------------
+
+(§2) WHAT IS MISSING FROM THE CURRENT TAPE
+    Keep:   raw trade prints (time, price, direction, size).
+    Improve aggressor classification — the green up / red down arrows must mean
+            BUYER-INITIATED / SELLER-INITIATED (taker side), not simply price
+            ticked up or down. Confirm from the data source.
+    Tag:    every trade with exchange, instrument, execution timestamp, price,
+            quantity and aggressor side.
+    Add:    rolling flow totals over 1s / 5s / 15s / 60s — buy volume, sell
+            volume, net delta and trade count. Keep individual prints available.
+    Improve depth changes — the Depth Engine shows levels and sizes but not
+            whether size was EXECUTED, CANCELLED or REPLENISHED. Need
+            event-by-event changes in resting liquidity, synchronized with trades.
+
+(§3) THE LAYOUT THEY WOULD BUILD
+    "BTC Quant Execution" (illustrative):
+      - Header metrics: SPOT DELTA · 15s, PERP DELTA · 15s, PRICE VS LEVEL.
+      - A. Executed trades, newest first:
+             TIME | PRICE | SIZE | AGGRESSOR | MARKET (Spot / Perp)
+      - B. Flow impact: SIGNED FLOW · 15s, PRICE CHANGE · 15s, plus a diagnostic
+             (e.g. "possible buy-side absorption": buying is strong but price
+             progress is small — check whether asks are being executed AND
+             replenished before concluding sellers are absorbing buyers).
+      - C. Liquidity event log: EVENT | OBSERVATION, e.g.
+             Ask depth declines after executions
+             Replenishment — new ask size appears at the same level
+             Price response — price repeatedly fails to advance
+    (The figures in the PDF are explicitly hypothetical, for layout only.)
+
+(§4) THE MOST IMPORTANT METRIC TO ADD
+    Price impact per unit of signed aggressive volume, measured SEPARATELY for
+    spot and perpetuals:
+
+        I_t = dP_t / V(signed)_t
+
+    At supply:
+      - aggressive buying rises but price impact stays LOW   -> possible SELLER absorption
+      - aggressive buying rises and impact INCREASES         -> buyers making progress, breakout may develop
+      - aggressive buying FADES and price falls              -> demand may be exhausted
+      - aggressive selling rises but price REFUSES to fall   -> possible BUYER absorption
+
+    Caveat: do NOT use the ratio blindly when net delta is near zero. Compare
+    against recent baselines and volatility, and check the order book for
+    replenishment and cancellations.
+
+(§5) CHANGES TO THE EXISTING DASHBOARD
+    Cumulative Delta   keep; show reset point, unit, rolling-window delta
+    Regime             keep as context, NOT as an entry signal
+    Book Imbalance     keep; expose the depth range and the exact formula
+    Cumulative OFI     keep only if computed from actual book updates, clearly defined
+    MTF OFI            keep only if each timeframe uses synchronized, comparable data
+    Depth Engine       add executed / cancelled / replenished size where data supports it
+    Trade Tape         add exchange, spot/perp identity, aggressor classification,
+                       rolling aggregation
+    Sentinel System    show the underlying evidence AND invalidation conditions
+                       behind every signal
+
+TECHNICAL REQUIREMENT
+    Synchronize the trade stream and the order-book stream by EXCHANGE
+    TIMESTAMPS and SEQUENCE NUMBERS. Otherwise a price response can be
+    mis-attributed to the wrong trades or liquidity event.
+
+PRIORITY ORDER
+    correct trade classification -> synchronized event data -> rolling
+    spot/perp flow -> price impact -> liquidity replenishment/cancellation
+    analysis.
+
+--------------------------------------------------------------------------------
+WHAT WE IMPLEMENTED
+--------------------------------------------------------------------------------
+
+    Aggressor = taker side, not ticks        DONE — Binance `m` flag (verified from source)
+    Tag every print                          DONE — exchange + market (SPOT/PERP) on RecentTrade; ms timestamps
+    Rolling flow 1/5/15/60s, spot vs perp    DONE — rolling-flow matrix on the Order Flow page
+    Depth: executed / cancelled / replenished DONE — diff-depth + bookSync, sequenced by update id (u)
+    Price impact I = dP / V(signed)          DONE — per-venue diagnostics with net~0 guard + 60s baseline
+    The §3 layout                            DONE — new "Order Flow" page ("BTC Quant Execution")
+    CVD reset point / unit / rolling delta   DONE — shown on the CVD card
+    Book Imbalance depth range + formula     DONE — shown on the Book Imbalance card
+    Sentinel evidence + invalidation         DONE — invalidation conditions, auto-evaluated (VOID flags)
+    Sequence-number sync                     PARTIAL — book stream sequenced via U/u (+pu) with resync
+
+--------------------------------------------------------------------------------
+WHAT WE DID NOT TAKE (and why)
+--------------------------------------------------------------------------------
+
+    Full cross-stream sequence joining
+        We correlate trades to liquidity events by TIME PROXIMITY (~2.5s), not a
+        shared sequence id. Binance does not share a sequence id between the
+        trade and depth streams, so an exact join needs a different mechanism.
+
+    MTF OFI "synchronized, comparable data"
+        Left as-is; its windows are OFI-history based, not cross-venue synchronized.
+
+    "Regime as context, not an entry signal"
+        That is a bot/strategy change. It was handled on the bot side
+        (TREND-only entries after the 5-year backtest work), not in the frontend.
+
+--------------------------------------------------------------------------------
+WHERE IT LIVES IN THE UI
+--------------------------------------------------------------------------------
+
+    Order Flow      Sidebar > Derivatives   (executed trades, rolling flow,
+                                             price impact, liquidity events)
+    Funding & OI    Sidebar > Derivatives   (cross-venue funding/OI, premium,
+                                             funding heatmap, OI leaderboard)
+    Macro & FX      Sidebar > Research      (FRED rates/inflation, ECB FX)
+    Sentinel        Panel on the Desk       (evidence, gates, invalidation/VOID)
+    Desk / Chart / NavBar / Settings / Intel — see UPGRADES.txt
+================================================================================

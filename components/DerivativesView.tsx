@@ -37,11 +37,14 @@ interface PremiumResponse {
 interface OiRow {
   symbol: string;
   oi_usd: number;
-  oi_change_24h_pct: number;
-  price_change_24h_pct: number;
+  oi_change_pct: number;
+  price_change_pct: number;
 }
+type OiWindow = '1h' | '4h' | '12h' | '24h';
+const OI_WINDOWS: OiWindow[] = ['1h', '4h', '12h', '24h'];
 interface OiResponse {
   as_of: string;
+  window?: OiWindow;
   rows: OiRow[];
 }
 
@@ -64,6 +67,7 @@ const DerivativesView: React.FC = () => {
   const [premium, setPremium] = useState<PremiumResponse | null>(null);
   const [heat, setHeat] = useState<FundingHeatmapResponse | null>(null);
   const [oi, setOi] = useState<OiResponse | null>(null);
+  const [oiWindow, setOiWindow] = useState<OiWindow>('24h');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,16 +75,14 @@ const DerivativesView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [cRes, pRes, hRes, oRes] = await Promise.all([
+      const [cRes, pRes, hRes] = await Promise.all([
         apiFetch(`/cross-venue?symbol=${sym}`, { timeoutMs: 40000 }),
         apiFetch(`/premium?symbol=${sym}`, { timeoutMs: 30000 }),
         apiFetch('/funding-heatmap', { timeoutMs: 40000 }),
-        apiFetch('/oi-leaderboard', { timeoutMs: 40000 }),
       ]);
       setCross(await cRes.json());
       setPremium(await pRes.json());
       setHeat(await hRes.json());
-      setOi(await oRes.json());
     } catch (e: any) {
       setError(e?.message || 'Failed to load derivatives data');
     } finally {
@@ -88,7 +90,19 @@ const DerivativesView: React.FC = () => {
     }
   }, []);
 
+  // OI leaderboard is fetched separately so changing the window is instant and
+  // does not re-pull the cross-venue / funding data.
+  const loadOi = useCallback(async (sym: string, win: OiWindow) => {
+    try {
+      const r = await apiFetch(`/oi-leaderboard?symbol=${sym}&window=${win}`, { timeoutMs: 40000 });
+      setOi(await r.json());
+    } catch {
+      /* keep the previous rows */
+    }
+  }, []);
+
   useEffect(() => { load(symbol); }, [load, symbol]);
+  useEffect(() => { loadOi(symbol, oiWindow); }, [loadOi, symbol, oiWindow]);
 
   const venues = cross?.venues || {};
   const premTone = (premium?.premium_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400';
@@ -223,8 +237,25 @@ const DerivativesView: React.FC = () => {
 
         {/* Open interest leaderboard */}
         <div className="mt-6">
-          <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-            <TrendingUp size={14} className="text-brand-accent" /> Open interest leaderboard — 24h change
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+              <TrendingUp size={14} className="text-brand-accent" /> Open interest leaderboard · {oiWindow} change
+            </div>
+            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
+              {OI_WINDOWS.map(w => (
+                <button
+                  key={w}
+                  onClick={() => setOiWindow(w)}
+                  className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                    oiWindow === w
+                      ? 'bg-brand-accent/20 text-brand-accent'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {w}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="fintech-card overflow-hidden">
             <table className="w-full text-left text-sm">
@@ -232,8 +263,8 @@ const DerivativesView: React.FC = () => {
                 <tr className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-3">Symbol</th>
                   <th className="px-4 py-3 text-right">Open interest</th>
-                  <th className="px-4 py-3 text-right">OI Δ 24h</th>
-                  <th className="px-4 py-3 text-right">Price Δ 24h</th>
+                  <th className="px-4 py-3 text-right">OI Δ {oiWindow}</th>
+                  <th className="px-4 py-3 text-right">Price Δ {oiWindow}</th>
                 </tr>
               </thead>
               <tbody>
@@ -241,11 +272,11 @@ const DerivativesView: React.FC = () => {
                   <tr key={r.symbol} className="border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02]">
                     <td className="px-4 py-2.5 font-mono text-[12px] text-slate-200">{r.symbol}</td>
                     <td className="px-4 py-2.5 text-right font-mono text-slate-300">{usd(r.oi_usd)}</td>
-                    <td className={`px-4 py-2.5 text-right font-mono ${r.oi_change_24h_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {r.oi_change_24h_pct >= 0 ? '+' : ''}{r.oi_change_24h_pct}%
+                    <td className={`px-4 py-2.5 text-right font-mono ${r.oi_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {r.oi_change_pct >= 0 ? '+' : ''}{r.oi_change_pct}%
                     </td>
-                    <td className={`px-4 py-2.5 text-right font-mono ${r.price_change_24h_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {r.price_change_24h_pct >= 0 ? '+' : ''}{r.price_change_24h_pct}%
+                    <td className={`px-4 py-2.5 text-right font-mono ${r.price_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {r.price_change_pct >= 0 ? '+' : ''}{r.price_change_pct}%
                     </td>
                   </tr>
                 ))}
@@ -257,7 +288,7 @@ const DerivativesView: React.FC = () => {
           </div>
           {oi?.as_of && (
             <div className="mt-2 font-mono text-[10px] text-slate-600">
-              OI in USD · recorded {oi.as_of} · source binance-fapi · rising OI + rising price = new longs
+              OI in USD · window {oi.window ?? oiWindow} · recorded {oi.as_of} · source binance-fapi · rising OI + rising price = new longs
             </div>
           )}
         </div>

@@ -1,0 +1,146 @@
+================================================================================
+QUANT DESK — UPGRADE NOTES
+Live site: https://quant-desk.up.railway.app
+Last updated: 2026-10-15
+================================================================================
+
+HOW TO SEE IT
+  Hard-refresh the browser (Ctrl+Shift+R) — the bundled asset hash changes on
+  every deploy, so a cached page can look stale.
+
+--------------------------------------------------------------------------------
+1. NEW PAGES
+--------------------------------------------------------------------------------
+
+ORDER FLOW                                    (Sidebar > Derivatives · "Order Flow")
+  The execution-quality page. Implements the reviewer's priority order:
+  classification -> synchronized venue data -> rolling flow -> price impact
+  -> liquidity events.
+
+  What's on it:
+    • Impact band — Spot delta 15s, Perp delta 15s, Signed flow 15s,
+      Perp price change 15s.
+    • Price-impact diagnostics — I = dP / V(signed) per venue, with a
+      "net flow ~ 0" guard and a 60s baseline comparison. Flags possible
+      seller/buyer absorption and breakout/breakdown development.
+    • Rolling flow matrix — 1s / 5s / 15s / 60s, buy / sell / net / print count,
+      SPOT and PERP shown separately.
+    • Executed trades — newest first: millisecond time, price, size, AGGRESSOR
+      (taker side) and MARKET (SPOT / PERP). Whale prints highlighted.
+    • Liquidity events — event-level book changes: EXECUTED (size removed with a
+      matching print), CANCELLED (removed without one), REPLENISHED (size added),
+      tagged by venue and by Binance update id (u).
+
+  Data sources: Binance spot + USDM perp WebSockets (aggTrade, diff-depth),
+  plus a REST snapshot per venue for book synchronization.
+
+FUNDING & OI                                  (Sidebar > Derivatives · "Funding & OI")
+    • Cross-venue table — mark price, funding and open interest for
+      Binance / OKX / Bybit side by side.
+    • Coinbase premium — US spot vs global price (US bid pressure proxy).
+    • Funding heatmap — most positive / most negative funding across all
+      Binance USDM perpetuals.
+    • Open-interest leaderboard — OI in USD with 24h OI change and 24h price
+      change (rising OI + rising price = new longs).
+
+MACRO & FX                                    (Sidebar > Research · "Macro & FX")
+    • Rates & inflation grid from FRED — Fed Funds, US 10Y, US 2Y, 10Y-2Y
+      spread, CPI (YoY), unemployment, dollar index, VIX. Each card shows its
+      own as-of date and series ID.
+    • FX strip — ECB reference rates via Frankfurter.
+    • A short "how to read this" guide.
+
+--------------------------------------------------------------------------------
+2. UPGRADED EXISTING PAGES
+--------------------------------------------------------------------------------
+
+DESK                                          (Sidebar > Overview · "Desk")
+    • Fixed the overlapping-panels bug: the metrics band was expanding past its
+      grid row and covering the book/tape/sentinel. Rows are now
+      auto + minmax(0,1fr) with min-h-0 everywhere.
+    • Order-flow metrics condensed into a single responsive band of 5 cards.
+    • Mobile: an Order Book / Trade Tape switcher appears below md; desktop
+      keeps both side by side.
+
+SENTINEL                                      (Panel on the Desk, right column)
+    • Everything behind each signal is visible in the detail modal: formula,
+      live variables, logic gates — and now INVALIDATION CONDITIONS.
+    • Invalidation is auto-evaluated. A red "VOID" chip appears on the row and
+      the modal shows "Active — signal void" when the void condition holds:
+          Z-Score    void when |z| < 1.5
+          Bayesian   void when regime != TRENDING or posterior < 0.4
+          RSI        void in the 40-60 neutral band
+          Skew       void when |gamma| < 0.5
+          E[X]       void when R:R < 1.5
+
+CHART                                         (Sidebar > Overview · "Chart")
+    • Drawing tools (trend line, ray, horizontal/vertical line, rectangle,
+      fib retracement, text) drawn on an overlay canvas.
+    • Fixed the ray Y-coordinate bug.
+    • Drawings now stay pinned while you pan/zoom (redraw on the chart's
+      dataZoom / rendered events).
+
+INTEL                                         (Sidebar > Research · "Intel")
+    • News now comes from Marketaux: each article is entity-tagged with a
+      sentiment score (-1..1) instead of a generic feed.
+
+SETTINGS                                      (Sidebar > System · "Settings")
+    • Repaired a broken layout (duplicate attributes / unclosed tags) and
+      applied a cleaner dark card style.
+    • Status row now renders its description (was passed under the wrong prop).
+
+--------------------------------------------------------------------------------
+3. NAVIGATION
+--------------------------------------------------------------------------------
+
+    • Sidebar rebuilt: smaller icons with labels always visible, a fully
+      scrollable list, grouped into:
+          Overview (Desk, Chart)
+          Market Structure (Depth, Liquidity, Dark Pool, Matrix, Regime)
+          Derivatives (Order Flow, Funding & OI)
+          Bot (Bot Control, Tactical, Sentinel, ULIS)
+          Research (Macro & FX, Strategy, Intel, Analytics)
+          System (Guide, Settings)
+    • Wallet button removed.
+    • Duplicate "Bot Mind" entry removed (Bot Control remains).
+    • Mobile: 4 primary tabs + a "More" sheet listing every group.
+
+--------------------------------------------------------------------------------
+4. BACKEND / DATA (services on Railway, keys held server-side)
+--------------------------------------------------------------------------------
+
+  New endpoints:
+    /cross-venue      Binance + OKX + Bybit funding, open interest, mark price
+    /premium          Coinbase USD spot vs Binance USDT spot
+    /funding-heatmap  All Binance USDM perpetual funding, ranked
+    /oi-leaderboard   OI + 24h changes for majors
+    /macro            FRED rates, inflation, dollar index, VIX
+    /fx               ECB reference rates (Frankfurter)
+    /market-intelligence  Now sourced from Marketaux (sentiment-tagged)
+
+  New client-side layer:
+    utils/bookSync.ts — REST snapshot + sequenced diff-depth with buffered
+    replay and automatic resync on gaps. Feeds the liquidity event log.
+
+  All new endpoints return provenance fields (source, as_of).
+
+--------------------------------------------------------------------------------
+5. INFRASTRUCTURE
+--------------------------------------------------------------------------------
+
+    • Full Railway deployment: bot (Docker), backend (FastAPI), frontend
+      (Vite build served by nginx).
+    • Bot and backend MUST run in EU West — Binance returns HTTP 451 from
+      Railway's US and Singapore egress ranges.
+    • Domain: https://quant-desk.up.railway.app
+
+--------------------------------------------------------------------------------
+6. KNOWN LIMITATIONS
+--------------------------------------------------------------------------------
+
+    • Liquidity events cover spot + perp, but the visible Depth Engine still
+      uses the top-20 snapshot stream (by design).
+    • Sentinel invalidation thresholds are sensible defaults, easily tuned.
+    • CVD rolling delta (Δ4) spans 4 candles, so its wall-clock window follows
+      the selected chart interval.
+================================================================================

@@ -1,0 +1,29 @@
+# Frontend-only deploy for Vercel — keep the upload small.
+node_modules
+dist
+.git
+.vercel
+.pytest_cache
+
+# server-side / non-frontend code
+/bot
+/backend
+/scratch
+/tests
+/data
+/logs
+/reports
+
+# heavy local artifacts
+*.zip
+*.pdf
+*.csv
+*.log
+*.out
+*.pkl
+*.tsbuildinfo
+
+# secrets
+.env
+.env.*
+!.env.example

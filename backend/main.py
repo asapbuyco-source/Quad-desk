@@ -1102,38 +1102,54 @@ OI_WATCHLIST = [
 ]
 
 
+# window -> (Binance interval, number of bars)
+OI_WINDOWS = {
+    "1h":  ("5m", 12),
+    "4h":  ("15m", 16),
+    "12h": ("30m", 24),
+    "24h": ("1h", 24),
+}
+
+
 @app.get("/oi-leaderboard")
-async def oi_leaderboard(limit: int = 12):
-    """Open interest + 24h OI change + 24h price change for majors (Binance)."""
-    out = {"as_of": _now_iso(), "source": "binance-fapi", "rows": []}
+async def oi_leaderboard(limit: int = 12, window: str = "24h"):
+    """Open interest plus OI and price change over the requested window."""
+    interval, bars = OI_WINDOWS.get(window, OI_WINDOWS["24h"])
+    out = {"as_of": _now_iso(), "source": "binance-fapi", "window": window, "rows": []}
     async with httpx.AsyncClient(timeout=20.0) as client:
         async def one(sym: str):
             try:
                 hist = (await client.get(
                     "https://fapi.binance.com/futures/data/openInterestHist",
-                    params={"symbol": sym, "period": "1h", "limit": 24},
+                    params={"symbol": sym, "period": interval, "limit": bars},
                 )).json()
                 if not hist:
                     return None
                 cur = float(hist[-1]["sumOpenInterestValue"])
                 old = float(hist[0]["sumOpenInterestValue"])
                 chg = (cur / old - 1.0) * 100.0 if old else 0.0
-                tick = (await client.get(
-                    "https://fapi.binance.com/fapi/v1/ticker/24hr",
-                    params={"symbol": sym},
+
+                # Price change over the same window (klines match the OI interval).
+                kl = (await client.get(
+                    "https://fapi.binance.com/fapi/v1/klines",
+                    params={"symbol": sym, "interval": interval, "limit": bars + 1},
                 )).json()
+                first_close = float(kl[0][4]) if kl else 0.0
+                last_close = float(kl[-1][4]) if kl else 0.0
+                pchg = (last_close / first_close - 1.0) * 100.0 if first_close else 0.0
+
                 return {
                     "symbol": sym,
                     "oi_usd": cur,
-                    "oi_change_24h_pct": round(chg, 2),
-                    "price_change_24h_pct": round(float(tick["priceChangePercent"]), 2),
+                    "oi_change_pct": round(chg, 2),
+                    "price_change_pct": round(pchg, 2),
                 }
             except Exception:
                 return None
 
         rows = [r for r in await asyncio.gather(*[one(s) for s in OI_WATCHLIST]) if r]
 
-    rows.sort(key=lambda r: r["oi_change_24h_pct"], reverse=True)
+    rows.sort(key=lambda r: r["oi_change_pct"], reverse=True)
     out["rows"] = rows[:limit]
     return out
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  LayoutGrid, CandlestickChart, Mountain, Droplets, Eye, Layers, Activity,
+  LayoutGrid, CandlestickChart, Mountain, Droplets, Layers, Activity,
   Crosshair, Zap, Globe2, Bot, Settings, BarChart2, Radio,
   BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark,
 } from 'lucide-react';
@@ -30,7 +30,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'depth', icon: Mountain, label: 'Depth', hint: 'Order book depth' },
       { id: 'liquidity', icon: Droplets, label: 'Liquidity', hint: 'Liquidity map' },
-      { id: 'dark-pool', icon: Eye, label: 'Dark Pool', hint: 'Hidden flow' },
       { id: 'bias', icon: Layers, label: 'Matrix', hint: 'Bias matrix' },
       { id: 'regime', icon: Activity, label: 'Regime', hint: 'HMM regime state' },
     ],
