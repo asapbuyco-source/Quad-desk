@@ -1047,22 +1047,33 @@ async def coinbase_premium(symbol: str = "BTCUSDT"):
     sym = _norm_symbol(symbol)
     base = sym[:-4] if sym.endswith("USDT") else sym
     out = {"symbol": sym, "as_of": _now_iso(), "source": "coinbase+binance"}
-    try:
-        # Coinbase Exchange rejects requests without a User-Agent (403), which
-        # surfaced as a KeyError on 'price'.
-        async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "quant-desk/1.0"}) as client:
+    cb_px = None
+    bn_px = None
+    errs = []
+    async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "quant-desk/1.0"}) as client:
+        # Coinbase Exchange rejects requests without a User-Agent (403).
+        try:
             cb = (await client.get(f"{COINBASE_BASE}/products/{base}-USD/ticker")).json()
-            bn = (await client.get("https://api.binance.com/api/v3/ticker/price",
+            cb_px = float(cb["price"])
+        except Exception as e:
+            errs.append(f"coinbase: {e}")
+        # api.binance.com (spot) is blocked from some cloud regions; the public
+        # market-data mirror serves the same ticker without geo restrictions.
+        try:
+            bn = (await client.get("https://data-api.binance.vision/api/v3/ticker/price",
                                    params={"symbol": sym})).json()
-        cb_px = float(cb["price"])
-        bn_px = float(bn["price"])
+            bn_px = float(bn["price"])
+        except Exception as e:
+            errs.append(f"binance: {e}")
+
+    if cb_px is not None and bn_px is not None:
         out.update({
             "coinbase": cb_px,
             "binance": bn_px,
             "premium_pct": round((cb_px / bn_px - 1.0) * 100.0, 4),
         })
-    except Exception as e:
-        out["error"] = str(e)
+    else:
+        out["error"] = "; ".join(errs) or "unavailable"
     return out
 
 
