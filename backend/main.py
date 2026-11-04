@@ -1057,19 +1057,27 @@ async def coinbase_premium(symbol: str = "BTCUSDT"):
             cb_px = float(cb["price"])
         except Exception as e:
             errs.append(f"coinbase: {e}")
-        # api.binance.com (spot) is blocked from some cloud regions; the public
-        # market-data mirror serves the same ticker without geo restrictions.
+        # Spot mirror first (true spot premium); fall back to the USDM perp
+        # ticker when the mirror is blocked from this cloud region.
         try:
             bn = (await client.get("https://data-api.binance.vision/api/v3/ticker/price",
                                    params={"symbol": sym})).json()
             bn_px = float(bn["price"])
+            bn_market = "spot"
         except Exception as e:
-            errs.append(f"binance: {e}")
+            try:
+                bn = (await client.get("https://fapi.binance.com/fapi/v1/ticker/price",
+                                       params={"symbol": sym})).json()
+                bn_px = float(bn["price"])
+                bn_market = "perp"
+            except Exception as e2:
+                errs.append(f"binance: {e}; {e2}")
 
     if cb_px is not None and bn_px is not None:
         out.update({
             "coinbase": cb_px,
             "binance": bn_px,
+            "binance_market": bn_market,
             "premium_pct": round((cb_px / bn_px - 1.0) * 100.0, 4),
         })
     else:
