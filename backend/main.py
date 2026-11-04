@@ -1048,7 +1048,9 @@ async def coinbase_premium(symbol: str = "BTCUSDT"):
     base = sym[:-4] if sym.endswith("USDT") else sym
     out = {"symbol": sym, "as_of": _now_iso(), "source": "coinbase+binance"}
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        # Coinbase Exchange rejects requests without a User-Agent (403), which
+        # surfaced as a KeyError on 'price'.
+        async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "quant-desk/1.0"}) as client:
             cb = (await client.get(f"{COINBASE_BASE}/products/{base}-USD/ticker")).json()
             bn = (await client.get("https://api.binance.com/api/v3/ticker/price",
                                    params={"symbol": sym})).json()
