@@ -8,6 +8,7 @@ import {
 } from '../types';
 import { MOCK_METRICS, DARK_POOL_THRESHOLDS } from '../constants';
 import { apiFetch } from '../utils/apiClient';
+import { validateLicense } from '../utils/entitlements';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
 import { auth, googleProvider, db } from '../lib/firebase';
 import {
@@ -73,6 +74,14 @@ interface AppState {
     auth: {
         user: User | null;
         registrationOpen: boolean;
+        /** Entitlement tier. 'pro' unlocks the advanced desks. */
+        plan: 'free' | 'pro';
+        subStatus: 'active' | 'inactive' | 'trialing' | 'past_due';
+        subRenewsAt: number | null;
+        /** Admin-only: render the app exactly as a free user would see it. */
+        previewAsUser: boolean;
+        /** Lemon Squeezy license key bound to this account (proof of purchase). */
+        licenseKey: string | null;
     };
     trading: {
         activePosition: Position | null;
@@ -144,6 +153,10 @@ interface AppState {
     fetchOrderFlowAnalysis: (data: any) => Promise<void>;
 
     setUser: (user: User | null) => void;
+    setSubscription: (plan: 'free' | 'pro', status?: 'active' | 'inactive' | 'trialing' | 'past_due', renewsAt?: number | null) => void;
+    setPreviewAsUser: (preview: boolean) => void;
+    /** Validate a Lemon Squeezy key, persist it and unlock Pro. */
+    activateLicense: (key: string) => Promise<{ ok: boolean; error?: string }>;
     signInGoogle: () => Promise<void>;
     loginEmail: (e: string, p: string) => Promise<void>;
     registerEmail: (e: string, p: string, n: string) => Promise<void>;
@@ -220,6 +233,11 @@ export const useStore = create<AppState>((set, get) => ({
     auth: {
         user: null,
         registrationOpen: true,
+        plan: 'free',
+        subStatus: 'inactive',
+        subRenewsAt: null,
+        previewAsUser: false,
+        licenseKey: null,
     },
     trading: {
         activePosition: null,
@@ -889,7 +907,34 @@ export const useStore = create<AppState>((set, get) => ({
         }));
     },
 
-    setUser: (user) => set(state => ({ auth: { ...state.auth, user } })),
+    setUser: (user) => set(state => ({
+        auth: user
+            ? { ...state.auth, user }
+            : { ...state.auth, user: null, plan: 'free', subStatus: 'inactive', subRenewsAt: null, previewAsUser: false, licenseKey: null },
+    })),
+    setSubscription: (plan, status = 'active', renewsAt = null) => set(state => ({
+        auth: { ...state.auth, plan, subStatus: status, subRenewsAt: renewsAt },
+    })),
+    setPreviewAsUser: (preview) => set(state => ({
+        auth: { ...state.auth, previewAsUser: preview },
+    })),
+    activateLicense: async (key) => {
+        const res = await validateLicense(key);
+        if (!res.valid) return { ok: false, error: res.error };
+        const expires = res.expiresAt ? Date.parse(res.expiresAt) : null;
+        const clean = key.trim();
+        set(state => ({
+            auth: { ...state.auth, plan: 'pro', subStatus: 'active', subRenewsAt: expires, licenseKey: clean },
+        }));
+        try {
+            const user = get().auth.user;
+            if (user) {
+                const { doc, setDoc } = await import('firebase/firestore');
+                await setDoc(doc(db, 'users', user.uid), { licenseKey: clean }, { merge: true });
+            }
+        } catch { /* local unlock still applies */ }
+        return { ok: true };
+    },
     signInGoogle: async () => {
         try { await signInWithPopup(auth, googleProvider); } catch (e: any) {
             get().addNotification({ id: Date.now().toString(), type: 'error', title: 'Auth Failed', message: e.message });
@@ -914,10 +959,33 @@ export const useStore = create<AppState>((set, get) => ({
                     if (restoredBot && restoredBot.isActive !== undefined) {
                         restoredBot.status = restoredBot.isActive ? 'ONLINE' : 'OFFLINE';
                     }
+                    // Entitlement lives on the user doc so a billing webhook (or
+                    // an admin grant) can flip it without a redeploy.
+                    const sub = data.subscription;
                     set(s => ({
                         config: { ...s.config, ...data.config },
-                        botSettings: { ...s.botSettings, ...restoredBot }
+                        botSettings: { ...s.botSettings, ...restoredBot },
+                        auth: {
+                            ...s.auth,
+                            plan: sub?.plan === 'pro' ? 'pro' : 'free',
+                            subStatus: sub?.status || 'inactive',
+                            subRenewsAt: sub?.renewsAt ?? null,
+                            licenseKey: data.licenseKey || null,
+                        },
                     }));
+
+                    // Re-validate a stored Lemon Squeezy key on every sign-in so
+                    // revoked/expired licences lose Pro access automatically.
+                    if (data.licenseKey) {
+                        validateLicense(data.licenseKey).then(r => {
+                            if (r.valid) {
+                                const exp = r.expiresAt ? Date.parse(r.expiresAt) : null;
+                                set(s => ({
+                                    auth: { ...s.auth, plan: 'pro', subStatus: 'active', subRenewsAt: exp },
+                                }));
+                            }
+                        }).catch(() => { /* keep last known state */ });
+                    }
                 }
             }
         } catch (e) { }

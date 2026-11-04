@@ -145,7 +145,28 @@ const SystemMonitor: React.FC = () => {
 };
 
 const AdminControl: React.FC = () => {
-    const { auth: { user, registrationOpen }, toggleRegistration } = useStore();
+    const { auth, toggleRegistration, setPreviewAsUser, setSubscription } = useStore();
+    const { user, registrationOpen, previewAsUser, plan } = auth;
+
+    // Persist an entitlement to the signed-in admin's own user doc so the
+    // paywall can be exercised end-to-end before billing is wired.
+    const grantPlan = async (next: 'free' | 'pro') => {
+        setSubscription(next, next === 'pro' ? 'active' : 'inactive', null);
+        try {
+            const { doc, setDoc } = await import('firebase/firestore');
+            const { db } = await import('../lib/firebase');
+            if (user) {
+                await setDoc(doc(db, 'users', user.uid), {
+                    subscription: {
+                        plan: next,
+                        status: next === 'pro' ? 'active' : 'inactive',
+                        renewsAt: null,
+                        source: 'admin_grant',
+                    },
+                }, { merge: true });
+            }
+        } catch { /* offline / rules — local state still applies */ }
+    };
     const [isOpen, setIsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<'CONFIG' | 'HEALTH'>('CONFIG');
 
@@ -232,6 +253,47 @@ const AdminControl: React.FC = () => {
                                                 {registrationOpen ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
                                             </button>
                                         </div>
+
+                                    {/* Preview as user — see exactly what a free account sees */}
+                                    <div className="flex items-center justify-between p-4 bg-black/40 rounded-xl border border-white/5">
+                                        <div>
+                                            <div className="text-sm font-bold text-white mb-1">Preview as user</div>
+                                            <div className={`text-[10px] font-bold uppercase ${previewAsUser ? 'text-amber-400' : 'text-zinc-500'}`}>
+                                                {previewAsUser ? 'ACTIVE — free-tier gating applied to you' : 'OFF — admin sees every desk'}
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => setPreviewAsUser(!previewAsUser)}
+                                            className={`p-2 rounded-lg transition-colors ${previewAsUser ? 'text-amber-400 hover:text-amber-300' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                            aria-label="Toggle preview as user"
+                                        >
+                                            {previewAsUser ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+                                        </button>
+                                    </div>
+
+                                    {/* Entitlement testing */}
+                                    <div className="flex items-center justify-between p-4 bg-black/40 rounded-xl border border-white/5">
+                                        <div>
+                                            <div className="text-sm font-bold text-white mb-1">Entitlement</div>
+                                            <div className="text-[10px] font-bold uppercase text-zinc-500">
+                                                Current: <span className={plan === 'pro' ? 'text-emerald-400' : 'text-zinc-300'}>{plan.toUpperCase()}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => grantPlan('free')}
+                                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'free' ? 'border-white/20 bg-white/10 text-white' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
+                                            >
+                                                Set Free
+                                            </button>
+                                            <button
+                                                onClick={() => grantPlan('pro')}
+                                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'pro' ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
+                                            >
+                                                Set Pro
+                                            </button>
+                                        </div>
+                                    </div>
                                     </div>
                                 ) : (
                                     <SystemMonitor />

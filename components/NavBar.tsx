@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import {
   LayoutGrid, CandlestickChart, Mountain, Droplets, Layers, Activity,
   Crosshair, Zap, Globe2, Bot, Settings, BarChart2, Radio,
-  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark,
+  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock,
 } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
+import { useStore } from '../store';
+import { canAccessTab, isAdminEmail } from '../utils/entitlements';
 
 const motion = m as any;
 
@@ -62,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'System',
     items: [
+      { id: 'pricing', icon: CreditCard, label: 'Plans & Billing', hint: 'Subscription, upgrade, invoices' },
       { id: 'guide', icon: BookOpen, label: 'Guide', hint: 'How to use' },
       { id: 'settings', icon: Settings, label: 'Settings', hint: 'Preferences' },
     ],
@@ -73,6 +76,9 @@ const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
 
 const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const auth = useStore(s => s.auth);
+  const admin = isAdminEmail(auth.user?.email);
+  const allowed = (id: string) => canAccessTab(id, auth.plan, { isAdmin: admin, previewAsUser: auth.previewAsUser });
   const go = (id: string) => { setActiveTab(id); setSheetOpen(false); };
   const primaryItems = MOBILE_PRIMARY.map(id => ALL_ITEMS.find(i => i.id === id)).filter(Boolean) as NavItem[];
 
@@ -113,6 +119,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
                       {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[3px] rounded-r bg-brand-accent" />}
                       <Icon size={16} strokeWidth={2} className={isActive ? 'text-brand-accent' : 'shrink-0'} />
                       <span className="truncate text-[12.5px] font-medium">{tab.label}</span>
+                      {!allowed(tab.id) && <Lock size={11} className="ml-auto shrink-0 text-amber-400/70" />}
                     </button>
                   );
                 })}
@@ -186,10 +193,11 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
                             ${isActive ? 'border-brand-accent/40 bg-brand-accent/15 text-white' : 'border-white/5 bg-white/[0.02] text-slate-300 hover:bg-white/5'}`}
                         >
                           <Icon size={17} strokeWidth={2} className={isActive ? 'text-brand-accent' : 'text-slate-400'} />
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="truncate text-[13px] font-medium">{tab.label}</div>
                             {tab.hint && <div className="truncate text-[10px] text-slate-500">{tab.hint}</div>}
                           </div>
+                          {!allowed(tab.id) && <Lock size={12} className="shrink-0 text-amber-400/70" />}
                         </button>
                       );
                     })}

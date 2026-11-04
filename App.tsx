@@ -29,14 +29,17 @@ const SettingsView = React.lazy(() => import('./components/SettingsView'));
 const MacroView = React.lazy(() => import('./components/MacroView'));
 const DerivativesView = React.lazy(() => import('./components/DerivativesView'));
 const OrderFlowPage = React.lazy(() => import('./components/OrderFlowPage'));
+const PricingPage = React.lazy(() => import('./components/PricingPage'));
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
 import { AnimatePresence, motion as m } from 'framer-motion';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Lock, Sparkles } from 'lucide-react';
 import { useStore } from './store';
 import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX, calculateZScoreBands } from './utils/analytics';
 import { BookSync } from './utils/bookSync';
+import { canAccessTab, isAdminEmail } from './utils/entitlements';
+import { useSeo } from './hooks/useSeo';
 
 const motion = m as any;
 const { onAuthStateChanged } = firebaseAuth;
@@ -50,6 +53,12 @@ const App: React.FC = () => {
     const ai = useStore(state => state.ai);
     const authState = useStore(state => state.auth);
     const notifications = useStore(state => state.notifications);
+    const adminUser = isAdminEmail(authState.user?.email);
+    const tabAllowed = canAccessTab(ui.activeTab, authState.plan, {
+        isAdmin: adminUser,
+        previewAsUser: authState.previewAsUser,
+    });
+    useSeo(ui.activeTab);
     const [currentPeriod, setCurrentPeriod] = useState<PeriodType>('20-PERIOD');
     const [connectionError, setConnectionError] = useState<boolean>(false);
     const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -377,6 +386,26 @@ const App: React.FC = () => {
                                         <Loader2 size={30} className="animate-spin text-brand-accent" />
                                     </div>
                                 }>
+                                {!tabAllowed ? (
+                                    <div className="flex h-full items-center justify-center p-6">
+                                        <div className="fintech-card max-w-md p-6 text-center">
+                                            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-accent/15 text-brand-accent">
+                                                <Lock size={22} />
+                                            </div>
+                                            <h2 className="text-base font-bold text-white">Pro desk locked</h2>
+                                            <p className="mt-2 text-xs text-slate-400">
+                                                This workspace is part of Pro — order flow, advanced analytics and bot tooling.
+                                            </p>
+                                            <button
+                                                onClick={() => setActiveTab('pricing')}
+                                                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-accent px-4 py-2 text-xs font-bold text-white hover:bg-brand-accent/90"
+                                            >
+                                                <Sparkles size={14} /> View plans
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                <>
                                 {ui.activeTab === 'dashboard' && <DashboardView />}
                                 {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
                                 {ui.activeTab === 'depth' && <DepthPage />}
@@ -396,6 +425,9 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'intel' && <IntelView />}
                                 {ui.activeTab === 'guide' && <GuideView />}
                                 {ui.activeTab === 'ulis' && <ULISView />}
+                                {ui.activeTab === 'pricing' && <PricingPage />}
+                                </>
+                                )}
                                 </Suspense>
                             </main>
                         </div>

@@ -16,7 +16,19 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read, write: if signedIn() && request.auth.uid == userId;
+      // Users may read their own profile and update preferences, but the
+      // entitlement fields are server-owned (billing webhook / admin grant).
+      // Without this, a client could simply set subscription.plan = "pro".
+      allow read: if signedIn() && request.auth.uid == userId;
+
+      allow create: if signedIn() && request.auth.uid == userId
+        && !request.resource.data.keys().hasAny(['subscription', 'plan', 'role', 'isAdmin']);
+
+      allow update: if signedIn() && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys()
+             .hasAny(['subscription', 'plan', 'role', 'isAdmin']);
+
+      allow delete: if false;
     }
 
     match /botTrades/{docId} {

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://quad-desk.vercel.app/sitemap.xml

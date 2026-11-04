@@ -1,7 +1,8 @@
 
 import React, { useState } from 'react';
 import { motion as m, AnimatePresence, useScroll, useTransform } from 'framer-motion';
-import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight, Heart } from 'lucide-react';
+import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight, Heart, Check } from 'lucide-react';
+import { upgradeHref, PLAN_FEATURES, PRICING } from '../utils/entitlements';
 
 const motion = m as any;
 
@@ -347,6 +348,86 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     </div>
                 </motion.div>
              </section>
+
+            {/* --- Free forever --- */}
+            <section className="py-24 px-6 relative z-10">
+                <div className="max-w-5xl mx-auto text-center">
+                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">Free forever</span>
+                    <h2 className="mt-3 text-4xl md:text-5xl font-bold text-white">Start free. <span className="text-brand-accent">No card.</span></h2>
+                    <p className="mt-4 text-zinc-400 max-w-2xl mx-auto">
+                        The core market view stays free — live prices, chart, funding and macro context.
+                        Upgrade only when you want the execution desk.
+                    </p>
+                    <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-left">
+                        {[
+                            'Live prices, chart & order book',
+                            'Funding & open interest across venues',
+                            'Macro & FX data (FRED / ECB)',
+                            'Market news with sentiment',
+                            'Sentinel context & guides',
+                            'No credit card required',
+                        ].map(t => (
+                            <div key={t} className="fintech-card flex items-start gap-3 p-4">
+                                <Check size={16} className="mt-0.5 shrink-0 text-emerald-400" />
+                                <span className="text-sm text-zinc-300">{t}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <button onClick={handleEnter} className="mt-10 inline-flex items-center gap-2 rounded-full bg-white px-8 py-3 font-bold text-black hover:scale-105 transition-transform">
+                        Enter free <ArrowRight size={16} />
+                    </button>
+                </div>
+            </section>
+
+            {/* --- Pricing --- */}
+            <section id="pricing" className="py-24 px-6 relative z-10">
+                <div className="max-w-5xl mx-auto">
+                    <div className="text-center mb-12">
+                        <span className="text-xs font-bold uppercase tracking-[0.2em] text-brand-accent">Pricing</span>
+                        <h2 className="mt-3 text-4xl md:text-5xl font-bold text-white">One upgrade. <span className="text-brand-accent">The whole desk.</span></h2>
+                        <p className="mt-4 text-zinc-400">Cancel anytime. Instant access after payment.</p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div className="fintech-card p-6 flex flex-col">
+                            <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-300">Free</h3>
+                            <div className="mt-2 font-mono text-4xl font-black text-white">$0 <span className="text-xs font-normal text-zinc-500">forever</span></div>
+                            <p className="mt-1 text-xs text-zinc-500">Core market view.</p>
+                            <ul className="mt-5 flex-1 space-y-2">
+                                {PLAN_FEATURES.filter(f => f.free).map(f => (
+                                    <li key={f.label} className="flex items-start gap-2 text-sm text-zinc-300">
+                                        <Check size={15} className="mt-0.5 shrink-0 text-emerald-400" />{f.label}
+                                    </li>
+                                ))}
+                            </ul>
+                            <button onClick={handleEnter} className="mt-5 w-full rounded-xl border border-white/15 py-2.5 text-sm font-semibold text-white hover:bg-white/5">
+                                Get started free
+                            </button>
+                        </div>
+                        <div className="fintech-card p-6 flex flex-col border-brand-accent/40 relative">
+                            <span className="absolute right-4 top-4 rounded-full bg-brand-accent/15 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-brand-accent">Recommended</span>
+                            <h3 className="text-sm font-bold uppercase tracking-wider text-white">Pro</h3>
+                            <div className="mt-2 font-mono text-4xl font-black text-white">${PRICING.pro.price} <span className="text-xs font-normal text-zinc-500">/ month</span></div>
+                            <p className="mt-1 text-xs text-zinc-500">${PRICING.pro.annual}/yr — two months free.</p>
+                            <ul className="mt-5 flex-1 space-y-2">
+                                {PLAN_FEATURES.map(f => (
+                                    <li key={f.label} className="flex items-start gap-2 text-sm text-zinc-300">
+                                        <Check size={15} className="mt-0.5 shrink-0 text-emerald-400" />{f.label}
+                                    </li>
+                                ))}
+                            </ul>
+                            <a
+                                href={upgradeHref() || '#'}
+                                onClick={(e) => { if (!upgradeHref()) { e.preventDefault(); handleEnter(); } }}
+                                target={upgradeHref() ? '_blank' : undefined}
+                                rel="noopener noreferrer"
+                                className="mt-5 w-full rounded-xl bg-brand-accent py-2.5 text-center text-sm font-bold text-white hover:bg-brand-accent/90"
+                            >
+                                Upgrade to Pro
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
             {/* --- Footer --- */}
             <footer className="border-t border-white/5 bg-black/50 backdrop-blur-lg py-12 relative z-20">
