@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import json
+import math
 import re
 import time
 import psutil
@@ -242,11 +243,55 @@ async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
             logger.error(f"Binance candle fetch error ({symbol} {interval}): {e}")
             return []
 
+LIQUIDATIONS: deque = deque(maxlen=6000)
+LIQ_STARTED_AT: Optional[float] = None
+
+
+async def _liquidation_worker():
+    """Collect Binance USDM forced orders (public stream) into memory."""
+    global LIQ_STARTED_AT
+    import websockets
+    url = "wss://fstream.binance.com/ws/!forceOrder@arr"
+    while True:
+        try:
+            async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+                LIQ_STARTED_AT = time.time()
+                logger.info("liquidation stream connected")
+                async for msg in ws:
+                    try:
+                        d = (json.loads(msg) or {}).get("o") or {}
+                        px = float(d.get("ap") or d.get("p") or 0.0)
+                        qty = float(d.get("q") or 0.0)
+                        if not d.get("s") or px <= 0 or qty <= 0:
+                            continue
+                        LIQUIDATIONS.append({
+                            "t": int(d.get("T") or 0),
+                            "symbol": d.get("s"),
+                            "side": d.get("S"),  # SELL = long liquidated, BUY = short liquidated
+                            "price": px,
+                            "qty": qty,
+                            "notional": px * qty,
+                        })
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.warning(f"liquidation stream error: {e}")
+            await asyncio.sleep(5)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["start_time"] = time.time()
+    liq_task = asyncio.create_task(_liquidation_worker())
     logger.info("🚀 Quant Desk Backend Active.")
-    yield
+    try:
+        yield
+    finally:
+        liq_task.cancel()
+        try:
+            await liq_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 app = FastAPI(lifespan=lifespan)
 
@@ -1229,6 +1274,258 @@ async def funding_history(symbol: str = "BTCUSDT", limit: int = 42):
         out["settlements"] = len(pts)
     except Exception as e:
         out["error"] = str(e)
+    return out
+
+
+# ── RSI screener (multi-timeframe, computed from Binance klines) ───────────
+RSI_UNIVERSE_SIZE = 50
+_rsi_cache: Dict[str, Any] = {"at": 0.0, "payload": None}
+
+
+def _wilder_rsi(closes: List[float], period: int = 14) -> Optional[float]:
+    if len(closes) < period + 1:
+        return None
+    gains = 0.0
+    losses = 0.0
+    for i in range(1, period + 1):
+        ch = closes[i] - closes[i - 1]
+        gains += max(ch, 0.0)
+        losses += max(-ch, 0.0)
+    avg_gain = gains / period
+    avg_loss = losses / period
+    for i in range(period + 1, len(closes)):
+        ch = closes[i] - closes[i - 1]
+        avg_gain = (avg_gain * (period - 1) + max(ch, 0.0)) / period
+        avg_loss = (avg_loss * (period - 1) + max(-ch, 0.0)) / period
+    if avg_loss == 0:
+        return 100.0
+    return 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+
+
+def _resample(closes: List[float], step: int) -> List[float]:
+    start = len(closes) % step
+    return closes[start::step]
+
+
+@app.get("/rsi-screener")
+async def rsi_screener(universe: int = RSI_UNIVERSE_SIZE):
+    """RSI on 15m / 1h / 4h for the most liquid Binance USDM perpetuals."""
+    now = time.time()
+    if _rsi_cache["payload"] and now - _rsi_cache["at"] < 120:
+        return _rsi_cache["payload"]
+
+    n = max(10, min(universe, 80))
+    out = {"as_of": _now_iso(), "source": "binance-fapi", "timeframes": ["15m", "1h", "4h"], "rows": []}
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        try:
+            tickers = (await client.get("https://fapi.binance.com/fapi/v1/ticker/24hr")).json()
+        except Exception as e:
+            out["error"] = str(e)
+            return out
+
+        meta: Dict[str, Dict[str, float]] = {}
+        for t in tickers:
+            s = t.get("symbol", "")
+            if not s.endswith("USDT") or "_" in s:
+                continue
+            try:
+                vol = float(t.get("quoteVolume") or 0.0)
+                if vol <= 0:
+                    continue
+                meta[s] = {
+                    "price": float(t.get("lastPrice") or 0.0),
+                    "change_24h": float(t.get("priceChangePercent") or 0.0),
+                    "volume_usd": vol,
+                }
+            except Exception:
+                continue
+
+        universe_syms = [s for s, _ in sorted(meta.items(), key=lambda kv: kv[1]["volume_usd"], reverse=True)[:n]]
+        sem = asyncio.Semaphore(8)
+
+        async def one(sym: str) -> Optional[Dict[str, Any]]:
+            async with sem:
+                try:
+                    kl = (await client.get(
+                        "https://fapi.binance.com/fapi/v1/klines",
+                        params={"symbol": sym, "interval": "15m", "limit": 500},
+                    )).json()
+                    closes = [float(k[4]) for k in kl]
+                except Exception:
+                    return None
+            row: Dict[str, Any] = {
+                "symbol": sym,
+                "price": meta[sym]["price"],
+                "change_24h": round(meta[sym]["change_24h"], 2),
+                "volume_usd": round(meta[sym]["volume_usd"], 0),
+                "rsi": {},
+            }
+            for tf, step in (("15m", 1), ("1h", 4), ("4h", 16)):
+                v = _wilder_rsi(_resample(closes, step))
+                row["rsi"][tf] = round(v, 1) if v is not None else None
+            vals = [v for v in row["rsi"].values() if v is not None]
+            row["rsi_avg"] = round(sum(vals) / len(vals), 1) if vals else None
+            return row
+
+        rows = [r for r in await asyncio.gather(*[one(s) for s in universe_syms]) if r]
+
+    rows.sort(key=lambda r: r["rsi_avg"] if r["rsi_avg"] is not None else 999, reverse=True)
+    out["rows"] = rows
+    out["count"] = len(rows)
+    out["overbought"] = sum(1 for r in rows if (r["rsi_avg"] or 0) >= 70)
+    out["oversold"] = sum(1 for r in rows if (r["rsi_avg"] or 100) <= 30)
+    _rsi_cache.update(at=now, payload=out)
+    return out
+
+
+# ── Liquidations (Binance forceOrder stream, collected in memory) ──────────
+def _liq_clusters(rows: List[Dict[str, Any]], top: int = 10) -> List[Dict[str, Any]]:
+    buckets: Dict[float, Dict[str, Any]] = {}
+    for x in rows:
+        p = x["price"]
+        if p <= 0:
+            continue
+        tick = 10 ** (math.floor(math.log10(p)) - 3)
+        key = round(p / tick) * tick
+        b = buckets.setdefault(key, {"price": key, "long_usd": 0.0, "short_usd": 0.0, "count": 0})
+        b["count"] += 1
+        if x["side"] == "SELL":
+            b["long_usd"] += x["notional"]
+        else:
+            b["short_usd"] += x["notional"]
+    out = sorted(buckets.values(), key=lambda b: b["long_usd"] + b["short_usd"], reverse=True)[:top]
+    for b in out:
+        b["long_usd"] = round(b["long_usd"], 0)
+        b["short_usd"] = round(b["short_usd"], 0)
+        b["total_usd"] = round(b["long_usd"] + b["short_usd"], 0)
+    return out
+
+
+@app.get("/liquidations")
+async def liquidations(symbol: str = "", minutes: int = 60, limit: int = 15):
+    """Recent forced orders from Binance USDM. History starts when the stream connects."""
+    now_ms = time.time() * 1000
+    window_ms = max(1, min(minutes, 1440)) * 60 * 1000
+    lo = now_ms - window_ms
+    sym = symbol.upper() if symbol else ""
+
+    rows = [x for x in list(LIQUIDATIONS) if x["t"] >= lo and (not sym or x["symbol"] == sym)]
+    long_usd = sum(x["notional"] for x in rows if x["side"] == "SELL")
+    short_usd = sum(x["notional"] for x in rows if x["side"] == "BUY")
+
+    by_symbol: Dict[str, Dict[str, Any]] = {}
+    for x in rows:
+        b = by_symbol.setdefault(x["symbol"], {"symbol": x["symbol"], "long_usd": 0.0, "short_usd": 0.0, "count": 0})
+        b["count"] += 1
+        if x["side"] == "SELL":
+            b["long_usd"] += x["notional"]
+        else:
+            b["short_usd"] += x["notional"]
+    sym_rows = sorted(by_symbol.values(), key=lambda b: b["long_usd"] + b["short_usd"], reverse=True)[:20]
+    for b in sym_rows:
+        b["long_usd"] = round(b["long_usd"], 0)
+        b["short_usd"] = round(b["short_usd"], 0)
+        b["total_usd"] = round(b["long_usd"] + b["short_usd"], 0)
+
+    largest = sorted(rows, key=lambda x: x["notional"], reverse=True)[:max(1, min(limit, 50))]
+
+    return {
+        "as_of": _now_iso(),
+        "source": "binance-forceOrder",
+        "symbol": sym or "all",
+        "minutes": minutes,
+        "buffered": len(LIQUIDATIONS),
+        "collecting_since": datetime.utcfromtimestamp(LIQ_STARTED_AT).isoformat() + "Z" if LIQ_STARTED_AT else None,
+        "totals": {"long_usd": round(long_usd, 0), "short_usd": round(short_usd, 0), "count": len(rows)},
+        "by_symbol": sym_rows,
+        "clusters": _liq_clusters(rows),
+        "largest": [{
+            "t": datetime.utcfromtimestamp(x["t"] / 1000).isoformat() + "Z",
+            "symbol": x["symbol"],
+            "side": "long" if x["side"] == "SELL" else "short",
+            "price": x["price"],
+            "notional": round(x["notional"], 0),
+        } for x in largest],
+    }
+
+
+# ── Hyperliquid whale positions (public API) ───────────────────────────────
+HL_INFO = "https://api.hyperliquid.xyz/info"
+HL_LEADERBOARD = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
+_whale_cache: Dict[str, Any] = {"at": 0.0, "payload": None}
+
+
+@app.get("/whales")
+async def whales(limit: int = 8):
+    """Top Hyperliquid accounts and their largest open positions."""
+    now = time.time()
+    if _whale_cache["payload"] and now - _whale_cache["at"] < 600:
+        return _whale_cache["payload"]
+
+    n = max(1, min(limit, 12))
+    out: Dict[str, Any] = {"as_of": _now_iso(), "source": "hyperliquid", "whales": []}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            lb = (await client.get(HL_LEADERBOARD)).json()
+        except Exception as e:
+            out["error"] = f"leaderboard: {e}"
+            return out
+        rows = lb.get("leaderboardRows") if isinstance(lb, dict) else lb
+        if not isinstance(rows, list):
+            out["error"] = "unexpected leaderboard payload"
+            return out
+
+        def acct(r: Dict[str, Any]) -> float:
+            try:
+                return float(r.get("accountValue") or 0.0)
+            except Exception:
+                return 0.0
+
+        rows = sorted(rows, key=acct, reverse=True)[:n]
+        sem = asyncio.Semaphore(5)
+
+        async def one(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            addr = r.get("ethAddress") or r.get("address")
+            if not addr:
+                return None
+            async with sem:
+                try:
+                    st = (await client.post(HL_INFO, json={"type": "clearinghouseState", "user": addr})).json()
+                except Exception:
+                    return None
+            positions = []
+            for ap in (st.get("assetPositions") or []):
+                p = ap.get("position") or {}
+                try:
+                    szi = float(p.get("szi") or 0.0)
+                    notional = abs(float(p.get("positionValue") or 0.0))
+                    if abs(szi) < 1e-9 or notional < 10000:
+                        continue
+                    positions.append({
+                        "coin": p.get("coin"),
+                        "side": "long" if szi > 0 else "short",
+                        "notional": round(notional, 0),
+                        "entry": float(p.get("entryPx") or 0.0),
+                        "pnl": round(float(p.get("unrealizedPnl") or 0.0), 0),
+                        "leverage": (p.get("leverage") or {}).get("value"),
+                        "liq": p.get("liquidationPx"),
+                    })
+                except Exception:
+                    continue
+            positions.sort(key=lambda x: x["notional"], reverse=True)
+            return {
+                "address": addr,
+                "account_value": round(acct(r), 0),
+                "position_count": len(positions),
+                "long_usd": round(sum(p["notional"] for p in positions if p["side"] == "long"), 0),
+                "short_usd": round(sum(p["notional"] for p in positions if p["side"] == "short"), 0),
+                "positions": positions[:8],
+            }
+
+        out["whales"] = [w for w in await asyncio.gather(*[one(r) for r in rows]) if w]
+
+    out["count"] = len(out["whales"])
+    _whale_cache.update(at=now, payload=out)
     return out
 
 

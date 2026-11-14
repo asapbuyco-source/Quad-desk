@@ -71,6 +71,9 @@ export const PRO_TABS = new Set([
   'macro-strategy',
   'analytics',
   'positioning',
+  'screener',
+  'liquidations',
+  'whales',
 ]);
 
 export const isProTab = (tab: string): boolean => PRO_TABS.has(tab);

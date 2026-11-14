@@ -2,7 +2,7 @@
 import {
   LayoutGrid, CandlestickChart, Mountain, Droplets, Layers, Activity,
   Crosshair, Zap, Globe2, Bot, Settings, BarChart2, Radio,
-  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock, Users,
+  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock, Users, Flame, Wallet, Thermometer,
 } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
@@ -34,6 +34,8 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'liquidity', icon: Droplets, label: 'Liquidity', hint: 'Liquidity map' },
       { id: 'bias', icon: Layers, label: 'Matrix', hint: 'Bias matrix' },
       { id: 'regime', icon: Activity, label: 'Regime', hint: 'HMM regime state' },
+      { id: 'liquidations', icon: Flame, label: 'Liquidations', hint: 'Forced orders and price clusters' },
+      { id: 'whales', icon: Wallet, label: 'Whales', hint: 'Large Hyperliquid positions' },
     ],
   },
   {
@@ -42,6 +44,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'order-flow', icon: Activity, label: 'Order Flow', hint: 'Prints, rolling flow, price impact' },
       { id: 'funding', icon: Gauge, label: 'Funding & OI', hint: 'Cross-venue funding, OI, premium' },
       { id: 'positioning', icon: Users, label: 'Positioning', hint: 'Long/short ratios, top traders, taker flow' },
+      { id: 'screener', icon: Thermometer, label: 'RSI Screener', hint: 'Multi-timeframe RSI heatmap' },
     ],
   },
   {

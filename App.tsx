@@ -31,6 +31,9 @@ const SettingsView = React.lazy(() => import('./components/SettingsView'));
 const MacroView = React.lazy(() => import('./components/MacroView'));
 const DerivativesView = React.lazy(() => import('./components/DerivativesView'));
 const PositioningPage = React.lazy(() => import('./components/PositioningPage'));
+const ScreenerPage = React.lazy(() => import('./components/ScreenerPage'));
+const LiquidationPage = React.lazy(() => import('./components/LiquidationPage'));
+const WhalesPage = React.lazy(() => import('./components/WhalesPage'));
 const OrderFlowPage = React.lazy(() => import('./components/OrderFlowPage'));
 const PricingPage = React.lazy(() => import('./components/PricingPage'));
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -425,6 +428,9 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'macro' && <MacroView />}
                                 {ui.activeTab === 'funding' && <DerivativesView />}
                                 {ui.activeTab === 'positioning' && <PositioningPage />}
+                                {ui.activeTab === 'screener' && <ScreenerPage />}
+                                {ui.activeTab === 'liquidations' && <LiquidationPage />}
+                                {ui.activeTab === 'whales' && <WhalesPage />}
                                 {ui.activeTab === 'order-flow' && <OrderFlowPage />}
                                 {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}
