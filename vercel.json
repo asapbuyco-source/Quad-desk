@@ -8,6 +8,14 @@
       "source": "/api/:path*",
       "destination": "https://quant-desk-backend-dcdo.onrender.com/:path*"
     },
+    { "source": "/about", "destination": "/about.html" },
+    { "source": "/learn", "destination": "/learn.html" },
+    { "source": "/privacy", "destination": "/privacy.html" },
+    { "source": "/terms", "destination": "/terms.html" },
+    { "source": "/disclaimer", "destination": "/disclaimer.html" },
+    { "source": "/markets/bitcoin", "destination": "/bitcoin.html" },
+    { "source": "/markets/ethereum", "destination": "/ethereum.html" },
+    { "source": "/markets/solana", "destination": "/solana.html" },
     {
       "source": "/(.*)",
       "destination": "/index.html"

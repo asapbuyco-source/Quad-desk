@@ -1175,6 +1175,63 @@ async def oi_leaderboard(limit: int = 12, window: str = "24h"):
     return out
 
 
+# ── Positioning: Long/Short + taker flow (Binance futures public) ──────────
+LS_BASE = "https://fapi.binance.com/futures/data"
+
+
+@app.get("/positioning")
+async def positioning(symbol: str = "BTCUSDT", period: str = "15m", limit: int = 48):
+    """Long/short ratios (retail accounts, top traders, top positions) + taker flow."""
+    sym = _norm_symbol(symbol)
+    out = {"symbol": sym, "period": period, "as_of": _now_iso(), "source": "binance-fapi", "series": {}}
+    endpoints = {
+        "global_accounts": "globalLongShortAccountRatio",
+        "top_accounts": "topLongShortAccountRatio",
+        "top_positions": "topLongShortPositionRatio",
+        "taker": "takerlongshortRatio",
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for key, ep in endpoints.items():
+            try:
+                rows = (await client.get(f"{LS_BASE}/{ep}",
+                                         params={"symbol": sym, "period": period, "limit": limit})).json()
+                if not isinstance(rows, list) or not rows:
+                    out["series"][key] = {"error": "no data"}
+                    continue
+                if key == "taker":
+                    series = [{"t": r["timestamp"], "ratio": float(r["buySellRatio"]),
+                               "buy": float(r["buyVol"]), "sell": float(r["sellVol"])} for r in rows]
+                else:
+                    series = [{"t": r["timestamp"], "long": float(r["longAccount"]),
+                               "short": float(r["shortAccount"]), "ratio": float(r["longShortRatio"])} for r in rows]
+                out["series"][key] = {"latest": series[-1], "series": series}
+            except Exception as e:
+                out["series"][key] = {"error": str(e)}
+    return out
+
+
+@app.get("/funding-history")
+async def funding_history(symbol: str = "BTCUSDT", limit: int = 42):
+    """Historical 8h funding, accumulated total and an annualised rate."""
+    sym = _norm_symbol(symbol)
+    out = {"symbol": sym, "as_of": _now_iso(), "source": "binance-fapi"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            rows = (await client.get("https://fapi.binance.com/fapi/v1/fundingRate",
+                                     params={"symbol": sym, "limit": limit})).json()
+        pts = [{"t": r["fundingTime"], "rate": float(r["fundingRate"]),
+                "mark": float(r.get("markPrice") or 0)} for r in rows]
+        out["history"] = pts
+        out["latest"] = pts[-1] if pts else None
+        out["accumulated_pct"] = round(sum(p["rate"] for p in pts) * 100.0, 4)
+        # 3 settlements/day, 365 days, simple annualisation.
+        out["annualized_pct"] = round((pts[-1]["rate"] * 3 * 365 * 100.0) if pts else 0.0, 2)
+        out["settlements"] = len(pts)
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
 @app.get("/alerts/status")
 async def alerts_status():
     """Called by AlertEngine.tsx every 60s to detect autonomous mode."""

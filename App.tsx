@@ -7,6 +7,8 @@ import AuthOverlay from './components/AuthOverlay';
 import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine';
 import { ToastContainer } from './components/Toast';
+import BackendWakeGate from './components/BackendWakeGate';
+import ConsentBanner from './components/ConsentBanner';
 
 // ── Route-level code splitting ───────────────────────────────────────────────
 // The shell + Desk load eagerly; every other tab is fetched on first visit so
@@ -28,6 +30,7 @@ const BotMindView = React.lazy(() => import('./components/BotMindView'));
 const SettingsView = React.lazy(() => import('./components/SettingsView'));
 const MacroView = React.lazy(() => import('./components/MacroView'));
 const DerivativesView = React.lazy(() => import('./components/DerivativesView'));
+const PositioningPage = React.lazy(() => import('./components/PositioningPage'));
 const OrderFlowPage = React.lazy(() => import('./components/OrderFlowPage'));
 const PricingPage = React.lazy(() => import('./components/PricingPage'));
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -38,7 +41,7 @@ import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX, calculateZScoreBands } from './utils/analytics';
 import { BookSync } from './utils/bookSync';
-import { canAccessTab, isAdminEmail } from './utils/entitlements';
+import { canAccessTab, isAdminEmail, isAdminOnlyTab } from './utils/entitlements';
 import { useSeo } from './hooks/useSeo';
 
 const motion = m as any;
@@ -392,16 +395,22 @@ const App: React.FC = () => {
                                             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-accent/15 text-brand-accent">
                                                 <Lock size={22} />
                                             </div>
-                                            <h2 className="text-base font-bold text-white">Pro desk locked</h2>
+                                            <h2 className="text-base font-bold text-white">
+                                                {isAdminOnlyTab(ui.activeTab) ? 'Admin only' : 'Pro desk locked'}
+                                            </h2>
                                             <p className="mt-2 text-xs text-slate-400">
-                                                This workspace is part of Pro — order flow, advanced analytics and bot tooling.
+                                                {isAdminOnlyTab(ui.activeTab)
+                                                    ? 'This workspace is restricted to administrator accounts.'
+                                                    : 'This workspace is part of Pro — order flow and advanced analytics.'}
                                             </p>
-                                            <button
-                                                onClick={() => setActiveTab('pricing')}
-                                                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-accent px-4 py-2 text-xs font-bold text-white hover:bg-brand-accent/90"
-                                            >
-                                                <Sparkles size={14} /> View plans
-                                            </button>
+                                            {!isAdminOnlyTab(ui.activeTab) && (
+                                                <button
+                                                    onClick={() => setActiveTab('pricing')}
+                                                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-accent px-4 py-2 text-xs font-bold text-white hover:bg-brand-accent/90"
+                                                >
+                                                    <Sparkles size={14} /> View plans
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 ) : (
@@ -415,6 +424,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'macro-strategy' && <MacroStrategyView />}
                                 {ui.activeTab === 'macro' && <MacroView />}
                                 {ui.activeTab === 'funding' && <DerivativesView />}
+                                {ui.activeTab === 'positioning' && <PositioningPage />}
                                 {ui.activeTab === 'order-flow' && <OrderFlowPage />}
                                 {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}
@@ -434,6 +444,8 @@ const App: React.FC = () => {
                     </motion.div>
                 )}
             </AnimatePresence>
+            <BackendWakeGate />
+            <ConsentBanner />
             <ToastContainer toasts={notifications} removeToast={removeNotification} />
         </div>
     );

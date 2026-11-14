@@ -1,0 +1,7 @@
+# ads.txt — authorized digital sellers
+# Replace the placeholder line with the record your ad network gives you.
+# Google AdSense example (replace pub-XXXXXXXXXXXXXXXX with your publisher id):
+# google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0
+#
+# Until a record is added here, no ad network is authorized to sell inventory
+# on this domain.

@@ -47,6 +47,17 @@ interface OiResponse {
   window?: OiWindow;
   rows: OiRow[];
 }
+interface FundingHistoryPoint { t: number; rate: number; mark: number }
+interface FundingHistoryResponse {
+  symbol: string;
+  history: FundingHistoryPoint[];
+  latest?: FundingHistoryPoint;
+  accumulated_pct?: number;
+  annualized_pct?: number;
+  settlements?: number;
+  as_of?: string;
+  error?: string;
+}
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'LINKUSDT'];
 const pct = (v?: number) => (v === undefined ? '—' : `${(v * 100).toFixed(4)}%`);
@@ -68,6 +79,7 @@ const DerivativesView: React.FC = () => {
   const [heat, setHeat] = useState<FundingHeatmapResponse | null>(null);
   const [oi, setOi] = useState<OiResponse | null>(null);
   const [oiWindow, setOiWindow] = useState<OiWindow>('24h');
+  const [fundHist, setFundHist] = useState<FundingHistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,8 +113,18 @@ const DerivativesView: React.FC = () => {
     }
   }, []);
 
+  const loadFundingHistory = useCallback(async (sym: string) => {
+    try {
+      const r = await apiFetch(`/funding-history?symbol=${sym}&limit=42`, { timeoutMs: 30000 });
+      setFundHist(await r.json());
+    } catch {
+      /* keep previous */
+    }
+  }, []);
+
   useEffect(() => { load(symbol); }, [load, symbol]);
   useEffect(() => { loadOi(symbol, oiWindow); }, [loadOi, symbol, oiWindow]);
+  useEffect(() => { loadFundingHistory(symbol); }, [loadFundingHistory, symbol]);
 
   const venues = cross?.venues || {};
   const premTone = (premium?.premium_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400';
@@ -291,6 +313,62 @@ const DerivativesView: React.FC = () => {
               OI in USD · window {oi.window ?? oiWindow} · recorded {oi.as_of} · source binance-fapi · rising OI + rising price = new longs
             </div>
           )}
+        </div>
+
+        {/* Funding history */}
+        <div className="mt-6">
+          <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+            <Layers size={14} className="text-brand-accent" /> Funding history — {fundHist?.symbol || symbol}
+          </div>
+          <div className="fintech-card p-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last 8h</div>
+                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.latest?.rate ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {fundHist?.latest ? pct(fundHist.latest.rate) : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Accumulated</div>
+                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.accumulated_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {fundHist?.accumulated_pct === undefined ? '—' : `${fundHist.accumulated_pct >= 0 ? '+' : ''}${fundHist.accumulated_pct}%`}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Annualised</div>
+                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.annualized_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {fundHist?.annualized_pct === undefined ? '—' : `${fundHist.annualized_pct >= 0 ? '+' : ''}${fundHist.annualized_pct}%`}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Settlements</div>
+                <div className="mt-1 font-mono text-lg font-black text-slate-200">{fundHist?.settlements ?? '—'}</div>
+              </div>
+            </div>
+
+            {!!fundHist?.history?.length && (
+              <div className="mt-4 flex h-24 items-center gap-px">
+                {(() => {
+                  const maxAbs = Math.max(...fundHist.history.map(p => Math.abs(p.rate)), 1e-9);
+                  return fundHist.history.map((p, i) => {
+                    const h = Math.max(2, (Math.abs(p.rate) / maxAbs) * 100);
+                    return (
+                      <div key={i} className="group relative flex h-full flex-1 flex-col justify-center">
+                        <div
+                          className={`w-full rounded-sm ${p.rate >= 0 ? 'bg-emerald-500/70' : 'bg-rose-500/70'}`}
+                          style={{ height: `${h}%` }}
+                          title={`${new Date(p.t).toLocaleString()} · ${(p.rate * 100).toFixed(4)}%`}
+                        />
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+            <div className="mt-2 font-mono text-[10px] text-slate-600">
+              {fundHist?.error ? 'unavailable' : `8h settlements, oldest → newest · recorded ${fundHist?.as_of || '—'} · source binance-fapi`}
+            </div>
+          </div>
         </div>
       </div>
     </div>

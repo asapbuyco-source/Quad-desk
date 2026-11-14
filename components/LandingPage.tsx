@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { motion as m, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight, Heart, Check } from 'lucide-react';
 import { upgradeHref, PLAN_FEATURES, PRICING } from '../utils/entitlements';
+import AdSlot from './AdSlot';
 
 const motion = m as any;
 
@@ -379,6 +380,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 </div>
             </section>
 
+            {/* Ad slot (only renders when consent + AdSense client are set) */}
+            <div className="mx-auto max-w-4xl px-6">
+                <AdSlot slot="home-mid" format="horizontal" className="py-6" />
+            </div>
+
             {/* --- Pricing --- */}
             <section id="pricing" className="py-24 px-6 relative z-10">
                 <div className="max-w-5xl mx-auto">
@@ -434,15 +440,17 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
                     <div className="flex items-center gap-2">
                         <Hexagon size={20} className="text-zinc-500" />
-                        <span className="text-zinc-500 font-bold tracking-widest text-xs">VANTAGE SYSTEMS</span>
+                        <span className="text-zinc-500 font-bold tracking-widest text-xs">QUANT DESK</span>
                     </div>
-                    <div className="flex gap-6 text-xs text-zinc-600 font-mono">
-                        <span className="hover:text-zinc-400 cursor-pointer">PRIVACY</span>
-                        <span className="hover:text-zinc-400 cursor-pointer">TERMS</span>
-                        <span className="hover:text-zinc-400 cursor-pointer">SECURITY</span>
+                    <div className="flex flex-wrap justify-center gap-6 text-xs text-zinc-600 font-mono">
+                        <a href="/learn" className="hover:text-zinc-300 transition-colors">LEARN</a>
+                        <a href="/about" className="hover:text-zinc-300 transition-colors">ABOUT</a>
+                        <a href="/privacy" className="hover:text-zinc-300 transition-colors">PRIVACY</a>
+                        <a href="/terms" className="hover:text-zinc-300 transition-colors">TERMS</a>
+                        <a href="/disclaimer" className="hover:text-zinc-300 transition-colors">DISCLAIMER</a>
                     </div>
                     <div className="text-xs text-zinc-700">
-                        © 2024 VANTAGE LTD. All rights reserved.
+                        © 2026 Quant Desk. All rights reserved.
                     </div>
                 </div>
             </footer>

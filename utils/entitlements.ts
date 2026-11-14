@@ -50,6 +50,12 @@ export const FREE_TABS = new Set([
   'settings',
 ]);
 
+/** Tabs that are hidden from normal users entirely — admin-only tooling. */
+export const ADMIN_ONLY_TABS = new Set([
+  'bot-control',
+  'bot-mind',
+]);
+
 /** Tabs that require Pro. */
 export const PRO_TABS = new Set([
   'depth',
@@ -64,9 +70,11 @@ export const PRO_TABS = new Set([
   'ulis',
   'macro-strategy',
   'analytics',
+  'positioning',
 ]);
 
 export const isProTab = (tab: string): boolean => PRO_TABS.has(tab);
+export const isAdminOnlyTab = (tab: string): boolean => ADMIN_ONLY_TABS.has(tab);
 
 /**
  * Resolve access. Admins see everything unless they switched on
@@ -78,8 +86,13 @@ export function canAccessTab(
   opts: { isAdmin?: boolean; previewAsUser?: boolean } = {},
 ): boolean {
   const { isAdmin = false, previewAsUser = false } = opts;
+  const admin = isAdmin && !previewAsUser;
+
+  // Admin tooling is never part of a paid plan.
+  if (isAdminOnlyTab(tab)) return admin;
+
   if (!PAYWALL_ENABLED) return true;          // billing not configured yet
-  if (isAdmin && !previewAsUser) return true;
+  if (admin) return true;
   if (!isProTab(tab)) return true;
   return plan === 'pro';
 }

@@ -1,9 +1,17 @@
 import React, { useState } from 'react';
-import { Check, X, Sparkles, CreditCard, ShieldCheck, ExternalLink, KeyRound, Loader2 } from 'lucide-react';
+import { Check, X, Sparkles, CreditCard, ShieldCheck, ExternalLink, KeyRound, Loader2, Gift } from 'lucide-react';
 import { useStore } from '../store';
 import {
   PLAN_FEATURES, PRICING, PORTAL_URL, isAdminEmail, buildCheckoutUrl,
 } from '../utils/entitlements';
+
+const env = (k: string): string => (import.meta as any).env?.[k] || '';
+
+const REFERRALS = [
+  { id: 'binance', name: 'Binance', blurb: 'USDM perps · deepest liquidity', href: env('VITE_REFERRAL_BINANCE') },
+  { id: 'bybit', name: 'Bybit', blurb: 'Perps + options', href: env('VITE_REFERRAL_BYBIT') },
+  { id: 'okx', name: 'OKX', blurb: 'Perps + spot', href: env('VITE_REFERRAL_OKX') },
+].filter(r => !!r.href);
 
 const PricingPage: React.FC = () => {
   const user = useStore(s => s.auth.user);
@@ -195,6 +203,35 @@ const PricingPage: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Referral / partner venues */}
+        {REFERRALS.length > 0 && (
+          <div className="mt-6 fintech-card p-5">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+              <Gift size={14} className="text-brand-accent" /> Start trading
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Trade on a venue with deep liquidity. Signing up through these links supports the desk at no extra cost.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {REFERRALS.map(r => (
+                <a
+                  key={r.id}
+                  href={r.href}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow sponsored"
+                  className="flex items-center justify-between rounded-lg border border-white/10 px-3 py-2.5 text-xs font-semibold text-slate-200 hover:bg-white/5"
+                >
+                  <span className="flex flex-col">
+                    <span>{r.name}</span>
+                    <span className="text-[10px] font-normal text-slate-500">{r.blurb}</span>
+                  </span>
+                  <ExternalLink size={12} className="text-slate-500" />
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 flex items-center justify-center gap-2 text-[10px] text-slate-600">
           <ShieldCheck size={12} /> Secure checkout via Lemon Squeezy · cancel anytime · instant access with your license key

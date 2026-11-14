@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bitcoin (BTC) derivatives: funding, open interest & positioning | Quant Desk</title>
+<meta name="description" content="How to read Bitcoin perpetual futures: funding rate, open interest, long/short positioning, taker flow and liquidations — with live data in the Quant Desk terminal." />
+<link rel="canonical" href="https://quad-desk.vercel.app/markets/bitcoin" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<meta property="og:title" content="Bitcoin (BTC) derivatives dashboard & data guide" />
+<meta property="og:description" content="Funding, open interest, positioning and liquidation data for Bitcoin perpetual futures." />
+<meta property="og:url" content="https://quad-desk.vercel.app/markets/bitcoin" />
+<meta property="og:image" content="https://quad-desk.vercel.app/og.svg" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","name":"Bitcoin (BTC) derivatives data","url":"https://quad-desk.vercel.app/markets/bitcoin","description":"Guide to Bitcoin perpetual futures funding, open interest, positioning and liquidations.","isPartOf":{"@type":"WebSite","name":"Quant Desk","url":"https://quad-desk.vercel.app/"}}
+</script>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:20px;margin:34px 0 8px;color:#fff}
+  p{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  .cta{display:inline-block;margin:8px 0 0;padding:11px 18px;border-radius:10px;background:#3b82f6;color:#fff;font-weight:700;font-size:14px}
+  .cta:hover{text-decoration:none;background:#2563eb}
+  dt{font-weight:700;color:#fff;margin-top:18px}
+  dd{margin:4px 0 0;color:#a1a1aa}
+  nav{margin-top:44px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Bitcoin (BTC) derivatives</h1>
+  <p>BTC perpetuals are the deepest crypto market, so their derivatives data is the cleanest signal of how leverage is positioned. Here is what to watch.</p>
+  <a class="cta" href="/?symbol=BTCUSDT">Open the BTC terminal →</a>
+
+  <h2>What moves BTC perp data</h2>
+  <dl>
+    <dt>Funding rate</dt>
+    <dd>Positive funding means longs pay shorts — a sign positioning is crowded long. Sustained high positive funding often precedes long liquidations.</dd>
+    <dt>Open interest</dt>
+    <dd>Rising OI with rising price implies new longs; rising OI with falling price implies new shorts. Falling OI means positions are closing.</dd>
+    <dt>Long/short ratio</dt>
+    <dd>Retail accounts tend to chase. Comparing retail ratios with top-trader positioning is more useful than either alone.</dd>
+    <dt>Taker buy/sell</dt>
+    <dd>Aggressive market orders. Buy dominance with little price movement suggests sellers are absorbing.</dd>
+    <dt>Coinbase premium</dt>
+    <dd>US spot demand versus offshore. A persistent premium points to US buyers bidding above the global reference.</dd>
+  </dl>
+
+  <h2>Why BTC data leads the market</h2>
+  <p>BTC carries the most open interest and the tightest spreads, so funding, basis and liquidation levels there tend to set the tone for the rest of the market. When BTC funding flips hard negative while price holds, it often marks a short-squeeze setup — the reverse of crowded longs.</p>
+
+  <h2>Related</h2>
+  <p>Read the <a href="/learn">market microstructure glossary</a>, or compare with <a href="/markets/ethereum">Ethereum</a> and <a href="/markets/solana">Solana</a> derivatives.</p>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/learn">Learn</a>
+    <a href="/markets/ethereum">ETH derivatives</a>
+    <a href="/markets/solana">SOL derivatives</a>
+    <a href="/about">About</a>
+  </nav>
+</div>
+</body>
+</html>

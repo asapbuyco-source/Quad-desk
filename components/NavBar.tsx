@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import {
   LayoutGrid, CandlestickChart, Mountain, Droplets, Layers, Activity,
   Crosshair, Zap, Globe2, Bot, Settings, BarChart2, Radio,
-  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock,
+  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock, Users,
 } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { canAccessTab, isAdminEmail } from '../utils/entitlements';
+import { canAccessTab, isAdminEmail, isAdminOnlyTab } from '../utils/entitlements';
 
 const motion = m as any;
 
@@ -41,6 +41,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'order-flow', icon: Activity, label: 'Order Flow', hint: 'Prints, rolling flow, price impact' },
       { id: 'funding', icon: Gauge, label: 'Funding & OI', hint: 'Cross-venue funding, OI, premium' },
+      { id: 'positioning', icon: Users, label: 'Positioning', hint: 'Long/short ratios, top traders, taker flow' },
     ],
   },
   {
@@ -71,7 +72,6 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const MOBILE_PRIMARY = ['dashboard', 'charting', 'funding', 'bot-control'];
 const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
 
 const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
@@ -80,11 +80,19 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
   const admin = isAdminEmail(auth.user?.email);
   const allowed = (id: string) => canAccessTab(id, auth.plan, { isAdmin: admin, previewAsUser: auth.previewAsUser });
   const go = (id: string) => { setActiveTab(id); setSheetOpen(false); };
-  const primaryItems = MOBILE_PRIMARY.map(id => ALL_ITEMS.find(i => i.id === id)).filter(Boolean) as NavItem[];
+
+  // Admin-only tooling is not merely locked â€” it is removed from a user's nav.
+  const visibleGroups = NAV_GROUPS
+    .map(g => ({ ...g, items: g.items.filter(t => !isAdminOnlyTab(t.id) || admin) }))
+    .filter(g => g.items.length > 0);
+  const mobilePrimary = admin
+    ? ['dashboard', 'charting', 'funding', 'bot-control']
+    : ['dashboard', 'charting', 'funding', 'intel'];
+  const primaryItems = mobilePrimary.map(id => ALL_ITEMS.find(i => i.id === id)).filter(Boolean) as NavItem[];
 
   return (
     <>
-      {/* ── Desktop sidebar: fixed header, everything else scrolls ────── */}
+      {/* â”€â”€ Desktop sidebar: fixed header, everything else scrolls â”€â”€â”€â”€â”€â”€ */}
       <aside className="hidden lg:flex flex-col h-[96vh] my-auto ml-4 w-56 fintech-card z-50 overflow-hidden">
         <div className="flex items-center gap-2.5 px-4 pt-5 pb-4 shrink-0">
           <div className="w-8 h-8 shrink-0 rounded-lg bg-brand-accent/15 flex items-center justify-center text-brand-accent">
@@ -97,7 +105,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
         </div>
 
         <nav className="flex-1 overflow-y-auto scrollbar-hide px-2 pb-3">
-          {NAV_GROUPS.map(group => (
+          {visibleGroups.map(group => (
             <div key={group.title} className="mb-2.5">
               <div className="px-2 pt-2 pb-1 text-[9px] font-semibold uppercase tracking-wider text-slate-600">
                 {group.title}
@@ -129,7 +137,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
         </nav>
       </aside>
 
-      {/* ── Mobile bottom bar ───────────────────────────────────────── */}
+      {/* â”€â”€ Mobile bottom bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="lg:hidden fixed bottom-5 left-4 right-4 z-50">
         <div className="fintech-card flex items-center justify-around px-1.5 py-2 shadow-2xl">
           {primaryItems.map(tab => {
@@ -156,7 +164,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
         </div>
       </div>
 
-      {/* ── Mobile full menu sheet ──────────────────────────────────── */}
+      {/* â”€â”€ Mobile full menu sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <AnimatePresence>
         {sheetOpen && (
           <motion.div
@@ -178,7 +186,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
                   <X size={18} />
                 </button>
               </div>
-              {NAV_GROUPS.map(group => (
+              {visibleGroups.map(group => (
                 <div key={group.title} className="mb-5">
                   <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{group.title}</div>
                   <div className="grid grid-cols-2 gap-2">

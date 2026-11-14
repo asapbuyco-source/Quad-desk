@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>About Quant Desk — data sources and methodology</title>
+<meta name="description" content="How Quant Desk records crypto order flow, funding and open interest, where every number comes from, and what we deliberately do not do." />
+<link rel="canonical" href="https://quad-desk.vercel.app/about" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<meta property="og:title" content="About Quant Desk" />
+<meta property="og:description" content="Data sources, methodology and limitations of the Quant Desk crypto derivatives terminal." />
+<meta property="og:url" content="https://quad-desk.vercel.app/about" />
+<meta property="og:image" content="https://quad-desk.vercel.app/og.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.65 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:20px;margin:34px 0 10px;color:#fff}
+  p,li{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  .card{background:rgba(18,18,18,.65);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px 20px;margin:16px 0}
+  nav{margin-top:48px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+  code{background:#18181b;border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:1px 6px;font-size:13px;color:#d4d4d8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>About Quant Desk</h1>
+  <p>Quant Desk is a crypto derivatives terminal for traders who care about <strong>what actually happened</strong> in the market: executed trades, changes in resting liquidity, funding, open interest and macro context — each shown with its source and timestamp.</p>
+
+  <h2>What we publish</h2>
+  <ul>
+    <li><strong>Executed trades</strong> with taker-side (aggressor) classification, split by spot and perpetual futures.</li>
+    <li><strong>Order-book liquidity events</strong> — size that was executed, cancelled or replenished, sequenced by exchange update id.</li>
+    <li><strong>Rolling flow and price impact</strong> over 1s / 5s / 15s / 60s windows.</li>
+    <li><strong>Funding and open interest</strong> across Binance, OKX and Bybit, plus the Coinbase spot premium.</li>
+    <li><strong>Macro and FX</strong> from FRED and the European Central Bank.</li>
+    <li><strong>News</strong> tagged by asset with a sentiment score.</li>
+  </ul>
+
+  <h2>Where the data comes from</h2>
+  <div class="card">
+    <p style="margin:0">Market data is read from public exchange endpoints (Binance, OKX, Bybit, Coinbase), the Federal Reserve Bank of St. Louis (FRED), the ECB via Frankfurter, and Marketaux for news. Nothing on this site is hand-entered; each panel displays its own as-of time.</p>
+  </div>
+
+  <h2>What we deliberately do not do</h2>
+  <p>We are not a broker and we do not route orders. We do not provide personalised investment advice, and we do not guarantee any result. Data can be delayed, incomplete or wrong — verify anything you act on.</p>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/learn">Learn</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <a href="/disclaimer">Disclaimer</a>
+  </nav>
+</div>
+</body>
+</html>

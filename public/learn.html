@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Learn crypto order flow, funding, open interest & price impact | Quant Desk</title>
+<meta name="description" content="Plain-English guide to crypto market microstructure: order flow, aggressor side, funding rates, open interest, liquidations, price impact and absorption." />
+<link rel="canonical" href="https://quad-desk.vercel.app/learn" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<meta property="og:title" content="Learn crypto order flow and derivatives data" />
+<meta property="og:description" content="Glossary and FAQ for order flow, funding, open interest, liquidations and price impact." />
+<meta property="og:url" content="https://quad-desk.vercel.app/learn" />
+<meta property="og:image" content="https://quad-desk.vercel.app/og.svg" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+ {"@type":"Question","name":"What is order flow in crypto trading?","acceptedAnswer":{"@type":"Answer","text":"Order flow is the record of executed trades and changes to resting orders. It shows who was aggressive, at what price, and how liquidity was added or removed."}},
+ {"@type":"Question","name":"What does aggressor side mean?","acceptedAnswer":{"@type":"Answer","text":"The aggressor is the side that crossed the spread. A buy aggressor lifted the ask; a sell aggressor hit the bid. It is not the same as the price ticking up or down."}},
+ {"@type":"Question","name":"What is funding rate in perpetual futures?","acceptedAnswer":{"@type":"Answer","text":"A periodic payment between longs and shorts that keeps the perpetual price near spot. Positive funding means longs pay shorts, usually when positioning is crowded long."}},
+ {"@type":"Question","name":"How is open interest different from volume?","acceptedAnswer":{"@type":"Answer","text":"Volume counts contracts traded; open interest counts contracts still open. Rising open interest with rising price suggests new longs, while falling open interest suggests positions closing."}},
+ {"@type":"Question","name":"What is price impact and absorption?","acceptedAnswer":{"@type":"Answer","text":"Price impact is how far price moves per unit of aggressive volume. Large aggressive buying with little price movement suggests sellers are absorbing the flow."}}
+]}
+</script>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:20px;margin:34px 0 8px;color:#fff}
+  p{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  dt{font-weight:700;color:#fff;margin-top:18px}
+  dd{margin:4px 0 0;color:#a1a1aa}
+  .faq{border-top:1px solid rgba(255,255,255,.08);margin-top:36px;padding-top:10px}
+  .faq h3{font-size:16px;color:#fff;margin:22px 0 6px}
+  nav{margin-top:44px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Learn market microstructure</h1>
+  <p>Short definitions for the concepts behind the terminal. No hype, no signals — just what the numbers mean.</p>
+
+  <h2>Glossary</h2>
+  <dl>
+    <dt>Order flow</dt>
+    <dd>The stream of executed trades plus changes to resting orders. It answers "who was aggressive, and what did the book do about it?"</dd>
+
+    <dt>Aggressor (taker) side</dt>
+    <dd>The side that crossed the spread. Buy aggressors lift the ask; sell aggressors hit the bid. Price direction alone does not tell you this.</dd>
+
+    <dt>Executed vs cancelled vs replenished</dt>
+    <dd>When size leaves a price level, it either traded (executed) or was pulled (cancelled). When it returns, it was replenished. The distinction separates real supply/demand from spoofing.</dd>
+
+    <dt>Funding rate</dt>
+    <dd>A periodic payment between longs and shorts on perpetual futures. Positive funding: longs pay shorts (crowded long). Negative funding: shorts pay longs.</dd>
+
+    <dt>Open interest (OI)</dt>
+    <dd>Contracts still open, not contracts traded. Rising OI with rising price suggests new longs; falling OI suggests positions closing.</dd>
+
+    <dt>Liquidation</dt>
+    <dd>A forced closure when margin runs out. Clusters of liquidations act like fuel for short-term moves.</dd>
+
+    <dt>Price impact / absorption</dt>
+    <dd>Price impact is how far price moves per unit of aggressive volume. Heavy buying with little movement implies sellers are absorbing; heavy buying with strong movement implies buyers are making progress.</dd>
+
+    <dt>Coinbase premium</dt>
+    <dd>US spot price (Coinbase) versus the offshore reference. A persistent premium suggests US buyers are bidding above global.</dd>
+  </dl>
+
+  <div class="faq">
+    <h2>Frequently asked questions</h2>
+
+    <h3>What is order flow in crypto trading?</h3>
+    <p>Order flow is the record of executed trades and changes to resting orders. It shows who was aggressive, at what price, and how liquidity was added or removed.</p>
+
+    <h3>What does aggressor side mean?</h3>
+    <p>The aggressor is the side that crossed the spread. A buy aggressor lifted the ask; a sell aggressor hit the bid. It is not the same as the price ticking up or down.</p>
+
+    <h3>What is funding rate in perpetual futures?</h3>
+    <p>A periodic payment between longs and shorts that keeps the perpetual price near spot. Positive funding means longs pay shorts, usually when positioning is crowded long.</p>
+
+    <h3>How is open interest different from volume?</h3>
+    <p>Volume counts contracts traded; open interest counts contracts still open. Rising open interest with rising price suggests new longs, while falling open interest suggests positions closing.</p>
+
+    <h3>What is price impact and absorption?</h3>
+    <p>Price impact is how far price moves per unit of aggressive volume. Large aggressive buying with little price movement suggests sellers are absorbing the flow.</p>
+  </div>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/about">About</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <a href="/disclaimer">Disclaimer</a>
+  </nav>
+</div>
+</body>
+</html>

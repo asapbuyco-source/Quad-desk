@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solana (SOL) derivatives: funding, open interest & positioning | Quant Desk</title>
+<meta name="description" content="Solana perpetual futures data explained: funding rate, open interest, long/short positioning, taker flow and liquidation clusters on a high-beta market." />
+<link rel="canonical" href="https://quad-desk.vercel.app/markets/solana" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<meta property="og:title" content="Solana (SOL) derivatives dashboard & data guide" />
+<meta property="og:description" content="Funding, open interest, positioning and liquidation data for Solana perpetual futures." />
+<meta property="og:url" content="https://quad-desk.vercel.app/markets/solana" />
+<meta property="og:image" content="https://quad-desk.vercel.app/og.svg" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","name":"Solana (SOL) derivatives data","url":"https://quad-desk.vercel.app/markets/solana","description":"Guide to Solana perpetual futures funding, open interest, positioning and liquidations.","isPartOf":{"@type":"WebSite","name":"Quant Desk","url":"https://quad-desk.vercel.app/"}}
+</script>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:20px;margin:34px 0 8px;color:#fff}
+  p{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  .cta{display:inline-block;margin:8px 0 0;padding:11px 18px;border-radius:10px;background:#3b82f6;color:#fff;font-weight:700;font-size:14px}
+  .cta:hover{text-decoration:none;background:#2563eb}
+  dt{font-weight:700;color:#fff;margin-top:18px}
+  dd{margin:4px 0 0;color:#a1a1aa}
+  nav{margin-top:44px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Solana (SOL) derivatives</h1>
+  <p>SOL is a high-beta perp market: funding and open interest move faster and liquidations hit harder. That makes it a good place to see crowding before it unwinds.</p>
+  <a class="cta" href="/?symbol=SOLUSDT">Open the SOL terminal →</a>
+
+  <h2>What moves SOL perp data</h2>
+  <dl>
+    <dt>Funding rate</dt>
+    <dd>SOL funding spikes are common in momentum runs. Very high positive funding is a warning, not an invitation.</dd>
+    <dt>Open interest</dt>
+    <dd>Thin books mean OI can build quickly. Fast OI growth into a wick often precedes a sharp squeeze.</dd>
+    <dt>Long/short ratio</dt>
+    <dd>SOL retail positioning is momentum-driven. When everyone is long into resistance, the downside move is faster.</dd>
+    <dt>Taker flow</dt>
+    <dd>Aggressive flow plus rising OI means new positions; aggressive flow plus falling OI means closing/absorption.</dd>
+    <dt>Liquidations</dt>
+    <dd>Liquidation clusters on SOL are wider apart than BTC, so moves can overshoot before finding fuel.</dd>
+  </dl>
+
+  <h2>High-beta leverage</h2>
+  <p>Because SOL moves more per unit of flow, the gap between funding and price response is informative. If funding is hot but price stops making progress, longs are paying for a move that is not happening — a classic setup for a flush.</p>
+
+  <h2>Related</h2>
+  <p>Compare with <a href="/markets/bitcoin">Bitcoin</a> and <a href="/markets/ethereum">Ethereum</a> derivatives, or read the <a href="/learn">glossary</a>.</p>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/learn">Learn</a>
+    <a href="/markets/bitcoin">BTC derivatives</a>
+    <a href="/markets/ethereum">ETH derivatives</a>
+    <a href="/about">About</a>
+  </nav>
+</div>
+</body>
+</html>
