@@ -10,3 +10,5 @@ bot/hmm_calibration_report.txt
 *.tsbuildinfo
 .railway/
 *.log
+.vercel
+.env*
