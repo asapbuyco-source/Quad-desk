@@ -130,7 +130,7 @@ VALID_GEMINI_MODELS = {
 }
 DEFAULT_MODEL = "gemini-2.5-flash"
 
-# Order fallback chain: newest/fastest â†’ oldest
+# Order fallback chain: newest/fastest → oldest
 # When the preferred model fails, the next one in the chain is tried automatically.
 FALLBACK_CHAIN = [
     "gemini-2.5-flash",
@@ -169,7 +169,7 @@ async def generate_with_fallback(preferred: str, prompt: str) -> tuple:
             logger.info(f"AI served by model: {model_id}")
             return response.text, model_id
         except Exception as e:
-            logger.warning(f"Model {model_id} failed: {e} â€” trying next fallback")
+            logger.warning(f"Model {model_id} failed: {e} — trying next fallback")
             last_err = e
 
     raise RuntimeError(f"All AI models exhausted. Last error: {last_err}")
@@ -226,7 +226,7 @@ async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
                 logger.error(f"Binance unexpected response for {symbol}: {data}")
                 return []
             # Return 7 values: openTime(ms), open, high, low, close, volume, takerBuyBaseVolume
-            # Index 9 of the Binance response is takerBuyBaseVolume â€” used for accurate CVD
+            # Index 9 of the Binance response is takerBuyBaseVolume — used for accurate CVD
             return [
                 [
                     int(k[0]),      # 0: openTime in ms (already ms, no conversion needed)
@@ -235,7 +235,7 @@ async def fetch_binance_candles(symbol: str, interval: str, limit: int = 300):
                     float(k[3]),    # 3: low
                     float(k[4]),    # 4: close
                     float(k[5]),    # 5: total base asset volume
-                    float(k[9]),    # 6: takerBuyBaseVolume (NEW) â€” for accurate historical delta
+                    float(k[9]),    # 6: takerBuyBaseVolume (NEW) — for accurate historical delta
                 ]
                 for k in data
             ]
@@ -371,7 +371,7 @@ app = FastAPI(lifespan=lifespan)
 ALLOWED_ORIGINS = [
     FRONTEND_URL,                     # Set via FRONTEND_URL env var on Railway
     "https://quandesk.netlify.app",   # Production frontend (explicit fallback)
-    # NOTE: "https://quantdesk.netlify.app" removed â€” typo domain. Add back only if you own it.
+    # NOTE: "https://quantdesk.netlify.app" removed — typo domain. Add back only if you own it.
     "http://localhost:5173",
     "http://localhost:3000",
     "http://127.0.0.1:5173",
@@ -396,13 +396,13 @@ ai_request_counts = defaultdict(list)
 async def security_middleware(request: Request, call_next):
     path = request.url.path
 
-    # â”€â”€ Always pass OPTIONS (CORS preflight) through â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Always pass OPTIONS (CORS preflight) through ──────────────────────────
     if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json"]:
         return await call_next(request)
 
-    # â”€â”€ AUDIT FIX #4: API Key authentication for all endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── AUDIT FIX #4: API Key authentication for all endpoints ─────────
     # BACKEND_API_KEY was loaded and required at startup but NEVER checked
-    # in this middleware. All endpoints were completely open â€” anyone could
+    # in this middleware. All endpoints were completely open — anyone could
     # hit /market-intelligence (burning Gemini quota), /backtest (heavy CPU),
     # and /analyze/strategy without any authentication.
     if not path.startswith("/admin/"):
@@ -414,14 +414,14 @@ async def security_middleware(request: Request, call_next):
             origin = request.headers.get("origin", "")
             response = JSONResponse(
                 status_code=401,
-                content={"detail": "Unauthorized â€” valid X-API-Key header required."},
+                content={"detail": "Unauthorized — valid X-API-Key header required."},
             )
             if origin in ALLOWED_ORIGINS:
                 response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
             return response
 
-    # â”€â”€ Admin endpoints require the admin key â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Admin endpoints require the admin key ─────────────────────────────────
     if path.startswith("/admin/"):
         admin_key = request.headers.get("X-Admin-Key")
         if not admin_key or admin_key != ADMIN_API_KEY:
@@ -435,7 +435,7 @@ async def security_middleware(request: Request, call_next):
                 response.headers["Access-Control-Allow-Credentials"] = "true"
             return response
 
-    # â”€â”€ Rate Limiting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Rate Limiting ─────────────────────────────────────────────────────────
     # Use X-Forwarded-For to get real client IP behind Railway/Render proxy
     xff = request.headers.get("X-Forwarded-For", "")
     client_ip = (
@@ -555,37 +555,37 @@ def _analyze_market_algo(symbol: str, klines: list) -> dict:
     high = max(highs)
     low  = min(lows)
 
-    # â”€â”€ Pivot points â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Pivot points ──────────────────────────────────────────────────
     pivot = (high + low + current_price) / 3
     r1    = 2 * pivot - low
     s1    = 2 * pivot - high
     r2    = pivot + (high - low)
     s2    = pivot - (high - low)
 
-    # â”€â”€ VWAP (volume-weighted average price) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── VWAP (volume-weighted average price) ──────────────────────────
     typical_prices = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
     total_vol      = sum(volumes) or 1
     vwap           = sum(tp * v for tp, v in zip(typical_prices, volumes)) / total_vol
 
-    # â”€â”€ Z-Score (last 20 closes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Z-Score (last 20 closes) ──────────────────────────────────────
     window = closes[-20:]
     mean   = sum(window) / len(window)
     std    = (sum((x - mean) ** 2 for x in window) / len(window)) ** 0.5 or 1
     z      = (current_price - mean) / std
 
-    # â”€â”€ ATR (last 14 bars) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── ATR (last 14 bars) ────────────────────────────────────────────
     tr_values = []
     for i in range(1, min(15, len(klines))):
         h, l, pc = highs[i], lows[i], closes[i - 1]
         tr_values.append(max(h - l, abs(h - pc), abs(l - pc)))
     atr = sum(tr_values) / len(tr_values) if tr_values else (high - low) / 14
 
-    # â”€â”€ Trend bias (last 5 closes vs previous 5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Trend bias (last 5 closes vs previous 5) ──────────────────────
     short_mean = sum(closes[-5:]) / 5
     mid_mean   = sum(closes[-10:-5]) / 5
     trend_up   = short_mean > mid_mean
 
-    # â”€â”€ Verdict logic â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Verdict logic ─────────────────────────────────────────────────
     above_vwap = current_price > vwap
     near_support    = abs(current_price - s1) / (atr or 1) < 1.5
     near_resistance = abs(current_price - r1) / (atr or 1) < 1.5
@@ -596,25 +596,25 @@ def _analyze_market_algo(symbol: str, klines: list) -> dict:
 
     # Bullish signals
     if z < -1.5:
-        reasons_bull.append(f"price is statistically depressed (Z={z:.2f}Ïƒ), indicating mean-reversion potential")
+        reasons_bull.append(f"price is statistically depressed (Z={z:.2f}σ), indicating mean-reversion potential")
     if above_vwap and trend_up:
         reasons_bull.append(f"price is trading above VWAP ({vwap:.2f}) with upward momentum")
     if near_support:
-        reasons_bull.append(f"price is testing key support at {s1:.2f} â€” a bounce zone")
+        reasons_bull.append(f"price is testing key support at {s1:.2f} — a bounce zone")
 
     # Bearish signals
     if z > 1.5:
-        reasons_bear.append(f"price is statistically stretched (Z={z:.2f}Ïƒ), mean-reversion risk is elevated")
+        reasons_bear.append(f"price is statistically stretched (Z={z:.2f}σ), mean-reversion risk is elevated")
     if not above_vwap and not trend_up:
         reasons_bear.append(f"price is trading below VWAP ({vwap:.2f}) with downward momentum")
     if near_resistance:
-        reasons_bear.append(f"price is testing resistance at {r1:.2f} â€” sellers likely to defend")
+        reasons_bear.append(f"price is testing resistance at {r1:.2f} — sellers likely to defend")
 
     # Neutral signals
     if abs(z) <= 0.5:
-        reasons_wait.append(f"Z-Score is neutral ({z:.2f}Ïƒ), no statistical edge")
+        reasons_wait.append(f"Z-Score is neutral ({z:.2f}σ), no statistical edge")
     if not near_support and not near_resistance and not reasons_bull and not reasons_bear:
-        reasons_wait.append("price is between key pivots â€” no high-probability setup is present")
+        reasons_wait.append("price is between key pivots — no high-probability setup is present")
 
     bull_score = len(reasons_bull)
     bear_score = len(reasons_bear)
@@ -714,18 +714,18 @@ async def analyze_order_flow(req: AnalysisRequest):
     # CVD scoring
     if cvd_up:
         bull_points += 1
-        notes.append("CVD trend is rising â€” cumulative buyer pressure is building")
+        notes.append("CVD trend is rising — cumulative buyer pressure is building")
     elif cvd_down:
         bear_points += 1
-        notes.append("CVD trend is falling â€” cumulative seller pressure is building")
+        notes.append("CVD trend is falling — cumulative seller pressure is building")
 
     # POC position
     if above_poc:
         bull_points += 1
-        notes.append(f"Price ({req.price:.2f}) is trading above the Point of Control ({req.pocPrice:.2f}) by {poc_pct:.2f}% â€” fair-value bullish bias")
+        notes.append(f"Price ({req.price:.2f}) is trading above the Point of Control ({req.pocPrice:.2f}) by {poc_pct:.2f}% — fair-value bullish bias")
     else:
         bear_points += 1
-        notes.append(f"Price ({req.price:.2f}) is trading below the Point of Control ({req.pocPrice:.2f}) by {poc_pct:.2f}% â€” fair-value bearish bias")
+        notes.append(f"Price ({req.price:.2f}) is trading below the Point of Control ({req.pocPrice:.2f}) by {poc_pct:.2f}% — fair-value bearish bias")
 
     # Verdict
     if bull_points > bear_points + 1:
@@ -751,7 +751,7 @@ async def analyze_order_flow(req: AnalysisRequest):
         flow_type  = "BALANCED"
         confidence = 0.45
         explanation = (
-            f"Order flow on {req.symbol} is BALANCED â€” no dominant side. "
+            f"Order flow on {req.symbol} is BALANCED — no dominant side. "
             + " ".join(f"{n.capitalize()}." for n in notes)
             + " Wait for a decisive delta shift or CVD break before committing."
         )
@@ -776,63 +776,63 @@ async def analyze_strategy(req: MacroStrategyRequest):
     bear: list[str] = []
     reversal: list[str] = []
 
-    # â”€â”€ 1. Z-Score â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 1. Z-Score ───────────────────────────────────────────────────────
     if req.zScore >= 2.5:
-        reversal.append(f"Z-Score ({req.zScore:.2f}Ïƒ) is in Sentiment Wash territory â€” statistically extreme, mean-reversion SHORT expected")
+        reversal.append(f"Z-Score ({req.zScore:.2f}σ) is in Sentiment Wash territory — statistically extreme, mean-reversion SHORT expected")
         bear.append("zscore")
     elif req.zScore <= -2.5:
-        reversal.append(f"Z-Score ({req.zScore:.2f}Ïƒ) is deeply negative â€” statistically oversold, mean-reversion LONG expected")
+        reversal.append(f"Z-Score ({req.zScore:.2f}σ) is deeply negative — statistically oversold, mean-reversion LONG expected")
         bull.append("zscore")
     elif req.zScore > 0.5:
-        bull.append(f"Z-Score ({req.zScore:.2f}Ïƒ) confirms a mild bullish drift above the mean")
+        bull.append(f"Z-Score ({req.zScore:.2f}σ) confirms a mild bullish drift above the mean")
     elif req.zScore < -0.5:
-        bear.append(f"Z-Score ({req.zScore:.2f}Ïƒ) confirms a mild bearish drift below the mean")
+        bear.append(f"Z-Score ({req.zScore:.2f}σ) confirms a mild bearish drift below the mean")
 
-    # â”€â”€ 2. Bayesian Posterior â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 2. Bayesian Posterior ────────────────────────────────────────────
     if req.bayesianPosterior > 0.65:
-        bull.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) strongly confirms bullish evidence â€” upside probability is elevated")
+        bull.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) strongly confirms bullish evidence — upside probability is elevated")
     elif req.bayesianPosterior > 0.6:
-        bull.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) leans bullish â€” evidence slightly favours upside")
+        bull.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) leans bullish — evidence slightly favours upside")
     elif req.bayesianPosterior < 0.35:
-        bear.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) strongly confirms bearish evidence â€” downside probability is elevated")
+        bear.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) strongly confirms bearish evidence — downside probability is elevated")
     elif req.bayesianPosterior < 0.4:
-        bear.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) leans bearish â€” evidence slightly favours downside")
+        bear.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) leans bearish — evidence slightly favours downside")
 
-    # â”€â”€ 3. RSI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 3. RSI ───────────────────────────────────────────────────────────
     if req.rsi < 30:
-        bull.append(f"RSI ({req.rsi:.1f}) signals capitulation â€” retail has over-sold; prepare for a high-velocity reversal long")
+        bull.append(f"RSI ({req.rsi:.1f}) signals capitulation — retail has over-sold; prepare for a high-velocity reversal long")
         reversal.append("RSI capitulation LONG")
     elif req.rsi > 70:
-        bear.append(f"RSI ({req.rsi:.1f}) signals overheating â€” retail is over-extended; prepare for a high-velocity reversal short")
+        bear.append(f"RSI ({req.rsi:.1f}) signals overheating — retail is over-extended; prepare for a high-velocity reversal short")
         reversal.append("RSI capitulation SHORT")
     elif req.rsi >= 55:
-        bull.append(f"RSI ({req.rsi:.1f}) is in bullish building zone â€” trend is healthy with upward momentum")
+        bull.append(f"RSI ({req.rsi:.1f}) is in bullish building zone — trend is healthy with upward momentum")
     elif req.rsi <= 40:
-        bear.append(f"RSI ({req.rsi:.1f}) is in bearish territory â€” downward pressure is sustained")
+        bear.append(f"RSI ({req.rsi:.1f}) is in bearish territory — downward pressure is sustained")
 
-    # â”€â”€ 4. OFI (Order Flow Imbalance) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 4. OFI (Order Flow Imbalance) ────────────────────────────────────
     if req.ofi > 10:
-        bull.append(f"OFI ({req.ofi:.1f}) shows positive order flow imbalance â€” buyers are aggressively lifting offers")
+        bull.append(f"OFI ({req.ofi:.1f}) shows positive order flow imbalance — buyers are aggressively lifting offers")
     elif req.ofi < -10:
-        bear.append(f"OFI ({req.ofi:.1f}) shows negative order flow imbalance â€” sellers are aggressively hitting bids")
+        bear.append(f"OFI ({req.ofi:.1f}) shows negative order flow imbalance — sellers are aggressively hitting bids")
 
-    # â”€â”€ 5. CVD (Cumulative Volume Delta) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 5. CVD (Cumulative Volume Delta) ─────────────────────────────────
     if req.cvd > 0:
-        bull.append(f"CVD ({req.cvd:.0f}) is positive â€” aggressive buyers dominate the tape")
+        bull.append(f"CVD ({req.cvd:.0f}) is positive — aggressive buyers dominate the tape")
     elif req.cvd < 0:
-        bear.append(f"CVD ({req.cvd:.0f}) is negative â€” aggressive sellers dominate the tape")
+        bear.append(f"CVD ({req.cvd:.0f}) is negative — aggressive sellers dominate the tape")
 
-    # â”€â”€ 6. Skewness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 6. Skewness ──────────────────────────────────────────────────────
     if req.skewness < -0.5:
-        bear.append(f"Return skewness ({req.skewness:.3f}) is negatively skewed â€” downside tail risk is elevated")
+        bear.append(f"Return skewness ({req.skewness:.3f}) is negatively skewed — downside tail risk is elevated")
     elif req.skewness > 0.5:
-        bull.append(f"Return skewness ({req.skewness:.3f}) is positively skewed â€” upside tail risk dominates")
+        bull.append(f"Return skewness ({req.skewness:.3f}) is positively skewed — upside tail risk dominates")
 
-    # â”€â”€ Tally votes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Tally votes ──────────────────────────────────────────────────────
     bull_score = sum(1 for x in bull if isinstance(x, str) and not x in ("zscore",)) + bull.count("zscore")
     # Count actual signal strings (not tags)
-    bull_signals = [x for x in bull if not x == "zscore"] + ([f"Z-Score {req.zScore:.2f}Ïƒ bullish"] if "zscore" in bull else [])
-    bear_signals = [x for x in bear if not x == "zscore"] + ([f"Z-Score {req.zScore:.2f}Ïƒ bearish"] if "zscore" in bear else [])
+    bull_signals = [x for x in bull if not x == "zscore"] + ([f"Z-Score {req.zScore:.2f}σ bullish"] if "zscore" in bull else [])
+    bear_signals = [x for x in bear if not x == "zscore"] + ([f"Z-Score {req.zScore:.2f}σ bearish"] if "zscore" in bear else [])
 
     bull_count = len([x for x in bull if isinstance(x, str)])
     bear_count = len([x for x in bear if isinstance(x, str)])
@@ -848,7 +848,7 @@ async def analyze_strategy(req: MacroStrategyRequest):
             + f" Dominant direction: {direction}. "
             f"Tape: speed={req.tapeSpeed}, dominant={req.tapeDominant}. "
             f"Wall context: {req.wallContext}. "
-            "Fade the extreme â€” enter counter-trend with tight risk."
+            "Fade the extreme — enter counter-trend with tight risk."
         )
     elif bull_count > bear_count and bull_count >= 2:
         verdict    = "BUY"
@@ -859,7 +859,7 @@ async def analyze_strategy(req: MacroStrategyRequest):
             + " ".join(f"{b.capitalize()}." for b in all_bull[:4])
             + f" Tape speed: {req.tapeSpeed}, dominant side: {req.tapeDominant}. "
             f"Wall context: {req.wallContext}. "
-            "All macro filters align â€” favour long entries on pullbacks to value."
+            "All macro filters align — favour long entries on pullbacks to value."
         )
     elif bear_count > bull_count and bear_count >= 2:
         verdict    = "SELL"
@@ -870,14 +870,14 @@ async def analyze_strategy(req: MacroStrategyRequest):
             + " ".join(f"{b.capitalize()}." for b in all_bear[:4])
             + f" Tape speed: {req.tapeSpeed}, dominant side: {req.tapeDominant}. "
             f"Wall context: {req.wallContext}. "
-            "Macro filters lean bearish â€” favour short entries at resistance or broken support."
+            "Macro filters lean bearish — favour short entries at resistance or broken support."
         )
     else:
         verdict    = "WAIT"
         confidence = 0.40
         mixed      = [x for x in bull + bear if isinstance(x, str)]
         analysis = (
-            f"WAIT on {req.symbol} @ {req.price:.2f} â€” signals are conflicting or insufficient. "
+            f"WAIT on {req.symbol} @ {req.price:.2f} — signals are conflicting or insufficient. "
             + (f"Mixed readings: {'; '.join(mixed[:3])}." if mixed else "No dominant signal detected.")
             + f" Tape speed: {req.tapeSpeed}. Wall context: {req.wallContext}. "
             "Do not force a trade. Wait for Z-Score divergence, OFI confirmation, and Bayesian alignment."
@@ -891,12 +891,12 @@ async def analyze_strategy(req: MacroStrategyRequest):
         "model_used": "quad-algo-v1",
     }
 
-# â”€â”€ Marketaux financial news (entity-tagged + sentiment) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Marketaux financial news (entity-tagged + sentiment) ───────────────────
 MARKETAUX_BASE = "https://api.marketaux.com/v1/news/all"
 
 
 def _marketaux_symbols(symbol: str = "") -> str:
-    """Map an internal pair (BTC/USDT, ETHUSDTâ€¦) to Marketaux entity symbols."""
+    """Map an internal pair (BTC/USDT, ETHUSDT…) to Marketaux entity symbols."""
     base = (symbol or "").upper().replace("/", "").replace("-", "")
     for quote in ("USDT", "USDC", "BUSD", "USD"):
         if base.endswith(quote):
@@ -998,7 +998,7 @@ async def get_market_intel(model: str = DEFAULT_MODEL, symbol: str = ""):
     return result
 
 
-# â”€â”€ Macro data (FRED) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Macro data (FRED) ──────────────────────────────────────────────────────
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 FRED_SERIES = {
     "fed_funds":    "DFF",        # Effective Fed Funds Rate
@@ -1065,7 +1065,7 @@ async def get_macro():
     return result
 
 
-# â”€â”€ FX rates (Frankfurter â€” ECB reference rates, no key) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── FX rates (Frankfurter — ECB reference rates, no key) ───────────────────
 # NOTE: host moved from api.frankfurter.app (301) to api.frankfurter.dev/v1
 FRANKFURTER_BASE = "https://api.frankfurter.dev/v1"
 
@@ -1084,7 +1084,7 @@ async def get_fx(base: str = "USD", symbols: str = "EUR,GBP,JPY,CHF,CAD,AUD"):
         return {"base": base, "rates": {}, "note": "fx unavailable"}
 
 
-# â”€â”€ Cross-venue derivatives (Binance / OKX / Bybit â€” public, no key) â”€â”€â”€â”€â”€â”€â”€
+# ── Cross-venue derivatives (Binance / OKX / Bybit — public, no key) ───────
 OKX_BASE = "https://www.okx.com"
 BYBIT_BASE = "https://api.bybit.com"
 COINBASE_BASE = "https://api.exchange.coinbase.com"
@@ -1161,7 +1161,7 @@ async def cross_venue(symbol: str = "BTCUSDT"):
 
 @app.get("/premium")
 async def coinbase_premium(symbol: str = "BTCUSDT"):
-    """Coinbase USD spot vs Binance USDT spot â€” US bid/ask pressure proxy."""
+    """Coinbase USD spot vs Binance USDT spot — US bid/ask pressure proxy."""
     sym = _norm_symbol(symbol)
     base = sym[:-4] if sym.endswith("USDT") else sym
     out = {"symbol": sym, "as_of": _now_iso(), "source": "coinbase+binance"}
@@ -1205,12 +1205,45 @@ async def coinbase_premium(symbol: str = "BTCUSDT"):
 
 @app.get("/funding-heatmap")
 async def funding_heatmap(limit: int = 12):
-    """Current funding across all Binance USDM perpetuals â€” highest / lowest."""
+    """Current funding across all Binance USDM perpetuals — highest / lowest."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             data = (await client.get("https://fapi.binance.com/fapi/v1/premiumIndex")).json()
     except Exception as e:
         return {"error": str(e), "as_of": _now_iso()}
+    if not isinstance(data, list):
+        # Binance rate-limits/blocks cloud egress IPs — fall back to Bybit linear.
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                bt = (await client.get("https://api.bybit.com/v5/market/tickers",
+                                       params={"category": "linear"})).json()
+            blist = ((bt or {}).get("result") or {}).get("list") or []
+            rows = []
+            for d in blist:
+                s = d.get("symbol", "")
+                if not s.endswith("USDT"):
+                    continue
+                try:
+                    rows.append({
+                        "symbol": s,
+                        "funding_rate": float(d.get("fundingRate") or 0.0),
+                        "mark_price": float(d.get("lastPrice") or 0.0),
+                        "next_funding_time": d.get("nextFundingTime"),
+                    })
+                except Exception:
+                    continue
+            if rows:
+                rows.sort(key=lambda r: r["funding_rate"], reverse=True)
+                return {
+                    "as_of": _now_iso(),
+                    "source": "bybit-linear",
+                    "count": len(rows),
+                    "highest": rows[:limit],
+                    "lowest": rows[-limit:][::-1],
+                }
+        except Exception:
+            pass
+        return {"error": f"binance premiumIndex unavailable: {str(data)[:160]}", "as_of": _now_iso()}
     rows = []
     for d in data:
         s = d.get("symbol", "")
@@ -1293,7 +1326,7 @@ async def oi_leaderboard(limit: int = 12, window: str = "24h"):
     return out
 
 
-# â”€â”€ Positioning: Long/Short + taker flow (Binance futures public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Positioning: Long/Short + taker flow (Binance futures public) ──────────
 LS_BASE = "https://fapi.binance.com/futures/data"
 
 
@@ -1350,7 +1383,7 @@ async def funding_history(symbol: str = "BTCUSDT", limit: int = 42):
     return out
 
 
-# â”€â”€ RSI screener (multi-timeframe, computed from Binance klines) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── RSI screener (multi-timeframe, computed from Binance klines) ───────────
 RSI_UNIVERSE_SIZE = 50
 _rsi_cache: Dict[str, Any] = {"at": 0.0, "payload": None}
 
@@ -1389,74 +1422,155 @@ async def rsi_screener(universe: int = RSI_UNIVERSE_SIZE):
 
     n = max(10, min(universe, 80))
     out = {"as_of": _now_iso(), "source": "binance-fapi", "timeframes": ["15m", "1h", "4h"], "rows": []}
+    errors: List[str] = []
+    rows: List[Dict[str, Any]] = []
+
+    def row_from(sym: str, meta: Dict[str, Dict[str, float]],
+                 r15: Optional[float], r1h: Optional[float], r4h: Optional[float]) -> Dict[str, Any]:
+        rsi = {
+            "15m": round(r15, 1) if r15 is not None else None,
+            "1h": round(r1h, 1) if r1h is not None else None,
+            "4h": round(r4h, 1) if r4h is not None else None,
+        }
+        vals = [v for v in rsi.values() if v is not None]
+        return {
+            "symbol": sym,
+            "price": meta[sym]["price"],
+            "change_24h": round(meta[sym]["change_24h"], 2),
+            "volume_usd": round(meta[sym]["volume_usd"], 0),
+            "rsi": rsi,
+            "rsi_avg": round(sum(vals) / len(vals), 1) if vals else None,
+        }
+
     async with httpx.AsyncClient(timeout=25.0) as client:
+        # 1) Binance USDM (primary)
         try:
             tickers = (await client.get("https://fapi.binance.com/fapi/v1/ticker/24hr")).json()
         except Exception as e:
-            out["error"] = str(e)
-            return out
-        if not isinstance(tickers, list):
-            out["error"] = f"ticker endpoint unavailable: {str(tickers)[:160]}"
-            return out
+            tickers = None
+            errors.append(f"binance tickers: {type(e).__name__}")
 
-        meta: Dict[str, Dict[str, float]] = {}
-        for t in tickers:
-            s = t.get("symbol", "")
-            if not s.endswith("USDT") or "_" in s:
-                continue
-            try:
-                vol = float(t.get("quoteVolume") or 0.0)
-                if vol <= 0:
+        if isinstance(tickers, list):
+            meta: Dict[str, Dict[str, float]] = {}
+            for t in tickers:
+                s = t.get("symbol", "")
+                if not s.endswith("USDT") or "_" in s:
                     continue
-                meta[s] = {
-                    "price": float(t.get("lastPrice") or 0.0),
-                    "change_24h": float(t.get("priceChangePercent") or 0.0),
-                    "volume_usd": vol,
-                }
-            except Exception:
-                continue
-
-        universe_syms = [s for s, _ in sorted(meta.items(), key=lambda kv: kv[1]["volume_usd"], reverse=True)[:n]]
-        sem = asyncio.Semaphore(8)
-
-        async def one(sym: str) -> Optional[Dict[str, Any]]:
-            async with sem:
                 try:
-                    kl = (await client.get(
-                        "https://fapi.binance.com/fapi/v1/klines",
-                        params={"symbol": sym, "interval": "15m", "limit": 500},
-                    )).json()
-                    if not isinstance(kl, list):
-                        return None
-                    closes = [float(k[4]) for k in kl]
+                    vol = float(t.get("quoteVolume") or 0.0)
+                    if vol <= 0:
+                        continue
+                    meta[s] = {
+                        "price": float(t.get("lastPrice") or 0.0),
+                        "change_24h": float(t.get("priceChangePercent") or 0.0),
+                        "volume_usd": vol,
+                    }
                 except Exception:
-                    return None
-            row: Dict[str, Any] = {
-                "symbol": sym,
-                "price": meta[sym]["price"],
-                "change_24h": round(meta[sym]["change_24h"], 2),
-                "volume_usd": round(meta[sym]["volume_usd"], 0),
-                "rsi": {},
-            }
-            for tf, step in (("15m", 1), ("1h", 4), ("4h", 16)):
-                v = _wilder_rsi(_resample(closes, step))
-                row["rsi"][tf] = round(v, 1) if v is not None else None
-            vals = [v for v in row["rsi"].values() if v is not None]
-            row["rsi_avg"] = round(sum(vals) / len(vals), 1) if vals else None
-            return row
+                    continue
 
-        rows = [r for r in await asyncio.gather(*[one(s) for s in universe_syms]) if r]
+            universe_syms = [s for s, _ in sorted(meta.items(), key=lambda kv: kv[1]["volume_usd"], reverse=True)[:n]]
+            out["universe"] = len(universe_syms)
+            sem = asyncio.Semaphore(3)
+
+            async def one(sym: str) -> Optional[Dict[str, Any]]:
+                async with sem:
+                    await asyncio.sleep(0.08)
+                    try:
+                        kl = (await client.get(
+                            "https://fapi.binance.com/fapi/v1/klines",
+                            params={"symbol": sym, "interval": "15m", "limit": 500},
+                        )).json()
+                        if not isinstance(kl, list):
+                            if len(errors) < 4:
+                                errors.append(f"{sym}: {str(kl)[:90]}")
+                            return None
+                        closes = [float(k[4]) for k in kl]
+                    except Exception as e:
+                        if len(errors) < 4:
+                            errors.append(f"{sym}: {type(e).__name__}")
+                        return None
+                return row_from(sym, meta,
+                                _wilder_rsi(closes),
+                                _wilder_rsi(_resample(closes, 4)),
+                                _wilder_rsi(_resample(closes, 16)))
+
+            rows = [r for r in await asyncio.gather(*[one(s) for s in universe_syms]) if r]
+        else:
+            errors.append(f"binance tickers: {str(tickers)[:90]}")
+
+        # 2) Bybit linear fallback — Binance often rate-limits cloud egress IPs.
+        if not rows:
+            out["source"] = "bybit-linear"
+            try:
+                bt = (await client.get("https://api.bybit.com/v5/market/tickers",
+                                       params={"category": "linear"})).json()
+            except Exception as e:
+                bt = None
+                errors.append(f"bybit tickers: {type(e).__name__}")
+
+            blist = ((bt or {}).get("result") or {}).get("list") or []
+            bmeta: Dict[str, Dict[str, float]] = {}
+            for t in blist:
+                s = t.get("symbol") or ""
+                if not s.endswith("USDT"):
+                    continue
+                try:
+                    turn = float(t.get("turnover24h") or 0.0)
+                    if turn <= 0:
+                        continue
+                    bmeta[s] = {
+                        "price": float(t.get("lastPrice") or 0.0),
+                        "change_24h": float(t.get("price24hPcnt") or 0.0) * 100.0,
+                        "volume_usd": turn,
+                    }
+                except Exception:
+                    continue
+
+            b_syms = [s for s, _ in sorted(bmeta.items(), key=lambda kv: kv[1]["volume_usd"], reverse=True)[:min(n, 40)]]
+            out["universe"] = len(b_syms)
+            bsem = asyncio.Semaphore(3)
+
+            async def klines(sym: str, interval: str, limit: int) -> List[float]:
+                async with bsem:
+                    await asyncio.sleep(0.05)
+                    d = (await client.get(
+                        "https://api.bybit.com/v5/market/kline",
+                        params={"category": "linear", "symbol": sym, "interval": interval, "limit": limit},
+                    )).json()
+                lst = ((d or {}).get("result") or {}).get("list") or []
+                return [float(k[4]) for k in reversed(lst)]
+
+            async def bone(sym: str) -> Optional[Dict[str, Any]]:
+                try:
+                    c15 = await klines(sym, "15", 200)
+                    c240 = await klines(sym, "240", 100)
+                except Exception as e:
+                    if len(errors) < 6:
+                        errors.append(f"bybit {sym}: {type(e).__name__}")
+                    return None
+                return row_from(sym, bmeta,
+                                _wilder_rsi(c15),
+                                _wilder_rsi(_resample(c15, 4)),
+                                _wilder_rsi(c240))
+
+            rows = [r for r in await asyncio.gather(*[bone(s) for s in b_syms]) if r]
 
     rows.sort(key=lambda r: r["rsi_avg"] if r["rsi_avg"] is not None else 999, reverse=True)
     out["rows"] = rows
     out["count"] = len(rows)
     out["overbought"] = sum(1 for r in rows if (r["rsi_avg"] or 0) >= 70)
     out["oversold"] = sum(1 for r in rows if (r["rsi_avg"] or 100) <= 30)
+    out["universe"] = out.get("universe", 0)
+    if errors:
+        out["debug"] = errors[:6]
+    if not rows:
+        out["error"] = "Market data unavailable from this region (rate limited or blocked); retry shortly."
+        return out
     _rsi_cache.update(at=now, payload=out)
     return out
 
 
-# â”€â”€ Liquidations (Binance forceOrder stream, collected in memory) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Liquidations (Binance forceOrder stream, collected in memory) ──────────
 def _liq_clusters(rows: List[Dict[str, Any]], top: int = 10) -> List[Dict[str, Any]]:
     buckets: Dict[float, Dict[str, Any]] = {}
     for x in rows:
@@ -1528,7 +1642,7 @@ async def liquidations(symbol: str = "", minutes: int = 60, limit: int = 15):
     }
 
 
-# â”€â”€ Hyperliquid whale positions (public API) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Hyperliquid whale positions (public API) ───────────────────────────────
 HL_INFO = "https://api.hyperliquid.xyz/info"
 HL_LEADERBOARD = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 _hl_whale_cache: Dict[str, Any] = {"at": 0.0, "payload": None}
@@ -1642,44 +1756,44 @@ async def alerts_evaluate(req: AlertEvaluateRequest):
     z_abs    = abs(req.zScore)
 
     if z_abs >= 1.5:
-        passed.append(f"Z-Score ({req.zScore:+.2f}Ïƒ) â‰¥ 1.5Ïƒ â€” meaningful dislocation")
+        passed.append(f"Z-Score ({req.zScore:+.2f}σ) ≥ 1.5σ — meaningful dislocation")
     else:
-        failed.append(f"Z-Score ({req.zScore:+.2f}Ïƒ) < 1.5Ïƒ â€” weak dislocation")
+        failed.append(f"Z-Score ({req.zScore:+.2f}σ) < 1.5σ — weak dislocation")
 
     if req.tacticalProbability >= 0.55:
-        passed.append(f"Tactical probability ({req.tacticalProbability:.2f}) â‰¥ 0.55 â€” moderate confidence setup")
+        passed.append(f"Tactical probability ({req.tacticalProbability:.2f}) ≥ 0.55 — moderate confidence setup")
     else:
-        failed.append(f"Tactical probability ({req.tacticalProbability:.2f}) < 0.55 â€” setup not mature")
+        failed.append(f"Tactical probability ({req.tacticalProbability:.2f}) < 0.55 — setup not mature")
 
     if req.aiScore >= 0.6:
-        passed.append(f"Algorithmic score ({req.aiScore:.2f}) â‰¥ 0.60 â€” model consensus confirmed")
+        passed.append(f"Algorithmic score ({req.aiScore:.2f}) ≥ 0.60 — model consensus confirmed")
     else:
-        failed.append(f"Algorithmic score ({req.aiScore:.2f}) < 0.60 â€” model score below threshold")
+        failed.append(f"Algorithmic score ({req.aiScore:.2f}) < 0.60 — model score below threshold")
 
     expected_direction = "LONG" if req.zScore < 0 else "SHORT"
 
     if expected_direction == "LONG":
         if req.bayesianPosterior >= 0.55:
-            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) â‰¥ 0.55 â€” bullish probability evidence")
+            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≥ 0.55 — bullish probability evidence")
         else:
-            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) < 0.55 â€” insufficient posterior evidence")
+            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) < 0.55 — insufficient posterior evidence")
     else:
         if req.bayesianPosterior <= 0.45:
-            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) â‰¤ 0.45 â€” bearish probability evidence")
+            passed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) ≤ 0.45 — bearish probability evidence")
         else:
-            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) > 0.45 â€” insufficient bearish evidence")
+            failed.append(f"Bayesian Posterior ({req.bayesianPosterior:.2f}) > 0.45 — insufficient bearish evidence")
 
     if req.expectedValueRR >= 1.0:
-        passed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) â‰¥ 1.0 R â€” favorable risk/reward setup")
+        passed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) ≥ 1.0 R — favorable risk/reward setup")
     else:
-        failed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) < 1.0 R â€” poor risk/reward expectancy")
+        failed.append(f"E[X] Math ({req.expectedValueRR:.2f} R) < 1.0 R — poor risk/reward expectancy")
 
     score        = len(passed)
     should_alert = score >= 3
 
     algo_analysis = None
     if should_alert:
-        # Direction: if z-score is negative â†’ oversold â†’ LONG; positive â†’ overbought â†’ SHORT
+        # Direction: if z-score is negative → oversold → LONG; positive → overbought → SHORT
         direction  = "LONG" if req.zScore < 0 else "SHORT"
         entry = req.dynamicEntry if req.dynamicEntry else req.price
         
@@ -1735,9 +1849,9 @@ async def send_telegram_alert(payload: TelegramPayload):
     if not bot_token or not chat_id:
         raise HTTPException(status_code=400, detail="Telegram credentials not configured on backend.")
 
-    emoji = "ðŸŸ¢" if payload.direction == "LONG" else "ðŸ”´"
+    emoji = "🟢" if payload.direction == "LONG" else "🔴"
     message = (
-        f"{emoji} *QUAD-DESK ALERT â€” {payload.symbol}*\n"
+        f"{emoji} *QUAD-DESK ALERT — {payload.symbol}*\n"
         f"Direction: *{payload.direction}*\n"
         f"Confidence: {payload.confidence*100:.0f}%\n"
         f"Entry: `{payload.entry}`\n"
@@ -1778,7 +1892,7 @@ async def alerts_test(payload: TelegramPayload):
     return await send_telegram_alert(payload)
 
 
-# â”€â”€ Whale Alert cache (5-min TTL) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Whale Alert cache (5-min TTL) ───────────────────────────────────────────
 _whale_cache: Dict[str, Any] = {"data": None, "ts": 0}
 WHALE_CACHE_TTL = 300  # seconds
 
@@ -1788,7 +1902,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
     """
     Proxy for the Whale Alert /v1/transactions endpoint.
     Returns normalised whale feed, block trades, inflow/outflow histogram,
-    and a rolling 4-hour bias value (-1 to +1) â€” same shape as the frontend
+    and a rolling 4-hour bias value (-1 to +1) — same shape as the frontend
     DarkPoolState expects.
     """
     # Serve cache if fresh
@@ -1796,7 +1910,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
         return _whale_cache["data"]
 
     if not WHALE_ALERT_API_KEY:
-        logger.warning("WHALE_ALERT_API_KEY not set â€” returning empty dark pool response")
+        logger.warning("WHALE_ALERT_API_KEY not set — returning empty dark pool response")
         return {
             "whaleFeed": [], "blockTrades": [], "inflowOutflow": [],
             "rawBias": 0.0, "isReal": False,
@@ -1822,7 +1936,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
             resp.raise_for_status()
             raw = resp.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"Whale Alert HTTP error: {e.response.status_code} â€” {e.response.text}")
+            logger.error(f"Whale Alert HTTP error: {e.response.status_code} — {e.response.text}")
             return {
                 "whaleFeed": [], "blockTrades": [], "inflowOutflow": [],
                 "rawBias": 0.0, "isReal": False,
@@ -1838,7 +1952,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
 
     transactions: list = raw.get("transactions", [])
 
-    # â”€â”€ Map to WhaleTransfer (whaleFeed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Map to WhaleTransfer (whaleFeed) ────────────────────────────────
     whale_feed = []
     for tx in transactions:
         amount_usd = float(tx.get("amount_usd", 0))
@@ -1856,7 +1970,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
 
         whale_feed.append({
             "id": tx.get("hash", f"wh-{tx.get('id', '')}"),
-            "timestamp": int(tx.get("timestamp", 0)) * 1000,  # â†’ ms
+            "timestamp": int(tx.get("timestamp", 0)) * 1000,  # → ms
             "amountBTC": amount_coin,
             "amountUSD": amount_usd,
             "fromLabel": from_label,
@@ -1865,7 +1979,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
             "exchangeFlag": to_exchange,
         })
 
-    # â”€â”€ Map to DarkPrint (blockTrades) â€” flag low-price-impact BTC txs â”€
+    # ── Map to DarkPrint (blockTrades) — flag low-price-impact BTC txs ─
     DAILY_VOLUME_BTC = 25000
     block_trades = []
     for tx in transactions:
@@ -1888,7 +2002,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
             "isSignificant": is_significant,
         })
 
-    # â”€â”€ Build hourly inflow/outflow histogram (last 8 h) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Build hourly inflow/outflow histogram (last 8 h) ────────────────
     now_ms = int(time.time()) * 1000
     buckets: Dict[int, Dict[str, float]] = {}
     for h in range(8):
@@ -1914,7 +2028,7 @@ async def get_whale_alerts(min_value: int = 10_000_000):
         for b in buckets.values()
     ]
 
-    # â”€â”€ Bias gauge: rolling 4-hour net signed flow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Bias gauge: rolling 4-hour net signed flow ────────────────────
     cutoff_ms = now_ms - 4 * 3_600_000
     recent = [t for t in whale_feed if t["timestamp"] >= cutoff_ms]
     buy_vol = sum(t["amountBTC"] for t in recent if t["direction"] == "INFLOW")
@@ -1945,7 +2059,7 @@ def system_status():
         "threads": process.num_threads(), "autonomous_active": state["autonomous_active"], "logs": list(log_buffer)
     }
 
-# â”€â”€ Backtesting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Backtesting ─────────────────────────────────────────────────────────────
 
 class BacktestRequest(BaseModel):
     symbol: str = "BTCUSDT"
@@ -1955,8 +2069,8 @@ class BacktestRequest(BaseModel):
     min_confidence: float = 0.70
     account_size: float = 100.0
     interval: str = "15m"   # candle interval for backtest
-    # â”€â”€ Realistic friction parameters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # slippage_bps: half-spread assumed on each entry AND exit leg (3 bps â‰ˆ $2.85 on a $95k BTC)
+    # ── Realistic friction parameters ─────────────────────────────────────────
+    # slippage_bps: half-spread assumed on each entry AND exit leg (3 bps ≈ $2.85 on a $95k BTC)
     slippage_bps: float = 3.0    # basis points per side (0.03%)
     # commission_pct: exchange fee per trade leg (Coinbase Advanced taker = 0.10%)
     commission_pct: float = 0.10  # percent per leg (0.10% = 0.001 fraction)
@@ -2033,8 +2147,8 @@ def _run_backtest_engine(
     total_costs_paid = 0.0  # accumulated slippage + commission across all trades
 
     # Pre-compute friction constants
-    slip_fraction = slippage_bps / 10_000.0  # e.g. 3 bps â†’ 0.0003
-    comm_fraction = commission_pct / 100.0   # e.g. 0.10% â†’ 0.001
+    slip_fraction = slippage_bps / 10_000.0  # e.g. 3 bps → 0.0003
+    comm_fraction = commission_pct / 100.0   # e.g. 0.10% → 0.001
 
     # Rolling window size for indicators
     WIN = 20  # Z-Score / VWAP window
@@ -2055,13 +2169,13 @@ def _run_backtest_engine(
         current = candles[i]
         price   = current["close"]
 
-        # â”€â”€ Z-Score â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Z-Score ───────────────────────────────────────────────────
         mean = sum(closes) / len(closes)
         variance = sum((c - mean) ** 2 for c in closes) / len(closes)
         std  = variance ** 0.5 or 1.0
         z    = (price - mean) / std
 
-        # â”€â”€ ATR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── ATR ───────────────────────────────────────────────────────
         tr_vals = []
         for j in range(1, len(prices)):
             hl = highs[j] - lows[j]
@@ -2070,7 +2184,7 @@ def _run_backtest_engine(
             tr_vals.append(max(hl, hc, lc))
         atr = sum(tr_vals[-ATR_WIN:]) / min(len(tr_vals), ATR_WIN) if tr_vals else price * 0.005
 
-        # â”€â”€ RSI (simple) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── RSI (simple) ──────────────────────────────────────────────
         gains, losses = [], []
         for j in range(1, len(closes)):
             d = closes[j] - closes[j - 1]
@@ -2081,13 +2195,13 @@ def _run_backtest_engine(
         rs    = avg_gain / avg_loss if avg_loss > 0 else 100
         rsi   = 100 - (100 / (1 + rs))
 
-        # â”€â”€ Simple Bayesian proxy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Simple Bayesian proxy ─────────────────────────────────────
         L_rsi = 3.0 if rsi > 55 else 0.333 if rsi < 45 else 1.0
         L_z   = 1.6 if z < -1.5 else 0.625 if z > 1.5 else 1.0
         bull_odds = L_rsi * L_z
         bayes = bull_odds / (bull_odds + 1.0)
 
-        # â”€â”€ Signal logic (simplified 4-stage) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Signal logic (simplified 4-stage) ─────────────────────────
         direction: Optional[str] = None
         confidence = 0.0
 
@@ -2110,7 +2224,7 @@ def _run_backtest_engine(
             i += 1
             continue
 
-        # â”€â”€ Risk sizing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Risk sizing ───────────────────────────────────────────────
         is_long   = direction == "BUY"
         sl_dist   = atr * 1.5
         tp_dist   = sl_dist * 1.5
@@ -2123,7 +2237,7 @@ def _run_backtest_engine(
             i += 1
             continue
 
-        # â”€â”€ Simulate exit on subsequent candles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Simulate exit on subsequent candles ───────────────────────
         result   = "OPEN"
         exit_price = price
         exit_idx   = i
@@ -2165,10 +2279,10 @@ def _run_backtest_engine(
             i += 1
             continue  # Skip unresolved trades in stats
 
-        # â”€â”€ Apply realistic friction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Apply realistic friction ──────────────────────────────────────────
         # Slippage: buying at a slightly worse price, selling at slightly worse price.
-        # For LONG  â†’ entry is marked-up,  exit is marked-down.
-        # For SHORT â†’ entry is marked-down, exit is marked-up.
+        # For LONG  → entry is marked-up,  exit is marked-down.
+        # For SHORT → entry is marked-down, exit is marked-up.
         if is_long:
             eff_entry = price * (1.0 + slip_fraction)       # pay the spread going in
             eff_exit  = exit_price * (1.0 - slip_fraction)  # lose the spread going out
@@ -2208,7 +2322,7 @@ def _run_backtest_engine(
         # Skip to after the exit candle (no overlapping trades)
         i = exit_idx + 1
 
-    # â”€â”€ Performance statistics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Performance statistics ─────────────────────────────────────────
     if not trades:
         return {
             "trades": [],
@@ -2261,7 +2375,7 @@ def _run_backtest_engine(
             "maxDrawdown": round(max_dd, 2),
             "sharpe":      sharpe,
             "finalEquity": round(equity, 2),
-            # Friction transparency â€” surface to UI so traders can see true cost of strategy
+            # Friction transparency — surface to UI so traders can see true cost of strategy
             "totalCostsPaid": round(total_costs_paid, 2),
         }
     }
@@ -2296,7 +2410,7 @@ async def run_backtest(req: BacktestRequest):
     interval = req.interval if req.interval in valid_intervals else "1h"
 
     logger.info(
-        f"Backtest: {req.symbol} {interval} {req.from_date}â†’{req.to_date} | "
+        f"Backtest: {req.symbol} {interval} {req.from_date}→{req.to_date} | "
         f"risk={req.risk_pct}% conf={req.min_confidence} "
         f"slip={req.slippage_bps}bps comm={req.commission_pct}%"
     )
@@ -2329,7 +2443,7 @@ async def run_backtest(req: BacktestRequest):
     # Print the core stats to the server console for easy terminal debugging
     stats = result.get("stats", {})
     logger.info(
-        f"ðŸ“Š RESULTS | Return: {stats.get('totalReturn', 0)}% | "
+        f"📊 RESULTS | Return: {stats.get('totalReturn', 0)}% | "
         f"Win Rate: {stats.get('winRate', 0)}% ({stats.get('wins', 0)}W/{stats.get('losses', 0)}L/{stats.get('breakevens', 0)}BE) | "
         f"Total Trades: {stats.get('totalTrades', 0)} | "
         f"Sharpe: {stats.get('sharpe', 0)} | "
@@ -2344,7 +2458,7 @@ async def run_backtest(req: BacktestRequest):
             logger.info(
                 f"Trade {idx+1}: {t['side']} at {t['entry']} | "
                 f"Result: {t['result']} (${t['pnl']}) | "
-                f"ðŸ§  Decisions -> [Conf: {t['confidence']}, Z-Score: {t['z_score']}, RSI: {t['rsi']}]"
+                f"🧠 Decisions -> [Conf: {t['confidence']}, Z-Score: {t['z_score']}, RSI: {t['rsi']}]"
             )
 
     return result
