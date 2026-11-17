@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import { useStore } from '../store';
 import { useVolumeProfileData } from '../hooks/useChart';
+import { signedColor } from './Premium';
 import { BarChart2, Activity, Layers, Minus, Anchor, TrendingUp, BrainCircuit, RefreshCw, Zap, ChevronRight, ChevronLeft, GripHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 
 const motion = m as any;
@@ -35,7 +36,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 const StatCard: React.FC<{ label: string; value: string; subValue?: string; color?: string }> = ({ label, value, subValue, color = "text-white" }) => (
-    <div className="p-4 rounded-xl bg-zinc-900/40 border border-white/5 flex flex-col justify-between">
+    <div className="premium-card p-4 flex flex-col justify-between">
         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">{label}</span>
         <div className="flex items-baseline gap-2 mt-1">
             <span className={`text-2xl font-black font-mono tracking-tighter ${color}`}>{value}</span>
@@ -282,7 +283,10 @@ const AnalyticsView: React.FC = () => {
                                 <BarChart2 size={24} />
                             </div>
                             <div>
-                                <h1 className="text-xl font-bold text-white tracking-tight">Order Flow</h1>
+                                <div className="flex items-center gap-2">
+                                    <h1 className="page-title text-xl font-bold tracking-tight">Order Flow</h1>
+                                    <span className="rounded-full border border-brand-accent/30 bg-brand-accent/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.14em] text-brand-accent">PRO</span>
+                                </div>
                                 <p className="text-xs text-zinc-400">Deep Market Analytics</p>
                             </div>
                         </div>
@@ -312,6 +316,33 @@ const AnalyticsView: React.FC = () => {
                             <span className="text-zinc-500 text-xs font-mono">Neural Flow Engine — Click to generate AI order flow analysis</span>
                             <ChevronRight size={12} className="ml-auto text-zinc-600" />
                         </button>
+                    )}
+
+                    {/* Session delta heat strip */}
+                    {candles.length > 0 && (
+                        <div className="premium-card p-3">
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Session delta heat</span>
+                                <span className="font-mono text-[9px] text-slate-600">green = net buying · red = net selling · last {Math.min(60, candles.length)} bars</span>
+                            </div>
+                            <div className="flex gap-px">
+                                {(() => {
+                                    const bars = candles.slice(-60);
+                                    const maxAbs = Math.max(...bars.map(c => Math.abs(c.delta || 0)), 1e-9);
+                                    return bars.map((c, i) => {
+                                        const d = c.delta || 0;
+                                        return (
+                                            <div
+                                                key={i}
+                                                className="h-9 flex-1 rounded-[2px]"
+                                                style={{ background: signedColor(d, maxAbs) }}
+                                                title={`${new Date((c.time as number) * 1000).toLocaleTimeString()} · delta ${d > 0 ? '+' : ''}${Math.round(d).toLocaleString()}`}
+                                            />
+                                        );
+                                    });
+                                })()}
+                            </div>
+                        </div>
                     )}
 
                     {/* Main Charts Area */}
