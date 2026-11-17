@@ -270,6 +270,64 @@ async def _okx_refresh_instruments(client: httpx.AsyncClient):
         logger.warning(f"okx instruments error: {e}")
 
 
+OKX_SEED_ULYS = [
+    "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "LINK", "ADA", "AVAX", "TON",
+    "SUI", "PEPE", "WIF", "OP", "ARB", "APT", "NEAR", "INJ", "SEI", "LTC",
+    "BCH", "TRX", "DOT", "ATOM", "FIL", "ETC", "UNI", "AAVE", "ORDI", "WLD",
+]
+OKX_SEEDED = False
+
+
+def _okx_add(inst: str, details: List[Dict[str, Any]], max_age_ms: int = 86400000):
+    meta = OKX_INSTRUMENTS.get(inst) or {}
+    ctval = float(meta.get("ctVal") or 1.0)
+    sym = (meta.get("uly") or inst).replace("-", "")
+    lo = (time.time() * 1000) - max_age_ms
+    for d in details or []:
+        try:
+            px = float(d.get("bkPx") or 0.0)
+            sz = float(d.get("sz") or 0.0)
+            ts = int(float(d.get("ts") or 0))
+            if px <= 0 or sz <= 0 or ts < lo:
+                continue
+            long_liq = d.get("posSide") == "long" or d.get("side") == "sell"
+            LIQUIDATIONS.append({
+                "t": ts,
+                "symbol": sym,
+                "side": "SELL" if long_liq else "BUY",
+                "price": px,
+                "qty": sz * ctval,
+                "notional": px * sz * ctval,
+                "venue": "okx",
+            })
+        except Exception:
+            continue
+
+
+async def _okx_seed_history(client: httpx.AsyncClient):
+    """Seed the buffer with the last 24h of OKX liquidations for major perps."""
+    global OKX_SEEDED
+    if OKX_SEEDED:
+        return
+    sem = asyncio.Semaphore(5)
+
+    async def seed(uly: str):
+        async with sem:
+            try:
+                d = (await client.get(
+                    "https://www.okx.com/api/v5/public/liquidation-orders",
+                    params={"instType": "SWAP", "uly": f"{uly}-USDT", "state": "filled", "limit": 100},
+                )).json()
+            except Exception:
+                return
+        for g in (d.get("data") or []):
+            _okx_add(g.get("instId") or "", g.get("details") or [], 86400000)
+
+    await asyncio.gather(*[seed(u) for u in OKX_SEED_ULYS])
+    OKX_SEEDED = True
+    logger.info(f"okx liquidation history seeded: {len(LIQUIDATIONS)} events")
+
+
 async def _okx_liquidation_worker():
     """Collect OKX SWAP liquidations (public stream) into the same buffer."""
     global LIQ_STARTED_AT
@@ -279,6 +337,7 @@ async def _okx_liquidation_worker():
         while True:
             try:
                 await _okx_refresh_instruments(client)
+                await _okx_seed_history(client)
                 async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                     await ws.send(json.dumps({
                         "op": "subscribe",
@@ -291,29 +350,8 @@ async def _okx_liquidation_worker():
                         try:
                             payload = json.loads(msg)
                             for item in payload.get("data") or []:
-                                inst = item.get("instId") or ""
-                                meta = OKX_INSTRUMENTS.get(inst) or {}
-                                ctval = float(meta.get("ctVal") or 1.0)
-                                sym = (meta.get("uly") or inst).replace("-", "")
-                                for d in item.get("details") or []:
-                                    px = float(d.get("bkPx") or 0.0)
-                                    sz = float(d.get("sz") or 0.0)
-                                    ts = int(float(d.get("ts") or 0))
-                                    if px <= 0 or sz <= 0:
-                                        continue
-                                    # OKX replays a snapshot on subscribe; drop stale entries.
-                                    if ts < (time.time() - 900) * 1000:
-                                        continue
-                                    long_liq = d.get("posSide") == "long" or d.get("side") == "sell"
-                                    LIQUIDATIONS.append({
-                                        "t": ts,
-                                        "symbol": sym,
-                                        "side": "SELL" if long_liq else "BUY",
-                                        "price": px,
-                                        "qty": sz * ctval,
-                                        "notional": px * sz * ctval,
-                                        "venue": "okx",
-                                    })
+                                # Live stream: keep events from the last 15 minutes.
+                                _okx_add(item.get("instId") or "", item.get("details") or [], 900000)
                         except Exception:
                             continue
             except Exception as e:
