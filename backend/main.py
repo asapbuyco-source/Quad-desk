@@ -1282,6 +1282,7 @@ async def funding_heatmap(limit: int = 12):
                     "count": len(rows),
                     "highest": rows[:limit],
                     "lowest": rows[-limit:][::-1],
+                    "all": sorted(rows, key=lambda r: abs(r["funding_rate"]), reverse=True)[:80],
                 }
         except Exception:
             pass
@@ -1307,6 +1308,7 @@ async def funding_heatmap(limit: int = 12):
         "count": len(rows),
         "highest": rows[:limit],
         "lowest": rows[-limit:][::-1],
+        "all": sorted(rows, key=lambda r: abs(r["funding_rate"]), reverse=True)[:80],
     }
 
 
@@ -1663,9 +1665,24 @@ async def liquidations(symbol: str = "", minutes: int = 60, limit: int = 15):
 
     largest = sorted(rows, key=lambda x: x["notional"], reverse=True)[:max(1, min(limit, 50))]
 
+    # 24 hourly buckets for the heat strip (independent of the selected window).
+    buffer_rows = list(LIQUIDATIONS)
+    end_ms = time.time() * 1000
+    hourly = []
+    for h in range(23, -1, -1):
+        hi = end_ms - h * 3600000
+        lo_h = hi - 3600000
+        sel = [x for x in buffer_rows if lo_h <= x["t"] < hi]
+        hourly.append({
+            "t": int(hi),
+            "long_usd": round(sum(x["notional"] for x in sel if x["side"] == "SELL"), 0),
+            "short_usd": round(sum(x["notional"] for x in sel if x["side"] == "BUY"), 0),
+            "count": len(sel),
+        })
+
     return {
         "as_of": _now_iso(),
-        "source": "binance-forceOrder",
+        "source": "binance-forceOrder+okx",
         "symbol": sym or "all",
         "minutes": minutes,
         "buffered": len(LIQUIDATIONS),
@@ -1673,6 +1690,7 @@ async def liquidations(symbol: str = "", minutes: int = 60, limit: int = 15):
         "totals": {"long_usd": round(long_usd, 0), "short_usd": round(short_usd, 0), "count": len(rows)},
         "by_symbol": sym_rows,
         "clusters": _liq_clusters(rows),
+        "hourly": hourly,
         "largest": [{
             "t": datetime.utcfromtimestamp(x["t"] / 1000).isoformat() + "Z",
             "symbol": x["symbol"],

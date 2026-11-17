@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { RefreshCw, ArrowUpRight, ArrowDownRight, Layers, Radio, Building2, TrendingUp } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import { useStore } from '../store';
+import { PageHeader, HeatCell, signedColor } from './Premium';
 
 interface VenueRow {
   price?: number;
@@ -23,8 +24,10 @@ interface FundingRow {
 interface FundingHeatmapResponse {
   as_of: string;
   count: number;
+  source?: string;
   highest: FundingRow[];
   lowest: FundingRow[];
+  all?: FundingRow[];
 }
 interface PremiumResponse {
   symbol: string;
@@ -132,33 +135,27 @@ const DerivativesView: React.FC = () => {
   return (
     <div className="h-full overflow-y-auto p-5 lg:p-6 pb-28 lg:pb-6">
       <div className="mx-auto max-w-6xl">
-        {/* Header */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-bold tracking-wide text-white">
-              <Layers size={18} className="text-brand-accent" /> Derivatives & Flows
-            </h1>
-            <p className="mt-1 text-xs text-slate-500">
-              Funding and open interest across venues · US spot premium · funding extremes market-wide
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <select
-              value={symbol}
-              onChange={e => setSymbol(e.target.value)}
-              className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none"
-            >
-              {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <button
-              onClick={() => load(symbol)}
-              disabled={loading}
-              className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50"
-            >
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
-            </button>
-          </div>
-        </div>
+        <PageHeader
+          icon={<Layers size={16} />}
+          title="Derivatives & Flows"
+          badge="PRO"
+          subtitle="Funding and open interest across venues · US spot premium · funding extremes market-wide"
+        >
+          <select
+            value={symbol}
+            onChange={e => setSymbol(e.target.value)}
+            className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none"
+          >
+            {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button
+            onClick={() => load(symbol)}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+        </PageHeader>
 
         {error && (
           <div className="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">{error}</div>
@@ -253,7 +250,30 @@ const DerivativesView: React.FC = () => {
         </div>
         {heat?.as_of && (
           <div className="mt-2 flex items-center gap-1.5 font-mono text-[10px] text-slate-600">
-            <Radio size={10} /> {heat.count} Binance USDM perpetuals · recorded {heat.as_of} · source binance-fapi
+            <Radio size={10} /> {heat.count} perpetuals · recorded {heat.as_of} · source {heat.source || 'binance-fapi'}
+          </div>
+        )}
+
+        {/* Funding heatmap grid */}
+        {!!heat?.all?.length && (
+          <div className="mt-4 premium-card p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Market funding heatmap</span>
+              <span className="font-mono text-[9px] text-slate-600">red = positive (longs pay) · green = negative</span>
+            </div>
+            <div className="grid grid-cols-6 gap-1 sm:grid-cols-10 lg:grid-cols-[repeat(16,minmax(0,1fr))]">
+              {(() => {
+                const maxAbs = Math.max(...heat.all!.map(r => Math.abs(r.funding_rate)), 1e-9);
+                return heat.all!.map(r => (
+                  <HeatCell
+                    key={r.symbol}
+                    text={r.symbol.replace('USDT', '')}
+                    color={signedColor(r.funding_rate, maxAbs)}
+                    title={`${r.symbol} · ${(r.funding_rate * 100).toFixed(4)}%`}
+                  />
+                ));
+              })()}
+            </div>
           </div>
         )}
 

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Flame, RefreshCw, ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
+import { PageHeader } from './Premium';
 
 interface Cluster { price: number; long_usd: number; short_usd: number; total_usd: number; count: number }
 interface SymRow { symbol: string; long_usd: number; short_usd: number; total_usd: number; count: number }
@@ -15,6 +16,7 @@ interface LiqResponse {
   by_symbol: SymRow[];
   clusters: Cluster[];
   largest: Largest[];
+  hourly?: { t: number; long_usd: number; short_usd: number; count: number }[];
   error?: string;
 }
 
@@ -57,48 +59,43 @@ const LiquidationPage: React.FC = () => {
   return (
     <div className="h-full overflow-y-auto p-5 lg:p-6 pb-28 lg:pb-6">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-bold tracking-wide text-white">
-              <Flame size={18} className="text-brand-accent" /> Liquidations
-            </h1>
-            <p className="mt-1 text-xs text-slate-500">
-              Forced orders from Binance USDM — long liqs (red) vs short liqs (green), clustered by price
-            </p>
+        <PageHeader
+          icon={<Flame size={16} />}
+          title="Liquidations"
+          badge="PRO"
+          subtitle="Forced orders from Binance + OKX — long liqs (red) vs short liqs (green), clustered by price"
+        >
+          <select value={symbol} onChange={e => setSymbol(e.target.value)}
+            className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none">
+            {SYMBOLS.map(s => <option key={s || 'all'} value={s}>{s ? s.replace('USDT', '') : 'All symbols'}</option>)}
+          </select>
+          <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
+            {WINDOWS.map(w => (
+              <button key={w} onClick={() => setMinutes(w)}
+                className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                  minutes === w ? 'bg-brand-accent/20 text-brand-accent' : 'text-slate-500 hover:text-slate-300'}`}>
+                {windowLabel(w)}
+              </button>
+            ))}
           </div>
-          <div className="flex items-center gap-2">
-            <select value={symbol} onChange={e => setSymbol(e.target.value)}
-              className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none">
-              {SYMBOLS.map(s => <option key={s || 'all'} value={s}>{s ? s.replace('USDT', '') : 'All symbols'}</option>)}
-            </select>
-            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
-              {WINDOWS.map(w => (
-                <button key={w} onClick={() => setMinutes(w)}
-                  className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
-                    minutes === w ? 'bg-brand-accent/20 text-brand-accent' : 'text-slate-500 hover:text-slate-300'}`}>
-                  {windowLabel(w)}
-                </button>
-              ))}
-            </div>
-            <button onClick={() => load(symbol, minutes)} disabled={loading}
-              className="rounded-lg border border-white/10 p-1.5 text-slate-300 hover:bg-white/5 disabled:opacity-50">
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
+          <button onClick={() => load(symbol, minutes)} disabled={loading}
+            className="rounded-lg border border-white/10 p-1.5 text-slate-300 hover:bg-white/5 disabled:opacity-50">
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </PageHeader>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="fintech-card p-4">
+          <div className="premium-card p-4">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Long liquidations</div>
             <div className="mt-1 font-mono text-xl font-black text-rose-400">{usd(data?.totals.long_usd ?? 0)}</div>
             <div className="mt-1 text-[10px] text-slate-500">{data?.totals.count ?? 0} forced orders</div>
           </div>
-          <div className="fintech-card p-4">
+          <div className="premium-card p-4">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Short liquidations</div>
             <div className="mt-1 font-mono text-xl font-black text-emerald-400">{usd(data?.totals.short_usd ?? 0)}</div>
             <div className="mt-1 text-[10px] text-slate-500">in the last {windowLabel(minutes)}</div>
           </div>
-          <div className="fintech-card p-4">
+          <div className="premium-card p-4">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Long share</div>
             <div className="mt-1 font-mono text-xl font-black text-white">{longShare.toFixed(0)}%</div>
             <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-800">
@@ -108,8 +105,38 @@ const LiquidationPage: React.FC = () => {
           </div>
         </div>
 
+        {!!data?.hourly?.length && (
+          <div className="mt-4 premium-card p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">24h liquidation heat</span>
+              <span className="font-mono text-[9px] text-slate-600">red = longs liquidated · green = shorts</span>
+            </div>
+            <div className="flex h-24 items-end gap-1">
+              {(() => {
+                const max = Math.max(1, ...data.hourly!.map(h => h.long_usd + h.short_usd));
+                return data.hourly!.map((h, i) => {
+                  const total = h.long_usd + h.short_usd;
+                  const lh = (h.long_usd / max) * 100;
+                  const sh = (h.short_usd / max) * 100;
+                  return (
+                    <div key={i} className="group relative flex h-full flex-1 flex-col justify-end gap-px"
+                      title={`${new Date(h.t).toLocaleTimeString([], { hour: '2-digit' })} · L ${usd(h.long_usd)} / S ${usd(h.short_usd)}`}>
+                      <div className="w-full rounded-sm bg-rose-500/80" style={{ height: `${lh}%` }} />
+                      <div className="w-full rounded-sm bg-emerald-500/80" style={{ height: `${sh}%` }} />
+                      {total === 0 && <div className="w-full rounded-sm bg-white/5" style={{ height: '2%' }} />}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="mt-1 flex justify-between font-mono text-[9px] text-slate-600">
+              <span>-24h</span><span>-18h</span><span>-12h</span><span>-6h</span><span>now</span>
+            </div>
+          </div>
+        )}
+
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="fintech-card p-4">
+          <div className="premium-card p-4">
             <div className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">Price clusters</div>
             <div className="space-y-1.5">
               {(data?.clusters || []).map(c => (

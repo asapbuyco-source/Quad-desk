@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Users, RefreshCw, Activity } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import { useStore } from '../store';
+import { PageHeader, StatTile } from './Premium';
 
 interface Point { t: number; long?: number; short?: number; ratio: number; buy?: number; sell?: number }
 interface Bucket { latest?: Point; series?: Point[]; error?: string }
@@ -96,38 +97,72 @@ const PositioningPage: React.FC = () => {
 
   const s = data?.series || {};
   const takerRatio = taker?.latest?.ratio;
+  const retail = s.global_accounts?.latest?.ratio;
+  const topAcc = s.top_accounts?.latest?.ratio;
+  const topPos = s.top_positions?.latest?.ratio;
+  const divergence = retail !== undefined && topPos !== undefined ? retail - topPos : undefined;
 
   return (
     <div className="h-full overflow-y-auto p-5 lg:p-6 pb-28 lg:pb-6">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-bold tracking-wide text-white">
-              <Users size={18} className="text-brand-accent" /> Positioning
-            </h1>
-            <p className="mt-1 text-xs text-slate-500">
-              Retail vs top-trader long/short, top positions and taker flow — Binance USDM futures
-            </p>
+        <PageHeader
+          icon={<Users size={16} />}
+          title="Positioning"
+          badge="PRO"
+          subtitle="Retail vs top-trader long/short, top positions and taker flow — Binance USDM futures"
+        >
+          <select value={symbol} onChange={e => setSymbol(e.target.value)}
+            className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none">
+            {SYMBOLS.map(sym => <option key={sym} value={sym}>{sym}</option>)}
+          </select>
+          <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
+            {PERIODS.map(p => (
+              <button key={p} onClick={() => setPeriod(p)}
+                className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                  period === p ? 'bg-brand-accent/20 text-brand-accent' : 'text-slate-500 hover:text-slate-300'}`}>
+                {p}
+              </button>
+            ))}
           </div>
-          <div className="flex items-center gap-2">
-            <select value={symbol} onChange={e => setSymbol(e.target.value)}
-              className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none">
-              {SYMBOLS.map(sym => <option key={sym} value={sym}>{sym}</option>)}
-            </select>
-            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
-              {PERIODS.map(p => (
-                <button key={p} onClick={() => setPeriod(p)}
-                  className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
-                    period === p ? 'bg-brand-accent/20 text-brand-accent' : 'text-slate-500 hover:text-slate-300'}`}>
-                  {p}
-                </button>
-              ))}
-            </div>
-            <button onClick={() => load(symbol, period)} disabled={loading}
-              className="rounded-lg border border-white/10 p-1.5 text-slate-300 hover:bg-white/5 disabled:opacity-50">
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-            </button>
-          </div>
+          <button onClick={() => load(symbol, period)} disabled={loading}
+            className="rounded-lg border border-white/10 p-1.5 text-slate-300 hover:bg-white/5 disabled:opacity-50">
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </PageHeader>
+
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile
+            label="Retail ratio"
+            value={retail === undefined ? '—' : retail.toFixed(2)}
+            sub="all accounts"
+            tone={retail === undefined ? 'text-slate-500' : retail >= 1 ? 'text-emerald-400' : 'text-rose-400'}
+            spark={s.global_accounts?.series?.map(p => p.ratio)}
+            sparkColor="#60a5fa"
+          />
+          <StatTile
+            label="Top traders"
+            value={topAcc === undefined ? '—' : topAcc.toFixed(2)}
+            sub="by account"
+            tone={topAcc === undefined ? 'text-slate-500' : topAcc >= 1 ? 'text-emerald-400' : 'text-rose-400'}
+            spark={s.top_accounts?.series?.map(p => p.ratio)}
+            sparkColor="#a78bfa"
+          />
+          <StatTile
+            label="Top positions"
+            value={topPos === undefined ? '—' : topPos.toFixed(2)}
+            sub="by position size"
+            tone={topPos === undefined ? 'text-slate-500' : topPos >= 1 ? 'text-emerald-400' : 'text-rose-400'}
+            spark={s.top_positions?.series?.map(p => p.ratio)}
+            sparkColor="#fbbf24"
+          />
+          <StatTile
+            label="Divergence"
+            value={divergence === undefined ? '—' : `${divergence >= 0 ? '+' : ''}${divergence.toFixed(2)}`}
+            sub={divergence === undefined ? 'retail − top' : divergence > 0.5 ? 'retail crowded long' : divergence < -0.5 ? 'retail crowded short' : 'aligned'}
+            tone={divergence === undefined ? 'text-slate-500' : Math.abs(divergence) > 0.5 ? 'text-amber-300' : 'text-slate-300'}
+            spark={s.taker?.series?.map(p => p.ratio)}
+            sparkColor="#f472b6"
+          />
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Wallet, RefreshCw, ExternalLink } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
+import { PageHeader } from './Premium';
 
 interface Position {
   coin: string;
@@ -52,29 +53,72 @@ const WhalesPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const whales = data?.whales || [];
+  const coinMap: Record<string, number> = {};
+  whales.forEach(w => w.positions.forEach(p => { coinMap[p.coin] = (coinMap[p.coin] || 0) + p.notional; }));
+  const coinRows = Object.entries(coinMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const maxCoin = Math.max(1, ...coinRows.map(r => r[1]));
+  const totalLong = whales.reduce((a, w) => a + w.long_usd, 0);
+  const totalShort = whales.reduce((a, w) => a + w.short_usd, 0);
+  const biasLong = totalLong + totalShort > 0 ? (totalLong / (totalLong + totalShort)) * 100 : 50;
+
   return (
     <div className="h-full overflow-y-auto p-5 lg:p-6 pb-28 lg:pb-6">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-bold tracking-wide text-white">
-              <Wallet size={18} className="text-brand-accent" /> Whale Positions
-            </h1>
-            <p className="mt-1 text-xs text-slate-500">
-              Largest Hyperliquid accounts and their biggest open perpetual positions · cached 10 min
-            </p>
-          </div>
+        <PageHeader
+          icon={<Wallet size={16} />}
+          title="Whale Positions"
+          badge="PRO"
+          subtitle="Largest Hyperliquid accounts and their biggest open perpetual positions · cached 10 min"
+        >
           <button onClick={load} disabled={loading}
             className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
-        </div>
+        </PageHeader>
 
         {data?.error && (
           <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
             {data.error}
           </div>
         )}
+
+        <div className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="premium-card p-4">
+            <div className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">Aggregate whale exposure</div>
+            <div className="space-y-1.5">
+              {coinRows.map(([coin, notional]) => (
+                <div key={coin} className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 font-mono text-[11px] text-slate-400">{coin}</span>
+                  <div className="h-3 flex-1 overflow-hidden rounded bg-slate-800/60">
+                    <div className="h-full rounded bg-gradient-to-r from-brand-accent/50 to-brand-accent"
+                      style={{ width: `${(notional / maxCoin) * 100}%` }} />
+                  </div>
+                  <span className="w-16 shrink-0 text-right font-mono text-[10px] text-slate-500">{usd(notional)}</span>
+                </div>
+              ))}
+              {!coinRows.length && <div className="py-6 text-center text-xs text-slate-500">No exposure data</div>}
+            </div>
+          </div>
+          <div className="premium-card p-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Whale net bias</div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="font-mono text-3xl font-black text-white">{biasLong.toFixed(0)}%</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-500">long</span>
+            </div>
+            <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-800">
+              <div className="bg-emerald-500" style={{ width: `${biasLong}%` }} />
+              <div className="bg-rose-500" style={{ width: `${100 - biasLong}%` }} />
+            </div>
+            <div className="mt-2 flex justify-between font-mono text-[10px]">
+              <span className="text-emerald-400">L {usd(totalLong)}</span>
+              <span className="text-rose-400">S {usd(totalShort)}</span>
+            </div>
+            <div className="mt-3 font-mono text-[9px] text-slate-600">
+              across {whales.length} tracked accounts · positions ≥ $10K
+            </div>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {(data?.whales || []).map(w => {

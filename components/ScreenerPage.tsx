@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Thermometer, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
+import { PageHeader, rsiColor } from './Premium';
 
 interface RsiRow {
   symbol: string;
@@ -21,15 +22,6 @@ interface RsiResponse {
 }
 
 type SortKey = 'symbol' | 'price' | 'change_24h' | 'rsi_avg' | '15m' | '1h' | '4h';
-
-const rsiColor = (v: number | null | undefined): string => {
-  if (v === null || v === undefined) return 'rgba(148,163,184,0.07)';
-  if (v >= 70) return 'rgba(244,63,94,0.55)';
-  if (v >= 60) return 'rgba(244,63,94,0.28)';
-  if (v <= 30) return 'rgba(16,185,129,0.55)';
-  if (v <= 40) return 'rgba(16,185,129,0.28)';
-  return 'rgba(148,163,184,0.10)';
-};
 
 const fmtUsd = (v: number) => {
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
@@ -80,26 +72,50 @@ const ScreenerPage: React.FC = () => {
   return (
     <div className="h-full overflow-y-auto p-5 lg:p-6 pb-28 lg:pb-6">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-bold tracking-wide text-white">
-              <Thermometer size={18} className="text-brand-accent" /> RSI Screener
-            </h1>
-            <p className="mt-1 text-xs text-slate-500">
-              Multi-timeframe RSI on the most liquid Binance USDM perpetuals · green oversold, red overbought
-            </p>
+        <PageHeader
+          icon={<Thermometer size={16} />}
+          title="RSI Screener"
+          badge="PRO"
+          subtitle="Multi-timeframe RSI on the most liquid perpetuals · green oversold, red overbought"
+        >
+          <div className="flex items-center gap-3 font-mono text-[11px]">
+            <span className="text-emerald-400">{data?.oversold ?? 0} oversold</span>
+            <span className="text-rose-400">{data?.overbought ?? 0} overbought</span>
+            <span className="text-slate-500">{data?.count ?? 0} symbols</span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-3 font-mono text-[11px]">
-              <span className="text-emerald-400">{data?.oversold ?? 0} oversold</span>
-              <span className="text-rose-400">{data?.overbought ?? 0} overbought</span>
-              <span className="text-slate-500">{data?.count ?? 0} symbols</span>
-            </div>
-            <button onClick={load} disabled={loading}
-              className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50">
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
-            </button>
-          </div>
+          <button onClick={load} disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50">
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+        </PageHeader>
+
+        <div className="mb-4 grid grid-cols-3 gap-3">
+          {tf.map(t => {
+            const vals = (data?.rows || []).map(r => r.rsi[t]).filter((v): v is number => v !== null && v !== undefined);
+            const ob = vals.filter(v => v >= 70).length;
+            const os = vals.filter(v => v <= 30).length;
+            const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+            return (
+              <div key={t} className="premium-card p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t} breadth</span>
+                  <span className="font-mono text-[10px] text-slate-500">{vals.length}</span>
+                </div>
+                <div className="mt-1.5 font-mono text-lg font-black text-white">
+                  {avg === null ? '—' : avg.toFixed(0)}
+                  <span className="ml-1 text-[10px] font-normal text-slate-500">avg RSI</span>
+                </div>
+                <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-800">
+                  <div className="bg-emerald-500" style={{ width: `${vals.length ? (os / vals.length) * 100 : 0}%` }} />
+                  <div className="bg-rose-500" style={{ width: `${vals.length ? (ob / vals.length) * 100 : 0}%` }} />
+                </div>
+                <div className="mt-1 flex justify-between font-mono text-[9px]">
+                  <span className="text-emerald-400/80">{os} OS</span>
+                  <span className="text-rose-400/80">{ob} OB</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {data?.error && (
