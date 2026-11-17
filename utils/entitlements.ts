@@ -32,11 +32,13 @@ export const PORTAL_URL: string =
 const LS_LICENSE_API = 'https://api.lemonsqueezy.com/v1/licenses';
 
 /**
- * Safe rollout: the paywall only enforces when a checkout path exists.
- * Until then every desk stays open (no accidental lockouts while billing
- * is being set up). Set VITE_CHECKOUT_URL to enable gating.
+ * Safe rollout: the paywall only enforces when a checkout path exists, unless
+ * it is explicitly forced on for previewing the locked experience.
+ * Set VITE_CHECKOUT_URL for real billing, or VITE_PAYWALL_FORCE=1 to preview.
  */
-export const PAYWALL_ENABLED: boolean = !!CHECKOUT_URL;
+const truthy = (v?: string) => ['1', 'true', 'yes', 'on'].includes((v || '').toLowerCase());
+export const PAYWALL_ENABLED: boolean =
+  !!CHECKOUT_URL || truthy((import.meta as any).env?.VITE_PAYWALL_FORCE);
 
 /** Tabs available on the free tier. */
 export const FREE_TABS = new Set([

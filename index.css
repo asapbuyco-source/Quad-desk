@@ -72,3 +72,10 @@ body {
     opacity: 0;
   }
 }
+
+/* Settings: compact density & reduced motion */
+html[data-density='compact'] .fintech-card { padding: 0.75rem; }
+html[data-density='compact'] .fintech-card.p-5 { padding: 0.875rem; }
+html[data-motion='reduced'] *,
+html[data-motion='reduced'] *::before,
+html[data-motion='reduced'] *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
