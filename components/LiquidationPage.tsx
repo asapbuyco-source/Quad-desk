@@ -4,7 +4,7 @@ import { apiFetch } from '../utils/apiClient';
 
 interface Cluster { price: number; long_usd: number; short_usd: number; total_usd: number; count: number }
 interface SymRow { symbol: string; long_usd: number; short_usd: number; total_usd: number; count: number }
-interface Largest { t: string; symbol: string; side: 'long' | 'short'; price: number; notional: number }
+interface Largest { t: string; symbol: string; venue?: string; side: 'long' | 'short'; price: number; notional: number }
 interface LiqResponse {
   as_of: string;
   symbol: string;
@@ -19,7 +19,8 @@ interface LiqResponse {
 }
 
 const SYMBOLS = ['', 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
-const WINDOWS = [15, 60, 240];
+const WINDOWS = [60, 240, 1440];
+const windowLabel = (w: number) => (w >= 1440 ? '24h' : `${w}m`);
 
 const usd = (v: number) => {
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
@@ -31,7 +32,7 @@ const time = (t: string) => { try { return new Date(t).toLocaleTimeString(); } c
 
 const LiquidationPage: React.FC = () => {
   const [symbol, setSymbol] = useState('');
-  const [minutes, setMinutes] = useState(60);
+  const [minutes, setMinutes] = useState(240);
   const [data, setData] = useState<LiqResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -75,7 +76,7 @@ const LiquidationPage: React.FC = () => {
                 <button key={w} onClick={() => setMinutes(w)}
                   className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
                     minutes === w ? 'bg-brand-accent/20 text-brand-accent' : 'text-slate-500 hover:text-slate-300'}`}>
-                  {w}m
+                  {windowLabel(w)}
                 </button>
               ))}
             </div>
@@ -95,7 +96,7 @@ const LiquidationPage: React.FC = () => {
           <div className="fintech-card p-4">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Short liquidations</div>
             <div className="mt-1 font-mono text-xl font-black text-emerald-400">{usd(data?.totals.short_usd ?? 0)}</div>
-            <div className="mt-1 text-[10px] text-slate-500">in the last {minutes} min</div>
+            <div className="mt-1 text-[10px] text-slate-500">in the last {windowLabel(minutes)}</div>
           </div>
           <div className="fintech-card p-4">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Long share</div>
@@ -139,6 +140,7 @@ const LiquidationPage: React.FC = () => {
                       ? <ArrowDownRight size={12} className="text-rose-400" />
                       : <ArrowUpRight size={12} className="text-emerald-400" />}
                     <span className="font-mono text-[11px] text-slate-300">{x.symbol.replace('USDT', '')}</span>
+                    <span className="font-mono text-[8px] uppercase text-slate-600">{x.venue || 'binance'}</span>
                     <span className="font-mono text-[9px] text-slate-600">{time(x.t)}</span>
                   </span>
                   <span className={`font-mono text-[11px] font-bold ${x.side === 'long' ? 'text-rose-400' : 'text-emerald-400'}`}>

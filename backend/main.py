@@ -298,11 +298,15 @@ async def _okx_liquidation_worker():
                                 for d in item.get("details") or []:
                                     px = float(d.get("bkPx") or 0.0)
                                     sz = float(d.get("sz") or 0.0)
+                                    ts = int(float(d.get("ts") or 0))
                                     if px <= 0 or sz <= 0:
+                                        continue
+                                    # OKX replays a snapshot on subscribe; drop stale entries.
+                                    if ts < (time.time() - 900) * 1000:
                                         continue
                                     long_liq = d.get("posSide") == "long" or d.get("side") == "sell"
                                     LIQUIDATIONS.append({
-                                        "t": int(float(d.get("ts") or 0)),
+                                        "t": ts,
                                         "symbol": sym,
                                         "side": "SELL" if long_liq else "BUY",
                                         "price": px,
