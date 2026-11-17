@@ -279,6 +279,16 @@ const IntelView: React.FC = () => {
                                                 </span>
                                                 <span className="text-xs font-mono text-zinc-500">/ 1.0</span>
                                             </div>
+                                            <div className="mt-2 h-1.5 w-32 overflow-hidden rounded-full"
+                                                style={{ background: 'linear-gradient(90deg,#f43f5e,#f59e0b,#10b981)' }}>
+                                                <div className="relative h-full">
+                                                    <div className="absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.8)]"
+                                                        style={{ left: `${Math.min(99, Math.max(1, ((data.intelligence.ai_sentiment_score + 1) / 2) * 100))}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="mt-1 flex w-32 justify-between text-[8px] font-mono uppercase tracking-wider text-zinc-600">
+                                                <span>bear</span><span>neut</span><span>bull</span>
+                                            </div>
                                         </div>
                                         {React.createElement(getSentimentInfo(data.intelligence.ai_sentiment_score).icon, {
                                             size: 32,

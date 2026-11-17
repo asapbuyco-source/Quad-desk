@@ -84,7 +84,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
   const allowed = (id: string) => canAccessTab(id, auth.plan, { isAdmin: admin, previewAsUser: auth.previewAsUser });
   const go = (id: string) => { setActiveTab(id); setSheetOpen(false); };
 
-  // Admin-only tooling is not merely locked â€” it is removed from a user's nav.
+  // Admin-only tooling is not merely locked — it is removed from a user's nav.
   const visibleGroups = NAV_GROUPS
     .map(g => ({ ...g, items: g.items.filter(t => !isAdminOnlyTab(t.id) || admin) }))
     .filter(g => g.items.length > 0);
@@ -95,7 +95,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
 
   return (
     <>
-      {/* â”€â”€ Desktop sidebar: fixed header, everything else scrolls â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Desktop sidebar: fixed header, everything else scrolls ────── */}
       <aside className="hidden lg:flex flex-col h-[96vh] my-auto ml-4 w-56 fintech-card z-50 overflow-hidden">
         <div className="flex items-center gap-2.5 px-4 pt-5 pb-4 shrink-0">
           <div className="w-8 h-8 shrink-0 rounded-lg bg-brand-accent/15 flex items-center justify-center text-brand-accent">
@@ -140,7 +140,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
         </nav>
       </aside>
 
-      {/* â”€â”€ Mobile bottom bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Mobile bottom bar ───────────────────────────────────────── */}
       <div className="lg:hidden fixed bottom-5 left-4 right-4 z-50">
         <div className="fintech-card flex items-center justify-around px-1.5 py-2 shadow-2xl">
           {primaryItems.map(tab => {
@@ -167,7 +167,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
         </div>
       </div>
 
-      {/* â”€â”€ Mobile full menu sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Mobile full menu sheet ──────────────────────────────────── */}
       <AnimatePresence>
         {sheetOpen && (
           <motion.div

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Activity, TrendingUp, TrendingDown, RefreshCw, Landmark, Percent, DollarSign } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
+import { PageHeader } from './Premium';
 
 interface MacroPoint {
   id: string;
@@ -70,31 +71,25 @@ const MacroView: React.FC = () => {
   return (
     <div className="h-full overflow-y-auto p-5 lg:p-6 pb-28 lg:pb-6">
       <div className="mx-auto max-w-6xl">
-        {/* Header */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-lg font-bold tracking-wide text-white">
-              <Landmark size={18} className="text-brand-accent" /> Macro & FX
-            </h1>
-            <p className="mt-1 text-xs text-slate-500">
-              Rates, inflation and dollar strength from FRED · reference FX from the ECB
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {asOf && (
-              <span className="font-mono text-[10px] text-slate-500">
-                recorded {asOf} · source FRED / ECB
-              </span>
-            )}
-            <button
-              onClick={load}
-              disabled={loading}
-              className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50"
-            >
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
-            </button>
-          </div>
-        </div>
+        <PageHeader
+          icon={<Landmark size={16} />}
+          title="Macro & FX"
+          badge="FREE"
+          subtitle="Rates, inflation and dollar strength from FRED · reference FX from the ECB"
+        >
+          {asOf && (
+            <span className="font-mono text-[10px] text-slate-500">
+              recorded {asOf} · source FRED / ECB
+            </span>
+          )}
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+        </PageHeader>
 
         {error && (
           <div className="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
@@ -110,8 +105,9 @@ const MacroView: React.FC = () => {
             if (!p) return null;
             const val = key === 'cpi' && p.yoy_pct !== undefined ? p.yoy_pct : p.value;
             const up = p.change >= 0;
+            const inverted = key === 'spread_10y2y' && val < 0;
             return (
-              <div key={key} className="fintech-card p-4" title={meta.hint}>
+              <div key={key} className="premium-card p-4" title={meta.hint}>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                     {meta.label}
@@ -123,11 +119,15 @@ const MacroView: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <div className="mt-2 font-mono text-2xl font-black tracking-tight text-white">
+                <div className={`mt-2 font-mono text-2xl font-black tracking-tight ${inverted ? 'text-rose-400' : 'text-white'}`}>
                   {fmt(val, meta.unit)}
                 </div>
                 <div className="mt-1 text-[10px] font-mono text-slate-500">
                   as of {p.date} · {p.id}
+                </div>
+                <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-800">
+                  <div className={`h-full rounded-full ${inverted ? 'bg-rose-500' : up ? 'bg-emerald-500' : 'bg-brand-accent'}`}
+                    style={{ width: `${Math.min(100, Math.max(6, Math.abs(p.change) * 40))}%` }} />
                 </div>
               </div>
             );
