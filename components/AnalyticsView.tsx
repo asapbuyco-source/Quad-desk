@@ -144,7 +144,7 @@ const AnalyticsView: React.FC = () => {
                         animate={{ width: 340, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                        className="h-full shrink-0 overflow-hidden border-r border-white/10 bg-[#09090b] flex flex-col z-10"
+                        className="h-full shrink-0 overflow-hidden border-r border-white/10 bg-[#09090b] flex flex-col z-10 max-lg:!w-[86vw]"
                         style={{ minWidth: 0 }}
                     >
                         {/* Panel Header */}
