@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Coverage — datasets, cadence and limits | Quant Desk</title>
+<meta name="description" content="What Quant Desk covers today: derivatives, liquidations, positioning, whales and macro — with cadence, retention and known limits." />
+<link rel="canonical" href="https://quad-desk.vercel.app/coverage" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:20px;margin:34px 0 8px;color:#fff}
+  p{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.07);vertical-align:top}
+  th{color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+  td{color:#a1a1aa}
+  .ok{color:#34d399}.no{color:#f87171}.part{color:#fbbf24}
+  nav{margin-top:44px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Coverage</h1>
+  <p>What is live, what is partial, and what we do not cover yet. We publish this so nobody has to guess.</p>
+
+  <h2>Live</h2>
+  <table>
+    <tr><th>Board</th><th>Dataset</th><th>Status</th><th>Retention</th></tr>
+    <tr><td>Desk / Chart</td><td>Prices, candles, order book, executed prints</td><td class="ok">Live</td><td>Session</td></tr>
+    <tr><td>Funding &amp; OI</td><td>Cross-venue funding, open interest, premium</td><td class="ok">Live</td><td>Current + 7d history</td></tr>
+    <tr><td>Positioning</td><td>Retail L/S, top traders, top positions, taker flow</td><td class="ok">Live</td><td>48 buckets</td></tr>
+    <tr><td>RSI Screener</td><td>RSI(14) on 15m / 1h / 4h across liquid perps</td><td class="ok">Live</td><td>Current</td></tr>
+    <tr><td>Liquidations</td><td>Forced orders, price clusters, 24h heat</td><td class="ok">Live</td><td>Rolling 24h</td></tr>
+    <tr><td>Whales</td><td>Top Hyperliquid accounts and open positions</td><td class="ok">Live</td><td>10-minute cache</td></tr>
+    <tr><td>Order Flow</td><td>Executed flow, CVD, price impact, absorption</td><td class="ok">Live</td><td>Session</td></tr>
+    <tr><td>Macro &amp; FX</td><td>FRED series, ECB reference rates</td><td class="ok">Live</td><td>Latest + prior</td></tr>
+  </table>
+
+  <h2>Partial / limited</h2>
+  <table>
+    <tr><th>Area</th><th>Limit</th></tr>
+    <tr><td>Liquidation history</td><td class="part">Rolling 24h only; seeded on cold start.</td></tr>
+    <tr><td>Binance-only ratios</td><td class="part">Positioning and funding history depend on Binance; Bybit is used for RSI/funding heatmap when needed.</td></tr>
+    <tr><td>Whale universe</td><td class="part">Top accounts by account value, not every wallet.</td></tr>
+    <tr><td>News sentiment</td><td class="part">Third-party feed; cached 10 minutes.</td></tr>
+  </table>
+
+  <h2>Not covered yet</h2>
+  <table>
+    <tr><th>Dataset</th><th>Reason</th></tr>
+    <tr><td>Liquidation heatmap models (forward-looking)</td><td class="no">Requires leverage-ratio modelling; on the roadmap.</td></tr>
+    <tr><td>ETF flows</td><td class="no">Paid provider required for reliable data.</td></tr>
+    <tr><td>Token unlocks</td><td class="no">Paid provider required.</td></tr>
+    <tr><td>Options / dealer gamma</td><td class="no">Not integrated.</td></tr>
+    <tr><td>CFTC positioning</td><td class="no">Not integrated.</td></tr>
+  </table>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/methodology">Methodology</a>
+    <a href="/changelog">Changelog</a>
+    <a href="/learn">Glossary</a>
+  </nav>
+</div>
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Methodology — how Quant Desk collects market data</title>
+<meta name="description" content="Where Quant Desk data comes from, how often it refreshes, what is recorded and what is deliberately not. Source and timestamp on every panel." />
+<link rel="canonical" href="https://quad-desk.vercel.app/methodology" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:20px;margin:34px 0 8px;color:#fff}
+  p{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.07);vertical-align:top}
+  th{color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+  td{color:#a1a1aa}
+  code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;font-size:12px}
+  .note{border-left:2px solid #3b82f6;padding:8px 14px;background:rgba(59,130,246,.06);margin:18px 0;color:#c7d2fe}
+  nav{margin-top:44px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Methodology</h1>
+  <p>Where the numbers come from, how often they refresh, and what we deliberately do not do.</p>
+
+  <div class="note">Rule: every panel prints its source and the time it was recorded. If a source is unavailable, the panel says so instead of showing a guessed value.</div>
+
+  <h2>Sources</h2>
+  <table>
+    <tr><th>Dataset</th><th>Source</th><th>Cadence</th></tr>
+    <tr><td>Prices, candles, order book</td><td>Binance spot / USD-M futures public streams</td><td>Real time</td></tr>
+    <tr><td>Funding &amp; open interest</td><td>Binance USD-M; Bybit linear as fallback</td><td>Seconds to minutes</td></tr>
+    <tr><td>Liquidations</td><td>OKX SWAP public liquidation stream + Binance forceOrder; 24h history seeded from OKX public records</td><td>Real time</td></tr>
+    <tr><td>Long/short, top traders, taker flow</td><td>Binance futures data endpoints</td><td>5–60 min buckets</td></tr>
+    <tr><td>Whale positions</td><td>Hyperliquid public account state (top accounts by account value)</td><td>10-minute cache</td></tr>
+    <tr><td>Coinbase premium</td><td>Coinbase spot vs Binance reference</td><td>Seconds</td></tr>
+    <tr><td>Macro</td><td>FRED (rates, CPI, unemployment, VIX)</td><td>Daily series</td></tr>
+    <tr><td>FX reference</td><td>European Central Bank</td><td>Daily</td></tr>
+    <tr><td>News &amp; sentiment</td><td>Marketaux; AI summary generated on request</td><td>10-minute cache</td></tr>
+  </table>
+
+  <h2>Fallbacks and gaps</h2>
+  <p>Cloud egress IPs are sometimes rate-limited by Binance. When that happens the RSI screener and funding heatmap fall back to Bybit linear and label the source accordingly. Long/short and top-trader ratios are Binance-only; when the endpoint is unavailable those panels show no data rather than filling the gap.</p>
+  <p>The liquidation collector keeps a rolling in-memory buffer. On a cold start it seeds 24 hours of OKX history, so the map is useful immediately but the archive does not extend beyond 24 hours yet.</p>
+
+  <h2>What we do not do</h2>
+  <p>We do not route orders, run an exchange, or publish trade signals. We do not claim to predict price. Data is informational only and is not investment advice. Read the <a href="/disclaimer">risk disclaimer</a>.</p>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/coverage">Coverage</a>
+    <a href="/changelog">Changelog</a>
+    <a href="/learn">Glossary</a>
+    <a href="/tools/position-size">Position sizer</a>
+  </nav>
+</div>
+</body>
+</html>

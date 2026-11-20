@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liquidation price calculator — long & short | Quant Desk</title>
+<meta name="description" content="Free liquidation price calculator for perpetual futures. Enter entry, leverage, side and maintenance margin to estimate liquidation price and distance." />
+<link rel="canonical" href="https://quad-desk.vercel.app/tools/liq-calc" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:48px 20px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:30px;line-height:1.2;margin:0 0 6px}
+  p{color:#a1a1aa;margin-top:0}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  form{display:grid;grid-template-columns:1fr 1fr;gap:14px;background:linear-gradient(180deg,rgba(24,24,27,.9),rgba(10,10,12,.85));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:5px}
+  input,select{width:100%;background:#0b0b0e;border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:10px 11px;color:#fff;font:14px ui-monospace,monospace;outline:none}
+  input:focus,select:focus{border-color:#3b82f6}
+  .full{grid-column:1/-1}
+  .out{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+  .cell{background:rgba(244,63,94,.07);border:1px solid rgba(244,63,94,.22);border-radius:10px;padding:11px 12px}
+  .cell .k{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#fda4af}
+  .cell .v{font:700 20px ui-monospace,monospace;color:#fff;margin-top:2px}
+  .warn{grid-column:1/-1;color:#64748b;font-size:12px;margin-top:4px}
+  nav{margin-top:34px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+  @media(max-width:520px){form{grid-template-columns:1fr}.out{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Liquidation price calculator</h1>
+  <p>Approximate liquidation price for isolated perpetual positions.</p>
+
+  <form id="f">
+    <div><label>Entry price</label><input id="entry" type="number" min="0" step="any" value="60000" /></div>
+    <div><label>Leverage</label><input id="lev" type="number" min="1" max="125" step="1" value="10" /></div>
+    <div><label>Side</label>
+      <select id="side"><option value="long">Long</option><option value="short">Short</option></select>
+    </div>
+    <div><label>Maintenance margin (%)</label><input id="mmr" type="number" min="0" step="any" value="0.5" /></div>
+    <div class="out">
+      <div class="cell"><div class="k">Liquidation price</div><div class="v" id="oLiq">—</div></div>
+      <div class="cell"><div class="k">Distance to liq</div><div class="v" id="oDist">—</div></div>
+    </div>
+    <div class="warn">Approximate. Real liquidation prices depend on exchange maintenance tiers, fees and funding. Not investment advice.</div>
+  </form>
+
+  <nav>
+    <a href="/tools/position-size">Position sizer</a>
+    <a href="/">Terminal</a>
+    <a href="/methodology">Methodology</a>
+    <a href="/learn">Glossary</a>
+  </nav>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  function calc() {
+    const entry = +$('entry').value;
+    const lev = Math.max(1, +$('lev').value || 1);
+    const mmr = +$('mmr').value / 100;
+    const side = $('side').value;
+    let liq = side === 'long'
+      ? entry * (1 - 1 / lev + mmr)
+      : entry * (1 + 1 / lev - mmr);
+    if (!isFinite(liq) || liq < 0) liq = 0;
+    $('oLiq').textContent = '$' + fmt(liq);
+    $('oDist').textContent = entry > 0 ? (Math.abs(liq - entry) / entry * 100).toFixed(2) + '%' : '—';
+  }
+  document.querySelectorAll('input,select').forEach(i => i.addEventListener('input', calc));
+  calc();
+</script>
+</body>
+</html>

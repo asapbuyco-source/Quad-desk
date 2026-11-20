@@ -4,6 +4,7 @@ import { motion as m, AnimatePresence, useScroll, useTransform } from 'framer-mo
 import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, Check } from 'lucide-react';
 import { upgradeHref, PLAN_FEATURES, PRICING } from '../utils/entitlements';
 import AdSlot from './AdSlot';
+import MarketRecord from './MarketRecord';
 import { apiFetch } from '../utils/apiClient';
 import { Sparkline, HeatCell, signedColor } from './Premium';
 
@@ -269,6 +270,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             </div>
 
             {/* --- Bento Grid Features --- */}
+            {/* --- Market record --- */}
+            <div className="py-10 sm:py-14">
+                <MarketRecord />
+            </div>
+
             <section className="py-16 sm:py-24 px-4 sm:px-6 relative z-10">
                 <div className="max-w-7xl mx-auto">
                     <motion.div 
@@ -517,6 +523,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     </div>
                     <div className="flex flex-wrap justify-center gap-6 text-xs text-zinc-600 font-mono">
                         <a href="/learn" className="hover:text-zinc-300 transition-colors">LEARN</a>
+                        <a href="/methodology" className="hover:text-zinc-300 transition-colors">METHODOLOGY</a>
+                        <a href="/coverage" className="hover:text-zinc-300 transition-colors">COVERAGE</a>
+                        <a href="/tools/position-size" className="hover:text-zinc-300 transition-colors">TOOLS</a>
                         <a href="/about" className="hover:text-zinc-300 transition-colors">ABOUT</a>
                         <a href="/privacy" className="hover:text-zinc-300 transition-colors">PRIVACY</a>
                         <a href="/terms" className="hover:text-zinc-300 transition-colors">TERMS</a>

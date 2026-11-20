@@ -16,6 +16,31 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://quad-desk.vercel.app/methodology</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://quad-desk.vercel.app/coverage</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://quad-desk.vercel.app/changelog</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://quad-desk.vercel.app/tools/position-size</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://quad-desk.vercel.app/tools/liq-calc</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://quad-desk.vercel.app/markets/bitcoin</loc>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
