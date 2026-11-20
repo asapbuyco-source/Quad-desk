@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Users, RefreshCw, Activity } from 'lucide-react';
+import { Users, RefreshCw, Activity, ArrowRight } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import { useStore } from '../store';
 import { PageHeader, StatTile } from './Premium';
@@ -73,6 +73,7 @@ const RatioCard: React.FC<{ title: string; bucket?: Bucket; hint?: string }> = (
 
 const PositioningPage: React.FC = () => {
   const storeSymbol = useStore(s => s.config.activeSymbol as string | undefined);
+  const setActiveTab = useStore(s => s.setActiveTab);
   const [symbol, setSymbol] = useState((storeSymbol || 'BTCUSDT').toUpperCase());
   const [period, setPeriod] = useState('15m');
   const [data, setData] = useState<PositioningResponse | null>(null);
@@ -210,6 +211,17 @@ const PositioningPage: React.FC = () => {
           <div className="mt-2 font-mono text-[10px] text-slate-600">
             recorded {data?.as_of || '—'} · period {period} · source binance-fapi
           </div>
+        </div>
+
+        <div className="mt-4 premium-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-xs font-bold text-white">Next: whale positions</div>
+            <p className="text-[11px] text-slate-500">See what the largest Hyperliquid accounts hold against this positioning.</p>
+          </div>
+          <button onClick={() => setActiveTab('whales')}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-accent/30 bg-brand-accent/10 px-3 py-1.5 text-[11px] font-bold text-brand-accent hover:bg-brand-accent/20">
+            Open Whales <ArrowRight size={12} />
+          </button>
         </div>
       </div>
     </div>

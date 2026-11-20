@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Flame, RefreshCw, ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import { PageHeader } from './Premium';
+import { useStore } from '../store';
 
 interface Cluster { price: number; long_usd: number; short_usd: number; total_usd: number; count: number }
 interface SymRow { symbol: string; long_usd: number; short_usd: number; total_usd: number; count: number }
@@ -33,6 +34,7 @@ const usd = (v: number) => {
 const time = (t: string) => { try { return new Date(t).toLocaleTimeString(); } catch { return t; } };
 
 const LiquidationPage: React.FC = () => {
+  const setActiveTab = useStore(s => s.setActiveTab);
   const [symbol, setSymbol] = useState('');
   const [minutes, setMinutes] = useState(240);
   const [data, setData] = useState<LiqResponse | null>(null);
@@ -211,6 +213,17 @@ const LiquidationPage: React.FC = () => {
             {data?.buffered ?? 0} orders buffered · collector {data?.collecting_since ? `since ${new Date(data.collecting_since).toLocaleString()}` : 'starting'} ·
             history begins when the backend connects to the stream · source binance-forceOrder
           </div>
+        </div>
+
+        <div className="mt-4 premium-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-xs font-bold text-white">Who got liquidated?</div>
+            <p className="text-[11px] text-slate-500">Check whale positioning to see who is exposed to the next cluster.</p>
+          </div>
+          <button onClick={() => setActiveTab('whales')}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-accent/30 bg-brand-accent/10 px-3 py-1.5 text-[11px] font-bold text-brand-accent hover:bg-brand-accent/20">
+            Open Whales <ArrowUpRight size={12} />
+          </button>
         </div>
       </div>
     </div>

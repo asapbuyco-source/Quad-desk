@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Check, X, Sparkles, CreditCard, ShieldCheck, ExternalLink, KeyRound, Loader2, Gift } from 'lucide-react';
 import { useStore } from '../store';
 import {
-  PLAN_FEATURES, PRICING, PORTAL_URL, isAdminEmail, buildCheckoutUrl,
+  PLAN_FEATURES, PRICING, PORTAL_URL, isAdminEmail, buildCheckoutUrl, PAYWALL_ENABLED,
 } from '../utils/entitlements';
 
 const env = (k: string): string => (import.meta as any).env?.[k] || '';
@@ -20,6 +20,10 @@ const PricingPage: React.FC = () => {
   const renewsAt = useStore(s => s.auth.subRenewsAt);
   const previewAsUser = useStore(s => s.auth.previewAsUser);
   const activateLicense = useStore(s => s.activateLicense);
+  const startTrial = useStore(s => s.startTrial);
+  const trialUsed = useStore(s => s.auth.trialUsed);
+  const trialUntil = useStore(s => s.auth.trialUntil);
+  const setActiveTab = useStore(s => s.setActiveTab);
   const [lic, setLic] = useState('');
   const [licBusy, setLicBusy] = useState(false);
   const [licMsg, setLicMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -112,6 +116,32 @@ const PricingPage: React.FC = () => {
             </button>
           )}
         </div>
+
+        {/* Demo trial — one shot, session scoped */}
+        {PAYWALL_ENABLED && !isPro && !trialUsed && (
+          <div className="mb-6 flex flex-col gap-3 rounded-xl border border-brand-accent/30 bg-brand-accent/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-bold text-white">Try every Pro desk for 15 minutes</div>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                One demo per session — whales, order flow, analytics and the rest. No card needed.
+              </p>
+            </div>
+            <button
+              onClick={() => { startTrial(15); setActiveTab('dashboard'); }}
+              className="shrink-0 rounded-lg bg-brand-accent px-4 py-2 text-xs font-bold text-white hover:bg-brand-accent/90"
+            >
+              Start demo
+            </button>
+          </div>
+        )}
+
+        {(trialUntil || trialUsed) && !isPro && (
+          <div className="mb-6 rounded-xl border border-white/10 bg-white/[0.02] p-3 font-mono text-[10px] text-slate-500">
+            {trialUntil && trialUntil > Date.now()
+              ? `Demo active · ${Math.max(1, Math.ceil((trialUntil - Date.now()) / 60000))} min left`
+              : 'Demo used. Pro stays unlocked permanently after upgrade.'}
+          </div>
+        )}
 
         {/* Plan cards */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

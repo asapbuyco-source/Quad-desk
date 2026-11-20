@@ -50,6 +50,10 @@ export const FREE_TABS = new Set([
   'guide',
   'pricing',
   'settings',
+  // Derivatives core — free so users build a daily habit.
+  'positioning',
+  'liquidations',
+  'screener',
 ]);
 
 /** Tabs that are hidden from normal users entirely — admin-only tooling. */
@@ -73,9 +77,6 @@ export const PRO_TABS = new Set([
   'ulis',
   'macro-strategy',
   'analytics',
-  'positioning',
-  'screener',
-  'liquidations',
   'whales',
 ]);
 
@@ -89,9 +90,9 @@ export const isAdminOnlyTab = (tab: string): boolean => ADMIN_ONLY_TABS.has(tab)
 export function canAccessTab(
   tab: string,
   plan: Plan,
-  opts: { isAdmin?: boolean; previewAsUser?: boolean } = {},
+  opts: { isAdmin?: boolean; previewAsUser?: boolean; trialActive?: boolean } = {},
 ): boolean {
-  const { isAdmin = false, previewAsUser = false } = opts;
+  const { isAdmin = false, previewAsUser = false, trialActive = false } = opts;
   const admin = isAdmin && !previewAsUser;
 
   // Admin tooling is never part of a paid plan.
@@ -100,8 +101,68 @@ export function canAccessTab(
   if (!PAYWALL_ENABLED) return true;          // billing not configured yet
   if (admin) return true;
   if (!isProTab(tab)) return true;
-  return plan === 'pro';
+  return plan === 'pro' || trialActive;
 }
+
+/** Copy used by the locked-desk upsell screen. */
+export const PRO_TAB_INFO: Record<string, { label: string; blurb: string; bullets: string[] }> = {
+  whales: {
+    label: 'Whale Positions',
+    blurb: 'Track the largest Hyperliquid accounts and what they are actually holding.',
+    bullets: ['Top accounts by account value', 'Open perp positions with leverage', 'Long/short exposure and unrealised PnL'],
+  },
+  'order-flow': {
+    label: 'Order Flow',
+    blurb: 'See who crossed the spread and whether the book is absorbing it.',
+    bullets: ['Executed prints with taker side', 'Rolling CVD and delta', 'Price-impact and absorption diagnostics'],
+  },
+  analytics: {
+    label: 'Analytics',
+    blurb: 'Session-level order-flow analytics with heat and composite profiles.',
+    bullets: ['Delta flow & CVD chart', 'Session delta heat strip', 'Composite volume profile'],
+  },
+  'ai-tactical': {
+    label: 'Tactical Scan',
+    blurb: 'AI-assisted tactical read built from live order flow and positioning.',
+    bullets: ['Structured trade scenarios', 'Confidence scoring', 'Invalidation levels'],
+  },
+  depth: {
+    label: 'Depth',
+    blurb: 'Full order-book depth with imbalance and wall detection.',
+    bullets: ['Live depth ladder', 'Bid/ask imbalance', 'Large resting liquidity'],
+  },
+  liquidity: {
+    label: 'Liquidity Map',
+    blurb: 'Map where liquidity sits and how it changes as price moves.',
+    bullets: ['Liquidity distribution', 'Sweep and replenish events', 'Support/resistance zones'],
+  },
+  bias: {
+    label: 'Bias Matrix',
+    blurb: 'Multi-factor bias across venues and timeframes.',
+    bullets: ['Cross-venue bias', 'Timeframe alignment', 'Conflict detection'],
+  },
+  regime: {
+    label: 'Regime',
+    blurb: 'Statistical regime state to match strategy to market conditions.',
+    bullets: ['HMM regime state', 'Transition probabilities', 'Volatility context'],
+  },
+  sentinel: {
+    label: 'Sentinel Edge',
+    blurb: 'Edge confirmation before you commit risk.',
+    bullets: ['Signal confirmation', 'Risk checks', 'Context-aware gating'],
+  },
+  ulis: {
+    label: 'ULIS',
+    blurb: 'Institutional liquidity and flow intelligence.',
+    bullets: ['Latent liquidity map', 'Gravity walls', 'Reflexivity and fragility scores'],
+  },
+};
+
+export const GENERIC_PRO_INFO = {
+  label: 'Pro desk',
+  blurb: 'This workspace is part of Pro — advanced execution and analytics.',
+  bullets: ['Full order flow and analytics', 'Positioning and whale data', 'Priority data access'],
+};
 
 export interface PlanFeature {
   label: string;
@@ -116,9 +177,9 @@ export const PLAN_FEATURES: PlanFeature[] = [
   { label: 'Market news & sentiment', free: true, pro: true },
   { label: 'Guide & settings', free: true, pro: true },
   { label: 'Executed-trades order flow + price impact', free: false, pro: true },
-  { label: 'Positioning: retail vs top traders', free: false, pro: true },
-  { label: 'RSI screener & liquidation clusters', free: false, pro: true },
-  { label: 'Whale positions & funding history', free: false, pro: true },
+  { label: 'Positioning: retail vs top traders', free: true, pro: true },
+  { label: 'RSI screener & liquidation clusters', free: true, pro: true },
+  { label: 'Whale positions (Hyperliquid)', free: false, pro: true },
   { label: 'Sentinel edge, ULIS & AI tactical scans', free: false, pro: true },
   { label: 'Analytics & advanced charting', free: false, pro: true },
 ];

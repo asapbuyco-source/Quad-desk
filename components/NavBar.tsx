@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { canAccessTab, isAdminEmail, isAdminOnlyTab } from '../utils/entitlements';
+import { canAccessTab, isAdminEmail, isAdminOnlyTab, PAYWALL_ENABLED, PRICING } from '../utils/entitlements';
 
 const motion = m as any;
 
@@ -139,6 +139,23 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
             </div>
           ))}
         </nav>
+
+        {PAYWALL_ENABLED && auth.plan !== 'pro' && !admin && (
+          <div className="shrink-0 px-2 pb-3">
+            <button
+              onClick={() => go('pricing')}
+              className="w-full rounded-xl border border-brand-accent/30 bg-brand-accent/10 p-3 text-left transition-colors hover:bg-brand-accent/15"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-black uppercase tracking-[0.16em] text-brand-accent">Quant Pro</span>
+                <span className="font-mono text-[10px] text-slate-400">${PRICING.pro.price}/mo</span>
+              </div>
+              <div className="mt-1 text-[11px] leading-tight text-slate-300">
+                Unlock whales, order flow &amp; analytics
+              </div>
+            </button>
+          </div>
+        )}
       </aside>
 
       {/* ── Mobile bottom bar ───────────────────────────────────────── */}

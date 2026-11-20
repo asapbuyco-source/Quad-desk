@@ -1,9 +1,10 @@
 
 import React, { useState } from 'react';
-import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, User as UserIcon } from 'lucide-react';
+import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, User as UserIcon, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import ProfileOverlay from './ProfileOverlay';
+import { isAdminEmail, PAYWALL_ENABLED } from '../utils/entitlements';
 
 const motion = m as any;
 
@@ -19,7 +20,9 @@ const Header: React.FC = () => {
     const { metrics } = useStore(state => state.market);
     const { isBacktest, activeSymbol, playbackSpeed, backtestDate } = useStore(state => state.config);
     const { user } = useStore(state => state.auth);
+    const { plan } = useStore(state => state.auth);
     const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setProfileOpen, setActiveTab } = useStore();
+    const showUpgrade = PAYWALL_ENABLED && plan !== 'pro' && !isAdminEmail(user?.email);
 
     return (
         <>
@@ -174,6 +177,14 @@ const Header: React.FC = () => {
                             <div className="w-2 h-2 rounded-full bg-brand-accent animate-pulse"></div>
                             <span className="text-xs font-medium text-slate-300">Connected</span>
                         </div>
+                    )}
+
+                    {/* Upgrade (free users) */}
+                    {showUpgrade && (
+                        <button onClick={() => setActiveTab('pricing')} title="Upgrade to Pro"
+                            className="hidden sm:flex items-center gap-1.5 rounded-full bg-brand-accent px-3 py-1.5 text-[11px] font-bold text-white hover:bg-brand-accent/90 transition-colors">
+                            <Sparkles size={12} /> Upgrade
+                        </button>
                     )}
 
                     {/* Notifications */}

@@ -8,6 +8,7 @@ import AdminControl from './components/AdminControl';
 import AlertEngine from './components/AlertEngine';
 import { ToastContainer } from './components/Toast';
 import BackendWakeGate from './components/BackendWakeGate';
+import TrialBanner from './components/TrialBanner';
 import ConsentBanner from './components/ConsentBanner';
 
 // ── Route-level code splitting ───────────────────────────────────────────────
@@ -45,7 +46,7 @@ import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX, calculateZScoreBands } from './utils/analytics';
 import { BookSync } from './utils/bookSync';
-import { canAccessTab, isAdminEmail, isAdminOnlyTab } from './utils/entitlements';
+import { canAccessTab, isAdminEmail, isAdminOnlyTab, PAYWALL_ENABLED, PRO_TAB_INFO, GENERIC_PRO_INFO } from './utils/entitlements';
 import { useSeo } from './hooks/useSeo';
 
 const motion = m as any;
@@ -61,10 +62,21 @@ const App: React.FC = () => {
     const authState = useStore(state => state.auth);
     const notifications = useStore(state => state.notifications);
     const adminUser = isAdminEmail(authState.user?.email);
+    const [clock, setClock] = useState(Date.now());
+    const trialActive = !!authState.trialUntil && authState.trialUntil > clock && !adminUser;
+    useEffect(() => {
+        if (!authState.trialUntil) return;
+        const id = setInterval(() => setClock(Date.now()), 15000);
+        return () => clearInterval(id);
+    }, [authState.trialUntil]);
+
     const tabAllowed = canAccessTab(ui.activeTab, authState.plan, {
         isAdmin: adminUser,
         previewAsUser: authState.previewAsUser,
+        trialActive,
     });
+    const lockedInfo = PRO_TAB_INFO[ui.activeTab] || GENERIC_PRO_INFO;
+
     useSeo(ui.activeTab);
     const [currentPeriod, setCurrentPeriod] = useState<PeriodType>('20-PERIOD');
     const [connectionError, setConnectionError] = useState<boolean>(false);
@@ -96,6 +108,7 @@ const App: React.FC = () => {
         refreshTacticalAnalysis,
         refreshLiquidityAnalysis,
         startDarkPoolPolling,
+        startTrial,
     } = useStore();
 
     const handlePeriodChange = (period: PeriodType) => {
@@ -394,26 +407,59 @@ const App: React.FC = () => {
                                     </div>
                                 }>
                                 {!tabAllowed ? (
-                                    <div className="flex h-full items-center justify-center p-6">
-                                        <div className="fintech-card max-w-md p-6 text-center">
+                                    <div className="flex h-full items-center justify-center overflow-y-auto p-6">
+                                        <div className="premium-card w-full max-w-md p-6 text-center">
                                             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-accent/15 text-brand-accent">
                                                 <Lock size={22} />
                                             </div>
-                                            <h2 className="text-base font-bold text-white">
-                                                {isAdminOnlyTab(ui.activeTab) ? 'Admin only' : 'Pro desk locked'}
+                                            <div className="mb-1 text-[9px] font-black uppercase tracking-[0.2em] text-brand-accent">Pro desk</div>
+                                            <h2 className="text-lg font-bold text-white">
+                                                {isAdminOnlyTab(ui.activeTab) ? 'Admin only' : lockedInfo.label}
                                             </h2>
-                                            <p className="mt-2 text-xs text-slate-400">
+                                            <p className="mt-2 text-xs leading-relaxed text-slate-400">
                                                 {isAdminOnlyTab(ui.activeTab)
                                                     ? 'This workspace is restricted to administrator accounts.'
-                                                    : 'This workspace is part of Pro — order flow and advanced analytics.'}
+                                                    : lockedInfo.blurb}
                                             </p>
+
                                             {!isAdminOnlyTab(ui.activeTab) && (
-                                                <button
-                                                    onClick={() => setActiveTab('pricing')}
-                                                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-accent px-4 py-2 text-xs font-bold text-white hover:bg-brand-accent/90"
-                                                >
-                                                    <Sparkles size={14} /> View plans
-                                                </button>
+                                                <>
+                                                    <ul className="mx-auto mt-4 max-w-xs space-y-1.5 text-left">
+                                                        {lockedInfo.bullets.map(b => (
+                                                            <li key={b} className="flex items-start gap-2 text-[11px] text-slate-300">
+                                                                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-brand-accent" />
+                                                                {b}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+
+                                                    {PAYWALL_ENABLED && !authState.trialUsed && (
+                                                        <button
+                                                            onClick={() => startTrial(15)}
+                                                            className="mt-5 w-full rounded-lg border border-brand-accent/40 bg-brand-accent/10 py-2.5 text-xs font-bold text-brand-accent hover:bg-brand-accent/20"
+                                                        >
+                                                            Try this desk free for 15 minutes
+                                                        </button>
+                                                    )}
+                                                    {PAYWALL_ENABLED && authState.trialUsed && (
+                                                        <p className="mt-4 font-mono text-[10px] text-slate-600">
+                                                            Demo trial used — upgrade for permanent access.
+                                                        </p>
+                                                    )}
+
+                                                    <button
+                                                        onClick={() => setActiveTab('pricing')}
+                                                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-accent px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-accent/90"
+                                                    >
+                                                        <Sparkles size={14} /> Unlock with Pro
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setActiveTab('dashboard')}
+                                                        className="mt-2 text-[10px] text-slate-500 hover:text-slate-300"
+                                                    >
+                                                        Back to the free desk
+                                                    </button>
+                                                </>
                                             )}
                                         </div>
                                     </div>
@@ -453,6 +499,7 @@ const App: React.FC = () => {
                 )}
             </AnimatePresence>
             <BackendWakeGate />
+            <TrialBanner />
             <ConsentBanner />
             <ToastContainer toasts={notifications} removeToast={removeNotification} />
         </div>

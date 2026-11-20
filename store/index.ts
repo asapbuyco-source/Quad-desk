@@ -82,6 +82,9 @@ interface AppState {
         previewAsUser: boolean;
         /** Lemon Squeezy license key bound to this account (proof of purchase). */
         licenseKey: string | null;
+        /** One-shot demo trial: timestamp until Pro desks stay open. */
+        trialUntil: number | null;
+        trialUsed: boolean;
     };
     trading: {
         activePosition: Position | null;
@@ -155,6 +158,8 @@ interface AppState {
     setUser: (user: User | null) => void;
     setSubscription: (plan: 'free' | 'pro', status?: 'active' | 'inactive' | 'trialing' | 'past_due', renewsAt?: number | null) => void;
     setPreviewAsUser: (preview: boolean) => void;
+    /** Start the one-shot 15-minute Pro demo (session-scoped). */
+    startTrial: (minutes: number) => void;
     /** Validate a Lemon Squeezy key, persist it and unlock Pro. */
     activateLicense: (key: string) => Promise<{ ok: boolean; error?: string }>;
     signInGoogle: () => Promise<void>;
@@ -238,6 +243,15 @@ export const useStore = create<AppState>((set, get) => ({
         subRenewsAt: null,
         previewAsUser: false,
         licenseKey: null,
+        trialUntil: (() => {
+            try {
+                const v = Number(window.sessionStorage.getItem('qd.trialUntil'));
+                return Number.isFinite(v) && v > Date.now() ? v : null;
+            } catch { return null; }
+        })(),
+        trialUsed: (() => {
+            try { return window.sessionStorage.getItem('qd.trialUsed') === '1'; } catch { return false; }
+        })(),
     },
     trading: {
         activePosition: null,
@@ -918,6 +932,14 @@ export const useStore = create<AppState>((set, get) => ({
     setPreviewAsUser: (preview) => set(state => ({
         auth: { ...state.auth, previewAsUser: preview },
     })),
+    startTrial: (minutes) => {
+        const until = Date.now() + Math.max(1, minutes) * 60000;
+        try {
+            window.sessionStorage.setItem('qd.trialUntil', String(until));
+            window.sessionStorage.setItem('qd.trialUsed', '1');
+        } catch { /* session storage may be unavailable */ }
+        set(state => ({ auth: { ...state.auth, trialUntil: until, trialUsed: true } }));
+    },
     activateLicense: async (key) => {
         const res = await validateLicense(key);
         if (!res.valid) return { ok: false, error: res.error };
