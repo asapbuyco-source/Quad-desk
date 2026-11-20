@@ -69,6 +69,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: 'System',
     items: [
       { id: 'pricing', icon: CreditCard, label: 'Plans & Billing', hint: 'Subscription, upgrade, invoices' },
+      { id: 'admin-users', icon: Users, label: 'Users', hint: 'Grant / revoke Pro access' },
       { id: 'guide', icon: BookOpen, label: 'Guide', hint: 'How to use' },
       { id: 'settings', icon: Settings, label: 'Settings', hint: 'Preferences' },
     ],

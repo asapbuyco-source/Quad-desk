@@ -34,6 +34,7 @@ const PositioningPage = React.lazy(() => import('./components/PositioningPage'))
 const ScreenerPage = React.lazy(() => import('./components/ScreenerPage'));
 const LiquidationPage = React.lazy(() => import('./components/LiquidationPage'));
 const WhalesPage = React.lazy(() => import('./components/WhalesPage'));
+const AdminUsers = React.lazy(() => import('./components/AdminUsers'));
 const OrderFlowPage = React.lazy(() => import('./components/OrderFlowPage'));
 const PricingPage = React.lazy(() => import('./components/PricingPage'));
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -431,6 +432,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'screener' && <ScreenerPage />}
                                 {ui.activeTab === 'liquidations' && <LiquidationPage />}
                                 {ui.activeTab === 'whales' && <WhalesPage />}
+                                {ui.activeTab === 'admin-users' && <AdminUsers />}
                                 {ui.activeTab === 'order-flow' && <OrderFlowPage />}
                                 {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}

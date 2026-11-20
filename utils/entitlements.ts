@@ -56,6 +56,7 @@ export const FREE_TABS = new Set([
 export const ADMIN_ONLY_TABS = new Set([
   'bot-control',
   'bot-mind',
+  'admin-users',
 ]);
 
 /** Tabs that require Pro. */

@@ -951,6 +951,17 @@ export const useStore = create<AppState>((set, get) => ({
         try {
             const user = get().auth.user;
             if (user) {
+                // Keep a directory record so admins can find accounts in
+                // Settings → Users. Entitlement fields stay server-owned.
+                try {
+                    const fs = await import('firebase/firestore');
+                    await fs.setDoc(fs.doc(db, 'users', user.uid), {
+                        email: user.email || null,
+                        displayName: user.displayName || null,
+                        photoURL: user.photoURL || null,
+                        lastSeen: fs.serverTimestamp(),
+                    }, { merge: true });
+                } catch { /* directory sync is best-effort */ }
                 const snap = await getDoc(doc(db, 'users', user.uid));
                 if (snap.exists()) {
                     const data = snap.data();
