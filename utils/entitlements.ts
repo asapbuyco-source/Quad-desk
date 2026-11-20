@@ -116,10 +116,11 @@ export const PLAN_FEATURES: PlanFeature[] = [
   { label: 'Market news & sentiment', free: true, pro: true },
   { label: 'Guide & settings', free: true, pro: true },
   { label: 'Executed-trades order flow + price impact', free: false, pro: true },
-  { label: 'Depth, liquidity, bias matrix & regime desks', free: false, pro: true },
+  { label: 'Positioning: retail vs top traders', free: false, pro: true },
+  { label: 'RSI screener & liquidation clusters', free: false, pro: true },
+  { label: 'Whale positions & funding history', free: false, pro: true },
   { label: 'Sentinel edge, ULIS & AI tactical scans', free: false, pro: true },
-  { label: 'Bot control & bot reasoning', free: false, pro: true },
-  { label: 'Performance analytics & backtests', free: false, pro: true },
+  { label: 'Analytics & advanced charting', free: false, pro: true },
 ];
 
 /**

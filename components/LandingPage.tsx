@@ -1,9 +1,11 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion as m, AnimatePresence, useScroll, useTransform } from 'framer-motion';
-import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, ChevronRight, Heart, Check } from 'lucide-react';
+import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, Check } from 'lucide-react';
 import { upgradeHref, PLAN_FEATURES, PRICING } from '../utils/entitlements';
 import AdSlot from './AdSlot';
+import { apiFetch } from '../utils/apiClient';
+import { Sparkline, HeatCell, signedColor } from './Premium';
 
 const motion = m as any;
 
@@ -11,10 +13,37 @@ interface LandingPageProps {
   onEnter: () => void;
 }
 
+interface FundingPoint { t: number; rate: number }
+
 const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   const [isInitializing, setIsInitializing] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [funding, setFunding] = useState<number[]>([]);
+  const [latestFunding, setLatestFunding] = useState<number | undefined>();
+  const [accumFunding, setAccumFunding] = useState<number | undefined>();
+  const [heatRows, setHeatRows] = useState<{ symbol: string; funding_rate: number }[]>([]);
   const { scrollY } = useScroll();
+
+  // Real market data for the hero preview — degrades silently offline.
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        const [h, f] = await Promise.all([
+          apiFetch('/funding-heatmap', { timeoutMs: 45000 }),
+          apiFetch('/funding-history?symbol=BTCUSDT&limit=42', { timeoutMs: 45000 }),
+        ]);
+        const hj = await h.json();
+        const fj = await f.json();
+        if (dead) return;
+        const rows = [...(hj?.highest || []).slice(0, 6), ...(hj?.lowest || []).slice(0, 6)];
+        setHeatRows(rows);
+        setFunding((fj?.history || []).map((p: FundingPoint) => p.rate));        setLatestFunding(fj?.latest?.rate);
+        setAccumFunding(fj?.accumulated_pct);
+      } catch { /* preview is optional */ }
+    })();
+    return () => { dead = true; };
+  }, []);
   
   // Parallax effects
   const y2 = useTransform(scrollY, [0, 500], [0, -150]);
@@ -111,7 +140,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         initial={{ y: 20, opacity: 0, letterSpacing: "-0.05em" }}
                         animate={{ y: 0, opacity: 1, letterSpacing: "-0.02em" }}
                         transition={{ delay: 0.3, duration: 0.8 }}
-                        className="text-6xl md:text-8xl lg:text-9xl font-bold text-white tracking-tighter leading-[0.9]"
+                        className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-bold text-white tracking-tighter leading-[0.95]"
                     >
                         QUANT DESK
                     </motion.h1>
@@ -127,10 +156,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.5, duration: 0.8 }}
-                    className="text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto mb-12 font-light tracking-wide leading-relaxed text-center z-20"
+                    className="text-base sm:text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto mb-10 font-light tracking-wide leading-relaxed text-center z-20 px-2"
                 >
-                    Institutional-grade terminal for the <span className="text-white font-medium">post-latency era</span>. 
-                    Real-time order flow analytics, Bayesian risk modeling, and sentinel logic.
+                    Live <span className="text-white font-medium">order flow</span>, cross-venue funding,
+                    liquidation clusters and trader positioning — with sources and timestamps.
+                    Core market data is free.
                 </motion.p>
 
                 {/* Primary CTA */}
@@ -139,7 +169,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     animate={{ scale: 1, opacity: 1 }}
                     whileHover={{ scale: 1.05 }}
                     transition={{ delay: 0.7, type: "spring" }}
-                    className="relative z-20 mb-20"
+                    className="relative z-20 mb-8"
                 >
                     <button
                         onClick={handleEnter}
@@ -147,11 +177,68 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     >
                         <div className="relative z-10 flex items-center gap-4">
                             <Terminal size={18} className="text-zinc-600 group-hover:text-black transition-colors" />
-                            <span>INITIALIZE SYSTEM</span>
+                            <span>OPEN THE TERMINAL</span>
                             <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                         </div>
                         <div className="absolute inset-0 bg-gradient-to-r from-brand-accent/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500 ease-in-out"></div>
                     </button>
+                </motion.div>
+
+                {/* Live terminal preview (real data) */}
+                <motion.div
+                    initial={{ y: 24, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.9, duration: 0.7 }}
+                    className="relative z-20 mb-14 w-full max-w-3xl px-1"
+                >
+                    <div className="premium-card overflow-hidden p-4 sm:p-5 text-left">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <span className="relative flex h-2 w-2">
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                                </span>
+                                <span className="font-mono text-[11px] font-bold text-white">BTCUSDT · FUNDING</span>
+                                <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-slate-500">live</span>
+                            </div>
+                            <div className="flex items-center gap-3 font-mono text-[11px]">
+                                <span className={(latestFunding ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                                    {latestFunding === undefined ? '—' : `${latestFunding >= 0 ? '+' : ''}${(latestFunding * 100).toFixed(4)}%`}
+                                </span>
+                                <span className="text-slate-600">
+                                    7d {accumFunding === undefined ? '—' : `${accumFunding >= 0 ? '+' : ''}${accumFunding}%`}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div className="mt-2">
+                            {funding.length > 1
+                                ? <Sparkline values={funding} color={(latestFunding ?? 0) >= 0 ? '#f43f5e' : '#10b981'} height={84} />
+                                : <div className="h-[84px] animate-pulse rounded-md bg-white/[0.04]" />}
+                        </div>
+
+                        <div className="mt-1 flex flex-wrap gap-1">
+                            {heatRows.length
+                                ? (() => {
+                                    const maxAbs = Math.max(...heatRows.map(r => Math.abs(r.funding_rate)), 1e-9);
+                                    return heatRows.map(r => (
+                                        <HeatCell key={r.symbol}
+                                            text={r.symbol.replace('USDT', '')}
+                                            color={signedColor(r.funding_rate, maxAbs)}
+                                            title={`${r.symbol} · ${(r.funding_rate * 100).toFixed(4)}%`}
+                                            className="flex-1 !px-1.5" />
+                                    ));
+                                })()
+                                : Array.from({ length: 12 }).map((_, i) => (
+                                    <div key={i} className="h-6 flex-1 animate-pulse rounded-md bg-white/[0.04]" />
+                                ))}
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[9px] text-slate-600">
+                            <span>funding extremes across perps · red positive / green negative</span>
+                            <span>binance · bybit</span>
+                        </div>
+                    </div>
                 </motion.div>
 
                 {/* Scroll Indicator */}
@@ -168,32 +255,21 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 </motion.div>
             </section>
 
-            {/* --- Infinite Ticker --- */}
+            {/* --- Data source strip --- */}
             <div className="w-full border-y border-white/5 bg-black/50 backdrop-blur-sm py-4 overflow-hidden relative z-20">
-                <div className="flex w-max gap-20 animate-[scroll_40s_linear_infinite]">
+                <div className="flex w-max gap-14 animate-[scroll_40s_linear_infinite]">
                     {[...Array(2)].map((_, i) => (
-                        <div key={i} className="flex gap-20 items-center opacity-40 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
-                             {/* Special Project Dedication Tags */}
-                             <PartnerLogo name="PROJECT LILI" isSpecial />
-                             <PartnerLogo name="INSPIRED BY LILIAN" />
-                             <PartnerLogo name="MY SPECIAL PERSON" />
-                             <PartnerLogo name="BEAUTIFUL WIFE" />
-                             
-                             {/* Standard Partners */}
-                             <PartnerLogo name="GOLDMAN SACHS" />
-                             <PartnerLogo name="JP MORGAN" />
-                             <PartnerLogo name="CITADEL" />
-                             <PartnerLogo name="BLACKROCK" />
-                             <PartnerLogo name="JANE STREET" />
-                             <PartnerLogo name="TWO SIGMA" />
-                             <PartnerLogo name="RENAISSANCE" />
+                        <div key={i} className="flex items-center gap-14 font-mono text-[10px] tracking-[0.22em] text-zinc-500">
+                            {['BINANCE USDM', 'BYBIT LINEAR', 'OKX SWAP', 'COINBASE SPOT', 'HYPERLIQUID', 'FRED', 'ECB FX'].map(s => (
+                                <span key={s} className="whitespace-nowrap">{s}</span>
+                            ))}
                         </div>
                     ))}
                 </div>
             </div>
 
             {/* --- Bento Grid Features --- */}
-            <section className="py-32 px-6 relative z-10">
+            <section className="py-16 sm:py-24 px-4 sm:px-6 relative z-10">
                 <div className="max-w-7xl mx-auto">
                     <motion.div 
                         initial={{ opacity: 0, y: 50 }}
@@ -201,8 +277,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         viewport={{ once: true }}
                         className="mb-16"
                     >
-                        <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Market Structure <span className="text-brand-accent">Decoded</span>.</h2>
-                        <p className="text-zinc-400 max-w-xl text-lg">Our proprietary engine processes millions of order book updates per second to reveal the liquidity landscape.</p>
+                        <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white mb-4">Market Structure <span className="text-brand-accent">Decoded</span>.</h2>
+                        <p className="text-zinc-400 max-w-xl text-base sm:text-lg">Every panel is built from public exchange feeds and macro APIs — with the source and timestamp shown, not a black-box score.</p>
                     </motion.div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-auto md:h-[600px]">
@@ -219,8 +295,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                 <div className="p-3 bg-brand-accent/20 w-fit rounded-xl mb-6 text-brand-accent">
                                     <Activity size={32} />
                                 </div>
-                                <h3 className="text-3xl font-bold text-white mb-2">Real-Time Order Flow</h3>
-                                <p className="text-zinc-400 max-w-sm">Visualize institutional liquidity walls and hidden iceberg orders before price reacts.</p>
+                                <h3 className="text-2xl sm:text-3xl font-bold text-white mb-2">Order Flow &amp; CVD</h3>
+                                <p className="text-zinc-400 max-w-sm">Executed prints with taker-side classification, rolling CVD, absorptions and price-impact diagnostics.</p>
                             </div>
                             
                             {/* Graphic Mockup inside card */}
@@ -255,16 +331,16 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                             <div className="p-3 bg-emerald-500/20 w-fit rounded-xl mb-6 text-emerald-500">
                                 <Shield size={32} />
                             </div>
-                            <h3 className="text-2xl font-bold text-white mb-2">Sentinel AI</h3>
-                            <p className="text-zinc-400 mb-8 text-sm">Bayesian risk models that halt execution during volatility spikes.</p>
-                            
+                            <h3 className="text-2xl font-bold text-white mb-2">Positioning &amp; Funding</h3>
+                            <p className="text-zinc-400 mb-8 text-sm">Retail versus top-trader positioning, taker flow and cross-venue funding — side by side.</p>
+
                             <div className="flex-1 flex flex-col gap-3">
-                                {['Skewness Audit', 'Gamma Flip', 'Liquidity Gap', 'Tail Risk'].map((item, i) => (
+                                {['Retail L/S ratio', 'Top-trader positioning', 'Taker buy/sell', 'Funding extremes'].map((item, i) => (
                                     <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/40 border border-white/5">
                                         <span className="text-xs text-zinc-300 font-mono uppercase">{item}</span>
                                         <div className="flex items-center gap-2">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                            <span className="text-[10px] text-emerald-500 font-bold">PASS</span>
+                                            <div className="w-1.5 h-1.5 rounded-full bg-brand-accent animate-pulse" />
+                                            <span className="text-[10px] text-brand-accent font-bold">LIVE</span>
                                         </div>
                                     </div>
                                 ))}
@@ -284,18 +360,18 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                 <div className="p-3 bg-purple-500/20 w-fit rounded-xl mb-4 text-purple-400">
                                     <Zap size={32} />
                                 </div>
-                                <h3 className="text-2xl font-bold text-white mb-2">Ultra-Low Latency Execution</h3>
-                                <p className="text-zinc-400">Direct fiber connections to NY4 and LD4 data centers ensure your fill is first in queue.</p>
+                                <h3 className="text-2xl font-bold text-white mb-2">Liquidations &amp; Whale Flow</h3>
+                                <p className="text-zinc-400">Forced orders streamed from Binance and OKX, clustered by price, alongside the largest Hyperliquid accounts and their open positions.</p>
                             </div>
                             <div className="relative z-10 flex gap-8 mt-8 md:mt-0">
                                 <div className="text-center">
-                                    <div className="text-4xl font-mono font-bold text-white mb-1">&lt;12ms</div>
-                                    <div className="text-xs text-zinc-500 uppercase tracking-wider">Round Trip</div>
+                                    <div className="text-2xl font-mono font-bold text-white mb-1">OKX + Binance</div>
+                                    <div className="text-xs text-zinc-500 uppercase tracking-wider">Liquidation tape</div>
                                 </div>
                                 <div className="w-px bg-white/10" />
                                 <div className="text-center">
-                                    <div className="text-4xl font-mono font-bold text-white mb-1">99.9%</div>
-                                    <div className="text-xs text-zinc-500 uppercase tracking-wider">Uptime</div>
+                                    <div className="text-2xl font-mono font-bold text-white mb-1">Hyperliquid</div>
+                                    <div className="text-xs text-zinc-500 uppercase tracking-wider">Whale accounts</div>
                                 </div>
                             </div>
                         </motion.div>
@@ -303,55 +379,50 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 </div>
             </section>
 
-             {/* --- 3D Interface Teaser --- */}
-             <section className="py-20 px-6 relative z-10 overflow-hidden">
-                <div className="max-w-6xl mx-auto text-center mb-12">
-                    <h2 className="text-3xl font-bold text-white mb-4">Command Center</h2>
-                    <p className="text-zinc-400">A unified interface for alpha generation.</p>
-                </div>
-                
-                <motion.div 
-                    initial={{ rotateX: 20, scale: 0.9, opacity: 0 }}
-                    whileInView={{ rotateX: 0, scale: 1, opacity: 1 }}
-                    transition={{ duration: 1.2, ease: "easeOut" }}
-                    viewport={{ once: true }}
-                    className="max-w-6xl mx-auto relative perspective-1000"
-                >
-                    <div className="relative rounded-xl overflow-hidden border border-white/10 shadow-2xl shadow-brand-accent/10 bg-[#09090b]">
-                        <div className="absolute top-0 left-0 right-0 h-8 bg-[#18181b] flex items-center gap-2 px-4 border-b border-white/5">
-                            <div className="w-3 h-3 rounded-full bg-red-500/20 border border-red-500/50" />
-                            <div className="w-3 h-3 rounded-full bg-amber-500/20 border border-amber-500/50" />
-                            <div className="w-3 h-3 rounded-full bg-emerald-500/20 border border-emerald-500/50" />
-                        </div>
-                        {/* Abstract representation of the UI */}
-                        <div className="p-8 pt-12 grid grid-cols-12 gap-4 h-[500px] opacity-80">
-                            <div className="col-span-3 h-full bg-zinc-800/30 rounded-lg animate-pulse" />
-                            <div className="col-span-6 h-full flex flex-col gap-4">
-                                <div className="h-2/3 bg-zinc-800/30 rounded-lg" />
-                                <div className="h-1/3 bg-zinc-800/30 rounded-lg" />
-                            </div>
-                            <div className="col-span-3 h-full bg-zinc-800/30 rounded-lg" />
-                        </div>
-                        
-                        {/* Glass Overlay with CTA */}
-                        {/* ACCESSIBILITY FIX: Changed to <button> for keyboard support */}
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm group transition-colors">
-                             <button 
-                                onClick={handleEnter}
-                                className="p-1 rounded-full border border-white/20 bg-black/50 hover:bg-black/60 focus:outline-none focus:ring-2 focus:ring-brand-accent transition-all"
-                                aria-label="Enter Terminal"
-                             >
-                                <div className="px-8 py-3 bg-white text-black rounded-full font-bold flex items-center gap-2 group-hover:scale-105 transition-transform">
-                                    ENTER TERMINAL <ChevronRight size={16} />
-                                </div>
-                             </button>
-                        </div>
+             {/* --- Workspaces --- */}
+            <section className="py-16 sm:py-24 px-4 sm:px-6 relative z-10">
+                <div className="max-w-6xl mx-auto">
+                    <div className="text-center mb-10">
+                        <h2 className="text-3xl sm:text-4xl font-bold text-white mb-3">Built like a desk</h2>
+                        <p className="text-zinc-400 max-w-xl mx-auto">Six focused workspaces instead of one crowded screen. Free covers the core; Pro unlocks the advanced desks.</p>
                     </div>
-                </motion.div>
-             </section>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {[
+                            { icon: Activity, name: 'Order Flow', desc: 'Executed prints, taker side, CVD and price impact.', badge: 'PRO' },
+                            { icon: Shield, name: 'Positioning', desc: 'Retail vs top-trader long/short and taker flow.', badge: 'PRO' },
+                            { icon: Zap, name: 'RSI Screener', desc: 'Multi-timeframe RSI heatmap across liquid perps.', badge: 'PRO' },
+                            { icon: Globe, name: 'Liquidations', desc: 'Forced orders clustered by price, 24h heat strip.', badge: 'PRO' },
+                            { icon: Terminal, name: 'Whale Positions', desc: 'Largest Hyperliquid accounts and open positions.', badge: 'PRO' },
+                            { icon: Hexagon, name: 'Macro & FX', desc: 'Rates, inflation, dollar strength and ECB FX.', badge: 'FREE' },
+                        ].map(({ icon: Icon, name, desc, badge }) => (
+                            <div key={name} className="premium-card p-4 flex items-start gap-3">
+                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-accent/15 text-brand-accent">
+                                    <Icon size={17} />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm font-bold text-white">{name}</span>
+                                        <span className={`rounded px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider ${
+                                            badge === 'PRO' ? 'bg-brand-accent/15 text-brand-accent' : 'bg-emerald-500/15 text-emerald-400'
+                                        }`}>{badge}</span>
+                                    </div>
+                                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{desc}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="mt-10 text-center">
+                        <button onClick={handleEnter} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-7 py-3 text-sm font-bold text-white hover:bg-white/5">
+                            Open the free desk <ArrowRight size={16} />
+                        </button>
+                    </div>
+                </div>
+            </section>
 
             {/* --- Free forever --- */}
-            <section className="py-24 px-6 relative z-10">
+            <section className="py-16 sm:py-20 px-4 sm:px-6 relative z-10">
                 <div className="max-w-5xl mx-auto text-center">
                     <span className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">Free forever</span>
                     <h2 className="mt-3 text-4xl md:text-5xl font-bold text-white">Start free. <span className="text-brand-accent">No card.</span></h2>
@@ -365,7 +436,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                             'Funding & open interest across venues',
                             'Macro & FX data (FRED / ECB)',
                             'Market news with sentiment',
-                            'Sentinel context & guides',
+                            'Order book depth & liquidity',
                             'No credit card required',
                         ].map(t => (
                             <div key={t} className="fintech-card flex items-start gap-3 p-4">
@@ -386,7 +457,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             </div>
 
             {/* --- Pricing --- */}
-            <section id="pricing" className="py-24 px-6 relative z-10">
+            <section id="pricing" className="py-16 sm:py-20 px-4 sm:px-6 relative z-10">
                 <div className="max-w-5xl mx-auto">
                     <div className="text-center mb-12">
                         <span className="text-xs font-bold uppercase tracking-[0.2em] text-brand-accent">Pricing</span>
@@ -475,17 +546,17 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
               <div className="font-mono text-xs text-zinc-500 uppercase flex flex-col items-center gap-2">
                   <div className="flex items-center gap-2">
                     <Terminal size={14} className="animate-pulse" />
-                    <span>Establishing Handshake...</span>
+                    <span>Opening your desk…</span>
                   </div>
                   <span className="text-white font-bold">{loadingProgress}%</span>
               </div>
               
               {/* Boot Log */}
               <div className="absolute bottom-12 left-12 font-mono text-[10px] text-zinc-600 flex flex-col gap-1">
-                  <span className="text-emerald-500">✓ Kernel loaded</span>
-                  <span className={loadingProgress > 30 ? "text-emerald-500" : "opacity-0"}>✓ Crypto modules active</span>
-                  <span className={loadingProgress > 60 ? "text-emerald-500" : "opacity-0"}>✓ Connecting to dark pools...</span>
-                  <span className={loadingProgress > 90 ? "text-emerald-500" : "opacity-0"}>✓ Access granted</span>
+                  <span className="text-emerald-500">✓ Loading market data</span>
+                  <span className={loadingProgress > 30 ? "text-emerald-500" : "opacity-0"}>✓ Exchange feeds connected</span>
+                  <span className={loadingProgress > 60 ? "text-emerald-500" : "opacity-0"}>✓ Scoring positioning & funding</span>
+                  <span className={loadingProgress > 90 ? "text-emerald-500" : "opacity-0"}>✓ Desk ready</span>
               </div>
           </motion.div>
       )}
@@ -493,21 +564,5 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
     </div>
   );
 };
-
-// Helper for Ticker
-const PartnerLogo = ({ name, isSpecial }: { name: string; isSpecial?: boolean }) => (
-    <div className="flex items-center gap-2">
-        {isSpecial ? (
-            <div className="w-8 h-8 rounded bg-brand-accent/20 flex items-center justify-center text-brand-accent">
-                <Heart size={14} fill="currentColor" />
-            </div>
-        ) : (
-            <div className="w-8 h-8 rounded bg-white/10" />
-        )}
-        <span className={`text-lg font-bold font-mono tracking-tighter ${isSpecial ? 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'text-white/50'}`}>
-            {name}
-        </span>
-    </div>
-);
 
 export default LandingPage;
