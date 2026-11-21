@@ -7,7 +7,7 @@ import { CHECKLIST_ITEMS } from '../constants';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { apiFetch } from '../utils/apiClient';
-import { Gauge, Flame, Users, Activity } from 'lucide-react';
+import { Gauge, Flame, Users, Activity, Waves, Globe2 } from 'lucide-react';
 
 const motion = m as any;
 
@@ -57,6 +57,24 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
   const liqNet = ctx.liqLong !== undefined && ctx.liqShort !== undefined ? ctx.liqShort - ctx.liqLong : undefined;
   const div = ctx.retail !== undefined && ctx.top !== undefined ? ctx.retail - ctx.top : undefined;
 
+  const metrics = useStore(s => s.market.metrics);
+  const bids = useStore(s => s.market.bids);
+  const asks = useStore(s => s.market.asks);
+  const setActiveTab = useStore(s => s.setActiveTab);
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const norm = (v: number, lo: number, hi: number) => clamp((v - lo) / (hi - lo), 0, 1);
+  const depth = [...(bids || []).slice(0, 10), ...(asks || []).slice(0, 10)]
+    .reduce((a, l: any) => a + (Number(l?.size) || 0), 0);
+  const depthProxy = norm(depth, 1000, 50000);
+  const ofiAbs = Math.abs(Number(metrics?.ofi) || 0);
+  const reflexivityRatio = clamp((ofiAbs / (100 + depthProxy * 100)) * 8, 0, 2);
+  const reflexivityScore = reflexivityRatio / 2;
+  const cvdAbs = Math.abs(Number((metrics as any)?.institutionalCVD) || 0);
+  const glrScore = clamp(
+    0.5 * norm(ofiAbs, 0, 80) + 0.3 * norm(cvdAbs, 0, 200000) + 0.2 * 0.55,
+    0, 1,
+  );
+
   let score = 0;
   if (fundingPct !== undefined) score += fundingPct > 0.01 ? -1 : fundingPct < -0.01 ? 1 : 0;
   if (liqNet !== undefined) score += liqNet > 0 ? 0.6 : -0.6;
@@ -66,7 +84,7 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
   const biasTone = score >= 0.5 ? 'text-emerald-400' : score <= -0.5 ? 'text-rose-400' : 'text-slate-300';
 
   return (
-    <div className="grid h-full grid-cols-2 gap-2 lg:grid-cols-4">
+    <div className="grid h-full grid-cols-2 gap-2 lg:grid-cols-6">
       <div className="premium-card flex flex-col justify-center px-3 py-2">
         <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
           <Gauge size={11} /> {symbol.replace('USDT', '')} funding
@@ -111,6 +129,39 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
             style={{ width: `${biasWidth}%` }} />
         </div>
       </div>
+
+      <button
+        onClick={() => setActiveTab('ulis')}
+        title="Open ULIS — full reflexivity model"
+        className="premium-card flex flex-col justify-center px-3 py-2 text-left transition-colors hover:border-amber-500/40"
+      >
+        <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+          <Waves size={11} className="text-amber-400" /> Reflexivity
+        </div>
+        <div className={`mt-0.5 font-mono text-base font-black ${reflexivityScore > 0.66 ? 'text-rose-400' : reflexivityScore > 0.4 ? 'text-amber-300' : 'text-emerald-400'}`}>
+          {reflexivityRatio.toFixed(2)}
+        </div>
+        <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-800">
+          <div className={`h-full rounded-full ${reflexivityScore > 0.66 ? 'bg-rose-500' : reflexivityScore > 0.4 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+            style={{ width: `${reflexivityScore * 100}%` }} />
+        </div>
+      </button>
+
+      <button
+        onClick={() => setActiveTab('ulis')}
+        title="Open ULIS — global liquidity radar"
+        className="premium-card flex flex-col justify-center px-3 py-2 text-left transition-colors hover:border-blue-500/40"
+      >
+        <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+          <Globe2 size={11} className="text-blue-400" /> Global Liquidity
+        </div>
+        <div className="mt-0.5 font-mono text-base font-black text-blue-300">
+          {(glrScore * 100).toFixed(0)}
+        </div>
+        <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-800">
+          <div className="h-full rounded-full bg-blue-500" style={{ width: `${glrScore * 100}%` }} />
+        </div>
+      </button>
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import React from 'react';
 import { MarketMetrics } from '../types';
-import { Activity, Skull, TrendingUp, Anchor, ArrowRight, TrendingDown, Waves, Zap, Layers, GitMerge } from 'lucide-react';
+import { Activity, Skull, TrendingUp, Anchor, ArrowRight, TrendingDown, Waves, Zap, Layers } from 'lucide-react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 
@@ -246,75 +246,13 @@ const CofiCard: React.FC = () => {
     );
 };
 
-// ── 5. MTF OFI ────────────────────────────────────────────────────────────────
-const MtfCard: React.FC = () => {
-    const ofiHistory = useStore(s => s.ofiHistory);
-    const n = ofiHistory.length;
-    const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-    const short = avg(ofiHistory.slice(-5));
-    const mid = avg(ofiHistory.slice(-20));
-    const long = avg(ofiHistory.slice(-60));
-    const classify = (v: number) => v > 5 ? 'BULL' : v < -5 ? 'BEAR' : 'NEUT';
-    const sClass = classify(short); const mClass = classify(mid); const lClass = classify(long);
-    const allBull = sClass === 'BULL' && mClass === 'BULL' && lClass === 'BULL';
-    const allBear = sClass === 'BEAR' && mClass === 'BEAR' && lClass === 'BEAR';
-    const converge = allBull ? 'BULLISH' : allBear ? 'BEARISH' : 'MIXED';
-    const tc = (c: string) => c === 'BULL' ? 'text-emerald-400' : c === 'BEAR' ? 'text-rose-400' : 'text-zinc-500';
-    const bc = (c: string) => c === 'BULL' ? 'bg-emerald-500' : c === 'BEAR' ? 'bg-rose-500' : 'bg-zinc-600';
-    const rows = [{ l: '5B', v: short, c: sClass }, { l: '20B', v: mid, c: mClass }, { l: '60B', v: long, c: lClass }];
-
-    return (
-        <MetricCard>
-            <div className="absolute top-0 right-0 p-3 opacity-[0.03] pointer-events-none">
-                <GitMerge size={56} />
-            </div>
-            <div className="flex items-start justify-between z-10">
-                <CardLabel
-                    icon={<GitMerge size={10} className="text-purple-400" />}
-                    label="MTF OFI"
-                    sub="Convergence"
-                />
-                <StatusPill
-                    color={converge === 'BULLISH' ? 'text-emerald-400' : converge === 'BEARISH' ? 'text-rose-400' : 'text-zinc-400'}
-                    bg={converge === 'BULLISH' ? 'bg-emerald-500/10' : converge === 'BEARISH' ? 'bg-rose-500/10' : 'bg-zinc-800'}
-                >
-                    {converge === 'BULLISH' || converge === 'BEARISH' ? '⚡' : ''}{converge}
-                </StatusPill>
-            </div>
-
-            <div className="mt-1.5 space-y-1.5 z-10 flex-1">
-                {n < 5 ? (
-                    <p className="text-[9px] text-zinc-600 text-center py-1">Collecting…</p>
-                ) : rows.map(({ l, v, c }) => (
-                    <div key={l}>
-                        <div className="flex justify-between items-center text-[9px] font-mono mb-0.5">
-                            <span className="text-zinc-600">{l}</span>
-                            <span className={`font-bold ${tc(c)}`}>{v > 0 ? '+' : ''}{v.toFixed(1)} <span className="text-[7px]">{c}</span></span>
-                        </div>
-                        <div className="h-0.5 bg-slate-800 rounded-full overflow-hidden relative">
-                            <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/10 z-10" />
-                            <motion.div
-                                animate={{ width: `${Math.min(Math.abs(v) / 2, 50)}%`, left: v > 0 ? '50%' : 'auto', right: v < 0 ? '50%' : 'auto' }}
-                                className={`absolute top-0 bottom-0 ${bc(c)}`}
-                            />
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </MetricCard>
-    );
-};
-
 // ── Main Export ───────────────────────────────────────────────────────────────
 const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3 auto-rows-[minmax(145px,auto)] lg:auto-rows-auto lg:h-[168px]">
+    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 auto-rows-[minmax(145px,auto)] lg:auto-rows-auto lg:h-[168px]">
         <CvdCard metrics={metrics} />
         <RegimeCard metrics={metrics} />
         <OfiCard metrics={metrics} />
         <CofiCard />
-        <div className="col-span-2 sm:col-span-1 lg:col-span-1 h-full">
-            <MtfCard />
-        </div>
     </div>
 );
 
