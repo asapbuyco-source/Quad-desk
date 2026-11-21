@@ -1782,6 +1782,161 @@ async def whales(limit: int = 8):
     return out
 
 
+# ── Forward liquidation model & market comparison (free, estimated) ───────
+@app.get("/liq-model")
+async def liq_model(symbol: str = "BTCUSDT"):
+    """Estimated liquidation levels by leverage bucket. Model, not exchange positions."""
+    sym = _norm_symbol(symbol)
+    out: Dict[str, Any] = {
+        "symbol": sym, "as_of": _now_iso(),
+        "model": "leverage-bucket estimate from open interest and the long/short ratio",
+        "levels": [],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            mark = (await client.get("https://fapi.binance.com/fapi/v1/premiumIndex",
+                                     params={"symbol": sym})).json()
+            hist = (await client.get("https://fapi.binance.com/futures/data/openInterestHist",
+                                     params={"symbol": sym, "period": "5m", "limit": 1})).json()
+            ratio_rows = (await client.get("https://fapi.binance.com/futures/data/globalLongShortAccountRatio",
+                                           params={"symbol": sym, "period": "5m", "limit": 1})).json()
+        price = float(mark.get("markPrice") or 0)
+        oi_usd = float(hist[-1]["sumOpenInterestValue"]) if isinstance(hist, list) and hist else 0.0
+        ratio = float(ratio_rows[-1]["longShortRatio"]) if isinstance(ratio_rows, list) and ratio_rows else 1.0
+    except Exception as e:
+        out["error"] = str(e)
+        return out
+    if price <= 0:
+        out["error"] = "no mark price"
+        return out
+
+    long_share = ratio / (1 + ratio) if ratio > 0 else 0.5
+    buckets = [5, 10, 25, 50, 100]
+    weights = [0.32, 0.28, 0.20, 0.13, 0.07]
+    mmr = 0.005
+    for lev, w in zip(buckets, weights):
+        share = oi_usd * w
+        long_px = price * (1 - 1 / lev + mmr)
+        short_px = price * (1 + 1 / lev - mmr)
+        out["levels"].append({
+            "leverage": lev, "side": "long", "price": round(long_px, 2),
+            "distance_pct": round((long_px / price - 1) * 100, 2),
+            "notional_usd": round(share * long_share),
+        })
+        out["levels"].append({
+            "leverage": lev, "side": "short", "price": round(short_px, 2),
+            "distance_pct": round((short_px / price - 1) * 100, 2),
+            "notional_usd": round(share * (1 - long_share)),
+        })
+    out["price"] = price
+    out["oi_usd"] = round(oi_usd)
+    out["long_share"] = round(long_share * 100, 1)
+    out["levels"].sort(key=lambda x: abs(x["distance_pct"]))
+    return out
+
+
+async def _daily_closes(client: httpx.AsyncClient, symbol: str, limit: int) -> List[float]:
+    try:
+        kl = (await client.get("https://fapi.binance.com/fapi/v1/klines",
+                               params={"symbol": symbol, "interval": "1d", "limit": limit})).json()
+        if isinstance(kl, list) and kl:
+            return [float(k[4]) for k in kl]
+    except Exception:
+        pass
+    try:
+        d = (await client.get("https://api.bybit.com/v5/market/kline",
+                              params={"category": "linear", "symbol": symbol, "interval": "D", "limit": limit})).json()
+        lst = ((d or {}).get("result") or {}).get("list") or []
+        return [float(k[4]) for k in reversed(lst)]
+    except Exception:
+        return []
+
+
+@app.get("/compare")
+async def compare(symbols: str = "BTCUSDT,ETHUSDT,SOLUSDT", days: int = 30):
+    """Daily-return correlation matrix and beta versus the first symbol."""
+    syms = [_norm_symbol(s.strip()) for s in symbols.split(",") if s.strip()][:6]
+    n = max(10, min(days, 180))
+    out: Dict[str, Any] = {"as_of": _now_iso(), "days": n, "symbols": syms, "matrix": [], "rows": []}
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        closes = {s: await _daily_closes(client, s, n + 1) for s in syms}
+
+    rets: Dict[str, List[float]] = {}
+    for s, c in closes.items():
+        if len(c) < 5:
+            continue
+        rets[s] = [(c[i] / c[i - 1] - 1.0) for i in range(1, len(c))]
+    valid = [s for s in syms if s in rets]
+    if not valid:
+        out["error"] = "no kline data"
+        return out
+    m = min(len(rets[s]) for s in valid)
+    rets = {s: rets[s][-m:] for s in valid}
+
+    def corr(a: List[float], b: List[float]) -> float:
+        ma, mb = sum(a) / len(a), sum(b) / len(b)
+        cov = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+        va = sum((x - ma) ** 2 for x in a)
+        vb = sum((y - mb) ** 2 for y in b)
+        return cov / ((va * vb) ** 0.5) if va > 0 and vb > 0 else 0.0
+
+    base = valid[0]
+    base_var = sum((x - sum(rets[base]) / m) ** 2 for x in rets[base])
+    out["matrix"] = [[round(corr(rets[a], rets[b]), 2) for b in valid] for a in valid]
+    for s in valid:
+        closes_s = closes[s][-m - 1:]
+        chg = (closes_s[-1] / closes_s[0] - 1.0) * 100 if closes_s else 0.0
+        mean = sum(rets[s]) / m
+        var = sum((x - mean) ** 2 for x in rets[s])
+        beta = (sum((x - mean) * (y - sum(rets[base]) / m) for x, y in zip(rets[s], rets[base])) / base_var) if base_var > 0 else 0.0
+        vol = (var / m) ** 0.5 * (365 ** 0.5) * 100
+        out["rows"].append({
+            "symbol": s,
+            "change_pct": round(chg, 2),
+            "vol_pct": round(vol, 1),
+            "beta": round(beta, 2),
+            "corr": round(corr(rets[s], rets[base]), 2),
+        })
+    return out
+
+
+ALT_BASKET = [
+    "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT",
+    "LINKUSDT", "TONUSDT", "SUIUSDT", "APTUSDT", "NEARUSDT",
+]
+
+
+@app.get("/altseason")
+async def altseason(days: int = 30):
+    """Share of major alts outperforming BTC over the window. 0–100 index."""
+    n = max(10, min(days, 120))
+    out: Dict[str, Any] = {"as_of": _now_iso(), "days": n, "alts": []}
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        btc = await _daily_closes(client, "BTCUSDT", n + 1)
+        rows = []
+        for s in ALT_BASKET:
+            c = await _daily_closes(client, s, n + 1)
+            if len(c) < 5:
+                continue
+            chg = (c[-1] / c[0] - 1.0) * 100
+            rows.append({"symbol": s, "change_pct": round(chg, 2)})
+    btc_chg = (btc[-1] / btc[0] - 1.0) * 100 if len(btc) > 1 else 0.0
+    beating = [r for r in rows if r["change_pct"] > btc_chg]
+    idx = round((len(beating) / len(rows)) * 100) if rows else 0
+    for r in rows:
+        r["vs_btc"] = round(r["change_pct"] - btc_chg, 2)
+    rows.sort(key=lambda r: r["vs_btc"], reverse=True)
+    out.update({
+        "index": idx,
+        "btc_change_pct": round(btc_chg, 2),
+        "beating": len(beating),
+        "count": len(rows),
+        "label": "Altseason" if idx >= 75 else "Bitcoin season" if idx <= 25 else "Mixed",
+        "alts": rows,
+    })
+    return out
+
+
 @app.get("/alerts/status")
 async def alerts_status():
     """Called by AlertEngine.tsx every 60s to detect autonomous mode."""

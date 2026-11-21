@@ -55,6 +55,7 @@ export const FREE_TABS = new Set([
   'liquidations',
   'screener',
   'watchlist',
+  'markets',
 ]);
 
 /** Tabs that are hidden from normal users entirely — admin-only tooling. */

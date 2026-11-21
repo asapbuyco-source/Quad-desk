@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DCA planner — monthly accumulation | Quant Desk</title>
+<meta name="description" content="Plan a dollar-cost averaging schedule: starting capital, monthly contribution and expected annual return over time." />
+<link rel="canonical" href="https://quad-desk.vercel.app/tools/dca" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:48px 20px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:30px;line-height:1.2;margin:0 0 6px}
+  p{color:#a1a1aa;margin-top:0}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  form{display:grid;grid-template-columns:1fr 1fr;gap:14px;background:linear-gradient(180deg,rgba(24,24,27,.9),rgba(10,10,12,.85));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:5px}
+  input{width:100%;background:#0b0b0e;border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:10px 11px;color:#fff;font:14px ui-monospace,monospace;outline:none}
+  input:focus{border-color:#3b82f6}
+  .full{grid-column:1/-1}
+  .out{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:6px}
+  .cell{background:rgba(16,185,129,.07);border:1px solid rgba(16,185,129,.22);border-radius:10px;padding:11px 12px}
+  .cell .k{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#6ee7b7}
+  .cell .v{font:700 20px ui-monospace,monospace;color:#fff;margin-top:2px}
+  .warn{grid-column:1/-1;color:#64748b;font-size:12px;margin-top:4px}
+  nav{margin-top:34px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+  @media(max-width:520px){form{grid-template-columns:1fr}.out{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>DCA planner</h1>
+  <p>Estimate where a monthly accumulation plan ends up — contributions first, assumptions second.</p>
+
+  <form id="f">
+    <div><label>Starting capital (USD)</label><input id="start" type="number" min="0" step="any" value="1000" /></div>
+    <div><label>Monthly contribution (USD)</label><input id="monthly" type="number" min="0" step="any" value="250" /></div>
+    <div><label>Expected annual return (%)</label><input id="ret" type="number" step="any" value="20" /></div>
+    <div><label>Years</label><input id="years" type="number" min="1" max="40" step="1" value="5" /></div>
+    <div class="out">
+      <div class="cell"><div class="k">Total contributed</div><div class="v" id="oContrib">—</div></div>
+      <div class="cell"><div class="k">Projected value</div><div class="v" id="oValue">—</div></div>
+      <div class="cell"><div class="k">Growth</div><div class="v" id="oGrowth">—</div></div>
+      <div class="cell"><div class="k">Multiple on capital</div><div class="v" id="oMult">—</div></div>
+    </div>
+    <div class="warn">Deterministic projection, not a backtest. Real returns vary and can be negative. Not investment advice.</div>
+  </form>
+
+  <nav>
+    <a href="/tools/funding-arb">Funding arb calculator</a>
+    <a href="/tools/position-size">Position sizer</a>
+    <a href="/">Terminal</a>
+    <a href="/methodology">Methodology</a>
+  </nav>
+</div>
+<script src="/site-nav.js" defer></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const money = (v) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  function calc() {
+    const start = +$('start').value || 0;
+    const monthly = +$('monthly').value || 0;
+    const years = Math.max(1, +$('years').value || 1);
+    const annual = (+$('ret').value || 0) / 100;
+    const r = Math.pow(1 + annual, 1 / 12) - 1;
+    const n = years * 12;
+    let value = start;
+    for (let i = 0; i < n; i++) value = value * (1 + r) + monthly;
+    const contrib = start + monthly * n;
+    $('oContrib').textContent = money(contrib);
+    $('oValue').textContent = money(value);
+    $('oGrowth').textContent = money(value - contrib);
+    $('oMult').textContent = contrib > 0 ? (value / contrib).toFixed(2) + '×' : '—';
+  }
+  document.querySelectorAll('input').forEach(i => i.addEventListener('input', calc));
+  calc();
+</script>
+</body>
+</html>

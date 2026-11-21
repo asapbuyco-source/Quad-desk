@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'liquidity', icon: Droplets, label: 'Liquidity', hint: 'Liquidity map' },
       { id: 'bias', icon: Layers, label: 'Matrix', hint: 'Bias matrix' },
       { id: 'regime', icon: Activity, label: 'Regime', hint: 'HMM regime state' },
+      { id: 'markets', icon: Globe2, label: 'Markets', hint: 'Compare symbols, correlation, altseason' },
       { id: 'liquidations', icon: Flame, label: 'Liquidations', hint: 'Forced orders and price clusters' },
       { id: 'whales', icon: Wallet, label: 'Whales', hint: 'Large Hyperliquid positions' },
     ],

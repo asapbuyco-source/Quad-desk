@@ -7,6 +7,11 @@ import { useStore } from '../store';
 interface Cluster { price: number; long_usd: number; short_usd: number; total_usd: number; count: number }
 interface SymRow { symbol: string; long_usd: number; short_usd: number; total_usd: number; count: number }
 interface Largest { t: string; symbol: string; venue?: string; side: 'long' | 'short'; price: number; notional: number }
+interface ModelLevel { leverage: number; side: 'long' | 'short'; price: number; distance_pct: number; notional_usd: number }
+interface ModelResp {
+  symbol: string; price: number; oi_usd: number; long_share: number;
+  levels: ModelLevel[]; model?: string; error?: string;
+}
 interface LiqResponse {
   as_of: string;
   symbol: string;
@@ -38,13 +43,18 @@ const LiquidationPage: React.FC = () => {
   const [symbol, setSymbol] = useState('');
   const [minutes, setMinutes] = useState(240);
   const [data, setData] = useState<LiqResponse | null>(null);
+  const [model, setModel] = useState<ModelResp | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (sym: string, mins: number) => {
     setLoading(true);
     try {
-      const r = await apiFetch(`/liquidations?symbol=${sym}&minutes=${mins}&limit=20`, { timeoutMs: 45000 });
+      const [r, m] = await Promise.all([
+        apiFetch(`/liquidations?symbol=${sym}&minutes=${mins}&limit=20`, { timeoutMs: 45000 }),
+        apiFetch(`/liq-model?symbol=${sym || 'BTCUSDT'}`, { timeoutMs: 45000 }),
+      ]);
       setData(await r.json());
+      setModel(await m.json());
     } catch {
       setData(null);
     } finally {
@@ -181,6 +191,40 @@ const LiquidationPage: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {!!model?.levels?.length && (
+          <div className="mt-6 premium-card p-4">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Estimated liquidation levels</span>
+              <span className="font-mono text-[9px] text-slate-600">
+                price {usd(model.price)} · OI {usd(model.oi_usd)} · {model.long_share}% long
+              </span>
+            </div>
+            <div className="mb-3 font-mono text-[9px] text-slate-600">
+              model: open interest split across 5×–100× buckets with the current long/short ratio — not exchange positions
+            </div>
+            <div className="space-y-1">
+              {(() => {
+                const maxN = Math.max(1, ...model.levels.map(l => l.notional_usd));
+                return model.levels.map((l, i) => (
+                  <div key={`${l.side}-${l.leverage}-${i}`} className="flex items-center gap-2">
+                    <span className="w-10 shrink-0 text-right font-mono text-[10px] text-slate-500">{l.leverage}×</span>
+                    <span className={`w-9 shrink-0 font-mono text-[9px] uppercase ${l.side === 'long' ? 'text-rose-400' : 'text-emerald-400'}`}>{l.side}</span>
+                    <span className="w-24 shrink-0 text-right font-mono text-[10px] text-slate-300">{usd(l.price)}</span>
+                    <div className="flex h-3 flex-1 overflow-hidden rounded bg-slate-800/60">
+                      <div className={`h-full ${l.side === 'long' ? 'bg-rose-500/80' : 'bg-emerald-500/80'}`}
+                        style={{ width: `${(l.notional_usd / maxN) * 100}%` }} />
+                    </div>
+                    <span className={`w-14 shrink-0 text-right font-mono text-[10px] ${l.distance_pct <= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                      {l.distance_pct >= 0 ? '+' : ''}{l.distance_pct}%
+                    </span>
+                    <span className="w-16 shrink-0 text-right font-mono text-[10px] text-slate-500">{usd(l.notional_usd)}</span>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        )}
 
         <div className="mt-6">
           <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">By symbol</div>

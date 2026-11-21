@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Funding arbitrage calculator | Quant Desk</title>
+<meta name="description" content="Estimate net funding carry between two perpetual venues: rate difference, fees, gross and net APR." />
+<link rel="canonical" href="https://quad-desk.vercel.app/tools/funding-arb" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:48px 20px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:30px;line-height:1.2;margin:0 0 6px}
+  p{color:#a1a1aa;margin-top:0}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  form{display:grid;grid-template-columns:1fr 1fr;gap:14px;background:linear-gradient(180deg,rgba(24,24,27,.9),rgba(10,10,12,.85));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:5px}
+  input,select{width:100%;background:#0b0b0e;border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:10px 11px;color:#fff;font:14px ui-monospace,monospace;outline:none}
+  input:focus{border-color:#3b82f6}
+  .full{grid-column:1/-1}
+  .out{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:6px}
+  .cell{background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.22);border-radius:10px;padding:11px 12px}
+  .cell .k{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#93c5fd}
+  .cell .v{font:700 20px ui-monospace,monospace;color:#fff;margin-top:2px}
+  .warn{grid-column:1/-1;color:#64748b;font-size:12px;margin-top:4px}
+  nav{margin-top:34px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+  @media(max-width:520px){form{grid-template-columns:1fr}.out{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Funding arbitrage calculator</h1>
+  <p>Long one venue, short another, collect the funding difference. Fees and execution are on you.</p>
+
+  <form id="f">
+    <div><label>Position size (USD per leg)</label><input id="size" type="number" min="0" step="any" value="10000" /></div>
+    <div><label>Days held</label><input id="days" type="number" min="1" step="1" value="7" /></div>
+    <div><label>Long venue funding (per 8h %)</label><input id="longRate" type="number" step="any" value="0.01" /></div>
+    <div><label>Short venue funding (per 8h %)</label><input id="shortRate" type="number" step="any" value="0.05" /></div>
+    <div class="full"><label>Round-trip fees per leg (%)</label><input id="fees" type="number" min="0" step="any" value="0.1" /></div>
+    <div class="out">
+      <div class="cell"><div class="k">Net funding (per 8h)</div><div class="v" id="oNet">—</div></div>
+      <div class="cell"><div class="k">Gross carry</div><div class="v" id="oGross">—</div></div>
+      <div class="cell"><div class="k">Fees</div><div class="v" id="oFees">—</div></div>
+      <div class="cell"><div class="k">Net APR</div><div class="v" id="oApr">—</div></div>
+    </div>
+    <div class="warn">Assumes rates stay constant, both legs fill, and no slippage or borrow cost. Not investment advice.</div>
+  </form>
+
+  <nav>
+    <a href="/tools/position-size">Position sizer</a>
+    <a href="/tools/liq-calc">Liquidation calculator</a>
+    <a href="/">Terminal</a>
+    <a href="/methodology">Methodology</a>
+  </nav>
+</div>
+<script src="/site-nav.js" defer></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const money = (v) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  function calc() {
+    const size = +$('size').value || 0;
+    const days = Math.max(1, +$('days').value || 1);
+    const lr = (+$('longRate').value || 0) / 100;
+    const sr = (+$('shortRate').value || 0) / 100;
+    const feePct = (+$('fees').value || 0) / 100;
+    const perInterval = (sr - lr) * size;
+    const intervals = days * 3;
+    const gross = perInterval * intervals;
+    const feesTotal = size * feePct * 2;
+    const net = gross - feesTotal;
+    $('oNet').textContent = money(perInterval);
+    $('oGross').textContent = money(gross);
+    $('oFees').textContent = money(feesTotal);
+    $('oApr').textContent = size > 0 ? ((net / size) * (365 / days) * 100).toFixed(1) + '%' : '—';
+  }
+  document.querySelectorAll('input').forEach(i => i.addEventListener('input', calc));
+  calc();
+</script>
+</body>
+</html>
