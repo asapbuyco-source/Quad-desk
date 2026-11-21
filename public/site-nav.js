@@ -16,7 +16,7 @@
 
   var style = document.createElement('style');
   style.textContent = [
-    '.qd-nav{position:sticky;top:0;z-index:200;background:rgba(5,5,7,.9);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.07)}',
+    '.qd-nav{position:sticky;top:0;z-index:200;padding-top:env(safe-area-inset-top);background:rgba(5,5,7,.9);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.07)}',
     '.qd-nav-inner{max-width:980px;margin:0 auto;display:flex;align-items:center;gap:16px;padding:10px 18px}',
     '.qd-brand{font:700 11px/1 Inter,system-ui,sans-serif;letter-spacing:.18em;color:#fff;text-decoration:none;white-space:nowrap}',
     '.qd-brand:hover{text-decoration:none}',

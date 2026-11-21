@@ -161,7 +161,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
       </aside>
 
       {/* ── Mobile bottom bar ───────────────────────────────────────── */}
-      <div className="lg:hidden fixed bottom-5 left-4 right-4 z-50">
+      <div className="lg:hidden fixed bottom-[calc(1.25rem+env(safe-area-inset-bottom))] left-4 right-4 z-50">
         <div className="fintech-card flex items-center justify-around px-1.5 py-2 shadow-2xl">
           {primaryItems.map(tab => {
             const isActive = activeTab === tab.id;
@@ -200,7 +200,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab, setActiveTab }) => {
               initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 30, stiffness: 300 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="absolute bottom-0 left-0 right-0 max-h-[80vh] overflow-y-auto rounded-t-3xl border-t border-white/10 bg-[#0b0b0d] p-5 pb-8"
+              className="absolute bottom-0 left-0 right-0 max-h-[80dvh] overflow-y-auto rounded-t-3xl border-t border-white/10 bg-[#0b0b0d] p-5 pb-[calc(2rem+env(safe-area-inset-bottom))]"
             >
               <div className="mb-4 flex items-center justify-between">
                 <span className="text-sm font-bold tracking-[0.18em] text-white">ALL SECTIONS</span>

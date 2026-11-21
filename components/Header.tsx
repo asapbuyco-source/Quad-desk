@@ -80,11 +80,11 @@ const Header: React.FC = () => {
                             {metrics.pair}
                         </h1>
                         <div className="flex items-center gap-2 lg:gap-3">
-                            <span className="text-base lg:text-2xl font-mono font-medium text-white tracking-tight">
+                            <span className="max-w-[110px] truncate text-base lg:max-w-none lg:text-2xl font-mono font-medium text-white tracking-tight">
                                 ${metrics.price.toFixed(2)}
                             </span>
                             <div className={`
-                flex items-center px-1.5 lg:px-2 py-0.5 rounded-full text-[10px] lg:text-xs font-bold font-mono
+                hidden min-[360px]:flex items-center px-1.5 lg:px-2 py-0.5 rounded-full text-[10px] lg:text-xs font-bold font-mono
                 ${metrics.change > 0
                                     ? 'bg-trade-bid/20 text-trade-bid'
                                     : metrics.change < 0
@@ -186,8 +186,8 @@ const Header: React.FC = () => {
                         </button>
                     )}
 
-                    {/* Notifications */}
-                    <button className="relative p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300">
+                    {/* Notifications (hidden on the smallest screens to protect header space) */}
+                    <button className="relative hidden sm:block p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300">
                         <Bell size={20} className="w-5 h-5 lg:w-5 lg:h-5" />
                         <span className="absolute top-2 right-2 w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full bg-trade-ask border-2 border-[#0B101B]"></span>
                     </button>

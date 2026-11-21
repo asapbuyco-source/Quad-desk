@@ -1336,7 +1336,7 @@ const ULISView: React.FC = () => {
                         sub="Unified field: visible + latent + gravity + reflexivity layers"
                         accent="text-violet-400"
                     />
-                    <div className="w-full h-[220px]">
+                    <div className="w-full h-[260px] lg:h-[220px]">
                         <MasterHeatmapCanvas
                             price={price}
                             levels={levels.map((l: any) => ({ price: l.price, size: l.size ?? 1 }))}
@@ -1406,7 +1406,7 @@ const ULISView: React.FC = () => {
                                 desc="GLR leads BTC by ~30–70 days in theory"
                             />
                         </div>
-                        <div className="w-full grid grid-cols-5 gap-1">
+                        <div className="w-full grid grid-cols-3 sm:grid-cols-5 gap-1">
                             {Object.entries(scores.glrComponents).map(([k, v]) => (
                                 <div key={k} className="flex flex-col items-center p-2 rounded-lg bg-black/30">
                                     <span className="text-[8px] text-zinc-600 uppercase tracking-wide">{k.replace('Liq', '').replace('Flow', '')}</span>
