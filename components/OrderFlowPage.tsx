@@ -171,12 +171,12 @@ const OrderFlowPage: React.FC = () => {
         </div>
 
         {/* Rolling flow totals */}
-        <div className="fintech-card overflow-hidden">
+        <div className="premium-card overflow-x-auto">
           <div className="flex items-center gap-2 border-b border-white/5 px-4 py-3">
             <Layers size={14} className="text-brand-accent" />
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Rolling flow · by venue</span>
           </div>
-          <table className="w-full text-left text-sm">
+          <table className="w-full min-w-[560px] text-left text-sm">
             <thead>
               <tr className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-2">Window</th>
@@ -218,7 +218,7 @@ const OrderFlowPage: React.FC = () => {
               </span>
               <span className="font-mono text-[10px] text-slate-600">newest first</span>
             </div>
-            <div className="max-h-[420px] overflow-y-auto scrollbar-hide">
+            <div className="max-h-[420px] overflow-y-auto overflow-x-auto scrollbar-hide">
               <table className="w-full text-left">
                 <thead className="sticky top-0 bg-[#0b0b0d]/95 backdrop-blur">
                   <tr className="text-[10px] uppercase tracking-wider text-slate-500">
@@ -266,7 +266,7 @@ const OrderFlowPage: React.FC = () => {
               </span>
               <span className="font-mono text-[10px] text-slate-600">diff-depth · seq</span>
             </div>
-            <div className="max-h-[420px] overflow-y-auto scrollbar-hide p-2 space-y-1">
+            <div className="max-h-[420px] overflow-y-auto overflow-x-auto scrollbar-hide p-2 space-y-1">
               {liqEvents.map(e => (
                 <div key={e.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-white/[0.03]">
                   <div className="min-w-0">

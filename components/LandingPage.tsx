@@ -66,7 +66,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   };
 
   return (
-    <div className="h-screen w-screen relative bg-[#050505] font-sans selection:bg-brand-accent/30 overflow-x-hidden">
+    <div className="h-[100dvh] w-full relative bg-[#050505] font-sans selection:bg-brand-accent/30 overflow-y-auto overflow-x-hidden overscroll-contain">
       
       {/* --- Global Background --- */}
       <div className="fixed inset-0 z-0 pointer-events-none">

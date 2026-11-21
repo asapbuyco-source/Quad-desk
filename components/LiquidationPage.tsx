@@ -228,8 +228,8 @@ const LiquidationPage: React.FC = () => {
 
         <div className="mt-6">
           <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">By symbol</div>
-          <div className="fintech-card overflow-hidden">
-            <table className="w-full text-left text-sm">
+          <div className="premium-card overflow-x-auto">
+            <table className="w-full min-w-[520px] text-left text-sm">
               <thead>
                 <tr className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-2.5">Symbol</th>

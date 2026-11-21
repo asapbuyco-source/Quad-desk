@@ -160,8 +160,8 @@ const AdminUsers: React.FC = () => {
           <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-300">{notice}</div>
         )}
 
-        <div className="premium-card overflow-hidden">
-          <table className="w-full text-left text-sm">
+        <div className="premium-card overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead>
               <tr className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-3">User</th>

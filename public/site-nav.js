@@ -27,7 +27,8 @@
     '.qd-links a.active{color:#fff;border-bottom-color:#3b82f6}',
     '.qd-cta{flex:none;background:#3b82f6;color:#fff;text-decoration:none;font:700 11px Inter,system-ui,sans-serif;padding:8px 13px;border-radius:8px;white-space:nowrap}',
     '.qd-cta:hover{background:#2563eb;text-decoration:none}',
-    '@media(max-width:680px){.qd-nav-inner{padding:8px 12px;gap:10px}.qd-cta{display:none}.qd-brand{font-size:10px}}'
+    '@media(max-width:680px){.qd-nav-inner{padding:8px 12px;gap:10px}.qd-cta{display:none}.qd-brand{font-size:10px}}',
+    '@media(max-width:640px){.wrap{padding-left:16px;padding-right:16px}table{font-size:12px}th,td{padding:7px 6px}pre{white-space:pre-wrap}}'
   ].join('');
 
   var header = document.createElement('header');
@@ -65,4 +66,22 @@
   header.appendChild(inner);
   document.head.appendChild(style);
   document.body.insertBefore(header, document.body.firstChild);
+
+  // Keep wide data tables usable on phones: wrap each in a horizontal scroller.
+  function wrapTables() {
+    document.querySelectorAll('table').forEach(function (t) {
+      if (t.parentElement && t.parentElement.hasAttribute('data-qd-scroll')) return;
+      var w = document.createElement('div');
+      w.setAttribute('data-qd-scroll', '');
+      w.style.overflowX = 'auto';
+      w.style.webkitOverflowScrolling = 'touch';
+      t.parentNode.insertBefore(w, t);
+      w.appendChild(t);
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wrapTables);
+  } else {
+    wrapTables();
+  }
 })();

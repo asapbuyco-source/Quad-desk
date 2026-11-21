@@ -120,8 +120,8 @@ const WatchlistPage: React.FC = () => {
           </button>
         </div>
 
-        <div className="premium-card overflow-hidden">
-          <table className="w-full text-left text-sm">
+        <div className="premium-card overflow-x-auto">
+          <table className="w-full min-w-[620px] text-left text-sm">
             <thead>
               <tr className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-3">Symbol</th>

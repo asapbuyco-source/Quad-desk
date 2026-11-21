@@ -122,8 +122,8 @@ const ScreenerPage: React.FC = () => {
           <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">{data.error}</div>
         )}
 
-        <div className="fintech-card overflow-hidden">
-          <table className="w-full text-left text-sm">
+        <div className="premium-card overflow-x-auto">
+          <table className="w-full min-w-[620px] text-left text-sm">
             <thead>
               <tr className="border-b border-white/5">
                 {header('symbol', 'Symbol', 'text-left')}
