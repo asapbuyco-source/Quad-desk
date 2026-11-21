@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, User as UserIcon, Sparkles } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import ProfileOverlay from './ProfileOverlay';
 import { isAdminEmail, PAYWALL_ENABLED } from '../utils/entitlements';
 
 const motion = m as any;
@@ -21,7 +20,7 @@ const Header: React.FC = () => {
     const { isBacktest, activeSymbol, playbackSpeed, backtestDate } = useStore(state => state.config);
     const { user } = useStore(state => state.auth);
     const { plan } = useStore(state => state.auth);
-    const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setProfileOpen, setActiveTab } = useStore();
+    const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setActiveTab } = useStore();
     const showUpgrade = PAYWALL_ENABLED && plan !== 'pro' && !isAdminEmail(user?.email);
 
     return (
@@ -206,7 +205,8 @@ const Header: React.FC = () => {
                     <div className="relative group">
                         {user ? (
                             <button
-                                onClick={() => setProfileOpen(true)}
+                                onClick={() => setActiveTab('profile')}
+                                title="Profile"
                                 className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 border border-white/20 overflow-hidden relative cursor-pointer hover:ring-2 hover:ring-white/20 transition-all"
                             >
                                 {user.photoURL ? (
@@ -224,9 +224,6 @@ const Header: React.FC = () => {
                 </div>
 
             </header>
-
-            {/* Profile Overlay Component */}
-            <ProfileOverlay />
         </>
     );
 };
