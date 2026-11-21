@@ -28,6 +28,25 @@ let _latestOfi = 0;
 let _lastZDivAlertMs = 0;
 const Z_DIV_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
+export interface PriceAlert {
+    id: string;
+    symbol: string;
+    direction: 'above' | 'below';
+    price: number;
+    createdAt: number;
+    triggeredAt?: number;
+}
+
+const readLS = <T,>(key: string, fallback: T): T => {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+    } catch { return fallback; }
+};
+const writeLS = (key: string, value: unknown) => {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+};
+
 interface AppState {
     ui: {
         activeTab: string;
@@ -99,6 +118,10 @@ interface AppState {
     macroStrategy: MacroStrategyState;
     botSettings: BotSettingsState;
     notifications: ToastMessage[];
+    /** Symbols pinned by the user (local, no account required). */
+    watchlist: string[];
+    /** Price alerts, capped for free accounts. */
+    priceAlerts: PriceAlert[];
     alertLogs: any[];
     darkPool: DarkPoolState;
     /** Rolling -1 to +1 bias from dark pool, used by SentinelPanel and BiasMatrix */
@@ -121,6 +144,10 @@ interface AppState {
 
     setHasEntered: (val: boolean) => void;
     setActiveTab: (tab: string) => void;
+    toggleWatch: (symbol: string) => void;
+    addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'createdAt'>) => boolean;
+    removePriceAlert: (id: string) => void;
+    triggerPriceAlert: (id: string) => void;
     setProfileOpen: (isOpen: boolean) => void;
     setSymbol: (symbol: string) => void;
     setInterval: (interval: string) => void;
@@ -326,6 +353,8 @@ export const useStore = create<AppState>((set, get) => ({
         lastUlis: '—',
     },
     notifications: [],
+    watchlist: readLS<string[]>('qd.watchlist', ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']),
+    priceAlerts: readLS<PriceAlert[]>('qd.priceAlerts', []),
     alertLogs: [],
     botTrades: [],
     botLogs: [],
@@ -347,6 +376,36 @@ export const useStore = create<AppState>((set, get) => ({
 
     setHasEntered: (val) => set(state => ({ ui: { ...state.ui, hasEntered: val } })),
     setActiveTab: (tab) => set(state => ({ ui: { ...state.ui, activeTab: tab } })),
+    toggleWatch: (symbol) => set(state => {
+        const next = state.watchlist.includes(symbol)
+            ? state.watchlist.filter(s => s !== symbol)
+            : [...state.watchlist, symbol];
+        writeLS('qd.watchlist', next);
+        return { watchlist: next };
+    }),
+    addPriceAlert: (alert) => {
+        const state = get();
+        const limit = state.auth.plan === 'pro' ? 100 : 3;
+        if (state.priceAlerts.filter(a => !a.triggeredAt).length >= limit) return false;
+        const next = [{
+            ...alert,
+            id: `pa_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            createdAt: Date.now(),
+        }, ...state.priceAlerts].slice(0, 100);
+        writeLS('qd.priceAlerts', next);
+        set({ priceAlerts: next });
+        return true;
+    },
+    removePriceAlert: (id) => {
+        const next = get().priceAlerts.filter(a => a.id !== id);
+        writeLS('qd.priceAlerts', next);
+        set({ priceAlerts: next });
+    },
+    triggerPriceAlert: (id) => {
+        const next = get().priceAlerts.map(a => a.id === id ? { ...a, triggeredAt: Date.now() } : a);
+        writeLS('qd.priceAlerts', next);
+        set({ priceAlerts: next });
+    },
     setProfileOpen: (isOpen) => set(state => ({ ui: { ...state.ui, isProfileOpen: isOpen } })),
     setSymbol: (symbol) => set(state => ({ config: { ...state.config, activeSymbol: symbol } })),
     setInterval: (interval) => set(state => ({ config: { ...state.config, interval } })),

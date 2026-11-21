@@ -54,6 +54,7 @@ export const FREE_TABS = new Set([
   'positioning',
   'liquidations',
   'screener',
+  'watchlist',
 ]);
 
 /** Tabs that are hidden from normal users entirely — admin-only tooling. */
@@ -175,6 +176,7 @@ export const PLAN_FEATURES: PlanFeature[] = [
   { label: 'Funding & open interest (cross-venue)', free: true, pro: true },
   { label: 'Macro & FX data (FRED / ECB)', free: true, pro: true },
   { label: 'Market news & sentiment', free: true, pro: true },
+  { label: 'Watchlist & 3 price alerts', free: true, pro: true },
   { label: 'Guide & settings', free: true, pro: true },
   { label: 'Executed-trades order flow + price impact', free: false, pro: true },
   { label: 'Positioning: retail vs top traders', free: true, pro: true },

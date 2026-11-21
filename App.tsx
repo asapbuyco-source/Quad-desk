@@ -9,6 +9,7 @@ import AlertEngine from './components/AlertEngine';
 import { ToastContainer } from './components/Toast';
 import BackendWakeGate from './components/BackendWakeGate';
 import TrialBanner from './components/TrialBanner';
+import PriceAlertWatcher from './components/PriceAlertWatcher';
 import ConsentBanner from './components/ConsentBanner';
 
 // ── Route-level code splitting ───────────────────────────────────────────────
@@ -36,6 +37,7 @@ const ScreenerPage = React.lazy(() => import('./components/ScreenerPage'));
 const LiquidationPage = React.lazy(() => import('./components/LiquidationPage'));
 const WhalesPage = React.lazy(() => import('./components/WhalesPage'));
 const AdminUsers = React.lazy(() => import('./components/AdminUsers'));
+const WatchlistPage = React.lazy(() => import('./components/WatchlistPage'));
 const OrderFlowPage = React.lazy(() => import('./components/OrderFlowPage'));
 const PricingPage = React.lazy(() => import('./components/PricingPage'));
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -466,6 +468,7 @@ const App: React.FC = () => {
                                 ) : (
                                 <>
                                 {ui.activeTab === 'dashboard' && <DashboardView />}
+                                {ui.activeTab === 'watchlist' && <WatchlistPage />}
                                 {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
                                 {ui.activeTab === 'depth' && <DepthPage />}
                                 {ui.activeTab === 'bias' && <BiasMatrixView />}
@@ -500,6 +503,7 @@ const App: React.FC = () => {
             </AnimatePresence>
             <BackendWakeGate />
             <TrialBanner />
+            <PriceAlertWatcher />
             <ConsentBanner />
             <ToastContainer toasts={notifications} removeToast={removeNotification} />
         </div>

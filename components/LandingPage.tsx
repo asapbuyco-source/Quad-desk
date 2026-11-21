@@ -442,6 +442,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                             'Funding & open interest across venues',
                             'Positioning: retail vs top traders',
                             'RSI screener & liquidation clusters',
+                            'Watchlist + 3 price alerts',
                             'Macro & FX data (FRED / ECB)',
                             'Market news with sentiment',
                             'Order book depth & liquidity',
