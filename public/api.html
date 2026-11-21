@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>API — recorded derivatives data | Quant Desk</title>
+<meta name="description" content="Quant Desk API (private beta): funding history, positioning, liquidations, RSI screener, whale positions and macro, with source and timestamps." />
+<link rel="canonical" href="https://quad-desk.vercel.app/api" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:36px;line-height:1.15;margin:0 0 10px}
+  h2{font-size:20px;margin:34px 0 10px;color:#fff}
+  p,li{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.07);vertical-align:top}
+  th{color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+  td{color:#a1a1aa}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;font-size:12px}
+  pre{background:#0b0b0e;border:1px solid rgba(255,255,255,.09);border-radius:10px;padding:14px;overflow:auto;font-size:12px;color:#cbd5e1}
+  .note{border-left:2px solid #f59e0b;background:rgba(245,158,11,.07);padding:10px 16px;margin:18px 0;color:#fcd34d}
+  nav{margin-top:44px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>API</h1>
+  <p>Recorded derivatives data over HTTPS. The same endpoints that power the terminal.</p>
+
+  <div class="note"><strong>Private beta.</strong> Keys are issued manually while we finalise rate limits and licensing. Email <a href="mailto:asapbuyco@gmail.com?subject=Quant%20Desk%20API%20key">asapbuyco@gmail.com</a> with your use case.</div>
+
+  <h2>Base URL</h2>
+  <pre>https://quad-desk.vercel.app/api</pre>
+  <p>All requests require an <code>X-API-Key</code> header. Responses are JSON and include an <code>as_of</code> timestamp and a <code>source</code> field where applicable.</p>
+
+  <pre>curl -H "X-API-Key: YOUR_KEY" \
+  "https://quad-desk.vercel.app/api/funding-history?symbol=BTCUSDT&limit=42"</pre>
+
+  <h2>Endpoints</h2>
+  <table>
+    <tr><th>Endpoint</th><th>Returns</th></tr>
+    <tr><td><code>/health</code></td><td>Service status. No key required.</td></tr>
+    <tr><td><code>/funding-history?symbol=&amp;limit=</code></td><td>8h funding settlements, accumulated %, annualised.</td></tr>
+    <tr><td><code>/positioning?symbol=&amp;period=&amp;limit=</code></td><td>Retail L/S, top traders, top positions, taker flow.</td></tr>
+    <tr><td><code>/liquidations?symbol=&amp;minutes=&amp;limit=</code></td><td>Forced orders, price clusters, 24h hourly heat.</td></tr>
+    <tr><td><code>/rsi-screener?universe=</code></td><td>RSI(14) on 15m/1h/4h for liquid perps.</td></tr>
+    <tr><td><code>/whales?limit=</code></td><td>Top Hyperliquid accounts and open positions.</td></tr>
+    <tr><td><code>/funding-heatmap?limit=</code></td><td>Funding extremes across perps.</td></tr>
+    <tr><td><code>/premium?symbol=</code></td><td>Coinbase spot vs Binance reference premium.</td></tr>
+    <tr><td><code>/macro</code>, <code>/fx</code></td><td>FRED series and ECB reference rates.</td></tr>
+  </table>
+
+  <h2>Limits</h2>
+  <ul>
+    <li>Beta keys are rate-limited per key; limits are confirmed at issue.</li>
+    <li>Data is for internal analysis. Redistribution requires a written agreement.</li>
+    <li>No warranty. Verify anything you act on. See <a href="/terms">terms</a>.</li>
+  </ul>
+
+  <nav>
+    <a href="/platform">Platform</a>
+    <a href="/institutional">Institutional</a>
+    <a href="/methodology">Methodology</a>
+    <a href="/coverage">Coverage</a>
+    <a href="/blog">Blog</a>
+  </nav>
+</div>
+</body>
+</html>

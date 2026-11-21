@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Platform — boards, data and free tier | Quant Desk</title>
+<meta name="description" content="What Quant Desk includes: order flow, positioning, RSI screener, liquidations, whale positions, funding and macro. Free core, Pro depth." />
+<link rel="canonical" href="https://quad-desk.vercel.app/platform" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<meta property="og:title" content="Quant Desk platform" />
+<meta property="og:description" content="Six focused desks: order flow, positioning, RSI, liquidations, whales and macro." />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:36px;line-height:1.15;margin:0 0 10px}
+  h2{font-size:20px;margin:36px 0 10px;color:#fff}
+  p,li{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:14px}
+  .card{background:linear-gradient(180deg,rgba(24,24,27,.88),rgba(10,10,12,.8));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px}
+  .card h3{margin:0 0 6px;font-size:14px;color:#fff}
+  .card p{margin:0;font-size:13px}
+  .tag{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:4px;margin-left:6px;vertical-align:2px}
+  .pro{background:rgba(59,130,246,.15);color:#60a5fa}
+  .free{background:rgba(16,185,129,.15);color:#34d399}
+  .cta{display:inline-block;margin-top:22px;background:#3b82f6;color:#fff;font-weight:700;padding:11px 18px;border-radius:10px}
+  nav{margin-top:44px;padding-top:20px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>The platform</h1>
+  <p>Six focused workspaces instead of one crowded screen. Core data is free; Pro adds depth and automation.</p>
+
+  <div class="grid">
+    <div class="card"><h3>Order Flow <span class="tag pro">Pro</span></h3><p>Executed prints with taker side, rolling CVD, price impact and absorption.</p></div>
+    <div class="card"><h3>Positioning <span class="tag free">Free</span></h3><p>Retail vs top-trader long/short, top positions and taker buy/sell flow.</p></div>
+    <div class="card"><h3>RSI Screener <span class="tag free">Free</span></h3><p>RSI(14) on 15m, 1h and 4h across the most liquid perpetuals, as a heat table.</p></div>
+    <div class="card"><h3>Liquidations <span class="tag free">Free</span></h3><p>Forced orders clustered by price, 24h heat strip and the largest prints.</p></div>
+    <div class="card"><h3>Whale Positions <span class="tag pro">Pro</span></h3><p>Largest Hyperliquid accounts, their open positions, leverage and unrealised PnL.</p></div>
+    <div class="card"><h3>Macro &amp; FX <span class="tag free">Free</span></h3><p>Rates, inflation, dollar strength from FRED and ECB reference FX.</p></div>
+    <div class="card"><h3>Funding &amp; OI <span class="tag free">Free</span></h3><p>Cross-venue funding, open interest, Coinbase premium and funding history.</p></div>
+    <div class="card"><h3>Watchlist &amp; Alerts <span class="tag free">Free</span></h3><p>Pinned symbols and 3 price alerts. Pro raises the limit and adds delivery.</p></div>
+  </div>
+
+  <h2>Free vs Pro</h2>
+  <p>Free covers the daily read: prices, chart, order book, funding, positioning, RSI, liquidations, macro and news. Pro unlocks order flow, whales, depth, regime, bias, analytics and AI-assisted scans — plus unlimited alerts.</p>
+
+  <h2>How it is built</h2>
+  <p>Public exchange feeds, FRED and ECB, recorded with a source and timestamp on every panel. When a feed is unavailable the panel says so instead of filling the gap. Read the <a href="/methodology">methodology</a> and <a href="/coverage">coverage</a>.</p>
+
+  <p style="margin-top:22px"><a class="cta" href="/">Open the terminal →</a></p>
+
+  <nav>
+    <a href="/institutional">Institutional</a>
+    <a href="/api">API</a>
+    <a href="/blog">Blog</a>
+    <a href="/about">About</a>
+    <a href="/methodology">Methodology</a>
+  </nav>
+</div>
+</body>
+</html>

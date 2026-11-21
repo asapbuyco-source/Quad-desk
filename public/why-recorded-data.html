@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Why we record instead of guess | Quant Desk</title>
+<meta name="description" content="The rule behind Quant Desk: every number carries a source and a timestamp. What happens when a feed fails, and why the free core stays free." />
+<link rel="canonical" href="https://quad-desk.vercel.app/blog/why-recorded-data" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.75 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:19px;margin:32px 0 8px;color:#fff}
+  p,li{color:#a1a1aa}
+  .date{font:11px ui-monospace,monospace;color:#60a5fa;text-transform:uppercase;letter-spacing:.1em}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  blockquote{border-left:2px solid #3b82f6;margin:20px 0;padding:6px 16px;color:#c7d2fe}
+  nav{margin-top:40px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <div class="date">2026-11-21</div>
+  <h1>Why we record instead of guess</h1>
+
+  <p>Every trading dashboard makes the same implicit promise: the number on screen is true. Very few show you how they know.</p>
+
+  <p>We built Quant Desk around one rule: <strong>every panel prints its source and the time it was recorded</strong>. If the feed is unavailable, the panel says so. It does not fill the gap with a plausible number.</p>
+
+  <h2>What that looks like in practice</h2>
+  <p>Funding on a perpetual is a public value from an exchange endpoint. Its timestamp matters: an 8-hour settlement printed at 08:00 is not the same as a rate recalculated at 08:03. Open interest is similar — a snapshot every few minutes, not a continuous tick. Liquidations are prints from a stream, and they arrive when they arrive.</p>
+  <p>When those timestamps are hidden, two panels can look consistent while describing different moments. That is how traders end up comparing a stale funding rate with a live price and drawing the wrong conclusion.</p>
+
+  <h2>When a source fails</h2>
+  <p>Cloud IPs get rate-limited. Exchanges change endpoints. A stream drops. The honest response is to label the panel unavailable and, where we can, fall back to a second venue and say which one.</p>
+  <p>Our RSI screener and funding heatmap fall back to Bybit linear when Binance refuses the request. The source line changes. The number remains checkable. When neither is available, the panel goes empty instead of inventing a value.</p>
+
+  <h2>Why the core is free</h2>
+  <p>Recorded data is more useful when more people can check it. Prices, funding, positioning, RSI, liquidations and macro are free. Pro pays for depth and automation — order flow, whale positions, analytics and more alerts — not for the right to see whether a number is real.</p>
+
+  <blockquote>If you cannot tell when a number was recorded, you cannot tell what it means.</blockquote>
+
+  <p>Read the <a href="/methodology">methodology</a> for sources and cadence, or the <a href="/coverage">coverage</a> page for what we do not cover yet.</p>
+
+  <nav>
+    <a href="/blog">← All notes</a>
+    <a href="/platform">Platform</a>
+    <a href="/methodology">Methodology</a>
+    <a href="/about">About</a>
+  </nav>
+</div>
+</body>
+</html>

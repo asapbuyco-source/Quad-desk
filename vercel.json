@@ -4,6 +4,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
+    { "source": "/api", "destination": "/api.html" },
     {
       "source": "/api/:path*",
       "destination": "https://quant-desk-backend-dcdo.onrender.com/:path*"
@@ -16,6 +17,12 @@
     { "source": "/methodology", "destination": "/methodology.html" },
     { "source": "/coverage", "destination": "/coverage.html" },
     { "source": "/changelog", "destination": "/changelog.html" },
+    { "source": "/platform", "destination": "/platform.html" },
+    { "source": "/institutional", "destination": "/institutional.html" },
+    { "source": "/blog", "destination": "/blog.html" },
+    { "source": "/blog/why-recorded-data", "destination": "/why-recorded-data.html" },
+    { "source": "/blog/reading-funding", "destination": "/reading-funding.html" },
+    { "source": "/blog/liquidations-are-fuel", "destination": "/liquidations-are-fuel.html" },
     { "source": "/tools/position-size", "destination": "/position-size.html" },
     { "source": "/tools/liq-calc", "destination": "/liq-calc.html" },
     { "source": "/markets/bitcoin", "destination": "/bitcoin.html" },

@@ -98,9 +98,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     <span className="font-bold text-white tracking-widest text-sm">QUANT DESK</span>
                 </div>
                 <div className="hidden md:flex gap-8 text-xs font-mono text-zinc-400">
-                    <span className="hover:text-white cursor-pointer transition-colors">PLATFORM</span>
-                    <span className="hover:text-white cursor-pointer transition-colors">INSTITUTIONAL</span>
-                    <span className="hover:text-white cursor-pointer transition-colors">API</span>
+                    <a href="/platform" className="hover:text-white transition-colors">PLATFORM</a>
+                    <a href="/institutional" className="hover:text-white transition-colors">INSTITUTIONAL</a>
+                    <a href="/api" className="hover:text-white transition-colors">API</a>
+                    <a href="/blog" className="hover:text-white transition-colors">BLOG</a>
                 </div>
                 <button 
                     onClick={handleEnter}
@@ -523,6 +524,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         <span className="text-zinc-500 font-bold tracking-widest text-xs">QUANT DESK</span>
                     </div>
                     <div className="flex flex-wrap justify-center gap-6 text-xs text-zinc-600 font-mono">
+                        <a href="/platform" className="hover:text-zinc-300 transition-colors">PLATFORM</a>
+                        <a href="/institutional" className="hover:text-zinc-300 transition-colors">INSTITUTIONAL</a>
+                        <a href="/api" className="hover:text-zinc-300 transition-colors">API</a>
+                        <a href="/blog" className="hover:text-zinc-300 transition-colors">BLOG</a>
                         <a href="/learn" className="hover:text-zinc-300 transition-colors">LEARN</a>
                         <a href="/methodology" className="hover:text-zinc-300 transition-colors">METHODOLOGY</a>
                         <a href="/coverage" className="hover:text-zinc-300 transition-colors">COVERAGE</a>

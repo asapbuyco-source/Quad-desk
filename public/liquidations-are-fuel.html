@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liquidations are fuel, not a signal | Quant Desk</title>
+<meta name="description" content="Forced orders explain why moves accelerate. They do not tell you when. How to read liquidation clusters without treating them as predictions." />
+<link rel="canonical" href="https://quad-desk.vercel.app/blog/liquidations-are-fuel" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.75 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:19px;margin:32px 0 8px;color:#fff}
+  p,li{color:#a1a1aa}
+  .date{font:11px ui-monospace,monospace;color:#60a5fa;text-transform:uppercase;letter-spacing:.1em}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  blockquote{border-left:2px solid #f43f5e;margin:20px 0;padding:6px 16px;color:#fecdd3}
+  nav{margin-top:40px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <div class="date">2026-11-17</div>
+  <h1>Liquidations are fuel, not a signal</h1>
+
+  <p>A liquidation is a forced closure. When margin runs out, the venue closes the position at market. That order does not care about your view — it adds volume in the direction of the move.</p>
+
+  <p>This is why liquidation clusters matter. They show where forced selling or buying is likely to appear if price reaches a level. They are fuel. They are not a schedule.</p>
+
+  <h2>What the tape shows</h2>
+  <p>Our liquidation board groups executed forced orders by price and by hour, separated into long liquidations (forced sells) and short liquidations (forced buys). A cluster at a price is a record of what happened there — not a guarantee it happens again.</p>
+  <p>The 24-hour heat strip is the fastest read: red bars are longs being closed, green bars are shorts being closed. A burst of red into a falling price is the signature of a long flush.</p>
+
+  <h2>What it does not show</h2>
+  <ul>
+    <li><strong>Timing.</strong> Price can sit above a cluster for days.</li>
+    <li><strong>Size beyond the window.</strong> Our archive is rolling 24 hours; older clusters are gone.</li>
+    <li><strong>Hidden leverage.</strong> Positions collateralised elsewhere are not visible in the print.</li>
+  </ul>
+
+  <blockquote>A liquidation print is evidence of pain, not a promise of continuation.</blockquote>
+
+  <h2>How to use it</h2>
+  <p>Pair liquidations with open interest and positioning. Rising OI into a cluster means more fuel. Falling OI after a flush means the fuel is being used. If price reaches a cluster and nothing accelerates, the cluster was smaller than it looked.</p>
+
+  <p>Open the <a href="/">terminal</a> to see the current board. The panel prints its recording time and source, and says when the collector has just started.</p>
+
+  <nav>
+    <a href="/blog">← All notes</a>
+    <a href="/platform">Platform</a>
+    <a href="/methodology">Methodology</a>
+    <a href="/about">About</a>
+  </nav>
+</div>
+</body>
+</html>
