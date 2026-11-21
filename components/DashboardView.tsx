@@ -6,7 +6,7 @@ import OrderFlowMetrics from './OrderFlowMetrics';
 import { CHECKLIST_ITEMS } from '../constants';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
-import { apiFetch } from '../utils/apiClient';
+import { cachedJson } from '../utils/cachedFetch';
 import { Gauge, Flame, Users, Activity, Waves, Globe2 } from 'lucide-react';
 
 const motion = m as any;
@@ -29,14 +29,11 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
     let dead = false;
     const load = async () => {
       try {
-        const [f, l, p] = await Promise.all([
-          apiFetch(`/funding-history?symbol=${symbol}&limit=21`, { timeoutMs: 45000 }),
-          apiFetch('/liquidations?minutes=1440', { timeoutMs: 45000 }),
-          apiFetch(`/positioning?symbol=${symbol}&period=1h&limit=24`, { timeoutMs: 45000 }),
+        const [fj, lj, pj] = await Promise.all([
+          cachedJson<any>(`/funding-history?symbol=${symbol}&limit=21`, { ttlMs: 120000, timeoutMs: 45000 }),
+          cachedJson<any>('/liquidations?minutes=1440', { ttlMs: 120000, timeoutMs: 45000 }),
+          cachedJson<any>(`/positioning?symbol=${symbol}&period=1h&limit=24`, { ttlMs: 120000, timeoutMs: 45000 }),
         ]);
-        const fj = await f.json();
-        const lj = await l.json();
-        const pj = await p.json();
         if (dead) return;
         setCtx({
           funding: fj?.latest?.rate,

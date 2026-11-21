@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Globe2, RefreshCw } from 'lucide-react';
-import { apiFetch } from '../utils/apiClient';
+import { cachedJson, readCached } from '../utils/cachedFetch';
 import { PageHeader, HeatCell } from './Premium';
 
 interface CompareRow { symbol: string; change_pct: number; vol_pct: number; beta: number; corr: number }
@@ -18,20 +18,20 @@ const corrColor = (v: number) => {
 
 const MarketsPage: React.FC = () => {
   const [days, setDays] = useState(30);
-  const [cmp, setCmp] = useState<CompareResp | null>(null);
-  const [alt, setAlt] = useState<AltResp | null>(null);
+  const [cmp, setCmp] = useState<CompareResp | null>(() => readCached<CompareResp>(`/compare?symbols=${SYMS}&days=30`)?.data ?? null);
+  const [alt, setAlt] = useState<AltResp | null>(() => readCached<AltResp>('/altseason?days=30')?.data ?? null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (window: number) => {
     setLoading(true);
     try {
       const [c, a] = await Promise.all([
-        apiFetch(`/compare?symbols=${SYMS}&days=${window}`, { timeoutMs: 60000 }),
-        apiFetch(`/altseason?days=${window}`, { timeoutMs: 60000 }),
+        cachedJson<CompareResp>(`/compare?symbols=${SYMS}&days=${window}`, { ttlMs: 300000, timeoutMs: 60000 }),
+        cachedJson<AltResp>(`/altseason?days=${window}`, { ttlMs: 300000, timeoutMs: 60000 }),
       ]);
-      setCmp(await c.json());
-      setAlt(await a.json());
-    } catch { /* keep previous */ }
+      setCmp(c);
+      setAlt(a);
+    } catch { /* keep cached */ }
     finally { setLoading(false); }
   }, []);
 

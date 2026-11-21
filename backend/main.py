@@ -1461,7 +1461,7 @@ def _resample(closes: List[float], step: int) -> List[float]:
 async def rsi_screener(universe: int = RSI_UNIVERSE_SIZE):
     """RSI on 15m / 1h / 4h for the most liquid Binance USDM perpetuals."""
     now = time.time()
-    if _rsi_cache["payload"] and now - _rsi_cache["at"] < 120:
+    if _rsi_cache["payload"] and now - _rsi_cache["at"] < 300:
         return _rsi_cache["payload"]
 
     n = max(10, min(universe, 80))
@@ -1857,6 +1857,10 @@ async def compare(symbols: str = "BTCUSDT,ETHUSDT,SOLUSDT", days: int = 30):
     """Daily-return correlation matrix and beta versus the first symbol."""
     syms = [_norm_symbol(s.strip()) for s in symbols.split(",") if s.strip()][:6]
     n = max(10, min(days, 180))
+    cache_key = f"compare:{','.join(syms)}:{n}"
+    cached = _market_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
     out: Dict[str, Any] = {"as_of": _now_iso(), "days": n, "symbols": syms, "matrix": [], "rows": []}
     async with httpx.AsyncClient(timeout=25.0) as client:
         closes = {s: await _daily_closes(client, s, n + 1) for s in syms}
@@ -1897,7 +1901,11 @@ async def compare(symbols: str = "BTCUSDT,ETHUSDT,SOLUSDT", days: int = 30):
             "beta": round(beta, 2),
             "corr": round(corr(rets[s], rets[base]), 2),
         })
+    _market_cache[cache_key] = (time.time(), out)
     return out
+
+
+_market_cache: Dict[str, Any] = {}
 
 
 ALT_BASKET = [
@@ -1910,6 +1918,10 @@ ALT_BASKET = [
 async def altseason(days: int = 30):
     """Share of major alts outperforming BTC over the window. 0–100 index."""
     n = max(10, min(days, 120))
+    cache_key = f"altseason:{n}"
+    cached = _market_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
     out: Dict[str, Any] = {"as_of": _now_iso(), "days": n, "alts": []}
     async with httpx.AsyncClient(timeout=25.0) as client:
         btc = await _daily_closes(client, "BTCUSDT", n + 1)
@@ -1934,6 +1946,7 @@ async def altseason(days: int = 30):
         "label": "Altseason" if idx >= 75 else "Bitcoin season" if idx <= 25 else "Mixed",
         "alts": rows,
     })
+    _market_cache[cache_key] = (time.time(), out)
     return out
 
 

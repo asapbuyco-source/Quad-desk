@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Thermometer, RefreshCw } from 'lucide-react';
-import { apiFetch } from '../utils/apiClient';
+import { cachedJson, readCached } from '../utils/cachedFetch';
 import { PageHeader, rsiColor } from './Premium';
 
 interface RsiRow {
@@ -30,20 +30,16 @@ const fmtUsd = (v: number) => {
 };
 
 const ScreenerPage: React.FC = () => {
-  const [data, setData] = useState<RsiResponse | null>(null);
+  const [data, setData] = useState<RsiResponse | null>(() => readCached<RsiResponse>('/rsi-screener')?.data ?? null);
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'rsi_avg', dir: -1 });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiFetch('/rsi-screener', { timeoutMs: 90000 });
-      setData(await r.json());
-    } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
+      setData(await cachedJson<RsiResponse>('/rsi-screener', { ttlMs: 180000, timeoutMs: 90000 }));
+    } catch { /* keep cached */ }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);

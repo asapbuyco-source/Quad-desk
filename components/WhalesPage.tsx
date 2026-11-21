@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Wallet, RefreshCw, ExternalLink } from 'lucide-react';
-import { apiFetch } from '../utils/apiClient';
+import { cachedJson, readCached } from '../utils/cachedFetch';
 import { PageHeader } from './Premium';
 
 interface Position {
@@ -36,19 +36,15 @@ const usd = (v: number) => {
 const short = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
 
 const WhalesPage: React.FC = () => {
-  const [data, setData] = useState<WhalesResponse | null>(null);
+  const [data, setData] = useState<WhalesResponse | null>(() => readCached<WhalesResponse>('/whales?limit=8')?.data ?? null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiFetch('/whales?limit=8', { timeoutMs: 90000 });
-      setData(await r.json());
-    } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
+      setData(await cachedJson<WhalesResponse>('/whales?limit=8', { ttlMs: 600000, timeoutMs: 90000 }));
+    } catch { /* keep cached */ }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);

@@ -83,7 +83,7 @@ const MasterHeatmapCanvas: React.FC<{
         const range = price * 0.02;
         const minP = price - range;
         const maxP = price + range;
-        const cols = 40; // time columns (simulated historical)
+        const cols = 40; // visual columns for the price profile
 
         // gather liquidity by price bucket
         const buckets = 32;
@@ -111,15 +111,13 @@ const MasterHeatmapCanvas: React.FC<{
         const colW = W / cols;
         const rowH = H / buckets;
 
-        // Draw heatmap columns (simulate time progression with slight noise)
+        // Draw the current liquidity profile by price bucket (no synthetic history)
         for (let col = 0; col < cols; col++) {
-            const timeFactor = col / cols; // older = lower intensity
             for (let row = 0; row < buckets; row++) {
                 const bucketIdx = buckets - 1 - row; // flip: top = high price
                 const rawLiq = liquidityMap[bucketIdx];
                 const norm = rawLiq / maxLiq;
-                const noise = (Math.random() * 0.15 - 0.075) * (1 - timeFactor);
-                const liq = clamp(norm + noise, 0, 1) * timeFactor;
+                const liq = norm;
 
                 if (liq < 0.04) continue; // skip near-zero
 
@@ -484,14 +482,14 @@ const computeAIVerdict = ({
         bidFraction * 0.30 +
         scores.nlfScore * scores.latentLiquidity * 0.30 +
         sweepBull * 0.15 +
-        (scores.glrComponents?.stablecoins ?? 55) / 100 * 0.25,
+        (scores.glrComponents?.orderFlow ?? 0) / 100 * 0.25,
         0, 1
     );
     const dlp = clamp(
         askFraction * 0.30 +
         (1 - scores.nlfScore) * scores.latentLiquidity * 0.30 +
         sweepBear * 0.15 +
-        (1 - (scores.glrComponents?.etfFlows ?? 50) / 100) * 0.25,
+        (1 - (scores.glrComponents?.depth ?? 0) / 100) * 0.25,
         0, 1
     );
 
@@ -1112,22 +1110,10 @@ const ULISView: React.FC = () => {
         const refillProxy = normalize(Math.abs(smoothCvd), 0, 500000) * 0.5;
         const fragility = clamp(elasticity * 0.5 + cancelProxy * 0.3 - refillProxy, 0, 1);
 
-        // 6. GLR proxy: composite macro signal
-        //    - darkPoolBias → institutional positioning proxy
-        //    - |cvd| / big number → derivatives leverage proxy
-        //    - stablecoin & ETF simulated as neutral (no real data)
-        const centralBankProxy = normalize(Math.abs(darkPoolBias), 0, 1) * 0.8 + 0.1;
-        const dollarLiqProxy = normalize(1 / (1 + Math.exp(-smoothOfi / 30)), 0, 1); // sigmoid of smoothed OFI
-        const stablecoinProxy = 0.55; // simulated neutral
-        const etfFlowsProxy = normalize(Math.abs(cvd || 0), 0, 200000);
-        const derivLevProxy = normalize(ofiAbs, 0, 80);
-        const glrScore = (
-            0.25 * centralBankProxy +
-            0.2 * dollarLiqProxy +
-            0.15 * stablecoinProxy +
-            0.15 * etfFlowsProxy +
-            0.25 * derivLevProxy
-        );
+        // 6. GLR proxy: live flow composite (no macro feeds are available)
+        const ofiNorm = normalize(ofiAbs, 0, 80);
+        const cvdNorm = normalize(Math.abs(smoothCvd), 0, 200000);
+        const glrScore = clamp(0.5 * ofiNorm + 0.3 * cvdNorm + 0.2 * visibleLiquidity, 0, 1);
 
         // 7. NLF proxy (neural prediction score)
         const nlfScore = normalize(
@@ -1171,13 +1157,11 @@ const ULISView: React.FC = () => {
             masterScore,
             singularityScore,
             cascadeProb,
-            // GLR components for radar
+            // GLR components for radar (live inputs only)
             glrComponents: {
-                centralBank: +(centralBankProxy * 100).toFixed(0),
-                dollarLiq: +(dollarLiqProxy * 100).toFixed(0),
-                stablecoins: +(stablecoinProxy * 100).toFixed(0),
-                etfFlows: +(etfFlowsProxy * 100).toFixed(0),
-                derivatives: +(derivLevProxy * 100).toFixed(0),
+                orderFlow: +(ofiNorm * 100).toFixed(0),
+                cvd: +(cvdNorm * 100).toFixed(0),
+                depth: +(visibleLiquidity * 100).toFixed(0),
             }
         };
     }, [stableBids, stableAsks, smoothOfi, smoothZScore, bayesianPosterior, smoothCvd, skewness, darkPoolBias, liquidity]);
@@ -1216,13 +1200,11 @@ const ULISView: React.FC = () => {
     // Stamp timestamp whenever committed verdict changes
     useEffect(() => { setAnalysisTs(Date.now()); }, [aiVerdict.verdict]);
 
-    // GLR Radar data
+    // GLR Radar data — live flow inputs only
     const radarData = [
-        { axis: 'Central Bank', value: scores.glrComponents.centralBank },
-        { axis: 'Dollar Liq', value: scores.glrComponents.dollarLiq },
-        { axis: 'Stablecoins', value: scores.glrComponents.stablecoins },
-        { axis: 'ETF Flows', value: scores.glrComponents.etfFlows },
-        { axis: 'Derivatives', value: scores.glrComponents.derivatives },
+        { axis: 'Order Flow', value: scores.glrComponents.orderFlow },
+        { axis: 'CVD', value: scores.glrComponents.cvd },
+        { axis: 'Book Depth', value: scores.glrComponents.depth },
     ];
 
     const masterPct = Math.round(scores.masterScore * 100);
@@ -1403,13 +1385,15 @@ const ULISView: React.FC = () => {
                             <ScoreBadge
                                 value={scores.glrScore}
                                 label="GLR Composite Index"
-                                desc="GLR leads BTC by ~30–70 days in theory"
+                                desc="Live order flow, CVD and book depth"
                             />
                         </div>
-                        <div className="w-full grid grid-cols-3 sm:grid-cols-5 gap-1">
+                        <div className="w-full grid grid-cols-3 gap-1">
                             {Object.entries(scores.glrComponents).map(([k, v]) => (
                                 <div key={k} className="flex flex-col items-center p-2 rounded-lg bg-black/30">
-                                    <span className="text-[8px] text-zinc-600 uppercase tracking-wide">{k.replace('Liq', '').replace('Flow', '')}</span>
+                                    <span className="text-[8px] text-zinc-600 uppercase tracking-wide">
+                                        {k === 'orderFlow' ? 'Flow' : k === 'depth' ? 'Depth' : k.toUpperCase()}
+                                    </span>
                                     <span className="text-blue-400 font-black text-sm font-mono">{String(v)}</span>
                                 </div>
                             ))}
@@ -1417,7 +1401,7 @@ const ULISView: React.FC = () => {
                         <div className="w-full flex items-start gap-2 p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
                             <Info size={12} className="text-blue-400 shrink-0 mt-0.5" />
                             <p className="text-[9px] text-blue-300/70 font-mono leading-relaxed">
-                                <span className="text-blue-300 font-bold">Proxy values</span> — Central Bank &amp; Stablecoin feeds unavailable. Derived from OFI, CVD, dark pool bias.
+                                <span className="text-blue-300 font-bold">Composite proxy</span> — live OFI, CVD and book depth. No macro feeds are used.
                             </p>
                         </div>
                     </div>
@@ -1478,7 +1462,7 @@ const ULISView: React.FC = () => {
                         <div className="w-full">
                             <div className="text-[9px] text-zinc-600 font-mono mb-2 flex items-center gap-1.5">
                                 <Cpu size={9} />
-                                Simulated Path Distribution
+                                Model path distribution
                             </div>
                             <div className="flex gap-1 items-end h-16">
                                 {Array.from({ length: 20 }, (_, i) => {

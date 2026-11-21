@@ -111,7 +111,6 @@ const App: React.FC = () => {
         refreshRegimeAnalysis,
         refreshTacticalAnalysis,
         refreshLiquidityAnalysis,
-        startDarkPoolPolling,
         startTrial,
     } = useStore();
 
@@ -121,7 +120,6 @@ const App: React.FC = () => {
 
     useEffect(() => {
         initSystemConfig();
-        const stopDarkPool = startDarkPoolPolling();
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
                 setUser(user);
@@ -136,7 +134,7 @@ const App: React.FC = () => {
                 setUser(null);
             }
         });
-        return () => { unsubscribe(); stopDarkPool(); };
+        return () => { unsubscribe(); };
     }, []);
 
     useEffect(() => {

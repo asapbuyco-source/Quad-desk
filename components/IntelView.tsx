@@ -88,6 +88,11 @@ const IntelView: React.FC = () => {
 
             const json = await res.json();
             if (json.error) throw new Error(json.error);
+            if (json.is_simulated || json.isSimulated) {
+                localStorage.removeItem(CACHE_KEY);
+                setData(null);
+                throw new Error('Live news feed unavailable. Placeholder stories are not shown.');
+            }
 
             // 3. SUCCESS HANDLER
             const result: MarketIntelResponse = {

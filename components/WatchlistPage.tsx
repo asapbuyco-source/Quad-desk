@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Star, Plus, Bell, Trash2, RefreshCw, ArrowRight, BellRing } from 'lucide-react';
-import { apiFetch } from '../utils/apiClient';
+import { cachedJson, readCached } from '../utils/cachedFetch';
 import { useStore } from '../store';
 import { PageHeader } from './Premium';
 
@@ -29,7 +29,7 @@ const WatchlistPage: React.FC = () => {
   const addNotification = useStore(s => s.addNotification);
   const metrics = useStore(s => s.market.metrics);
 
-  const [rows, setRows] = useState<RsiRow[]>([]);
+  const [rows, setRows] = useState<RsiRow[]>(() => readCached<any>('/rsi-screener')?.data?.rows ?? []);
   const [loading, setLoading] = useState(true);
   const [addSymbol, setAddSymbol] = useState('');
   const [form, setForm] = useState({ symbol: 'BTCUSDT', direction: 'above' as 'above' | 'below', price: '' });
@@ -40,8 +40,7 @@ const WatchlistPage: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiFetch('/rsi-screener', { timeoutMs: 90000 });
-      const j = await r.json();
+      const j = await cachedJson<any>('/rsi-screener', { ttlMs: 180000, timeoutMs: 90000 });
       setRows(j?.rows || []);
     } catch { /* keep previous */ }
     finally { setLoading(false); }
