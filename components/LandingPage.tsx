@@ -114,6 +114,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
             {/* --- Hero Section --- */}
             <section className="min-h-screen flex flex-col items-center justify-center pt-32 pb-20 px-6 relative">
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <img src="/img/city-nyc.jpg" alt="" className="h-full w-full object-cover opacity-20" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-[#050505]/75 via-[#050505]/85 to-[#050505]" />
+                </div>
                 
                 {/* Floating Elements */}
                 <motion.div style={{ y: y2 }} className="absolute top-1/4 left-[10%] hidden lg:block opacity-20">
@@ -545,6 +549,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     <div className="text-xs text-zinc-700">
                         © 2026 Quant Desk. All rights reserved.
                     </div>
+                </div>
+                <div className="mx-auto mt-6 max-w-7xl px-6 font-mono text-[9px] text-zinc-700">
+                    City photography: public domain (Rawpixel, Pexels via Wikimedia) · Oslo by Sunderland Renaissance and Frankfurt by DXR, CC BY-SA 4.0.
                 </div>
             </footer>
 
