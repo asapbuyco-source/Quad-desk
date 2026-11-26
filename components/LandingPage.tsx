@@ -5,6 +5,7 @@ import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, Check } fr
 import { upgradeHref, PLAN_FEATURES, PRICING } from '../utils/entitlements';
 import AdSlot from './AdSlot';
 import MarketRecord from './MarketRecord';
+import LandingCharts from './LandingCharts';
 import { apiFetch } from '../utils/apiClient';
 import { Sparkline, HeatCell, signedColor } from './Premium';
 
@@ -276,6 +277,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 <MarketRecord />
             </div>
 
+            <LandingCharts />
+
             <section className="py-16 sm:py-24 px-4 sm:px-6 relative z-10">
                 <div className="max-w-7xl mx-auto">
                     <motion.div 
@@ -305,6 +308,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                 <h3 className="text-2xl sm:text-3xl font-bold text-white mb-2">Order Flow &amp; CVD</h3>
                                 <p className="text-zinc-400 max-w-sm">Executed prints with taker-side classification, rolling CVD, absorptions and price-impact diagnostics.</p>
                             </div>
+
                             
                             {/* Graphic Mockup inside card */}
                             <div className="relative h-48 w-full mt-8 rounded-xl bg-black/50 border border-white/5 overflow-hidden p-4">
@@ -528,6 +532,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         <a href="/institutional" className="hover:text-zinc-300 transition-colors">INSTITUTIONAL</a>
                         <a href="/api" className="hover:text-zinc-300 transition-colors">API</a>
                         <a href="/blog" className="hover:text-zinc-300 transition-colors">BLOG</a>
+                        <a href="/locations" className="hover:text-zinc-300 transition-colors">LOCATIONS</a>
                         <a href="/learn" className="hover:text-zinc-300 transition-colors">LEARN</a>
                         <a href="/methodology" className="hover:text-zinc-300 transition-colors">METHODOLOGY</a>
                         <a href="/coverage" className="hover:text-zinc-300 transition-colors">COVERAGE</a>

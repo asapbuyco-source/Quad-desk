@@ -7,6 +7,7 @@
     { href: '/institutional', label: 'Institutional' },
     { href: '/api', label: 'API' },
     { href: '/blog', label: 'Blog' },
+    { href: '/locations', label: 'Locations' },
     { href: '/about', label: 'About' },
     { href: '/learn', label: 'Learn' },
     { href: '/tools/position-size', label: 'Tools' }

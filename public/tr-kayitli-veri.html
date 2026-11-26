@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Neden tahmin etmek yerine kaydediyoruz | Quant Desk</title>
+<meta name="description" content="Quant Desk’te her panel kaynağını ve kayıt saatini gösterir. Bir kaynak çöktüğünde ne olur ve çekirdek neden ücretsiz kalır." />
+<link rel="canonical" href="https://quantdeskterminal.com/tr/blog/kayitli-veri" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="alternate" hreflang="en" href="https://quantdeskterminal.com/blog/why-recorded-data" />
+<link rel="alternate" hreflang="es" href="https://quantdeskterminal.com/es/blog/datos-registrados" />
+<link rel="alternate" hreflang="fr" href="https://quantdeskterminal.com/fr/blog/donnees-enregistrees" />
+<link rel="alternate" hreflang="tr" href="https://quantdeskterminal.com/tr/blog/kayitli-veri" />
+<link rel="alternate" hreflang="x-default" href="https://quantdeskterminal.com/blog/why-recorded-data" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Neden tahmin etmek yerine kaydediyoruz","datePublished":"2026-11-21","inLanguage":"tr","author":{"@type":"Organization","name":"Quant Desk"},"publisher":{"@type":"Organization","name":"Quant Desk","url":"https://quantdeskterminal.com/"},"mainEntityOfPage":"https://quantdeskterminal.com/tr/blog/kayitli-veri"}
+</script>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.75 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.2;margin:0 0 8px}
+  h2{font-size:19px;margin:32px 0 8px;color:#fff}
+  p,li{color:#a1a1aa}
+  .date{font:11px ui-monospace,monospace;color:#60a5fa;text-transform:uppercase;letter-spacing:.1em}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  blockquote{border-left:2px solid #3b82f6;margin:20px 0;padding:6px 16px;color:#c7d2fe}
+  nav{margin-top:40px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <div class="date">2026-11-21</div>
+  <h1>Neden tahmin etmek yerine kaydediyoruz</h1>
+  <p>Her trading paneli, ekrandaki sayının doğru olduğunu dolaylı olarak vaat eder. Çok azı bunu nasıl bildiğini gösterir.</p>
+  <p>Quant Desk’i tek bir kuralla kurduk: her panel kaynağını ve kaydedildiği saati yazar. Kaynak yoksa panel bunu söyler. Boşluğu mantıklı görünen bir sayıyla doldurmaz.</p>
+  <p>Perpetual fonlama oranı borsanın halka açık verisidir. Zaman damgası önemlidir: 08:00’de yazdırılan 8 saatlik bir ödeme, 08:03’te yeniden hesaplanan bir oranla aynı şey değildir. Açık pozisyon da benzerdir: sürekli bir tick değil, birkaç dakikada bir alınan anlık görüntüdür.</p>
+  <p>Bu zaman damgaları gizlendiğinde iki panel tutarlı görünürken farklı anları anlatabilir. Eski bir fonlama oranını canlı fiyatla karşılaştırıp yanlış sonuca varmak böyle olur.</p>
+  <p>RSI tarayıcımız ve fonlama haritası, Binance isteği reddettiğinde Bybit’e geçer. Kaynak satırı değişir. Sayı doğrulanabilir kalır. İkisi de yoksa panel değer uydurmak yerine boş kalır.</p>
+  <blockquote>Bir sayının ne zaman kaydedildiğini bilmiyorsanız, ne anlama geldiğini de bilemezsiniz.</blockquote>
+  <nav>
+    <a href="/blog/why-recorded-data">English</a> <a href="/blog">Blog</a> <a href="/methodology">Metodoloji</a> <a href="/">Terminal</a>
+  </nav>
+</div>
+<script src="/site-nav.js" defer></script>
+</body>
+</html>

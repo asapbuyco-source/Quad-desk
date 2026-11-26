@@ -91,6 +91,51 @@
     <priority>0.5</priority>
   </url>
   <url>
+    <loc>https://quantdeskterminal.com/locations</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/locations/norway</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/locations/united-kingdom</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/locations/united-states</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/locations/germany</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/locations/united-arab-emirates</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/es/blog/datos-registrados</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/fr/blog/donnees-enregistrees</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://quantdeskterminal.com/tr/blog/kayitli-veri</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
     <loc>https://quantdeskterminal.com/markets/bitcoin</loc>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
