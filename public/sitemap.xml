@@ -1,122 +1,122 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://quad-desk.vercel.app/</loc>
+    <loc>https://quantdeskterminal.com/</loc>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/learn</loc>
+    <loc>https://quantdeskterminal.com/learn</loc>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/platform</loc>
+    <loc>https://quantdeskterminal.com/platform</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/institutional</loc>
+    <loc>https://quantdeskterminal.com/institutional</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/api</loc>
+    <loc>https://quantdeskterminal.com/api</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/blog</loc>
+    <loc>https://quantdeskterminal.com/blog</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/blog/why-recorded-data</loc>
+    <loc>https://quantdeskterminal.com/blog/why-recorded-data</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/blog/reading-funding</loc>
+    <loc>https://quantdeskterminal.com/blog/reading-funding</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/blog/liquidations-are-fuel</loc>
+    <loc>https://quantdeskterminal.com/blog/liquidations-are-fuel</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/about</loc>
+    <loc>https://quantdeskterminal.com/about</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/methodology</loc>
+    <loc>https://quantdeskterminal.com/methodology</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/coverage</loc>
+    <loc>https://quantdeskterminal.com/coverage</loc>
     <changefreq>weekly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/changelog</loc>
+    <loc>https://quantdeskterminal.com/changelog</loc>
     <changefreq>weekly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/tools/position-size</loc>
+    <loc>https://quantdeskterminal.com/tools/position-size</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/tools/liq-calc</loc>
+    <loc>https://quantdeskterminal.com/tools/liq-calc</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/tools/funding-arb</loc>
+    <loc>https://quantdeskterminal.com/tools/funding-arb</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/tools/dca</loc>
+    <loc>https://quantdeskterminal.com/tools/dca</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/refer</loc>
+    <loc>https://quantdeskterminal.com/refer</loc>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/markets/bitcoin</loc>
+    <loc>https://quantdeskterminal.com/markets/bitcoin</loc>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/markets/ethereum</loc>
+    <loc>https://quantdeskterminal.com/markets/ethereum</loc>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/markets/solana</loc>
+    <loc>https://quantdeskterminal.com/markets/solana</loc>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/privacy</loc>
+    <loc>https://quantdeskterminal.com/privacy</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/terms</loc>
+    <loc>https://quantdeskterminal.com/terms</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
-    <loc>https://quad-desk.vercel.app/disclaimer</loc>
+    <loc>https://quantdeskterminal.com/disclaimer</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>

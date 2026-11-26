@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>API — recorded derivatives data | Quant Desk</title>
 <meta name="description" content="Quant Desk API (private beta): funding history, positioning, liquidations, RSI screener, whale positions and macro, with source and timestamps." />
-<link rel="canonical" href="https://quad-desk.vercel.app/api" />
+<link rel="canonical" href="https://quantdeskterminal.com/api" />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <style>
   :root{color-scheme:dark}
@@ -37,11 +37,11 @@
   <div class="note"><strong>Private beta.</strong> Keys are issued manually while we finalise rate limits and licensing. Email <a href="mailto:asapbuyco@gmail.com?subject=Quant%20Desk%20API%20key">asapbuyco@gmail.com</a> with your use case.</div>
 
   <h2>Base URL</h2>
-  <pre>https://quad-desk.vercel.app/api</pre>
+  <pre>https://quantdeskterminal.com/api</pre>
   <p>All requests require an <code>X-API-Key</code> header. Responses are JSON and include an <code>as_of</code> timestamp and a <code>source</code> field where applicable.</p>
 
   <pre>curl -H "X-API-Key: YOUR_KEY" \
-  "https://quad-desk.vercel.app/api/funding-history?symbol=BTCUSDT&limit=42"</pre>
+  "https://quantdeskterminal.com/api/funding-history?symbol=BTCUSDT&limit=42"</pre>
 
   <h2>Endpoints</h2>
   <table>
