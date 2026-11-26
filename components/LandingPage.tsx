@@ -115,7 +115,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
             {/* --- Hero Section --- */}
             <section className="min-h-screen flex flex-col items-center justify-center pt-32 pb-20 px-6 relative">
                 <div className="pointer-events-none absolute inset-0 overflow-hidden">
-                    <img src="/img/city-nyc.jpg" alt="" className="h-full w-full object-cover opacity-20" />
+                    <img src="/img/city-nyc.webp" alt="New York skyline at night" width={1600} height={900} fetchPriority="high" className="h-full w-full object-cover opacity-20" />
                     <div className="absolute inset-0 bg-gradient-to-b from-[#050505]/75 via-[#050505]/85 to-[#050505]" />
                 </div>
                 
@@ -150,6 +150,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-bold text-white tracking-tighter leading-[0.95]"
                     >
                         QUANT DESK
+                        <span className="sr-only"> — crypto derivatives terminal, order flow, funding and liquidations</span>
                     </motion.h1>
                     <motion.div 
                         initial={{ scaleX: 0 }}

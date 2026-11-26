@@ -89,7 +89,7 @@ const AuthOverlay: React.FC = () => {
           <aside className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#0b1220] via-[#080d16] to-black p-8 md:flex">
             <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-brand-accent/20 blur-[90px]" />
             <div className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-emerald-500/10 blur-[90px]" />
-            <img src="/img/city-london.jpg" alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20" />
+            <img src="/img/city-london.webp" alt="London skyline at night" width={1600} height={900} className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#0b1220]/85 via-[#080d16]/90 to-black" />
 
             <div className="relative z-10 flex items-center gap-2.5">

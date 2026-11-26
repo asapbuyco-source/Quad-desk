@@ -10,6 +10,7 @@ import { ToastContainer } from './components/Toast';
 import BackendWakeGate from './components/BackendWakeGate';
 import TrialBanner from './components/TrialBanner';
 import PriceAlertWatcher from './components/PriceAlertWatcher';
+import { Analytics } from '@vercel/analytics/react';
 import ConsentBanner from './components/ConsentBanner';
 
 // ── Route-level code splitting ───────────────────────────────────────────────
@@ -81,7 +82,7 @@ const App: React.FC = () => {
     });
     const lockedInfo = PRO_TAB_INFO[ui.activeTab] || GENERIC_PRO_INFO;
 
-    useSeo(ui.activeTab);
+    useSeo(ui.hasEntered ? ui.activeTab : 'home');
     const [currentPeriod, setCurrentPeriod] = useState<PeriodType>('20-PERIOD');
     const [connectionError, setConnectionError] = useState<boolean>(false);
     const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -506,6 +507,7 @@ const App: React.FC = () => {
             <BackendWakeGate />
             <TrialBanner />
             <PriceAlertWatcher />
+            <Analytics />
             <ConsentBanner />
             <ToastContainer toasts={notifications} removeToast={removeNotification} />
         </div>

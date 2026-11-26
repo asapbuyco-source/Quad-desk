@@ -5,9 +5,13 @@ import { useEffect } from 'react';
  * the static defaults in index.html cover everything else.
  */
 const SEO: Record<string, { title: string; description: string }> = {
+  home: {
+    title: 'Quant Desk — Crypto Derivatives Terminal & Order Flow',
+    description: 'Live crypto derivatives data: order flow, funding, open interest, liquidations, RSI and positioning. Free core terminal, recorded with sources and timestamps.',
+  },
   dashboard: {
-    title: 'Desk — live order flow & liquidity | Quant Desk',
-    description: 'Live crypto order flow, depth and liquidity in one desk. Spot and perp prints, funding context and market structure.',
+    title: 'Live Desk — order flow, funding & liquidations | Quant Desk',
+    description: 'Live crypto order flow, depth and liquidity in one desk. Spot and perp prints, funding context, liquidation clusters and market structure.',
   },
   charting: {
     title: 'Chart — price action & drawing tools | Quant Desk',
