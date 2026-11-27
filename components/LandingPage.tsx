@@ -19,7 +19,7 @@ interface FundingPoint { t: number; rate: number }
 
 const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
   const [isInitializing, setIsInitializing] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingProgress] = useState(0);
   const [funding, setFunding] = useState<number[]>([]);
   const [latestFunding, setLatestFunding] = useState<number | undefined>();
   const [accumFunding, setAccumFunding] = useState<number | undefined>();
@@ -53,17 +53,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
   const handleEnter = () => {
     setIsInitializing(true);
-    // Simulate boot sequence
-    const interval = setInterval(() => {
-        setLoadingProgress(prev => {
-            if (prev >= 100) {
-                clearInterval(interval);
-                setTimeout(onEnter, 200); 
-                return 100;
-            }
-            return prev + Math.floor(Math.random() * 15) + 5;
-        });
-    }, 120);
+    onEnter();
   };
 
   return (
@@ -406,9 +396,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         {[
                             { icon: Activity, name: 'Order Flow', desc: 'Executed prints, taker side, CVD and price impact.', badge: 'PRO' },
-                            { icon: Shield, name: 'Positioning', desc: 'Retail vs top-trader long/short and taker flow.', badge: 'PRO' },
-                            { icon: Zap, name: 'RSI Screener', desc: 'Multi-timeframe RSI heatmap across liquid perps.', badge: 'PRO' },
-                            { icon: Globe, name: 'Liquidations', desc: 'Forced orders clustered by price, 24h heat strip.', badge: 'PRO' },
+                            { icon: Shield, name: 'Positioning', desc: 'Retail vs top-trader long/short and taker flow.', badge: 'FREE' },
+                            { icon: Zap, name: 'RSI Screener', desc: 'Multi-timeframe RSI heatmap across liquid perps.', badge: 'FREE' },
+                            { icon: Globe, name: 'Liquidations', desc: 'Forced orders clustered by price, 24h heat strip.', badge: 'FREE' },
                             { icon: Terminal, name: 'Whale Positions', desc: 'Largest Hyperliquid accounts and open positions.', badge: 'PRO' },
                             { icon: Hexagon, name: 'Macro & FX', desc: 'Rates, inflation, dollar strength and ECB FX.', badge: 'FREE' },
                         ].map(({ icon: Icon, name, desc, badge }) => (
@@ -455,7 +445,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                             'Watchlist + 3 price alerts',
                             'Macro & FX data (FRED / ECB)',
                             'Market news with sentiment',
-                            'Order book depth & liquidity',
+                            'Funding history & cross-venue basis',
                             'No credit card required',
                         ].map(t => (
                             <div key={t} className="fintech-card flex items-start gap-3 p-4">
@@ -538,6 +528,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         <a href="/api" className="hover:text-zinc-300 transition-colors">API</a>
                         <a href="/blog" className="hover:text-zinc-300 transition-colors">BLOG</a>
                         <a href="/locations" className="hover:text-zinc-300 transition-colors">LOCATIONS</a>
+                        <a href="/contact" className="hover:text-zinc-300 transition-colors">CONTACT</a>
                         <a href="/learn" className="hover:text-zinc-300 transition-colors">LEARN</a>
                         <a href="/methodology" className="hover:text-zinc-300 transition-colors">METHODOLOGY</a>
                         <a href="/coverage" className="hover:text-zinc-300 transition-colors">COVERAGE</a>

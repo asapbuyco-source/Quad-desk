@@ -23,7 +23,7 @@ const cleanError = (msg: string) => {
 };
 
 const AuthOverlay: React.FC = () => {
-  const { signInGoogle, registerEmail, loginEmail, auth: { registrationOpen } } = useStore();
+  const { signInGoogle, registerEmail, loginEmail, setGuest, auth: { registrationOpen } } = useStore();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [isLoading, setIsLoading] = useState(false);
@@ -155,7 +155,7 @@ const AuthOverlay: React.FC = () => {
               {mode === 'login' ? 'Sign in to your desk' : 'Start with the free desk'}
             </h1>
             <p className="mt-1 text-xs text-slate-500">
-              {mode === 'login' ? 'Core market data stays free. Pro unlocks the advanced desks.' : 'Free forever for live prices, funding and order flow.'}
+              {mode === 'login' ? 'Core market data stays free. Pro unlocks the advanced desks.' : 'Free forever for live prices, funding, positioning and liquidations.'}
             </p>
 
             <div className="mt-5 flex rounded-xl border border-white/5 bg-black/40 p-1">
@@ -245,6 +245,11 @@ const AuthOverlay: React.FC = () => {
               className="flex w-full items-center justify-center gap-3 rounded-xl bg-white py-3 text-sm font-bold text-black transition-transform hover:scale-[1.01] active:scale-[0.99]">
               <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="h-5 w-5" />
               Continue with Google
+            </button>
+
+            <button onClick={() => setGuest(true)}
+              className="mt-2 w-full rounded-xl border border-white/10 py-2.5 text-[11px] font-semibold text-slate-400 hover:bg-white/5 hover:text-slate-200">
+              Explore the free desk without an account
             </button>
 
             <p className="mt-5 text-center text-[10px] leading-relaxed text-slate-600">

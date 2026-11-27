@@ -9,6 +9,7 @@
     { href: '/blog', label: 'Blog' },
     { href: '/locations', label: 'Locations' },
     { href: '/about', label: 'About' },
+    { href: '/contact', label: 'Contact' },
     { href: '/learn', label: 'Learn' },
     { href: '/tools/position-size', label: 'Tools' }
   ];

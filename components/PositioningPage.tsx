@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import { Users, RefreshCw, Activity, ArrowRight } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import { useStore } from '../store';
@@ -16,61 +16,6 @@ interface PositioningResponse {
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'LINKUSDT'];
 const PERIODS = ['5m', '15m', '1h', '4h'];
 
-const Spark: React.FC<{ values: number[]; color?: string }> = ({ values, color = '#3b82f6' }) => {
-  if (values.length < 2) return <div className="h-10" />;
-  const w = 220, h = 40;
-  const min = Math.min(...values), max = Math.max(...values);
-  const span = max - min || 1;
-  const pts = values.map((v, i) => `${(i / (values.length - 1)) * w},${h - ((v - min) / span) * h}`).join(' ');
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-10 w-full" preserveAspectRatio="none">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
-    </svg>
-  );
-};
-
-const RatioCard: React.FC<{ title: string; bucket?: Bucket; hint?: string }> = ({ title, bucket, hint }) => {
-  const latest = bucket?.latest;
-  const longPct = latest?.long !== undefined ? latest.long * 100 : null;
-  const shortPct = latest?.short !== undefined ? latest.short * 100 : null;
-  const ratio = latest?.ratio;
-
-  return (
-    <div className="fintech-card p-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{title}</div>
-          {hint && <div className="mt-0.5 text-[9px] text-slate-600">{hint}</div>}
-        </div>
-        <div className={`font-mono text-lg font-black ${ratio === undefined ? 'text-slate-500' : ratio >= 1 ? 'text-emerald-400' : 'text-rose-400'}`}>
-          {ratio === undefined ? '—' : ratio.toFixed(2)}
-        </div>
-      </div>
-
-      {longPct !== null && shortPct !== null ? (
-        <>
-          <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-slate-800">
-            <div className="bg-emerald-500" style={{ width: `${longPct}%` }} />
-            <div className="bg-rose-500" style={{ width: `${shortPct}%` }} />
-          </div>
-          <div className="mt-1 flex justify-between font-mono text-[9px] text-slate-500">
-            <span className="text-emerald-400/80">L {longPct.toFixed(1)}%</span>
-            <span className="text-rose-400/80">S {shortPct.toFixed(1)}%</span>
-          </div>
-        </>
-      ) : (
-        <div className="mt-3 text-[11px] text-slate-500">{bucket?.error || 'No data'}</div>
-      )}
-
-      {bucket?.series && bucket.series.length > 1 && (
-        <div className="mt-2">
-          <Spark values={bucket.series.map(p => p.ratio)} color={ratio !== undefined && ratio >= 1 ? '#10b981' : '#f43f5e'} />
-        </div>
-      )}
-    </div>
-  );
-};
-
 const PositioningPage: React.FC = () => {
   const storeSymbol = useStore(s => s.config.activeSymbol as string | undefined);
   const setActiveTab = useStore(s => s.setActiveTab);
@@ -79,6 +24,11 @@ const PositioningPage: React.FC = () => {
   const [data, setData] = useState<PositioningResponse | null>(null);
   const [taker, setTaker] = useState<Bucket | undefined>();
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const next = (storeSymbol || '').toUpperCase();
+    if (next && next !== symbol) setSymbol(next);
+  }, [storeSymbol]);
 
   const load = useCallback(async (sym: string, per: string) => {
     setLoading(true);
@@ -102,6 +52,10 @@ const PositioningPage: React.FC = () => {
   const topAcc = s.top_accounts?.latest?.ratio;
   const topPos = s.top_positions?.latest?.ratio;
   const divergence = retail !== undefined && topPos !== undefined ? retail - topPos : undefined;
+  const divSeries = (s.global_accounts?.series || []).map((p, i) => {
+    const t = s.top_positions?.series?.[i]?.ratio;
+    return t === undefined ? 0 : p.ratio - t;
+  });
 
   return (
     <div className="h-full overflow-y-auto p-5 lg:p-6 pb-28 lg:pb-6">
@@ -109,8 +63,8 @@ const PositioningPage: React.FC = () => {
         <PageHeader
           icon={<Users size={16} />}
           title="Positioning"
-          badge="PRO"
-          subtitle="Retail vs top-trader long/short, top positions and taker flow — Binance USDM futures"
+          badge="FREE"
+          subtitle="Retail vs top-trader long/short, top positions and taker flow â€” Binance USDM futures"
         >
           <select value={symbol} onChange={e => setSymbol(e.target.value)}
             className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none">
@@ -131,72 +85,49 @@ const PositioningPage: React.FC = () => {
           </button>
         </PageHeader>
 
-        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
           <StatTile
             label="Retail ratio"
-            value={retail === undefined ? '—' : retail.toFixed(2)}
-            sub="all accounts"
+            value={retail === undefined ? 'â€”' : retail.toFixed(2)}
+            sub={s.global_accounts?.latest?.long !== undefined ? `${(s.global_accounts.latest.long * 100).toFixed(0)}% long` : "all accounts"}
             tone={retail === undefined ? 'text-slate-500' : retail >= 1 ? 'text-emerald-400' : 'text-rose-400'}
             spark={s.global_accounts?.series?.map(p => p.ratio)}
             sparkColor="#60a5fa"
           />
           <StatTile
             label="Top traders"
-            value={topAcc === undefined ? '—' : topAcc.toFixed(2)}
-            sub="by account"
+            value={topAcc === undefined ? 'â€”' : topAcc.toFixed(2)}
+            sub={s.top_accounts?.latest?.long !== undefined ? `${(s.top_accounts.latest.long * 100).toFixed(0)}% long` : "by account"}
             tone={topAcc === undefined ? 'text-slate-500' : topAcc >= 1 ? 'text-emerald-400' : 'text-rose-400'}
             spark={s.top_accounts?.series?.map(p => p.ratio)}
             sparkColor="#a78bfa"
           />
           <StatTile
             label="Top positions"
-            value={topPos === undefined ? '—' : topPos.toFixed(2)}
-            sub="by position size"
+            value={topPos === undefined ? 'â€”' : topPos.toFixed(2)}
+            sub={s.top_positions?.latest?.long !== undefined ? `${(s.top_positions.latest.long * 100).toFixed(0)}% long` : "by position size"}
             tone={topPos === undefined ? 'text-slate-500' : topPos >= 1 ? 'text-emerald-400' : 'text-rose-400'}
             spark={s.top_positions?.series?.map(p => p.ratio)}
             sparkColor="#fbbf24"
           />
           <StatTile
             label="Divergence"
-            value={divergence === undefined ? '—' : `${divergence >= 0 ? '+' : ''}${divergence.toFixed(2)}`}
-            sub={divergence === undefined ? 'retail − top' : divergence > 0.5 ? 'retail crowded long' : divergence < -0.5 ? 'retail crowded short' : 'aligned'}
+            value={divergence === undefined ? 'â€”' : `${divergence >= 0 ? '+' : ''}${divergence.toFixed(2)}`}
+            sub={divergence === undefined ? 'retail âˆ’ top' : divergence > 0.5 ? 'retail crowded long' : divergence < -0.5 ? 'retail crowded short' : 'aligned'}
             tone={divergence === undefined ? 'text-slate-500' : Math.abs(divergence) > 0.5 ? 'text-amber-300' : 'text-slate-300'}
-            spark={s.taker?.series?.map(p => p.ratio)}
+            spark={divSeries}
             sparkColor="#f472b6"
           />
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <RatioCard title="Retail accounts" hint="all accounts" bucket={s.global_accounts} />
-          <RatioCard title="Top traders" hint="by account" bucket={s.top_accounts} />
-          <RatioCard title="Top positions" hint="by position size" bucket={s.top_positions} />
-          <div className="fintech-card p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Taker flow</div>
-                <div className="mt-0.5 text-[9px] text-slate-600">buy vs sell volume</div>
-              </div>
-              <div className={`font-mono text-lg font-black ${takerRatio === undefined ? 'text-slate-500' : takerRatio >= 1 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {takerRatio === undefined ? '—' : takerRatio.toFixed(2)}
-              </div>
-            </div>
-            {taker?.latest?.buy !== undefined && taker?.latest?.sell !== undefined ? (
-              <>
-                <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-slate-800">
-                  <div className="bg-emerald-500" style={{ width: `${(taker.latest.buy / (taker.latest.buy + taker.latest.sell)) * 100}%` }} />
-                </div>
-                <div className="mt-1 flex justify-between font-mono text-[9px] text-slate-500">
-                  <span className="text-emerald-400/80">Buy {Math.round(taker.latest.buy).toLocaleString()}</span>
-                  <span className="text-rose-400/80">Sell {Math.round(taker.latest.sell).toLocaleString()}</span>
-                </div>
-              </>
-            ) : (
-              <div className="mt-3 text-[11px] text-slate-500">No data</div>
-            )}
-            {taker?.series && taker.series.length > 1 && (
-              <div className="mt-2"><Spark values={taker.series.map(p => p.ratio)} color={takerRatio && takerRatio >= 1 ? '#10b981' : '#f43f5e'} /></div>
-            )}
-          </div>
+          <StatTile
+            label="Taker flow"
+            value={takerRatio === undefined ? '—' : takerRatio.toFixed(2)}
+            sub={taker?.latest?.buy !== undefined && taker?.latest?.sell !== undefined
+              ? `${Math.round((taker.latest.buy / (taker.latest.buy + taker.latest.sell)) * 100)}% buy`
+              : 'aggressive flow'}
+            tone={takerRatio === undefined ? 'text-slate-500' : takerRatio >= 1 ? 'text-emerald-400' : 'text-rose-400'}
+            spark={taker?.series?.map(p => p.ratio)}
+            sparkColor="#f472b6"
+          />
         </div>
 
         <div className="mt-4 fintech-card p-4">
@@ -204,12 +135,12 @@ const PositioningPage: React.FC = () => {
             <Activity size={13} className="text-brand-accent" /> How to read this
           </div>
           <ul className="space-y-1 text-[11px] text-slate-400">
-            <li>• Ratio &gt; 1 means more longs than shorts. Retail extremes often mark local reversals; top-trader positioning is usually the contrarian tell.</li>
-            <li>• Divergence between retail and top traders is the signal worth watching, not either number alone.</li>
-            <li>• Taker flow &gt; 1 = aggressive buying; watch it with price to judge absorption.</li>
+            <li>â€¢ Ratio &gt; 1 means more longs than shorts. Retail extremes often mark local reversals; top-trader positioning is usually the contrarian tell.</li>
+            <li>â€¢ Divergence between retail and top traders is the signal worth watching, not either number alone.</li>
+            <li>â€¢ Taker flow &gt; 1 = aggressive buying; watch it with price to judge absorption.</li>
           </ul>
           <div className="mt-2 font-mono text-[10px] text-slate-600">
-            recorded {data?.as_of || '—'} · period {period} · source binance-fapi
+            recorded {data?.as_of || 'â€”'} Â· period {period} Â· source binance-fapi
           </div>
         </div>
 

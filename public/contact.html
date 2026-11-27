@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Contact & support — Quant Desk</title>
+<meta name="description" content="Contact Quant Desk support: account, billing, API access and data questions. Typical reply within one business day." />
+<link rel="canonical" href="https://quantdeskterminal.com/contact" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:56px 20px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.15;margin:0 0 8px}
+  h2{font-size:19px;margin:30px 0 8px;color:#fff}
+  p{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  form{background:linear-gradient(180deg,rgba(24,24,27,.9),rgba(10,10,12,.85));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px;display:grid;gap:12px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:5px}
+  input,select,textarea{width:100%;background:#0b0b0e;border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:10px 11px;color:#fff;font:14px Inter,system-ui,sans-serif;outline:none}
+  textarea{min-height:140px;resize:vertical}
+  input:focus,select:focus,textarea:focus{border-color:#3b82f6}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  button{background:#3b82f6;color:#fff;border:0;border-radius:9px;padding:11px 16px;font-weight:700;font-size:13px;cursor:pointer}
+  button:disabled{opacity:.6;cursor:wait}
+  .hp{position:absolute;left:-9999px;opacity:0}
+  .status{font:12px ui-monospace,monospace;min-height:18px}
+  .ok{color:#34d399}.err{color:#f87171}
+  .note{background:rgba(59,130,246,.07);border-left:2px solid #3b82f6;padding:9px 14px;color:#c7d2fe;font-size:13px;margin:16px 0}
+  details{border-bottom:1px solid rgba(255,255,255,.07);padding:10px 0}
+  summary{cursor:pointer;color:#fff;font-weight:600;font-size:14px}
+  details p{margin:6px 0 0;font-size:13px}
+  nav{margin-top:40px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+  @media(max-width:560px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <h1>Contact &amp; support</h1>
+  <p>Account, billing, API access or data questions. A real person on the family team replies — typically within one business day.</p>
+  <div class="note">Prefer email? Write to <a href="mailto:support@quantdeskterminal.com">support@quantdeskterminal.com</a>.</div>
+
+  <form id="contact-form">
+    <div class="row">
+      <div><label for="name">Name</label><input id="name" name="name" autocomplete="name" placeholder="Your name" /></div>
+      <div><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com" /></div>
+    </div>
+    <div class="row">
+      <div><label for="topic">Topic</label>
+        <select id="topic" name="topic">
+          <option value="support">Account / support</option>
+          <option value="billing">Billing / licence</option>
+          <option value="api">API access</option>
+          <option value="data">Data or methodology</option>
+          <option value="partnership">Partnership / referrals</option>
+        </select>
+      </div>
+      <div><label for="company">Company (optional)</label><input id="company" name="company" autocomplete="organization" placeholder="Firm or community" /></div>
+    </div>
+    <div>
+      <label for="message">Message</label>
+      <textarea id="message" name="message" required minlength="10" maxlength="4000" placeholder="Tell us what you need — include the symbol or page if relevant."></textarea>
+    </div>
+    <div class="hp"><label for="website">Website</label><input id="website" name="website" tabindex="-1" autocomplete="off" /></div>
+    <div><button id="send" type="submit">Send message</button></div>
+    <div id="status" class="status" role="status"></div>
+  </form>
+
+  <h2>Common questions</h2>
+  <details><summary>How fast is support?</summary><p>Usually within one business day, Monday–Friday. Data-feed incidents are prioritised.</p></details>
+  <details><summary>I bought Pro — how do I activate it?</summary><p>Paste the licence key from your Lemon Squeezy receipt on the Plans page in the terminal. If it fails, email us the order reference.</p></details>
+  <details><summary>Can I get API access?</summary><p>Yes, in stages. Send the venues, symbols and cadence you need through this form and we will confirm coverage and limits.</p></details>
+  <details><summary>Do you give trading advice?</summary><p>No. We publish recorded market data. Nothing here is investment advice.</p></details>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/platform">Platform</a>
+    <a href="/methodology">Methodology</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+  </nav>
+</div>
+<script src="/site-nav.js" defer></script>
+<script>
+  const form = document.getElementById('contact-form');
+  const statusEl = document.getElementById('status');
+  const send = document.getElementById('send');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    statusEl.className = 'status';
+    statusEl.textContent = 'Sending…';
+    send.disabled = true;
+    const payload = {
+      name: document.getElementById('name').value,
+      email: document.getElementById('email').value,
+      topic: document.getElementById('topic').value,
+      company: document.getElementById('company').value,
+      message: document.getElementById('message').value,
+      website: document.getElementById('website').value,
+    };
+    try {
+      const res = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not send the message.');
+      statusEl.className = 'status ok';
+      statusEl.textContent = 'Message sent. We will reply by email.';
+      form.reset();
+    } catch (err) {
+      statusEl.className = 'status err';
+      statusEl.textContent = err.message || 'Could not send the message.';
+    } finally {
+      send.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

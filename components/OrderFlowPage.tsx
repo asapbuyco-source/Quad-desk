@@ -63,6 +63,8 @@ function diagnose(r15: Roll, r60: Roll): { label: string; tone: string } | null 
 
 const OrderFlowPage: React.FC = () => {
   const recentTrades = useStore(s => s.market.recentTrades);
+  const activeSymbol = useStore(s => s.config.activeSymbol);
+  const base = (activeSymbol || 'BTCUSDT').replace('USDT', '');
   // Event-level liquidity changes are derived in the store from the diff-depth
   // stream (sequenced by update id), not from top-20 snapshots.
   const liqEvents = useStore(s => s.liquidityEvents);
@@ -107,7 +109,7 @@ const OrderFlowPage: React.FC = () => {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="flex items-center gap-2 text-lg font-bold tracking-wide text-white">
-              <Activity size={18} className="text-brand-accent" /> BTC Quant Execution
+              <Activity size={18} className="text-brand-accent" /> {base} Quant Execution
             </h1>
             <p className="mt-1 text-xs text-slate-500">
               Executed prints, signed spot/perp flow and price impact · taker-side classification
@@ -123,21 +125,21 @@ const OrderFlowPage: React.FC = () => {
           <div className="fintech-card p-3">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Spot δ · 15s</span>
             <div className={`mt-1 font-mono text-xl font-black ${rolls.SPOT['15s'].net >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {fmtBtc(rolls.SPOT['15s'].net)} <span className="text-xs text-slate-500">BTC</span>
+              {fmtBtc(rolls.SPOT['15s'].net)} <span className="text-xs text-slate-500">{base}</span>
             </div>
             <div className="mt-0.5 font-mono text-[10px] text-slate-600">{rolls.SPOT['15s'].count} prints</div>
           </div>
           <div className="fintech-card p-3">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Perp δ · 15s</span>
             <div className={`mt-1 font-mono text-xl font-black ${rolls.PERP['15s'].net >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {fmtBtc(rolls.PERP['15s'].net)} <span className="text-xs text-slate-500">BTC</span>
+              {fmtBtc(rolls.PERP['15s'].net)} <span className="text-xs text-slate-500">{base}</span>
             </div>
             <div className="mt-0.5 font-mono text-[10px] text-slate-600">{rolls.PERP['15s'].count} prints</div>
           </div>
           <div className="fintech-card p-3">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Signed flow · 15s</span>
             <div className={`mt-1 font-mono text-xl font-black ${totalSigned >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {fmtBtc(totalSigned)} <span className="text-xs text-slate-500">BTC</span>
+              {fmtBtc(totalSigned)} <span className="text-xs text-slate-500">{base}</span>
             </div>
             <div className="mt-0.5 font-mono text-[10px] text-slate-600">spot + perp</div>
           </div>

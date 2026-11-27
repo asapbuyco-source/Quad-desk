@@ -51,6 +51,8 @@ interface AppState {
     ui: {
         activeTab: string;
         hasEntered: boolean;
+        /** Browsing without an account (free boards, local watchlist/alerts). */
+        guest: boolean;
         isProfileOpen: boolean;
         theme?: 'dark' | 'light';
         soundEnabled?: boolean;
@@ -143,6 +145,7 @@ interface AppState {
     ofiHistory: number[];
 
     setHasEntered: (val: boolean) => void;
+    setGuest: (val: boolean) => void;
     setActiveTab: (tab: string) => void;
     toggleWatch: (symbol: string) => void;
     addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'createdAt'>) => boolean;
@@ -226,6 +229,7 @@ export const useStore = create<AppState>((set, get) => ({
     ui: {
         activeTab: 'dashboard',
         hasEntered: false,
+        guest: false,
         isProfileOpen: false,
     },
     config: {
@@ -375,6 +379,7 @@ export const useStore = create<AppState>((set, get) => ({
     },
 
     setHasEntered: (val) => set(state => ({ ui: { ...state.ui, hasEntered: val } })),
+    setGuest: (val) => set(state => ({ ui: { ...state.ui, guest: val } })),
     setActiveTab: (tab) => set(state => ({ ui: { ...state.ui, activeTab: tab } })),
     toggleWatch: (symbol) => set(state => {
         const next = state.watchlist.includes(symbol)

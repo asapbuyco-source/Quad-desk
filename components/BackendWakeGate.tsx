@@ -18,7 +18,7 @@ const BackendWakeGate: React.FC = () => {
   const offline = status === 'offline';
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[70] w-[260px] max-w-[calc(100vw-2rem)]">
+    <div className="pointer-events-none fixed bottom-24 lg:bottom-4 right-4 z-[70] w-[260px] max-w-[calc(100vw-2rem)]">
       <div className="pointer-events-auto fintech-card p-3 shadow-2xl">
         <div className="flex items-start gap-2.5">
           <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${

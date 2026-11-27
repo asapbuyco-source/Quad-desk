@@ -125,6 +125,7 @@ const App: React.FC = () => {
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
                 setUser(user);
+                useStore.getState().setGuest(false);
                 loadUserPreferences();
                 addNotification({
                     id: 'auth-success',
@@ -385,7 +386,7 @@ const App: React.FC = () => {
                     <motion.div key="landing" exit={{ opacity: 0, y: -50 }} className="absolute inset-0 z-50">
                         <LandingPage onEnter={() => setHasEntered(true)} />
                     </motion.div>
-                ) : !authState.user ? (
+                ) : !authState.user && !ui.guest ? (
                     <motion.div key="auth" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-50">
                         <AuthOverlay />
                     </motion.div>

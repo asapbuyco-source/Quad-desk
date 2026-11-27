@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import { Thermometer, RefreshCw } from 'lucide-react';
 import { cachedJson, readCached } from '../utils/cachedFetch';
 import { PageHeader, rsiColor } from './Premium';
@@ -61,7 +61,7 @@ const ScreenerPage: React.FC = () => {
       className={`cursor-pointer select-none px-3 py-2.5 ${align} text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300`}
       onClick={() => setSort(s => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : -1 }))}
     >
-      {label}{sort.key === key ? (sort.dir === 1 ? ' ↑' : ' ↓') : ''}
+      {label}{sort.key === key ? (sort.dir === 1 ? ' â†‘' : ' â†“') : ''}
     </th>
   );
 
@@ -71,8 +71,8 @@ const ScreenerPage: React.FC = () => {
         <PageHeader
           icon={<Thermometer size={16} />}
           title="RSI Screener"
-          badge="PRO"
-          subtitle="Multi-timeframe RSI on the most liquid perpetuals · green oversold, red overbought"
+          badge="FREE"
+          subtitle="Multi-timeframe RSI on the most liquid perpetuals Â· green oversold, red overbought"
         >
           <div className="flex items-center gap-3 font-mono text-[11px]">
             <span className="text-emerald-400">{data?.oversold ?? 0} oversold</span>
@@ -98,7 +98,7 @@ const ScreenerPage: React.FC = () => {
                   <span className="font-mono text-[10px] text-slate-500">{vals.length}</span>
                 </div>
                 <div className="mt-1.5 font-mono text-lg font-black text-white">
-                  {avg === null ? '—' : avg.toFixed(0)}
+                  {avg === null ? 'â€”' : avg.toFixed(0)}
                   <span className="ml-1 text-[10px] font-normal text-slate-500">avg RSI</span>
                 </div>
                 <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-800">
@@ -149,20 +149,20 @@ const ScreenerPage: React.FC = () => {
                       <td key={t} className="px-1.5 py-1.5 text-right">
                         <div className="rounded-md px-2 py-1 font-mono text-[12px] font-bold text-white"
                           style={{ background: rsiColor(v) }}>
-                          {v === null || v === undefined ? '—' : v.toFixed(1)}
+                          {v === null || v === undefined ? 'â€”' : v.toFixed(1)}
                         </div>
                       </td>
                     );
                   })}
                   <td className="px-3 py-2 text-right font-mono text-[12px] font-black"
                     style={{ color: (r.rsi_avg ?? 50) >= 70 ? '#fb7185' : (r.rsi_avg ?? 50) <= 30 ? '#34d399' : '#e2e8f0' }}>
-                    {r.rsi_avg === null ? '—' : r.rsi_avg.toFixed(1)}
+                    {r.rsi_avg === null ? 'â€”' : r.rsi_avg.toFixed(1)}
                   </td>
                 </tr>
               ))}
               {!rows.length && (
                 <tr><td colSpan={6 + tf.length} className="px-4 py-10 text-center text-xs text-slate-500">
-                  {loading ? 'Computing RSI across the market…' : 'No data'}
+                  {loading ? 'Computing RSI across the marketâ€¦' : 'No data'}
                 </td></tr>
               )}
             </tbody>
@@ -170,8 +170,8 @@ const ScreenerPage: React.FC = () => {
         </div>
 
         <div className="mt-2 font-mono text-[10px] text-slate-600">
-          Wilder RSI(14) · 15m bars resampled to 1h/4h · top {data?.count ?? 0} by 24h volume
-          {rows[0] ? ` · ${rows[0].symbol} ${fmtUsd(rows[0].volume_usd)} 24h` : ''} · recorded {data?.as_of || '—'} · source binance-fapi
+          Wilder RSI(14) Â· 15m bars resampled to 1h/4h Â· top {data?.count ?? 0} by 24h volume
+          {rows[0] ? ` Â· ${rows[0].symbol} ${fmtUsd(rows[0].volume_usd)} 24h` : ''} Â· recorded {data?.as_of || 'â€”'} Â· source binance-fapi
         </div>
       </div>
     </div>

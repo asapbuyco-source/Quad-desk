@@ -126,6 +126,10 @@ const DerivativesView: React.FC = () => {
   }, []);
 
   useEffect(() => { load(symbol); }, [load, symbol]);
+  useEffect(() => {
+    const next = (storeSymbol || '').toUpperCase();
+    if (next && next !== symbol) setSymbol(next);
+  }, [storeSymbol]);
   useEffect(() => { loadOi(symbol, oiWindow); }, [loadOi, symbol, oiWindow]);
   useEffect(() => { loadFundingHistory(symbol); }, [loadFundingHistory, symbol]);
 
@@ -138,7 +142,7 @@ const DerivativesView: React.FC = () => {
         <PageHeader
           icon={<Layers size={16} />}
           title="Derivatives & Flows"
-          badge="PRO"
+          badge="FREE"
           subtitle="Funding and open interest across venues · US spot premium · funding extremes market-wide"
         >
           <select
@@ -171,7 +175,7 @@ const DerivativesView: React.FC = () => {
           />
           <DerivedCard
             label="Binance funding"
-            tone={(venues.binance?.funding_rate ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}
+            tone={(venues.binance?.funding_rate ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}
             value={pct(venues.binance?.funding_rate)}
             sub={venues.binance?.error ? 'unavailable' : 'per interval · source binance-fapi'}
           />
@@ -203,7 +207,7 @@ const DerivativesView: React.FC = () => {
                   <tr key={name} className="border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02]">
                     <td className="px-4 py-3 font-medium capitalize text-slate-200">{name}</td>
                     <td className="px-4 py-3 text-right font-mono text-slate-300">{v.error ? '—' : usd(v.price)}</td>
-                    <td className={`px-4 py-3 text-right font-mono ${(v.funding_rate ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    <td className={`px-4 py-3 text-right font-mono ${(v.funding_rate ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                       {v.error ? '—' : pct(v.funding_rate)}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-slate-300">{v.error ? '—' : usd(v.open_interest)}</td>
@@ -224,8 +228,8 @@ const DerivativesView: React.FC = () => {
         {/* Funding heatmap */}
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {[
-            { title: 'Most positive funding', rows: heat?.highest, tone: 'text-emerald-400', Icon: ArrowUpRight, note: 'Longs pay shorts — crowded longs' },
-            { title: 'Most negative funding', rows: heat?.lowest, tone: 'text-rose-400', Icon: ArrowDownRight, note: 'Shorts pay longs — crowded shorts' },
+            { title: 'Most positive funding', rows: heat?.highest, tone: 'text-rose-400', Icon: ArrowUpRight, note: 'Longs pay shorts — crowded longs' },
+            { title: 'Most negative funding', rows: heat?.lowest, tone: 'text-emerald-400', Icon: ArrowDownRight, note: 'Shorts pay longs — crowded shorts' },
           ].map(col => (
             <div key={col.title} className="fintech-card p-4">
               <div className="mb-3 flex items-center justify-between">
@@ -344,19 +348,19 @@ const DerivativesView: React.FC = () => {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last 8h</div>
-                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.latest?.rate ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.latest?.rate ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                   {fundHist?.latest ? pct(fundHist.latest.rate) : '—'}
                 </div>
               </div>
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Accumulated</div>
-                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.accumulated_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.accumulated_pct ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                   {fundHist?.accumulated_pct === undefined ? '—' : `${fundHist.accumulated_pct >= 0 ? '+' : ''}${fundHist.accumulated_pct}%`}
                 </div>
               </div>
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Annualised</div>
-                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.annualized_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <div className={`mt-1 font-mono text-lg font-black ${(fundHist?.annualized_pct ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                   {fundHist?.annualized_pct === undefined ? '—' : `${fundHist.annualized_pct >= 0 ? '+' : ''}${fundHist.annualized_pct}%`}
                 </div>
               </div>
@@ -375,7 +379,7 @@ const DerivativesView: React.FC = () => {
                     return (
                       <div key={i} className="group relative flex h-full flex-1 flex-col justify-center">
                         <div
-                          className={`w-full rounded-sm ${p.rate >= 0 ? 'bg-emerald-500/70' : 'bg-rose-500/70'}`}
+                          className={`w-full rounded-sm ${p.rate >= 0 ? 'bg-rose-500/70' : 'bg-emerald-500/70'}`}
                           style={{ height: `${h}%` }}
                           title={`${new Date(p.t).toLocaleString()} · ${(p.rate * 100).toFixed(4)}%`}
                         />

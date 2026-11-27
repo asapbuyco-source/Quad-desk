@@ -36,7 +36,10 @@ const PricingPage: React.FC = () => {
 
   const checkoutHref = buildCheckoutUrl({ email: user?.email, userId: user?.uid });
   const startCheckout = () => {
-    if (!checkoutHref) return;
+    if (!checkoutHref) {
+      window.location.href = '/contact?topic=billing';
+      return;
+    }
     window.open(checkoutHref, checkoutHref.startsWith('mailto:') ? '_self' : '_blank', 'noopener,noreferrer');
   };
 
@@ -108,11 +111,10 @@ const PricingPage: React.FC = () => {
           ) : (
             <button
               onClick={startCheckout}
-              disabled={!checkoutHref}
-              title={checkoutHref ? 'Open secure checkout' : 'Checkout link not configured yet'}
-              className="flex items-center gap-2 rounded-lg bg-brand-accent px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+              title={checkoutHref ? 'Open secure checkout' : 'Request Pro access'}
+              className="flex items-center gap-2 rounded-lg bg-brand-accent px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-brand-accent/90"
             >
-              <Sparkles size={14} /> Upgrade to Pro
+              <Sparkles size={14} /> {checkoutHref ? 'Upgrade to Pro' : 'Request Pro access'}
             </button>
           )}
         </div>
@@ -193,10 +195,9 @@ const PricingPage: React.FC = () => {
             {!isPro && (
               <button
                 onClick={startCheckout}
-                disabled={!checkoutHref}
-                className="mt-4 w-full rounded-lg bg-brand-accent py-2 text-xs font-bold text-white hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-4 w-full rounded-lg bg-brand-accent py-2 text-xs font-bold text-white hover:bg-brand-accent/90"
               >
-                {checkoutHref ? 'Start Pro — secure checkout' : 'Checkout coming soon'}
+                {checkoutHref ? 'Start Pro - secure checkout' : 'Request Pro access'}
               </button>
             )}
           </div>

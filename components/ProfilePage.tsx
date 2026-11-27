@@ -19,6 +19,7 @@ const ProfilePage: React.FC = () => {
   const priceAlerts = useStore(s => s.priceAlerts);
   const logout = useStore(s => s.logout);
   const setActiveTab = useStore(s => s.setActiveTab);
+  const setGuest = useStore(s => s.setGuest);
 
   const admin = isAdminEmail(user?.email);
   const pro = plan === 'pro' || (admin && !previewAsUser);
@@ -52,6 +53,7 @@ const ProfilePage: React.FC = () => {
                   {pro ? 'Pro' : 'Free'}
                 </span>
                 {admin && <span className="rounded bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-rose-300">Admin</span>}
+                {!user && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">Guest</span>}
                 {trialLeft > 0 && <span className="rounded bg-brand-accent/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-brand-accent">Demo · {trialLeft}m</span>}
               </div>
             </div>
@@ -140,6 +142,12 @@ const ProfilePage: React.FC = () => {
             <KeyRound size={14} className="text-slate-500" /> Account
           </div>
           <div className="flex flex-wrap gap-2">
+            {!user && (
+              <button onClick={() => setGuest(false)}
+                className="flex items-center gap-1.5 rounded-lg bg-brand-accent px-3 py-1.5 text-[11px] font-bold text-white hover:bg-brand-accent/90">
+                Sign in / create account
+              </button>
+            )}
             <button onClick={() => logout()}
               className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 px-3 py-1.5 text-[11px] text-rose-300 hover:bg-rose-500/10">
               <LogOut size={13} /> Sign out

@@ -91,6 +91,11 @@
     <priority>0.5</priority>
   </url>
   <url>
+    <loc>https://quantdeskterminal.com/contact</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://quantdeskterminal.com/locations</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>

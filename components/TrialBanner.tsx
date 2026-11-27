@@ -18,7 +18,7 @@ const TrialBanner: React.FC = () => {
   const mins = Math.max(1, Math.ceil((trialUntil - now) / 60000));
 
   return (
-    <div className="pointer-events-none fixed right-4 top-20 z-[60]">
+    <div className="pointer-events-none fixed right-4 bottom-24 lg:bottom-auto lg:top-20 z-[60]">
       <div className="pointer-events-auto flex items-center gap-3 rounded-xl border border-brand-accent/30 bg-[#0b1220]/95 px-3 py-2 shadow-xl backdrop-blur-md">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-accent/15 text-brand-accent">
           <Timer size={14} />

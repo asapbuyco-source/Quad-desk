@@ -20,6 +20,8 @@ const Header: React.FC = () => {
     const { isBacktest, activeSymbol, playbackSpeed, backtestDate } = useStore(state => state.config);
     const { user } = useStore(state => state.auth);
     const { plan } = useStore(state => state.auth);
+    const priceAlerts = useStore(state => state.priceAlerts);
+    const alertCount = priceAlerts.filter(a => !a.triggeredAt).length;
     const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setActiveTab } = useStore();
     const showUpgrade = PAYWALL_ENABLED && plan !== 'pro' && !isAdminEmail(user?.email);
 
@@ -80,8 +82,8 @@ const Header: React.FC = () => {
                             {metrics.pair}
                         </h1>
                         <div className="flex items-center gap-2 lg:gap-3">
-                            <span className="max-w-[110px] truncate text-base lg:max-w-none lg:text-2xl font-mono font-medium text-white tracking-tight">
-                                ${metrics.price.toFixed(2)}
+                            <span className="text-base lg:text-2xl font-mono font-medium text-white tracking-tight">
+                                ${metrics.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                             <div className={`
                 hidden min-[360px]:flex items-center px-1.5 lg:px-2 py-0.5 rounded-full text-[10px] lg:text-xs font-bold font-mono
@@ -187,9 +189,12 @@ const Header: React.FC = () => {
                     )}
 
                     {/* Notifications (hidden on the smallest screens to protect header space) */}
-                    <button className="relative hidden sm:block p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300">
+                    <button onClick={() => setActiveTab('watchlist')} title={alertCount ? `${alertCount} active alerts` : 'Alerts'}
+                        className="relative hidden sm:block p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300">
                         <Bell size={20} className="w-5 h-5 lg:w-5 lg:h-5" />
-                        <span className="absolute top-2 right-2 w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full bg-trade-ask border-2 border-[#0B101B]"></span>
+                        {alertCount > 0 && (
+                            <span className="absolute top-2 right-2 w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full bg-trade-ask border-2 border-[#0B101B]"></span>
+                        )}
                     </button>
 
                     {/* Settings */}

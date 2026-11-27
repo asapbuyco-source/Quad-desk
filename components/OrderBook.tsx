@@ -116,6 +116,11 @@ const OrderRow: React.FC<{ level: OrderBookLevel; type: 'ask' | 'bid'; maxVol: n
 };
 
 const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
+  const bestBid = bids[0]?.price ?? 0;
+  const bestAsk = asks[0]?.price ?? 0;
+  const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : null;
+  const mid = bestAsk > 0 && bestBid > 0 ? (bestAsk + bestBid) / 2 : 0;
+  const spreadBps = spread !== null && mid > 0 ? (spread / mid) * 10000 : null;
 
   const { maxVol, maxDelta, netDelta } = useMemo(() => {
     const allLevels = [...asks, ...bids];
@@ -183,7 +188,9 @@ const OrderBook: React.FC<OrderBookProps> = ({ asks, bids }) => {
 
         <div className="py-2 my-1 bg-white/5 backdrop-blur-sm text-center border-y border-white/5 relative group">
           <div className="absolute inset-0 bg-brand-accent/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          <span className="relative z-10 text-xs text-slate-400 font-medium group-hover:text-white transition-colors">Spread: Equilibrium</span>
+          <span className="relative z-10 text-xs text-slate-400 font-medium group-hover:text-white transition-colors">
+            {spread === null ? 'Spread —' : `Spread $${spread.toFixed(2)} · ${spreadBps?.toFixed(1)} bps`}
+          </span>
         </div>
 
         <div>

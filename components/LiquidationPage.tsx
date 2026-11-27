@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import { Flame, RefreshCw, ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import { PageHeader } from './Premium';
@@ -74,8 +74,8 @@ const LiquidationPage: React.FC = () => {
         <PageHeader
           icon={<Flame size={16} />}
           title="Liquidations"
-          badge="PRO"
-          subtitle="Forced orders from Binance + OKX — long liqs (red) vs short liqs (green), clustered by price"
+          badge="FREE"
+          subtitle="Forced orders from Binance + OKX â€” long liqs (red) vs short liqs (green), clustered by price"
         >
           <select value={symbol} onChange={e => setSymbol(e.target.value)}
             className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-slate-200 outline-none">
@@ -121,7 +121,7 @@ const LiquidationPage: React.FC = () => {
           <div className="mt-4 premium-card p-4">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">24h liquidation heat</span>
-              <span className="font-mono text-[9px] text-slate-600">red = longs liquidated · green = shorts</span>
+              <span className="font-mono text-[9px] text-slate-600">red = longs liquidated Â· green = shorts</span>
             </div>
             <div className="flex h-24 items-end gap-1">
               {(() => {
@@ -132,7 +132,7 @@ const LiquidationPage: React.FC = () => {
                   const sh = (h.short_usd / max) * 100;
                   return (
                     <div key={i} className="group relative flex h-full flex-1 flex-col justify-end gap-px"
-                      title={`${new Date(h.t).toLocaleTimeString([], { hour: '2-digit' })} · L ${usd(h.long_usd)} / S ${usd(h.short_usd)}`}>
+                      title={`${new Date(h.t).toLocaleTimeString([], { hour: '2-digit' })} Â· L ${usd(h.long_usd)} / S ${usd(h.short_usd)}`}>
                       <div className="w-full rounded-sm bg-rose-500/80" style={{ height: `${lh}%` }} />
                       <div className="w-full rounded-sm bg-emerald-500/80" style={{ height: `${sh}%` }} />
                       {total === 0 && <div className="w-full rounded-sm bg-white/5" style={{ height: '2%' }} />}
@@ -164,7 +164,7 @@ const LiquidationPage: React.FC = () => {
                 </div>
               ))}
               {!data?.clusters?.length && <div className="py-6 text-center text-xs text-slate-500">
-                {data?.collecting_since ? 'No liquidations in this window yet.' : 'Collector starting — data appears within seconds.'}
+                {data?.collecting_since ? 'No liquidations in this window yet.' : 'Collector starting â€” data appears within seconds.'}
               </div>}
             </div>
           </div>
@@ -197,18 +197,18 @@ const LiquidationPage: React.FC = () => {
             <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Estimated liquidation levels</span>
               <span className="font-mono text-[9px] text-slate-600">
-                price {usd(model.price)} · OI {usd(model.oi_usd)} · {model.long_share}% long
+                price {usd(model.price)} Â· OI {usd(model.oi_usd)} Â· {model.long_share}% long
               </span>
             </div>
             <div className="mb-3 font-mono text-[9px] text-slate-600">
-              model: open interest split across 5×–100× buckets with the current long/short ratio — not exchange positions
+              model: open interest split across 5Ã—â€“100Ã— buckets with the current long/short ratio â€” not exchange positions
             </div>
             <div className="space-y-1">
               {(() => {
                 const maxN = Math.max(1, ...model.levels.map(l => l.notional_usd));
                 return model.levels.map((l, i) => (
                   <div key={`${l.side}-${l.leverage}-${i}`} className="flex items-center gap-2">
-                    <span className="w-10 shrink-0 text-right font-mono text-[10px] text-slate-500">{l.leverage}×</span>
+                    <span className="w-10 shrink-0 text-right font-mono text-[10px] text-slate-500">{l.leverage}Ã—</span>
                     <span className={`w-9 shrink-0 font-mono text-[9px] uppercase ${l.side === 'long' ? 'text-rose-400' : 'text-emerald-400'}`}>{l.side}</span>
                     <span className="w-24 shrink-0 text-right font-mono text-[10px] text-slate-300">{usd(l.price)}</span>
                     <div className="flex h-3 flex-1 overflow-hidden rounded bg-slate-800/60">
@@ -254,8 +254,8 @@ const LiquidationPage: React.FC = () => {
             </table>
           </div>
           <div className="mt-2 font-mono text-[10px] text-slate-600">
-            {data?.buffered ?? 0} orders buffered · collector {data?.collecting_since ? `since ${new Date(data.collecting_since).toLocaleString()}` : 'starting'} ·
-            history begins when the backend connects to the stream · source binance-forceOrder
+            {data?.buffered ?? 0} orders buffered Â· collector {data?.collecting_since ? `since ${new Date(data.collecting_since).toLocaleString()}` : 'starting'} Â·
+            history begins when the backend connects to the stream Â· source binance-forceOrder
           </div>
         </div>
 

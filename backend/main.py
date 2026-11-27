@@ -439,7 +439,7 @@ async def security_middleware(request: Request, call_next):
     path = request.url.path
 
     # ── Always pass OPTIONS (CORS preflight) through ──────────────────────────
-    if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json"]:
+    if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json", "/contact"]:
         return await call_next(request)
 
     # ── AUDIT FIX #4: API Key authentication for all endpoints ─────────
@@ -2240,6 +2240,67 @@ async def options(currency: str = "BTC"):
         out["error"] = str(e)
     _market_cache[cache_key] = (time.time(), out)
     return out
+
+
+class ContactRequest(BaseModel):
+    name: str = ""
+    email: str
+    topic: str = "support"
+    message: str
+    company: str = ""
+    website: str = ""  # honeypot
+
+
+_contact_hits: Dict[str, list] = defaultdict(list)
+
+
+@app.post("/contact")
+async def contact(req: ContactRequest, request: Request):
+    """Send a support message via Resend. No data is stored."""
+    ip = (request.client.host if request.client else "unknown")
+    now = time.time()
+    hits = [t for t in _contact_hits[ip] if now - t < 3600]
+    if len(hits) >= 5:
+        return JSONResponse(status_code=429, content={"error": "Too many messages. Try again later."})
+    _contact_hits[ip] = hits + [now]
+
+    if req.website.strip():
+        return {"ok": True}
+    email = req.email.strip()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return JSONResponse(status_code=400, content={"error": "Enter a valid email address."})
+    message = req.message.strip()
+    if len(message) < 10 or len(message) > 4000:
+        return JSONResponse(status_code=400, content={"error": "Message must be 10-4000 characters."})
+
+    key = os.getenv("RESEND_API_KEY", "")
+    if not key:
+        return JSONResponse(status_code=503, content={"error": "Email is not configured yet."})
+
+    to_addr = os.getenv("CONTACT_TO", "support@quantdeskterminal.com")
+    from_addr = os.getenv("CONTACT_FROM", "Quant Desk <support@quantdeskterminal.com>")
+    subject = f"[{req.topic[:24]}] {req.name.strip()[:60] or email}"
+    text = (
+        f"From: {req.name.strip() or '(no name)'} <{email}>\n"
+        f"Topic: {req.topic}\n"
+        f"Company: {req.company.strip() or '-'}\n\n"
+        f"{message}\n"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"from": from_addr, "to": [to_addr], "reply_to": email,
+                      "subject": subject, "text": text},
+            )
+        if r.status_code >= 400:
+            logger.warning(f"resend error {r.status_code}: {r.text[:200]}")
+            return JSONResponse(status_code=502, content={"error": "Could not send the message."})
+    except Exception as e:
+        logger.warning(f"resend exception: {e}")
+        return JSONResponse(status_code=502, content={"error": "Could not send the message."})
+    return {"ok": True}
 
 
 @app.get("/alerts/status")
