@@ -1967,17 +1967,27 @@ async def premium_history(symbol: str = "BTCUSDT", hours: int = 168):
     n = max(24, min(hours, 300))
     out: Dict[str, Any] = {"symbol": sym, "product": product, "as_of": _now_iso(), "series": []}
     try:
-        async with httpx.AsyncClient(timeout=25.0, headers={"User-Agent": "QuantDesk/1.0"}) as client:
+        async with httpx.AsyncClient(timeout=25.0, headers={"User-Agent": "quant-desk/1.0"}) as client:
             cb = (await client.get(
                 f"https://api.exchange.coinbase.com/products/{product}/candles",
                 params={"granularity": 3600},
             )).json()
-            bn = (await client.get(
-                "https://fapi.binance.com/fapi/v1/klines",
-                params={"symbol": sym, "interval": "1h", "limit": n},
-            )).json()
+            try:
+                bn = (await client.get(
+                    "https://fapi.binance.com/fapi/v1/klines",
+                    params={"symbol": sym, "interval": "1h", "limit": n},
+                )).json()
+            except Exception:
+                bn = None
+            if not isinstance(bn, list):
+                d = (await client.get(
+                    "https://api.bybit.com/v5/market/kline",
+                    params={"category": "linear", "symbol": sym, "interval": "60", "limit": n},
+                )).json()
+                lst = ((d or {}).get("result") or {}).get("list") or []
+                bn = [[int(k[0]), k[1], k[2], k[3], k[4]] for k in reversed(lst)]
         if not isinstance(cb, list) or not isinstance(bn, list):
-            out["error"] = "venue unavailable"
+            out["error"] = f"venue unavailable (coinbase={type(cb).__name__}, binance={type(bn).__name__})"
             return out
         cb_map = {int(r[0]): float(r[4]) for r in cb}
         series = []
@@ -2026,6 +2036,20 @@ async def coin_futures(symbol: str = "BTCUSDT"):
                                       params={"symbol": sym, "period": "1h", "limit": 1})).json()
         price = float(mark.get("markPrice") or 0)
         index = float(mark.get("indexPrice") or 0)
+        if price <= 0 or not isinstance(tick, dict) or 'quoteVolume' not in tick:
+            d = (await client.get("https://api.bybit.com/v5/market/tickers",
+                                  params={"category": "linear", "symbol": sym})).json()
+            row = (((d or {}).get("result") or {}).get("list") or [{}])[0]
+            price = float(row.get("lastPrice") or price or 0)
+            index = price
+            mark = {
+                "lastFundingRate": row.get("fundingRate") or 0,
+                "nextFundingTime": row.get("nextFundingTime"),
+            }
+            tick = {
+                "priceChangePercent": float(row.get("price24hPcnt") or 0) * 100.0,
+                "quoteVolume": float(row.get("turnover24h") or 0),
+            }
         out.update({
             "price": price,
             "index": index,
