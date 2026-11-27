@@ -11,6 +11,7 @@ import BackendWakeGate from './components/BackendWakeGate';
 import TrialBanner from './components/TrialBanner';
 import PriceAlertWatcher from './components/PriceAlertWatcher';
 import CommandPalette from './components/CommandPalette';
+import AIAssistant from './components/AIAssistant';
 import { Analytics } from '@vercel/analytics/react';
 import ConsentBanner from './components/ConsentBanner';
 
@@ -531,6 +532,7 @@ const App: React.FC = () => {
             <TrialBanner />
             <PriceAlertWatcher />
             <CommandPalette />
+            {ui.hasEntered && <AIAssistant />}
             <Analytics />
             <ConsentBanner />
             <ToastContainer toasts={notifications} removeToast={removeNotification} />

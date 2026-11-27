@@ -118,3 +118,40 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
         analysis: String(parsed.analysis || '').substring(0, 350),
     };
 }
+
+
+export interface AssistantMessage { role: 'user' | 'assistant'; content: string }
+
+export async function runAssistant(messages: AssistantMessage[], context: string): Promise<string> {
+    const apiKey = getGroqApiKey();
+    if (!apiKey || apiKey === DEFAULT_API_KEY) {
+        throw new Error('AI is not configured. Add VITE_GROQ_API_KEY.');
+    }
+    const system = `You are the Quant Desk assistant inside a crypto derivatives terminal.
+
+Rules:
+- Answer questions about the app, its boards, market data and trading concepts.
+- Use the DATA block for every number. Never invent prices, funding, OI or liquidations.
+- If data is missing or stale, say so plainly.
+- No financial advice, no price predictions, no guaranteed outcomes. Explain what the data shows.
+- Be concise: under 180 words, bullets when useful, no markdown tables.
+
+DATA:
+${context}`;
+    const res = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: MODEL,
+            messages: [{ role: 'system', content: system }, ...messages.slice(-8)],
+            temperature: 0.3,
+            max_tokens: 700,
+        }),
+    });
+    if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`AI request failed (${res.status}): ${t.slice(0, 160)}`);
+    }
+    const data = await res.json();
+    return String(data.choices?.[0]?.message?.content || 'No answer returned.');
+}
