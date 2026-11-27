@@ -2,7 +2,7 @@
 import {
   LayoutGrid, CandlestickChart, Mountain, Droplets, Layers, Activity,
   Crosshair, Zap, Globe2, Bot, Settings, BarChart2, Radio,
-  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock, Users, Flame, Wallet, Thermometer, Star,
+  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock, Users, Flame, Wallet, Thermometer, Star, Bitcoin,
 } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'liquidity', icon: Droplets, label: 'Liquidity', hint: 'Liquidity map' },
       { id: 'bias', icon: Layers, label: 'Matrix', hint: 'Bias matrix' },
       { id: 'regime', icon: Activity, label: 'Regime', hint: 'HMM regime state' },
+      { id: 'coins', icon: Bitcoin, label: 'Coins', hint: 'Premium, futures & options per coin' },
       { id: 'markets', icon: Globe2, label: 'Markets', hint: 'Compare symbols, correlation, altseason' },
       { id: 'liquidations', icon: Flame, label: 'Liquidations', hint: 'Forced orders and price clusters' },
       { id: 'whales', icon: Wallet, label: 'Whales', hint: 'Large Hyperliquid positions' },

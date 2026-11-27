@@ -21,6 +21,10 @@ const SEO: Record<string, { title: string; description: string }> = {
     title: 'Funding & Open Interest — cross-venue | Quant Desk',
     description: 'Funding rates and open interest across Binance, OKX and Bybit, plus Coinbase premium and OI momentum.',
   },
+  coins: {
+    title: 'Coin Explorer — premium, futures & options | Quant Desk',
+    description: 'Per-coin derivatives data: Coinbase premium history, perpetual funding and basis, open interest, liquidation totals and Deribit options with DVOL.',
+  },
   macro: {
     title: 'Macro & FX — rates, inflation, dollar | Quant Desk',
     description: 'US rates, inflation, dollar index and ECB reference FX, recorded with sources and timestamps.',

@@ -1950,6 +1950,273 @@ async def altseason(days: int = 30):
     return out
 
 
+CB_PRODUCTS = {
+    "BTCUSDT": "BTC-USD",
+    "ETHUSDT": "ETH-USD",
+    "SOLUSDT": "SOL-USD",
+}
+
+
+@app.get("/premium-history")
+async def premium_history(symbol: str = "BTCUSDT", hours: int = 168):
+    """Coinbase spot premium versus the Binance USD-M reference, hourly."""
+    sym = _norm_symbol(symbol)
+    product = CB_PRODUCTS.get(sym)
+    if not product:
+        return {"error": "unsupported symbol", "symbol": sym}
+    n = max(24, min(hours, 300))
+    out: Dict[str, Any] = {"symbol": sym, "product": product, "as_of": _now_iso(), "series": []}
+    try:
+        async with httpx.AsyncClient(timeout=25.0, headers={"User-Agent": "QuantDesk/1.0"}) as client:
+            cb = (await client.get(
+                f"https://api.exchange.coinbase.com/products/{product}/candles",
+                params={"granularity": 3600},
+            )).json()
+            bn = (await client.get(
+                "https://fapi.binance.com/fapi/v1/klines",
+                params={"symbol": sym, "interval": "1h", "limit": n},
+            )).json()
+        if not isinstance(cb, list) or not isinstance(bn, list):
+            out["error"] = "venue unavailable"
+            return out
+        cb_map = {int(r[0]): float(r[4]) for r in cb}
+        series = []
+        for k in bn:
+            t = int(k[0] // 1000)
+            cbp = cb_map.get(t)
+            if not cbp:
+                continue
+            bnp = float(k[4])
+            if bnp <= 0:
+                continue
+            series.append({
+                "t": t,
+                "premium": round((cbp / bnp - 1.0) * 100.0, 4),
+                "coinbase": cbp,
+                "binance": bnp,
+            })
+        series = series[-n:]
+        out["series"] = series
+        if series:
+            vals = [p["premium"] for p in series]
+            out["latest"] = series[-1]
+            out["avg"] = round(sum(vals) / len(vals), 4)
+            out["min"] = min(vals)
+            out["max"] = max(vals)
+            out["hours"] = len(series)
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
+@app.get("/coin-futures")
+async def coin_futures(symbol: str = "BTCUSDT"):
+    """Per-coin futures snapshot: price, basis, OI, funding, positioning, liquidations."""
+    sym = _norm_symbol(symbol)
+    out: Dict[str, Any] = {"symbol": sym, "as_of": _now_iso(), "source": "binance-fapi"}
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            mark = (await client.get("https://fapi.binance.com/fapi/v1/premiumIndex", params={"symbol": sym})).json()
+            tick = (await client.get("https://fapi.binance.com/fapi/v1/ticker/24hr", params={"symbol": sym})).json()
+            oi = (await client.get("https://fapi.binance.com/futures/data/openInterestHist",
+                                   params={"symbol": sym, "period": "1h", "limit": 25})).json()
+            ls = (await client.get("https://fapi.binance.com/futures/data/globalLongShortAccountRatio",
+                                   params={"symbol": sym, "period": "1h", "limit": 1})).json()
+            taker = (await client.get("https://fapi.binance.com/futures/data/takerlongshortRatio",
+                                      params={"symbol": sym, "period": "1h", "limit": 1})).json()
+        price = float(mark.get("markPrice") or 0)
+        index = float(mark.get("indexPrice") or 0)
+        out.update({
+            "price": price,
+            "index": index,
+            "basis_pct": round((price / index - 1.0) * 100.0, 4) if index else None,
+            "change_24h": float(tick.get("priceChangePercent") or 0),
+            "volume_24h": float(tick.get("quoteVolume") or 0),
+            "funding_rate": float(mark.get("lastFundingRate") or 0),
+            "next_funding_time": mark.get("nextFundingTime"),
+            "oi_usd": float(oi[-1]["sumOpenInterestValue"]) if isinstance(oi, list) and oi else 0,
+            "long_short": float(ls[-1]["longShortRatio"]) if isinstance(ls, list) and ls else None,
+            "taker_ratio": float(taker[-1]["buySellRatio"]) if isinstance(taker, list) and taker else None,
+        })
+        if isinstance(oi, list) and len(oi) > 1:
+            old = float(oi[0]["sumOpenInterestValue"])
+            out["oi_change_24h"] = round((out["oi_usd"] / old - 1.0) * 100.0, 2) if old else 0
+        # 24h liquidations from the in-memory collector (partial by design).
+        lo = (time.time() - 86400) * 1000
+        sel = [x for x in list(LIQUIDATIONS) if x["symbol"] == sym and x["t"] >= lo]
+        out["liq_24h"] = {
+            "long_usd": round(sum(x["notional"] for x in sel if x["side"] == "SELL")),
+            "short_usd": round(sum(x["notional"] for x in sel if x["side"] == "BUY")),
+            "count": len(sel),
+        }
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], start=1)}
+
+
+def _parse_instrument(name: str):
+    # BTC-27NOV26-60000-C
+    try:
+        _, exp, strike, typ = name.split("-")
+        day = int(exp[:2])
+        mon = _MONTHS[exp[2:5]]
+        year = 2000 + int(exp[5:7])
+        return (year, mon, day), float(strike), typ
+    except Exception:
+        return None
+
+
+@app.get("/options")
+async def options(currency: str = "BTC"):
+    """Deribit options snapshot: OI, volume, max pain, IV, DVOL and term structure."""
+    cur = (currency or "BTC").upper()
+    if cur not in ("BTC", "ETH"):
+        return {"error": "only BTC and ETH options are available", "currency": cur}
+    now = time.time()
+    cache_key = f"options:{cur}"
+    cached = _market_cache.get(cache_key)
+    if cached and now - cached[0] < 60:
+        return cached[1]
+
+    out: Dict[str, Any] = {"currency": cur, "as_of": _now_iso(), "source": "deribit"}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            book = (await client.get("https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+                                     params={"currency": cur, "kind": "option"})).json()
+            idx = (await client.get("https://www.deribit.com/api/v2/public/get_index_price",
+                                    params={"index_name": f"{cur.lower()}_usd"})).json()
+            dvol = (await client.get("https://www.deribit.com/api/v2/public/get_volatility_index_data",
+                                     params={"currency": cur,
+                                             "start_timestamp": int((now - 365 * 86400) * 1000),
+                                             "end_timestamp": int(now * 1000),
+                                             "resolution": "1D"})).json()
+            daily = await _daily_closes(client, f"{cur}USDT", 31)
+        rows = book.get("result") or []
+        spot = float((idx.get("result") or {}).get("index_price") or 0)
+        if not rows or spot <= 0:
+            out["error"] = "deribit unavailable"
+            return out
+
+        total_oi = 0.0
+        total_vol_usd = 0.0
+        call_oi = 0.0
+        put_oi = 0.0
+        strikes: Dict[float, Dict[str, float]] = {}
+        expiries: Dict[str, Dict[str, float]] = {}
+        options_list = []
+
+        for r in rows:
+            parsed = _parse_instrument(r.get("instrument_name", ""))
+            if not parsed:
+                continue
+            (y, m, d), strike, typ = parsed
+            oi = float(r.get("open_interest") or 0)
+            iv = float(r.get("mark_iv") or 0)
+            vol = float(r.get("volume_usd") or 0)
+            total_oi += oi
+            total_vol_usd += vol
+            if typ == "C":
+                call_oi += oi
+            else:
+                put_oi += oi
+            s = strikes.setdefault(strike, {"call": 0.0, "put": 0.0, "iv_sum": 0.0, "iv_n": 0})
+            s["call" if typ == "C" else "put"] += oi
+            if iv > 0:
+                s["iv_sum"] += iv
+                s["iv_n"] += 1
+            exp_key = f"{y:04d}-{m:02d}-{d:02d}"
+            e = expiries.setdefault(exp_key, {"oi": 0.0, "volume_usd": 0.0, "iv_sum": 0.0, "iv_n": 0, "atm_dist": 1e18, "atm_iv": None})
+            e["oi"] += oi
+            e["volume_usd"] += vol
+            if iv > 0 and abs(strike - spot) < e["atm_dist"]:
+                e["atm_dist"] = abs(strike - spot)
+                e["atm_iv"] = iv
+            options_list.append({"strike": strike, "type": typ, "oi": oi, "iv": iv,
+                                 "expiry": exp_key})
+
+        # Max pain across strikes
+        all_strikes = sorted(strikes.keys())
+        best_strike, best_pain = None, None
+        for k in all_strikes:
+            pain = 0.0
+            for strike, s in strikes.items():
+                if strike < k:
+                    pain += s["call"] * (k - strike)
+                if strike > k:
+                    pain += s["put"] * (strike - k)
+            if best_pain is None or pain < best_pain:
+                best_pain, best_strike = pain, k
+
+        # DVOL
+        dvol_rows = ((dvol.get("result") or {}).get("data") or [])
+        dvol_series = [{"t": int(r[0]), "close": float(r[4])} for r in dvol_rows if len(r) >= 5]
+        dvol_latest = dvol_series[-1]["close"] if dvol_series else None
+        closes = [p["close"] for p in dvol_series]
+        pct_rank = (sum(1 for c in closes if c <= dvol_latest) / len(closes) * 100) if closes and dvol_latest else None
+
+        # Realized vol (30d daily log returns, annualised)
+        rv = None
+        if len(daily) > 5:
+            rets = [math.log(daily[i] / daily[i - 1]) for i in range(1, len(daily)) if daily[i - 1] > 0]
+            if len(rets) > 2:
+                mean = sum(rets) / len(rets)
+                var = sum((x - mean) ** 2 for x in rets) / len(rets)
+                rv = round((var ** 0.5) * (365 ** 0.5) * 100, 2)
+
+        expiry_rows = []
+        today = datetime.utcnow().date()
+        for key, e in expiries.items():
+            try:
+                y, m, d = [int(x) for x in key.split("-")]
+                days = (datetime(y, m, d).date() - today).days
+            except Exception:
+                days = None
+            expiry_rows.append({
+                "expiry": key,
+                "days": days,
+                "oi": round(e["oi"], 1),
+                "volume_usd": round(e["volume_usd"]),
+                "atm_iv": round(e["atm_iv"], 2) if e["atm_iv"] else None,
+            })
+        expiry_rows.sort(key=lambda x: x["expiry"])
+
+        strike_rows = []
+        for strike, s in sorted(strikes.items(), key=lambda kv: kv[1]["call"] + kv[1]["put"], reverse=True)[:24]:
+            strike_rows.append({
+                "strike": strike,
+                "call_oi": round(s["call"], 1),
+                "put_oi": round(s["put"], 1),
+                "iv": round(s["iv_sum"] / s["iv_n"], 2) if s["iv_n"] else None,
+            })
+        strike_rows.sort(key=lambda x: x["strike"])
+
+        out.update({
+            "spot": spot,
+            "total_oi_contracts": round(total_oi, 1),
+            "total_oi_usd": round(total_oi * spot),
+            "volume_24h_usd": round(total_vol_usd),
+            "call_oi": round(call_oi, 1),
+            "put_oi": round(put_oi, 1),
+            "put_call_ratio": round(put_oi / call_oi, 3) if call_oi else None,
+            "max_pain": best_strike,
+            "dvol": dvol_latest,
+            "dvol_percentile_1y": round(pct_rank) if pct_rank is not None else None,
+            "rv_30d": rv,
+            "iv_rv_spread": round(dvol_latest - rv, 2) if dvol_latest and rv else None,
+            "dvol_series": dvol_series[-120:],
+            "expiries": expiry_rows,
+            "strikes": strike_rows,
+        })
+    except Exception as e:
+        out["error"] = str(e)
+    _market_cache[cache_key] = (time.time(), out)
+    return out
+
+
 @app.get("/alerts/status")
 async def alerts_status():
     """Called by AlertEngine.tsx every 60s to detect autonomous mode."""
