@@ -16,6 +16,8 @@ interface FuturesResp {
   liq_24h?: { long_usd: number; short_usd: number; count: number }; error?: string;
 }
 interface FundingResp { history?: { t: number; rate: number }[]; error?: string }
+interface VenueRow { price?: number; funding_rate?: number; open_interest?: number; source?: string; error?: string }
+interface CrossResp { symbol?: string; venues?: Record<string, VenueRow>; as_of?: string }
 interface StrikeRow { strike: number; call_oi: number; put_oi: number; iv: number | null }
 interface ExpiryRow { expiry: string; days: number | null; oi: number; volume_usd: number; atm_iv: number | null }
 interface OptionsResp {
@@ -52,6 +54,7 @@ const CoinPage: React.FC = () => {
   const [premium, setPremium] = useState<PremiumResp | null>(null);
   const [fut, setFut] = useState<FuturesResp | null>(null);
   const [funding, setFunding] = useState<FundingResp | null>(null);
+  const [cross, setCross] = useState<CrossResp | null>(null);
   const [opt, setOpt] = useState<OptionsResp | null>(null);
   const [loading, setLoading] = useState(true);
   const setActiveTab = useStore(s => s.setActiveTab);
@@ -63,11 +66,12 @@ const CoinPage: React.FC = () => {
       if (tab === 'premium') {
         setPremium(await cachedJson<PremiumResp>(`/premium-history?symbol=${symbol}&hours=168`, { ttlMs: 300000, timeoutMs: 60000 }));
       } else if (tab === 'futures') {
-        const [f, h] = await Promise.all([
+        const [f, h, c] = await Promise.all([
           cachedJson<FuturesResp>(`/coin-futures?symbol=${symbol}`, { ttlMs: 120000, timeoutMs: 60000 }),
           cachedJson<FundingResp>(`/funding-history?symbol=${symbol}&limit=42`, { ttlMs: 300000, timeoutMs: 45000 }),
+          cachedJson<CrossResp>(`/cross-venue?symbol=${symbol}`, { ttlMs: 120000, timeoutMs: 60000 }),
         ]);
-        setFut(f); setFunding(h);
+        setFut(f); setFunding(h); setCross(c);
       } else {
         setOpt(await cachedJson<OptionsResp>(`/options?currency=${coin}`, { ttlMs: 120000, timeoutMs: 60000 }));
       }
@@ -81,6 +85,7 @@ const CoinPage: React.FC = () => {
   const premSeries = (p?.series || []).map(x => x.premium);
   const latestPrem = p?.latest?.premium;
   const dvolSeries = (opt?.dvol_series || []).map(x => x.close);
+  const termIv = (opt?.expiries || []).filter(e => e.atm_iv !== null).map(e => e.atm_iv as number);
   const strikes = opt?.strikes || [];
   const maxStrikeOi = Math.max(1, ...strikes.map(s => Math.max(s.call_oi, s.put_oi)));
   const liqTotal = (fut?.liq_24h?.long_usd ?? 0) + (fut?.liq_24h?.short_usd ?? 0);
@@ -182,6 +187,33 @@ const CoinPage: React.FC = () => {
               <button onClick={() => setActiveTab('liquidations')}
                 className="rounded-lg border border-white/10 px-3 py-1.5 text-[11px] text-slate-300 hover:bg-white/5">Liquidation map →</button>
             </div>
+
+            {cross?.venues && (
+              <div className="premium-card overflow-x-auto">
+                <table className="w-full min-w-[520px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
+                      <th className="px-4 py-2.5">Venue</th>
+                      <th className="px-4 py-2.5 text-right">Price</th>
+                      <th className="px-4 py-2.5 text-right">Funding</th>
+                      <th className="px-4 py-2.5 text-right">Open interest</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(cross.venues).map(([name, v]) => (
+                      <tr key={name} className="border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02]">
+                        <td className="px-4 py-2 font-mono text-[12px] capitalize text-slate-200">{name}</td>
+                        <td className="px-4 py-2 text-right font-mono text-[12px] text-slate-300">{v.error ? '—' : `$${price(v.price)}`}</td>
+                        <td className={`px-4 py-2 text-right font-mono text-[12px] ${(v.funding_rate ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          {v.error ? '—' : `${((v.funding_rate ?? 0) * 100).toFixed(4)}%`}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-[12px] text-slate-300">{v.error ? '—' : usd(v.open_interest)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -214,6 +246,16 @@ const CoinPage: React.FC = () => {
                     ? <Sparkline values={dvolSeries} color="#a78bfa" height={120} />
                     : <div className="h-24 animate-pulse rounded bg-white/[0.04]" />}
                 </div>
+
+                {termIv.length > 1 && (
+                  <div className="premium-card p-4">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">ATM IV term structure</span>
+                      <span className="font-mono text-[9px] text-slate-600">nearest strike per expiry · mark IV</span>
+                    </div>
+                    <Sparkline values={termIv} color="#fbbf24" height={100} />
+                  </div>
+                )}
 
                 <div className="premium-card p-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
