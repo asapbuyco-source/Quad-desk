@@ -64,6 +64,8 @@ const PositioningPage: React.FC = () => {
           icon={<Users size={16} />}
           title="Positioning"
           badge="FREE"
+          source="binance-fapi"
+          asOf={data?.as_of}
           subtitle="Retail vs top-trader long/short, top positions and taker flow â€” Binance USDM futures"
         >
           <select value={symbol} onChange={e => setSymbol(e.target.value)}

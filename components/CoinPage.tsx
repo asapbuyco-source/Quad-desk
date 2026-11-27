@@ -6,10 +6,11 @@ import { PageHeader, Sparkline, EmptyState } from './Premium';
 
 interface PremiumPoint { t: number; premium: number; coinbase: number; binance: number }
 interface PremiumResp {
-  latest?: PremiumPoint; avg?: number; min?: number; max?: number; hours?: number;
+  latest?: PremiumPoint; avg?: number; min?: number; max?: number; hours?: number; as_of?: string;
   series: PremiumPoint[]; error?: string;
 }
 interface FuturesResp {
+  as_of?: string;
   price?: number; index?: number; basis_pct?: number; change_24h?: number; volume_24h?: number;
   funding_rate?: number; next_funding_time?: string; oi_usd?: number; oi_change_24h?: number;
   long_short?: number; taker_ratio?: number;
@@ -21,6 +22,7 @@ interface CrossResp { symbol?: string; venues?: Record<string, VenueRow>; as_of?
 interface StrikeRow { strike: number; call_oi: number; put_oi: number; iv: number | null }
 interface ExpiryRow { expiry: string; days: number | null; oi: number; volume_usd: number; atm_iv: number | null }
 interface OptionsResp {
+  as_of?: string;
   spot?: number; total_oi_contracts?: number; total_oi_usd?: number; volume_24h_usd?: number;
   call_oi?: number; put_oi?: number; put_call_ratio?: number; max_pain?: number;
   dvol?: number; dvol_percentile_1y?: number; rv_30d?: number; iv_rv_spread?: number;
@@ -97,6 +99,8 @@ const CoinPage: React.FC = () => {
           icon={<Bitcoin size={16} />}
           title="Coin Explorer"
           badge="FREE"
+          source={tab === 'options' ? 'deribit' : 'binance'}
+          asOf={tab === 'premium' ? premium?.as_of : tab === 'futures' ? fut?.as_of : opt?.as_of}
           subtitle="Premium, futures and options data per coin — recorded with sources and timestamps"
         >
           <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">

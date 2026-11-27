@@ -1,7 +1,7 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import { Flame, RefreshCw, ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
-import { PageHeader } from './Premium';
+import { PageHeader, SkeletonRows } from './Premium';
 import { useStore } from '../store';
 
 interface Cluster { price: number; long_usd: number; short_usd: number; total_usd: number; count: number }
@@ -75,6 +75,8 @@ const LiquidationPage: React.FC = () => {
           icon={<Flame size={16} />}
           title="Liquidations"
           badge="FREE"
+          source="binance + okx"
+          asOf={data?.as_of}
           subtitle="Forced orders from Binance + OKX â€” long liqs (red) vs short liqs (green), clustered by price"
         >
           <select value={symbol} onChange={e => setSymbol(e.target.value)}
@@ -247,9 +249,9 @@ const LiquidationPage: React.FC = () => {
                     <td className="px-4 py-2 text-right font-mono text-[12px] text-slate-400">{r.count}</td>
                   </tr>
                 ))}
-                {!data?.by_symbol?.length && (
-                  <tr><td colSpan={4} className="px-4 py-6 text-center text-xs text-slate-500">No data</td></tr>
-                )}
+                {!data?.by_symbol?.length && (loading
+                  ? <SkeletonRows rows={4} colSpan={4} />
+                  : <tr><td colSpan={4} className="px-4 py-6 text-center text-xs text-slate-500">No data</td></tr>)}
               </tbody>
             </table>
           </div>

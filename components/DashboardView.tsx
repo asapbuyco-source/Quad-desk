@@ -7,6 +7,7 @@ import { CHECKLIST_ITEMS } from '../constants';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { cachedJson } from '../utils/cachedFetch';
+import MiniPriceChart from './MiniPriceChart';
 import { Gauge, Flame, Users, Activity, Waves, Globe2 } from 'lucide-react';
 
 const motion = m as any;
@@ -211,8 +212,11 @@ const DashboardView: React.FC = () => {
       {/* Row 2 — book + tape (8 cols) and sentinel (4 cols) */}
       <motion.div
         variants={item}
-        className="order-3 lg:col-span-8 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3"
+        className="order-3 lg:col-span-8 min-h-0 flex flex-col gap-3"
       >
+        <MiniPriceChart />
+
+        <div className="min-h-0 flex-1 flex flex-col md:grid md:grid-cols-2 gap-3">
         {/* Mobile View Toggle (hidden on md and above) */}
         <div className="flex md:hidden items-center p-1 rounded-xl bg-white/[0.03] border border-white/5 shrink-0">
           <button
@@ -245,6 +249,7 @@ const DashboardView: React.FC = () => {
         {/* Trade Tape Panel */}
         <div className={`min-h-0 h-[420px] md:h-full ${mobileTab === 'tape' ? 'block' : 'hidden md:block'}`}>
           <TradeTape trades={recentTrades} />
+        </div>
         </div>
       </motion.div>
 

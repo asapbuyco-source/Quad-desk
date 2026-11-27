@@ -10,6 +10,7 @@ import { ToastContainer } from './components/Toast';
 import BackendWakeGate from './components/BackendWakeGate';
 import TrialBanner from './components/TrialBanner';
 import PriceAlertWatcher from './components/PriceAlertWatcher';
+import CommandPalette from './components/CommandPalette';
 import { Analytics } from '@vercel/analytics/react';
 import ConsentBanner from './components/ConsentBanner';
 
@@ -405,15 +406,34 @@ const App: React.FC = () => {
                         <AlertEngine />
                         <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                             <Header />
-                            <main className="flex-1 overflow-hidden p-0 lg:p-6 lg:pl-0 relative">
+                            <main className="flex-1 overflow-hidden p-0 lg:p-4 lg:pl-0 relative">
                                 <Suspense fallback={
                                     <div className="flex h-full w-full items-center justify-center">
                                         <Loader2 size={30} className="animate-spin text-brand-accent" />
                                     </div>
                                 }>
                                 {!tabAllowed ? (
-                                    <div className="flex h-full items-center justify-center overflow-y-auto p-6">
-                                        <div className="premium-card w-full max-w-md p-6 text-center">
+                                    <div className="relative flex h-full items-center justify-center overflow-y-auto p-6">
+                                        <div className="pointer-events-none absolute inset-0 select-none p-6 opacity-20 blur-[6px]">
+                                            <div className="grid h-full grid-cols-12 gap-3">
+                                                <div className="col-span-9 grid grid-rows-3 gap-3">
+                                                    <div className="rounded-lg border border-white/5 bg-white/[0.05]" />
+                                                    <div className="rounded-lg border border-white/5 bg-white/[0.04]" />
+                                                    <div className="rounded-lg border border-white/5 bg-white/[0.03]" />
+                                                </div>
+                                                <div className="col-span-3 rounded-lg border border-white/5 bg-white/[0.04]" />
+                                            </div>
+                                        </div>
+                                        <div className="premium-card relative z-10 w-full max-w-md p-6 text-center">
+                                            <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5 font-mono text-[9px]">
+                                                <span className="rounded bg-white/5 px-2 py-0.5 text-slate-300">
+                                                    {market.metrics.pair} ${market.metrics.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                                </span>
+                                                <span className={`rounded px-2 py-0.5 ${market.metrics.change >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                                                    {market.metrics.change >= 0 ? '+' : ''}{market.metrics.change.toFixed(2)}%
+                                                </span>
+                                                <span className="rounded bg-brand-accent/10 px-2 py-0.5 text-brand-accent">live feed</span>
+                                            </div>
                                             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-accent/15 text-brand-accent">
                                                 <Lock size={22} />
                                             </div>
@@ -510,6 +530,7 @@ const App: React.FC = () => {
             <BackendWakeGate />
             <TrialBanner />
             <PriceAlertWatcher />
+            <CommandPalette />
             <Analytics />
             <ConsentBanner />
             <ToastContainer toasts={notifications} removeToast={removeNotification} />

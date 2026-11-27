@@ -2050,6 +2050,8 @@ async def coin_futures(symbol: str = "BTCUSDT"):
             tick = {
                 "priceChangePercent": float(row.get("price24hPcnt") or 0) * 100.0,
                 "quoteVolume": float(row.get("turnover24h") or 0),
+                "highPrice": row.get("highPrice24h"),
+                "lowPrice": row.get("lowPrice24h"),
             }
         out.update({
             "price": price,
@@ -2057,6 +2059,8 @@ async def coin_futures(symbol: str = "BTCUSDT"):
             "basis_pct": round((price / index - 1.0) * 100.0, 4) if index else None,
             "change_24h": float(tick.get("priceChangePercent") or 0),
             "volume_24h": float(tick.get("quoteVolume") or 0),
+            "high_24h": float(tick.get("highPrice") or 0),
+            "low_24h": float(tick.get("lowPrice") or 0),
             "funding_rate": float(mark.get("lastFundingRate") or 0),
             "next_funding_time": mark.get("nextFundingTime"),
             "oi_usd": float(oi[-1]["sumOpenInterestValue"]) if isinstance(oi, list) and oi else 0,

@@ -422,107 +422,19 @@ const PriceChart: React.FC<PriceChartProps> = ({
                 { left: 8, right: 12, top: '68%', height: '14%' },
             ],
             graphic: (() => {
-                const g: any[] = [];
                 const lastC = data[data.length - 1];
                 const firstC = data[0];
                 const price = lastC?.close ?? 0;
                 const change = firstC?.close ? ((price - firstC.close) / firstC.close * 100) : 0;
-                const z = botSettings?.currentZScore ?? 0;
-                const b = (botSettings?.currentBayes ?? 0.5) * 100;
-                const regime = botSettings?.currentRegime || '';
-                const signal = botSettings?.lastSignal || 'WAIT';
-                const isBuySignal = signal.includes('BUY') || signal.includes('LONG');
-                const isSellSignal = signal.includes('SELL') || signal.includes('SHORT');
-                const pnl = botSettings?.globalSessionPnl ?? 0;
-
-                const rectStyle = (w: number, h: number, bg: string) => ({
-                    type: 'rect' as const,
-                    shape: { x: 0, y: 0, width: w, height: h },
-                    style: { fill: bg, stroke: 'rgba(255,255,255,0.08)', lineWidth: 1 },
-                });
-
-                const txt = (x: number, y: number, text: string, color: string, font: string) => ({
-                    type: 'text' as const,
-                    left: x, top: y,
-                    style: { text, fill: color, font },
-                });
-
-                const L = 8;
-                const W = 118;
-
-                // Price badge
-                g.push({
-                    type: 'group', left: L, top: 8,
+                return [{
+                    type: 'group', left: 8, top: 8,
                     children: [
-                        rectStyle(W, 52, 'rgba(9,9,11,0.88)'),
-                        txt(8, 4, price.toFixed(1), '#e4e4e7', 'bold 13px "JetBrains Mono"'),
-                        txt(8, 22, `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`, change >= 0 ? UP_COLOR : DOWN_COLOR, 'bold 10px "JetBrains Mono"'),
-                        txt(8, 36, `ATR ${((botSettings?.currentATR || 0) * 100).toFixed(2)}%`, TEXT_DIM, '9px "JetBrains Mono"'),
+                        { type: 'rect', shape: { x: 0, y: 0, width: 118, height: 52 }, style: { fill: 'rgba(9,9,11,0.88)', stroke: 'rgba(255,255,255,0.08)', lineWidth: 1 } },
+                        { type: 'text', left: 8, top: 4, style: { text: price.toFixed(1), fill: '#e4e4e7', font: 'bold 13px "JetBrains Mono"' } },
+                        { type: 'text', left: 8, top: 22, style: { text: `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`, fill: change >= 0 ? UP_COLOR : DOWN_COLOR, font: 'bold 10px "JetBrains Mono"' } },
+                        { type: 'text', left: 8, top: 36, style: { text: `ATR ${((botSettings?.currentATR || 0) * 100).toFixed(2)}%`, fill: TEXT_DIM, font: '9px "JetBrains Mono"' } },
                     ],
-                });
-
-                // Bot bias
-                const biasColor = isBuySignal ? UP_COLOR : isSellSignal ? DOWN_COLOR : '#f59e0b';
-                g.push({
-                    type: 'group', left: L, top: 64,
-                    children: [
-                        rectStyle(W, 64, 'rgba(9,9,11,0.88)'),
-                        txt(8, 4, regime || 'REGIME', '#e4e4e7', 'bold 10px "JetBrains Mono"'),
-                        txt(8, 20, `Z ${z >= 0 ? '+' : ''}${z.toFixed(2)}  B ${b.toFixed(0)}%`, Math.abs(z) > 1.5 ? DOWN_COLOR : Math.abs(z) > 1.0 ? '#f59e0b' : UP_COLOR, 'bold 9px "JetBrains Mono"'),
-                        txt(8, 36, signal, biasColor, 'bold 9px "JetBrains Mono"'),
-                        txt(8, 50, `PnL ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? UP_COLOR : DOWN_COLOR, '9px "JetBrains Mono"'),
-                    ],
-                });
-
-                // OI panel — right side
-                const oiD = botSettings?.oiDelta5mPct ?? 0;
-                const oiZ = botSettings?.oiZScore ?? 0;
-                const oiRegime = (botSettings?.priceOIRegime || '').replace(/_/g, ' ');
-                const R = 8;
-                const RW = 110;
-                g.push({
-                    type: 'group', right: R, top: 8,
-                    children: [
-                        rectStyle(RW, 44, 'rgba(9,9,11,0.88)'),
-                        txt(8, 5, 'OI FLOW', TEXT_DIM, 'bold 8px "JetBrains Mono"'),
-                        txt(8, 18, `Z ${oiZ >= 0 ? '+' : ''}${oiZ.toFixed(1)}  Δ${oiD >= 0 ? '+' : ''}${oiD.toFixed(1)}%`, Math.abs(oiD) > 1 ? '#f59e0b' : TEXT_DIM, '9px "JetBrains Mono"'),
-                        txt(8, 31, oiRegime || '—', (oiRegime || '').includes('LONG_BUILD') ? UP_COLOR : (oiRegime || '').includes('SHORT_BUILD') ? DOWN_COLOR : TEXT_DIM, '8px "JetBrains Mono"'),
-                    ],
-                });
-
-                // Risk badge
-                const oiRisk = (botSettings?.oiRiskLabel || '').replace(/_/g, ' ');
-                if (oiRisk && oiRisk !== 'UNKNOWN') {
-                    const riskBg = oiRisk === 'EXTREME_RISK' ? 'rgba(244,63,94,0.2)' : oiRisk === 'ELEVATED_RISK' ? 'rgba(245,158,11,0.2)' : 'rgba(59,130,246,0.15)';
-                    g.push({
-                        type: 'group', right: R, top: 56,
-                        children: [
-                            { type: 'rect' as const, shape: { x: 0, y: 0, width: RW, height: 22 }, style: { fill: riskBg, stroke: oiRisk === 'EXTREME_RISK' ? 'rgba(244,63,94,0.4)' : 'rgba(245,158,11,0.25)', lineWidth: 1 } },
-                            txt(8, 5, `⚡ ${oiRisk}`, oiRisk === 'EXTREME_RISK' ? DOWN_COLOR : '#f59e0b', 'bold 9px "JetBrains Mono"'),
-                        ],
-                    });
-                }
-
-                // Gate stats
-                const gateStats = botSettings?.gateStats ?? {};
-                const gateEntries = Object.entries(gateStats)
-                    .filter(([, v]) => v > 0)
-                    .sort(([, a], [, b]) => b - a)
-                    .slice(0, 5);
-                if (gateEntries.length > 0) {
-                    const totalRejections = gateEntries.reduce((s, [, v]) => s + v, 0);
-                    const gateTop = (oiRisk && oiRisk !== 'UNKNOWN') ? 82 : 56;
-                    const gateCh: any[] = [
-                        { type: 'rect' as const, shape: { x: 0, y: 0, width: RW, height: 14 + gateEntries.length * 13 }, style: { fill: 'rgba(9,9,11,0.88)', stroke: 'rgba(255,255,255,0.08)', lineWidth: 1 } },
-                        txt(8, 4, `GATES · ${totalRejections}`, '#484f58', 'bold 7px "JetBrains Mono"'),
-                    ];
-                    gateEntries.forEach(([name, count], i) => {
-                        gateCh.push(txt(8, 14 + i * 13, `${name.replace(/_/g, ' ')}  ${count}`, '#8b949e', '7px "JetBrains Mono"'));
-                    });
-                    g.push({ type: 'group', right: R, top: gateTop, children: gateCh });
-                }
-
-                return g;
+                }];
             })(),
             xAxis: [
                 {

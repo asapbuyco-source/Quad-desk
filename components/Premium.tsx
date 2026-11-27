@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 
 /** Shared "premium" presentation primitives. Visual only — no data logic. */
 
@@ -25,13 +25,36 @@ export const Sparkline: React.FC<{ values: number[]; color?: string; height?: nu
   );
 };
 
+export const Provenance: React.FC<{ source?: string; asOf?: string; live?: boolean }> = ({ source, asOf, live }) => {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(id);
+  }, []);
+  const ts = asOf ? new Date(asOf).getTime() : NaN;
+  const ageS = Number.isFinite(ts) ? Math.max(0, Math.round((now - ts) / 1000)) : null;
+  const label = live ? 'live' : ageS === null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS / 60)}m ago`;
+  const tone = live ? 'text-emerald-400' : ageS !== null && ageS > 120 ? 'text-amber-400' : 'text-slate-500';
+  return (
+    <span title={asOf ? `recorded ${asOf}` : undefined}
+      className="flex items-center gap-1.5 rounded-md border border-white/[0.07] bg-black/40 px-2 py-0.5 font-mono text-[9px] text-slate-500">
+      <span className={`h-1.5 w-1.5 rounded-full ${live ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+      {source && <span className="uppercase tracking-wider">{source}</span>}
+      <span className={tone}>{label}</span>
+    </span>
+  );
+};
+
 export const PageHeader: React.FC<{
   icon: React.ReactNode;
   title: string;
   subtitle?: string;
   badge?: string;
+  source?: string;
+  asOf?: string;
+  live?: boolean;
   children?: React.ReactNode;
-}> = ({ icon, title, subtitle, badge, children }) => (
+}> = ({ icon, title, subtitle, badge, source, asOf, live, children }) => (
   <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
     <div className="min-w-0">
       <div className="flex flex-wrap items-center gap-2">
@@ -44,6 +67,7 @@ export const PageHeader: React.FC<{
             {badge}
           </span>
         )}
+        {(source || asOf || live) && <Provenance source={source} asOf={asOf} live={live} />}
       </div>
       {subtitle && <p className="mt-1.5 text-xs text-slate-500">{subtitle}</p>}
     </div>
@@ -96,6 +120,18 @@ export const EmptyState: React.FC<{ icon?: React.ReactNode; title: string; hint?
 
 export const Skeleton: React.FC<{ className?: string }> = ({ className = '' }) => (
   <div className={`animate-pulse rounded-md bg-white/[0.05] ${className}`} />
+);
+
+export const SkeletonRows: React.FC<{ rows?: number; colSpan: number }> = ({ rows = 5, colSpan }) => (
+  <>
+    {Array.from({ length: rows }).map((_, i) => (
+      <tr key={i}>
+        <td colSpan={colSpan} className="px-3 py-2">
+          <div className="h-3 w-full animate-pulse rounded bg-white/[0.05]" style={{ opacity: 1 - i * 0.12 }} />
+        </td>
+      </tr>
+    ))}
+  </>
 );
 
 /** RSI / intensity colour ramp shared by heatmaps. */

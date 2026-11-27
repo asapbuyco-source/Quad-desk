@@ -1,9 +1,10 @@
 
-import React, { useState } from 'react';
-import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, User as UserIcon, Sparkles } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronDown, Bell, History, Radio, Check, Calendar, Play, Settings, User as UserIcon, Sparkles, Search } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
 import { isAdminEmail, PAYWALL_ENABLED } from '../utils/entitlements';
+import { cachedJson } from '../utils/cachedFetch';
 
 const motion = m as any;
 
@@ -22,6 +23,25 @@ const Header: React.FC = () => {
     const { plan } = useStore(state => state.auth);
     const priceAlerts = useStore(state => state.priceAlerts);
     const alertCount = priceAlerts.filter(a => !a.triggeredAt).length;
+    const [stats, setStats] = useState<{ high?: number; low?: number; volume?: number; next?: number }>({});
+    const [clock, setClock] = useState(Date.now());
+    useEffect(() => {
+        let dead = false;
+        cachedJson<any>(`/coin-futures?symbol=${activeSymbol}`, { ttlMs: 120000, timeoutMs: 45000 })
+            .then(d => { if (!dead) setStats({ high: d.high_24h, low: d.low_24h, volume: d.volume_24h, next: d.next_funding_time }); })
+            .catch(() => {});
+        const id = setInterval(() => setClock(Date.now()), 30000);
+        return () => { dead = true; clearInterval(id); };
+    }, [activeSymbol]);
+    const fundingIn = (() => {
+        const next = Number(stats.next);
+        if (!Number.isFinite(next) || next <= 0) return null;
+        const diff = next - clock;
+        if (diff <= 0) return 'settling';
+        const h = Math.floor(diff / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    })();
     const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setActiveTab } = useStore();
     const showUpgrade = PAYWALL_ENABLED && plan !== 'pro' && !isAdminEmail(user?.email);
 
@@ -172,11 +192,14 @@ const Header: React.FC = () => {
                         )}
                     </button>
 
-                    {/* Status Pill (Desktop Only) */}
-                    {!isBacktest && (
-                        <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5">
-                            <div className="w-2 h-2 rounded-full bg-brand-accent animate-pulse"></div>
-                            <span className="text-xs font-medium text-slate-300">Connected</span>
+                    {/* 24h stats + funding countdown (wide screens) */}
+                    {!isBacktest && stats.high !== undefined && (
+                        <div className="hidden xl:flex items-center gap-3 rounded-full border border-white/5 bg-white/[0.03] px-3 py-1.5 font-mono text-[9px] text-slate-500">
+                            <span>H <b className="font-bold text-slate-300">{stats.high.toLocaleString(undefined, { maximumFractionDigits: 1 })}</b></span>
+                            <span>L <b className="font-bold text-slate-300">{stats.low?.toLocaleString(undefined, { maximumFractionDigits: 1 })}</b></span>
+                            <span>VOL <b className="font-bold text-slate-300">{stats.volume ? `$${(stats.volume / 1e6).toFixed(1)}M` : '—'}</b></span>
+                            <span className="text-slate-700">·</span>
+                            <span>FUND <b className="font-bold text-slate-300">{fundingIn || '—'}</b></span>
                         </div>
                     )}
 
@@ -187,6 +210,12 @@ const Header: React.FC = () => {
                             <Sparkles size={12} /> Upgrade
                         </button>
                     )}
+
+                    {/* Quick switcher */}
+                    <button onClick={() => window.dispatchEvent(new Event('qd-palette'))} title="Search boards and symbols (⌘K)"
+                        className="hidden sm:block p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300">
+                        <Search size={18} />
+                    </button>
 
                     {/* Notifications (hidden on the smallest screens to protect header space) */}
                     <button onClick={() => setActiveTab('watchlist')} title={alertCount ? `${alertCount} active alerts` : 'Alerts'}

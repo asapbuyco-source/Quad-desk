@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Globe2, RefreshCw } from 'lucide-react';
 import { cachedJson, readCached } from '../utils/cachedFetch';
-import { PageHeader, HeatCell } from './Premium';
+import { PageHeader, HeatCell, SkeletonRows } from './Premium';
 
 interface CompareRow { symbol: string; change_pct: number; vol_pct: number; beta: number; corr: number }
 interface CompareResp { as_of?: string; days: number; symbols: string[]; matrix: number[][]; rows: CompareRow[]; error?: string }
@@ -47,6 +47,8 @@ const MarketsPage: React.FC = () => {
           icon={<Globe2 size={16} />}
           title="Markets"
           badge="FREE"
+          source="binance / bybit"
+          asOf={cmp?.as_of}
           subtitle="Relative performance, correlation and beta across majors · altseason breadth"
         >
           <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
@@ -151,9 +153,9 @@ const MarketsPage: React.FC = () => {
                   <td className="px-4 py-2 text-right font-mono text-[12px] text-slate-300">{r.corr}</td>
                 </tr>
               ))}
-              {!cmp?.rows?.length && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-slate-500">{loading ? 'Loading…' : 'No data'}</td></tr>
-              )}
+              {!cmp?.rows?.length && (loading
+                ? <SkeletonRows rows={5} colSpan={5} />
+                : <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-slate-500">No data</td></tr>)}
             </tbody>
           </table>
         </div>

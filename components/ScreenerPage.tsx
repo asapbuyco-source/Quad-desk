@@ -1,7 +1,7 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import { Thermometer, RefreshCw } from 'lucide-react';
 import { cachedJson, readCached } from '../utils/cachedFetch';
-import { PageHeader, rsiColor } from './Premium';
+import { PageHeader, rsiColor, SkeletonRows } from './Premium';
 
 interface RsiRow {
   symbol: string;
@@ -13,6 +13,7 @@ interface RsiRow {
 }
 interface RsiResponse {
   as_of: string;
+  source?: string;
   timeframes: string[];
   rows: RsiRow[];
   count: number;
@@ -72,6 +73,8 @@ const ScreenerPage: React.FC = () => {
           icon={<Thermometer size={16} />}
           title="RSI Screener"
           badge="FREE"
+          source={data?.source || 'binance/bybit'}
+          asOf={data?.as_of}
           subtitle="Multi-timeframe RSI on the most liquid perpetuals Â· green oversold, red overbought"
         >
           <div className="flex items-center gap-3 font-mono text-[11px]">
@@ -160,11 +163,9 @@ const ScreenerPage: React.FC = () => {
                   </td>
                 </tr>
               ))}
-              {!rows.length && (
-                <tr><td colSpan={6 + tf.length} className="px-4 py-10 text-center text-xs text-slate-500">
-                  {loading ? 'Computing RSI across the marketâ€¦' : 'No data'}
-                </td></tr>
-              )}
+              {!rows.length && (loading
+                ? <SkeletonRows rows={6} colSpan={6 + tf.length} />
+                : <tr><td colSpan={6 + tf.length} className="px-4 py-10 text-center text-xs text-slate-500">No data</td></tr>)}
             </tbody>
           </table>
         </div>

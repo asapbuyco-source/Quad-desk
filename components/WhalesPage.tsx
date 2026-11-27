@@ -65,6 +65,8 @@ const WhalesPage: React.FC = () => {
           icon={<Wallet size={16} />}
           title="Whale Positions"
           badge="PRO"
+          source="hyperliquid"
+          asOf={data?.as_of}
           subtitle="Largest Hyperliquid accounts and their biggest open perpetual positions · cached 10 min"
         >
           <button onClick={load} disabled={loading}

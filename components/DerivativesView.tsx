@@ -143,6 +143,8 @@ const DerivativesView: React.FC = () => {
           icon={<Layers size={16} />}
           title="Derivatives & Flows"
           badge="FREE"
+          source={heat?.source || 'binance-fapi'}
+          asOf={heat?.as_of || cross?.as_of}
           subtitle="Funding and open interest across venues · US spot premium · funding extremes market-wide"
         >
           <select
