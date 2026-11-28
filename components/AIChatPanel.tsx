@@ -17,6 +17,16 @@ const readUsage = (): { day: string; count: number } => {
   } catch { return { day, count: 0 }; }
 };
 
+const cleanAnswer = (text: string): string => text
+  .replace(/\*\*(.*?)\*\*/gs, '$1')
+  .replace(/__(.*?)__/gs, '$1')
+  .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')
+  .replace(/^#{1,6}\s+/gm, '')
+  .replace(/^\s*[-*]\s+/gm, '• ')
+  .replace(/\*/g, '')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
 const AIChatPanel: React.FC = () => {
   const metrics = useStore(s => s.market.metrics);
   const activeSymbol = useStore(s => s.config.activeSymbol);
@@ -47,26 +57,66 @@ const AIChatPanel: React.FC = () => {
   const context = async (): Promise<string> => {
     const sym = activeSymbol || 'BTCUSDT';
     const base = sym.replace('USDT', '');
-    const [fut, pos, fund, opt] = await Promise.all([
+    const [fut, pos, fund, opt, news, macro, fx, heat, oi, alt, whales, liq, rsi] = await Promise.all([
       cachedJson<any>(`/coin-futures?symbol=${sym}`, { ttlMs: 60000, timeoutMs: 45000 }).catch(() => null),
       cachedJson<any>(`/positioning?symbol=${sym}&period=1h&limit=24`, { ttlMs: 60000, timeoutMs: 45000 }).catch(() => null),
       cachedJson<any>(`/funding-history?symbol=${sym}&limit=21`, { ttlMs: 120000, timeoutMs: 45000 }).catch(() => null),
       (base === 'BTC' || base === 'ETH')
         ? cachedJson<any>(`/options?currency=${base}`, { ttlMs: 120000, timeoutMs: 60000 }).catch(() => null)
         : Promise.resolve(null),
+      cachedJson<any>(`/headlines?symbol=${sym}`, { ttlMs: 300000, timeoutMs: 25000 }).catch(() => null),
+      cachedJson<any>('/macro', { ttlMs: 600000, timeoutMs: 30000 }).catch(() => null),
+      cachedJson<any>('/fx', { ttlMs: 600000, timeoutMs: 25000 }).catch(() => null),
+      cachedJson<any>('/funding-heatmap', { ttlMs: 180000, timeoutMs: 45000 }).catch(() => null),
+      cachedJson<any>('/oi-leaderboard?window=24h&limit=5', { ttlMs: 180000, timeoutMs: 45000 }).catch(() => null),
+      cachedJson<any>('/altseason?days=30', { ttlMs: 300000, timeoutMs: 60000 }).catch(() => null),
+      cachedJson<any>('/whales?limit=4', { ttlMs: 600000, timeoutMs: 60000 }).catch(() => null),
+      cachedJson<any>('/liquidations?minutes=1440&limit=3', { ttlMs: 120000, timeoutMs: 45000 }).catch(() => null),
+      cachedJson<any>('/rsi-screener?universe=20', { ttlMs: 300000, timeoutMs: 90000 }).catch(() => null),
     ]);
+    const rsiRows = rsi?.rows || [];
     return JSON.stringify({
       app: {
-        boards: 'Desk, Chart, Coin Explorer, Markets, Positioning, RSI Screener, Liquidations, Whales, Funding & OI, Order Flow, Depth, Liquidity, Bias, Regime, Macro, Intel, Analytics',
-        free: 'prices, chart, funding, positioning, RSI, liquidations, macro, news, watchlist, 3 alerts',
-        pro: 'order flow, whales, depth, liquidity, regime, bias, analytics, AI scans, unlimited alerts',
+        boards: 'Desk, AI Workspace, Chart, Coin Explorer, Markets, Positioning, RSI Screener, Liquidations, Whales, Funding & OI, Order Flow, Depth, Liquidity, Bias, Regime, Macro, Intel, Analytics, Pricing, Settings',
+        free: 'prices, chart, funding, positioning, RSI, liquidations, macro, news, watchlist, 3 alerts, AI 5/day',
+        pro: 'order flow, whales, depth, liquidity, regime, bias, analytics, AI scans, unlimited alerts, AI 100/day',
         disclaimer: 'data only, not investment advice',
       },
-      current: { tab: activeTab, symbol: sym, price: metrics.price, change24h: metrics.change, watchlist, activeAlerts: priceAlerts.filter(a => !a.triggeredAt).length },
-      futures: fut ? { price: fut.price, basis_pct: fut.basis_pct, funding_rate: fut.funding_rate, oi_usd: fut.oi_usd, oi_change_24h: fut.oi_change_24h, volume_24h: fut.volume_24h, long_short: fut.long_short, taker_ratio: fut.taker_ratio, liq_24h: fut.liq_24h } : null,
-      positioning: pos?.series ? { retail: pos.series.global_accounts?.latest, top_accounts: pos.series.top_accounts?.latest, top_positions: pos.series.top_positions?.latest, taker: pos.series.taker?.latest, as_of: pos.as_of } : null,
+      current: {
+        tab: activeTab, symbol: sym, price: metrics.price, change24h: metrics.change,
+        watchlist, activeAlerts: priceAlerts.filter(a => !a.triggeredAt).length,
+      },
+      futures: fut ? {
+        price: fut.price, basis_pct: fut.basis_pct, funding_rate: fut.funding_rate,
+        oi_usd: fut.oi_usd, oi_change_24h: fut.oi_change_24h, volume_24h: fut.volume_24h,
+        long_short: fut.long_short, taker_ratio: fut.taker_ratio, liq_24h: fut.liq_24h,
+      } : null,
+      positioning: pos?.series ? {
+        retail: pos.series.global_accounts?.latest,
+        top_accounts: pos.series.top_accounts?.latest,
+        top_positions: pos.series.top_positions?.latest,
+        taker: pos.series.taker?.latest,
+        as_of: pos.as_of,
+      } : null,
       funding: fund ? { latest: fund.latest, accumulated_pct: fund.accumulated_pct, settlements: fund.settlements } : null,
-      options: opt ? { dvol: opt.dvol, dvol_percentile_1y: opt.dvol_percentile_1y, rv_30d: opt.rv_30d, put_call_ratio: opt.put_call_ratio, max_pain: opt.max_pain, total_oi_usd: opt.total_oi_usd } : null,
+      options: opt ? {
+        dvol: opt.dvol, dvol_percentile_1y: opt.dvol_percentile_1y, rv_30d: opt.rv_30d,
+        put_call_ratio: opt.put_call_ratio, max_pain: opt.max_pain, total_oi_usd: opt.total_oi_usd,
+        expiries: (opt.expiries || []).slice(0, 3),
+      } : null,
+      news: news?.articles ? news.articles.slice(0, 5).map((a: any) => ({ title: a.title, source: a.source, published: a.published_at, sentiment: a.sentiment })) : null,
+      macro: macro?.series ? Object.fromEntries(Object.entries(macro.series).map(([k, v]: any) => [k, { value: v.value, change: v.change, date: v.date, yoy_pct: v.yoy_pct }])) : null,
+      fx: fx?.rates ? { base: fx.base, date: fx.date, rates: Object.fromEntries(Object.entries(fx.rates).filter(([k]) => ['EUR', 'GBP', 'JPY', 'CNY', 'NOK'].includes(k))) } : null,
+      funding_extremes: heat ? { highest: (heat.highest || []).slice(0, 3), lowest: (heat.lowest || []).slice(0, 3), count: heat.count } : null,
+      oi_leaderboard: oi?.rows ? oi.rows.slice(0, 5) : null,
+      altseason: alt ? { index: alt.index, label: alt.label, beating: alt.beating, count: alt.count, top: (alt.alts || []).slice(0, 3) } : null,
+      whales: whales?.whales ? whales.whales.slice(0, 4).map((w: any) => ({ account_value: w.account_value, long_usd: w.long_usd, short_usd: w.short_usd, position_count: w.position_count })) : null,
+      liquidations_24h: liq ? { totals: liq.totals, largest: (liq.largest || []).slice(0, 3) } : null,
+      rsi_screener: rsiRows.length ? {
+        count: rsiRows.length,
+        overbought: rsiRows.filter((r: any) => (r.rsi_avg || 0) >= 70).slice(0, 3),
+        oversold: rsiRows.filter((r: any) => (r.rsi_avg || 100) <= 30).slice(0, 3),
+      } : null,
     });
   };
 
@@ -81,7 +131,7 @@ const AIChatPanel: React.FC = () => {
     setMessages(next);
     try {
       const answer = await runAssistant(next, await context());
-      setMessages(m => [...m, { role: 'assistant', content: answer }]);
+      setMessages(m => [...m, { role: 'assistant', content: cleanAnswer(answer) }]);
       const u = { day: usage.day, count: usage.count + 1 };
       setUsage(u);
       try { localStorage.setItem(USAGE_KEY, JSON.stringify(u)); } catch { /* ignore */ }

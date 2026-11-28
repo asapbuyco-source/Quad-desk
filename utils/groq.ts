@@ -136,6 +136,8 @@ Rules:
 - If data is missing or stale, say so plainly.
 - No financial advice, no price predictions, no guaranteed outcomes. Explain what the data shows.
 - Be concise: under 180 words, bullets when useful, no markdown tables.
+- Never use markdown formatting: no asterisks, bold, headings, backticks or code fences. Plain text only; use "- " for bullets.
+- When asked about a page, explain what it shows and read the current DATA value for it.
 
 DATA:
 ${context}`;

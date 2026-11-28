@@ -992,6 +992,24 @@ async def fetch_marketaux_news(symbol: str = "", limit: int = 6) -> list:
     return out
 
 
+@app.get("/headlines")
+async def headlines(symbol: str = ""):
+    """Lightweight news feed (no AI generation) for the assistant and widgets."""
+    articles = await fetch_marketaux_news(symbol=symbol, limit=8)
+    return {
+        "as_of": _now_iso(),
+        "source": "marketaux",
+        "count": len(articles),
+        "articles": [{
+            "title": a.get("title"),
+            "source": (a.get("source") or {}).get("name"),
+            "published_at": a.get("publishedAt"),
+            "sentiment": a.get("sentiment", 0),
+            "url": a.get("url"),
+        } for a in articles],
+    }
+
+
 @app.get("/market-intelligence")
 async def get_market_intel(model: str = DEFAULT_MODEL, symbol: str = ""):
     now = datetime.now().timestamp() * 1000
