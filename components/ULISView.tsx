@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import { motion as m } from 'framer-motion';
 import { useStore } from '../store';
+import { PageHeader } from './Premium';
 import {
     Globe2, Layers, Activity, BrainCircuit, AlertTriangle,
     Zap, TrendingUp, Radio, Shield, Info, Cpu
@@ -1209,7 +1210,6 @@ const ULISView: React.FC = () => {
 
     const masterPct = Math.round(scores.masterScore * 100);
     const masterColor = masterPct > 65 ? 'text-red-400' : masterPct > 40 ? 'text-amber-400' : 'text-emerald-400';
-    const masterBorderColor = masterPct > 65 ? 'border-red-500/30' : masterPct > 40 ? 'border-amber-500/30' : 'border-emerald-500/30';
 
     return (
         <motion.div
@@ -1217,59 +1217,58 @@ const ULISView: React.FC = () => {
             animate={{ opacity: 1 }}
             className="h-full overflow-y-auto px-4 lg:px-8 pb-24 lg:pb-8 pt-6 max-w-7xl mx-auto"
         >
-            {/* ── Page Header ── */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-                <div className="flex items-center gap-4">
-                    <div className="p-3 bg-violet-500/20 rounded-xl text-violet-400 shadow-[0_0_24px_rgba(139,92,246,0.3)]">
-                        <Globe2 size={30} />
-                    </div>
-                    <div>
-                        <h1 className="text-3xl font-black text-white tracking-tight">
-                            Unified Liquidity Intelligence
-                        </h1>
-                        <p className="text-slate-400 text-sm mt-0.5">
-                            ULIS — Master Market Physics Engine · {config.activeSymbol}
-                        </p>
+            <PageHeader
+                icon={<Globe2 size={16} />}
+                title="ULIS"
+                badge="PRO"
+                source="order book + flow"
+                live
+                subtitle="Unified Liquidity Intelligence — liquidity layers, reflexivity, cascade risk and execution context."
+            >
+                <span className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1 font-mono text-[10px] text-slate-300">{config.activeSymbol}</span>
+            </PageHeader>
+
+            {/* ── Model strip ── */}
+            <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                <div className="premium-card p-3">
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Master score</div>
+                    <div className={`mt-0.5 font-mono text-2xl font-black ${masterColor}`}>{masterPct}</div>
+                    <div className={`font-mono text-[9px] uppercase ${masterColor} opacity-70`}>
+                        {masterPct > 65 ? 'High tension' : masterPct > 40 ? 'Building' : 'Stable field'}
                     </div>
                 </div>
-                {/* Master Score pill */}
-                <div className={`px-6 py-3 rounded-2xl border ${masterBorderColor} bg-black/40 flex flex-col items-end`}>
-                    <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest">Master Liquidity Score</span>
-                    <span className={`text-4xl font-black font-mono ${masterColor}`}>{masterPct}</span>
-                    <span className={`text-[9px] font-mono font-bold uppercase ${masterColor} opacity-60`}>
-                        {masterPct > 65 ? 'HIGH TENSION' : masterPct > 40 ? 'BUILDING' : 'STABLE FIELD'}
-                    </span>
+                <div className="premium-card p-3">
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Cascade risk</div>
+                    <div className={`mt-0.5 font-mono text-2xl font-black ${scores.cascadeProb > 0.6 ? 'text-rose-400' : scores.cascadeProb > 0.35 ? 'text-amber-300' : 'text-emerald-400'}`}>
+                        {(scores.cascadeProb * 100).toFixed(0)}%
+                    </div>
+                    <div className="font-mono text-[9px] text-slate-600">{scores.cascadeProb > 0.6 ? 'Imminent' : scores.cascadeProb > 0.35 ? 'Elevated' : 'Low'}</div>
+                </div>
+                <div className="premium-card p-3">
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Reflexivity</div>
+                    <div className={`mt-0.5 font-mono text-2xl font-black ${scores.reflexivityScore > 0.66 ? 'text-rose-400' : scores.reflexivityScore > 0.4 ? 'text-amber-300' : 'text-emerald-400'}`}>
+                        {scores.reflexivityRatio.toFixed(2)}
+                    </div>
+                    <div className="font-mono text-[9px] text-slate-600">pressure / liquidity</div>
+                </div>
+                <div className="premium-card p-3">
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">GLR</div>
+                    <div className="mt-0.5 font-mono text-2xl font-black text-blue-300">{(scores.glrScore * 100).toFixed(0)}</div>
+                    <div className="font-mono text-[9px] text-slate-600">flow, CVD, depth</div>
                 </div>
             </div>
 
-            {/* ── Architecture Banner ── */}
-            <div className="mb-8 p-4 rounded-2xl border border-white/5 bg-zinc-900/30 overflow-x-auto">
-                <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest font-mono whitespace-nowrap text-zinc-500 flex-nowrap justify-center">
-                    {[
-                        { label: 'GLR', sub: 'Global Layer', color: 'text-blue-400 border-blue-500/30 bg-blue-500/10' },
-                        { label: '→', sub: '', color: 'text-zinc-700 border-transparent' },
-                        { label: 'ILIH', sub: 'Microstructure', color: 'text-violet-400 border-violet-500/30 bg-violet-500/10' },
-                        { label: '→', sub: '', color: 'text-zinc-700 border-transparent' },
-                        { label: 'NLF', sub: 'Neural Predict', color: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' },
-                        { label: '→', sub: '', color: 'text-zinc-700 border-transparent' },
-                        { label: 'LSE', sub: 'Cascade Risk', color: 'text-red-400 border-red-500/30 bg-red-500/10' },
-                        { label: '→', sub: '', color: 'text-zinc-700 border-transparent' },
-                        { label: 'TDE', sub: 'Execution', color: 'text-amber-400 border-amber-500/30 bg-amber-500/10' },
-                    ].map((item, i) => (
-                        item.label === '→' ? (
-                            <span key={i} className="text-zinc-700 text-sm">→</span>
-                        ) : (
-                            <div key={i} className={`flex flex-col items-center px-4 py-2 rounded-xl border ${item.color}`}>
-                                <span className={`text-sm font-black ${item.color.split(' ')[0]}`}>{item.label}</span>
-                                <span className="text-[8px] opacity-70">{item.sub}</span>
-                            </div>
-                        )
-                    ))}
-                </div>
+            <div className="mb-5 flex flex-wrap items-center gap-1.5">
+                {['GLR · global layer', 'ILIH · microstructure', 'NLF · prediction', 'LSE · cascade', 'TDE · execution'].map((label, i) => (
+                    <span key={label} className="flex items-center gap-1.5">
+                        <span className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-[8px] uppercase tracking-wider text-slate-500">{label}</span>
+                        {i < 4 && <span className="text-[9px] text-slate-700">→</span>}
+                    </span>
+                ))}
             </div>
 
             {/* ── Signal Engine ── */}
-            <div className="mb-8">
+            <div className="mb-4">
                 <div className="flex items-center gap-2 mb-4">
                     <Zap size={15} className="text-amber-400" />
                     <span className="text-xs font-black tracking-widest uppercase text-zinc-300">Signal Engine</span>
@@ -1308,10 +1307,10 @@ const ULISView: React.FC = () => {
             />
 
             {/* ── Main Grid ── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
 
                 {/* Panel 1: Master Heatmap */}
-                <div className="lg:col-span-2 p-5 rounded-2xl border border-white/5 bg-zinc-900/40 flex flex-col gap-4">
+                <div className="lg:col-span-2 premium-card p-4 flex flex-col gap-4">
                     <SectionHeader
                         icon={<Layers size={18} />}
                         title="Master Liquidity Heatmap"
@@ -1352,7 +1351,7 @@ const ULISView: React.FC = () => {
                 </div>
 
                 {/* Panel 2: GLR Radar */}
-                <div className="p-5 rounded-2xl border border-blue-500/20 bg-blue-500/5 flex flex-col gap-4">
+                <div className="premium-card p-4 border-blue-500/20 flex flex-col gap-4">
                     <SectionHeader
                         icon={<Radio size={18} />}
                         title="Global Liquidity Radar"
@@ -1408,7 +1407,7 @@ const ULISView: React.FC = () => {
                 </div>
 
                 {/* Panel 3: Reflexivity Index */}
-                <div className="p-5 rounded-2xl border border-amber-500/20 bg-amber-500/5 flex flex-col gap-4">
+                <div className="premium-card p-4 border-amber-500/20 flex flex-col gap-4">
                     <SectionHeader
                         icon={<Activity size={18} />}
                         title="Reflexivity Index"
@@ -1437,10 +1436,10 @@ const ULISView: React.FC = () => {
             </div>
 
             {/* ── Bottom Row: Cascade + NLF ── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
 
                 {/* Panel 4: Cascade Probability */}
-                <div className="p-5 rounded-2xl border border-red-500/20 bg-red-500/5 flex flex-col gap-4">
+                <div className="premium-card p-4 border-red-500/20 flex flex-col gap-4">
                     <SectionHeader
                         icon={<AlertTriangle size={18} />}
                         title="Cascade Probability"
@@ -1502,7 +1501,7 @@ const ULISView: React.FC = () => {
                 </div>
 
                 {/* Panel 5: NLF */}
-                <div className="p-5 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 flex flex-col gap-4">
+                <div className="premium-card p-4 border-emerald-500/20 flex flex-col gap-4">
                     <SectionHeader
                         icon={<BrainCircuit size={18} />}
                         title="Neural Liquidity Forecast"
