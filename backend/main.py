@@ -2486,12 +2486,12 @@ async def newsletter_signup(req: NewsletterRequest, request: Request):
 async def newsletter_stats():
     key = os.getenv("RESEND_API_KEY", "")
     audience = os.getenv("RESEND_AUDIENCE_ID", "")
-    if not key or not audience:
+    if not key:
         return {"configured": False, "audience": bool(audience), "from": _newsletter_from()}
     return {
         "configured": True,
-        "audience": True,
-        "count": await _resend_contact_count(key, audience),
+        "audience": bool(audience),
+        "count": (await _resend_contact_count(key, audience)) if audience else None,
         "from": _newsletter_from(),
     }
 

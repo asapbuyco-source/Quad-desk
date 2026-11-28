@@ -39,6 +39,7 @@ const NewsletterAdmin: React.FC = () => {
   }, [user?.email]);
 
   const configured = !!stats?.configured;
+  const hasAudience = !!stats?.audience;
   const count = stats?.count;
 
   const fillSnapshot = async () => {
@@ -175,8 +176,8 @@ const NewsletterAdmin: React.FC = () => {
         <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
           <div className="premium-card p-3">
             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Audience</div>
-            <div className="mt-0.5 font-mono text-xl font-black text-white">{configured ? (count ?? '—') : 'Not set'}</div>
-            <div className="font-mono text-[9px] text-slate-600">{configured ? 'Resend contacts' : 'Add RESEND_AUDIENCE_ID'}</div>
+            <div className="mt-0.5 font-mono text-xl font-black text-white">{hasAudience ? (count ?? '—') : 'Not set'}</div>
+            <div className="font-mono text-[9px] text-slate-600">{hasAudience ? 'Resend contacts' : 'Add RESEND_AUDIENCE_ID'}</div>
           </div>
           <div className="premium-card p-3">
             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Sender</div>
@@ -194,8 +195,17 @@ const NewsletterAdmin: React.FC = () => {
           <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.06] p-3 text-[11px] text-amber-300">
             <AlertTriangle size={13} className="mt-0.5 shrink-0" />
             <span>
-              Set <span className="font-mono">RESEND_API_KEY</span> and <span className="font-mono">RESEND_AUDIENCE_ID</span> on Render,
-              then verify the domain in Resend. Subscribers are stored as Resend contacts.
+              Set <span className="font-mono">RESEND_API_KEY</span> on Render and verify the domain in Resend.
+              Add <span className="font-mono">RESEND_AUDIENCE_ID</span> to store subscribers.
+            </span>
+          </div>
+        )}
+        {configured && !hasAudience && (
+          <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.06] p-3 text-[11px] text-amber-300">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span>
+              Tests work, but broadcasts need an audience. In Resend open <span className="font-mono">Audiences</span>,
+              create one, then set <span className="font-mono">RESEND_AUDIENCE_ID</span> on Render.
             </span>
           </div>
         )}
@@ -274,7 +284,7 @@ const NewsletterAdmin: React.FC = () => {
               <p className="mt-1 text-[10px] text-slate-500">Goes to every subscribed contact. Unsubscribe is automatic.</p>
               <button
                 onClick={sendBroadcast}
-                disabled={busy !== null || !configured}
+                disabled={busy !== null || !configured || !hasAudience}
                 className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-accent py-2.5 text-[11px] font-bold text-white hover:bg-brand-accent/90 disabled:opacity-40"
               >
                 {busy === 'send' ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} {schedule ? 'Schedule broadcast' : 'Send broadcast'}
