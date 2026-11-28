@@ -1,5 +1,5 @@
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = 'openai/gpt-oss-120b';
 const DEFAULT_API_KEY = 'GROQ_API_KEY_PLACEHOLDER';
 
 export function getGroqApiKey(): string {
@@ -86,7 +86,8 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
             model: MODEL,
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.2,
-            max_tokens: 500,
+            max_tokens: 700,
+            reasoning_effort: 'low',
         }),
     });
 
@@ -145,7 +146,8 @@ ${context}`;
             model: MODEL,
             messages: [{ role: 'system', content: system }, ...messages.slice(-8)],
             temperature: 0.3,
-            max_tokens: 700,
+            max_tokens: 900,
+            reasoning_effort: 'low',
         }),
     });
     if (!res.ok) {
