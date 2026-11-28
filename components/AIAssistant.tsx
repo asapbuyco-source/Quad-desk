@@ -37,6 +37,55 @@ const AIAssistant: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState(readUsage);
   const listRef = useRef<HTMLDivElement>(null);
+  const [vp, setVp] = useState(() => ({
+    w: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    h: typeof window !== 'undefined' ? window.innerHeight : 800,
+  }));
+  const [pos, setPos] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('qd.ai.pos') || 'null');
+      if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) return saved;
+    } catch { /* ignore */ }
+    const w = typeof window !== 'undefined' ? window.innerWidth : 1280;
+    const h = typeof window !== 'undefined' ? window.innerHeight : 800;
+    return { x: Math.max(8, w - 72), y: Math.max(8, h - (w < 1024 ? 220 : 88)) };
+  });
+  const dragRef = useRef<{ active: boolean; moved: boolean; sx: number; sy: number; ox: number; oy: number } | null>(null);
+
+  useEffect(() => {
+    const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('qd.ai.pos', JSON.stringify(pos)); } catch { /* ignore */ }
+  }, [pos]);
+
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+  const onDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { active: true, moved: false, sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y };
+  };
+  const onMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = dragRef.current;
+    if (!d?.active) return;
+    const dx = e.clientX - d.sx;
+    const dy = e.clientY - d.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
+    setPos({ x: clamp(d.ox + dx, 8, vp.w - 56), y: clamp(d.oy + dy, 8, vp.h - 56) });
+  };
+  const onUp = () => {
+    const d = dragRef.current;
+    if (d && !d.moved) setOpen(v => !v);
+    dragRef.current = null;
+  };
+
+  const panelW = Math.min(560, vp.w - 24);
+  const panelH = Math.min(Math.max(420, Math.round(vp.h * 0.66)), vp.h - 24);
+  const panelX = clamp(pos.x + 56 - panelW, 12, Math.max(12, vp.w - panelW - 12));
+  const panelY = clamp(pos.y + 56 - panelH, 12, Math.max(12, vp.h - panelH - 12));
 
   const limit = admin ? Infinity : plan === 'pro' ? LIMIT_PRO : LIMIT_FREE;
   const left = Math.max(0, limit - usage.count);
@@ -131,15 +180,23 @@ const AIAssistant: React.FC = () => {
   return (
     <>
       <button
-        onClick={() => setOpen(v => !v)}
-        aria-label="Open AI assistant"
-        className="fixed right-4 bottom-40 lg:bottom-6 z-[65] flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 text-white shadow-[0_10px_30px_-8px_rgba(59,130,246,0.8)] transition-transform hover:scale-105"
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+        style={{ left: pos.x, top: pos.y }}
+        aria-label="Open AI assistant (drag to move)"
+        title="Drag to move · click to open"
+        className="fixed z-[65] flex h-12 w-12 touch-none cursor-grab items-center justify-center rounded-full bg-gradient-to-tr from-brand-accent to-purple-500 text-white shadow-[0_10px_30px_-8px_rgba(59,130,246,0.8)] transition-transform active:scale-95 active:cursor-grabbing"
       >
         {open ? <X size={20} /> : <Bot size={21} />}
       </button>
 
       {open && (
-        <div className="fixed right-4 bottom-56 lg:bottom-24 z-[64] flex max-h-[68dvh] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b0b0e]/98 shadow-2xl backdrop-blur-md">
+        <div
+          style={{ left: panelX, top: panelY, width: panelW, height: panelH }}
+          className="fixed z-[64] flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b0b0e]/98 shadow-2xl backdrop-blur-md"
+        >
           <div className="flex items-center justify-between border-b border-white/5 px-3 py-2.5">
             <div className="flex items-center gap-2">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-accent/15 text-brand-accent"><Sparkles size={14} /></span>
