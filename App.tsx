@@ -44,6 +44,7 @@ const WatchlistPage = React.lazy(() => import('./components/WatchlistPage'));
 const ProfilePage = React.lazy(() => import('./components/ProfilePage'));
 const MarketsPage = React.lazy(() => import('./components/MarketsPage'));
 const CoinPage = React.lazy(() => import('./components/CoinPage'));
+const AIWorkspace = React.lazy(() => import('./components/AIWorkspace'));
 const OrderFlowPage = React.lazy(() => import('./components/OrderFlowPage'));
 const PricingPage = React.lazy(() => import('./components/PricingPage'));
 import type { CandleData, RecentTrade, PeriodType, OrderBookLevel } from './types';
@@ -496,6 +497,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'profile' && <ProfilePage />}
                                 {ui.activeTab === 'markets' && <MarketsPage />}
                                 {ui.activeTab === 'coins' && <CoinPage />}
+                                {ui.activeTab === 'ai' && <AIWorkspace />}
                                 {ui.activeTab === 'charting' && <ChartingView currentPeriod={currentPeriod} onPeriodChange={handlePeriodChange} />}
                                 {ui.activeTab === 'depth' && <DepthPage />}
                                 {ui.activeTab === 'bias' && <BiasMatrixView />}

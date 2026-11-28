@@ -248,7 +248,7 @@ const CofiCard: React.FC = () => {
 
 // ── Main Export ───────────────────────────────────────────────────────────────
 const OrderFlowMetrics: React.FC<OrderFlowMetricsProps> = ({ metrics }) => (
-    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 auto-rows-[minmax(145px,auto)] lg:auto-rows-auto lg:h-[168px]">
+    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2 auto-rows-[minmax(132px,auto)] lg:auto-rows-auto lg:h-[150px]">
         <CvdCard metrics={metrics} />
         <RegimeCard metrics={metrics} />
         <OfiCard metrics={metrics} />

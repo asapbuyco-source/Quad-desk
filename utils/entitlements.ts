@@ -57,6 +57,7 @@ export const FREE_TABS = new Set([
   'watchlist',
   'markets',
   'coins',
+  'ai',
 ]);
 
 /** Tabs that are hidden from normal users entirely — admin-only tooling. */

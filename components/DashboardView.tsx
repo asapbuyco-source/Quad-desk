@@ -83,7 +83,7 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
 
   return (
     <div className="grid h-full grid-cols-2 gap-2 lg:grid-cols-6">
-      <div className="premium-card flex flex-col justify-center px-3 py-2">
+      <div className="premium-card flex flex-col justify-center px-3 py-1.5">
         <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
           <Gauge size={11} /> {symbol.replace('USDT', '')} funding
         </div>
@@ -95,7 +95,7 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
         </div>
       </div>
 
-      <div className="premium-card flex flex-col justify-center px-3 py-2">
+      <div className="premium-card flex flex-col justify-center px-3 py-1.5">
         <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
           <Flame size={11} /> Liquidations 24h
         </div>
@@ -107,7 +107,7 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
         </div>
       </div>
 
-      <div className="premium-card flex flex-col justify-center px-3 py-2">
+      <div className="premium-card flex flex-col justify-center px-3 py-1.5">
         <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
           <Users size={11} /> Positioning
         </div>
@@ -117,7 +117,7 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
         <div className="font-mono text-[9px] text-slate-600">retail − top positions</div>
       </div>
 
-      <div className="premium-card flex flex-col justify-center px-3 py-2">
+      <div className="premium-card flex flex-col justify-center px-3 py-1.5">
         <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
           <Activity size={11} /> Desk bias
         </div>
@@ -131,7 +131,7 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
       <button
         onClick={() => setActiveTab('ulis')}
         title="Open ULIS — full reflexivity model"
-        className="premium-card flex flex-col justify-center px-3 py-2 text-left transition-colors hover:border-amber-500/40"
+        className="premium-card flex flex-col justify-center px-3 py-1.5 text-left transition-colors hover:border-amber-500/40"
       >
         <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
           <Waves size={11} className="text-amber-400" /> Reflexivity
@@ -148,7 +148,7 @@ const ContextStrip: React.FC<{ symbol: string }> = ({ symbol }) => {
       <button
         onClick={() => setActiveTab('ulis')}
         title="Open ULIS — global liquidity radar"
-        className="premium-card flex flex-col justify-center px-3 py-2 text-left transition-colors hover:border-blue-500/40"
+        className="premium-card flex flex-col justify-center px-3 py-1.5 text-left transition-colors hover:border-blue-500/40"
       >
         <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
           <Globe2 size={11} className="text-blue-400" /> Global Liquidity
@@ -196,23 +196,23 @@ const DashboardView: React.FC = () => {
       initial="hidden"
       animate="show"
       className="h-full w-full overflow-y-auto lg:overflow-hidden pb-28 lg:pb-0 px-3 lg:px-0
-                 flex flex-col gap-3
-                 lg:grid lg:grid-cols-12 lg:grid-rows-[76px_168px_minmax(0,1fr)] lg:gap-3"
+                 flex flex-col gap-2 lg:gap-2
+                 lg:grid lg:grid-cols-12 lg:grid-rows-[60px_150px_minmax(0,1fr)]"
     >
       {/* Row 0 — compact market context strip */}
-      <motion.div variants={item} className="order-1 lg:col-span-12 shrink-0 lg:h-[76px]">
+      <motion.div variants={item} className="order-1 lg:col-span-12 shrink-0 lg:h-[60px]">
         <ContextStrip symbol={activeSymbol || 'BTCUSDT'} />
       </motion.div>
 
-      {/* Row 1 — order-flow metrics strip (responsive on mobile, fixed 168px on desktop) */}
-      <motion.div variants={item} className="order-2 lg:col-span-12 shrink-0 lg:h-[168px]">
+      {/* Row 1 — order-flow metrics strip (compact to give book/tape more room) */}
+      <motion.div variants={item} className="order-2 lg:col-span-12 shrink-0 lg:h-[150px]">
         <OrderFlowMetrics metrics={metrics} />
       </motion.div>
 
       {/* Row 2 — book + tape (8 cols) and sentinel (4 cols) */}
       <motion.div
         variants={item}
-        className="order-3 lg:col-span-8 min-h-0 flex flex-col gap-3"
+        className="order-3 lg:col-span-9 min-h-0 flex flex-col gap-2"
       >
         <MiniPriceChart />
 
@@ -253,7 +253,7 @@ const DashboardView: React.FC = () => {
         </div>
       </motion.div>
 
-      <motion.div variants={item} className="order-4 lg:col-span-4 min-h-0 h-[460px] lg:h-full" style={{ minHeight: 0 }}>
+      <motion.div variants={item} className="order-4 lg:col-span-3 min-h-0 h-[460px] lg:h-full" style={{ minHeight: 0 }}>
         <SentinelPanel
           checklist={CHECKLIST_ITEMS}
           aiScanResult={scanResult}
