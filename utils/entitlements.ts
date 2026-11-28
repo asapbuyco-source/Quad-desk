@@ -63,6 +63,8 @@ export const CHECKOUT_URLS: Record<Exclude<Plan, 'free'>, { month: string; year:
 };
 
 const LS_PORTAL = 'https://app.lemonsqueezy.com/my-orders';
+export const ANNUAL_CHECKOUT_AVAILABLE: boolean =
+  Object.values(CHECKOUT_URLS).some(v => !!v.year);
 export const PORTAL_URL: string =
   (import.meta as any).env?.VITE_BILLING_PORTAL_URL ||
   (Object.values(CHECKOUT_URLS).some(v => v.month.includes('lemonsqueezy')) ? LS_PORTAL : '');

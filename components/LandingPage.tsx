@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion as m, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, Check } from 'lucide-react';
-import { upgradeHref, PLAN_FEATURES, PRICING } from '../utils/entitlements';
+import { upgradeHref, PLAN_FEATURES, PRICING, ANNUAL_CHECKOUT_AVAILABLE } from '../utils/entitlements';
 import AdSlot from './AdSlot';
 import MarketRecord from './MarketRecord';
 import LandingCharts from './LandingCharts';
@@ -497,7 +497,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                                         <span className="text-[11px] font-normal text-zinc-500">{tier === 'free' ? ' forever' : ' / month'}</span>
                                     </div>
                                     <p className="mt-0.5 text-[11px] text-zinc-500">
-                                        {tier === 'free' ? 'No card required.' : `$${p.annual}/yr billed annually`}
+                                        {tier === 'free'
+                                            ? 'No card required.'
+                                            : ANNUAL_CHECKOUT_AVAILABLE
+                                                ? `or $${p.annual}/yr billed annually`
+                                                : 'Billed monthly'}
                                     </p>
                                     <p className="mt-2 min-h-[32px] text-xs text-zinc-400">{p.blurb}</p>
                                     <ul className="mt-3 flex-1 space-y-1.5">
@@ -527,9 +531,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                             );
                         })}
                     </div>
-                    <p className="mt-4 text-center text-[11px] text-zinc-500">
-                        Prices in USD. Payments and tax handled by Lemon Squeezy. Enterprise or annual invoicing: <a href="/contact?topic=billing" className="text-brand-accent hover:underline">contact billing</a>.
-                    </p>
+          <p className="mt-4 text-center text-[11px] text-slate-500">
+            Prices in USD. Annual billing saves about 20%. Payments and tax handled by Lemon Squeezy. Enterprise or annual invoicing: <a href="/contact?topic=billing" className="text-brand-accent hover:underline">contact billing</a>.
+          </p>
                 </div>
             </section>
 

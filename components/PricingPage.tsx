@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Check, Sparkles, CreditCard, ShieldCheck, ExternalLink, KeyRound, Loader2, Users, Gift, Lock } from 'lucide-react';
 import { useStore } from '../store';
 import {
-  PLAN_FEATURES, PLAN_LABEL, PRICING, PORTAL_URL, isAdminEmail, buildCheckoutUrl, PAYWALL_ENABLED, type Plan,
+  PLAN_FEATURES, PLAN_LABEL, PRICING, PORTAL_URL, ANNUAL_CHECKOUT_AVAILABLE, isAdminEmail, buildCheckoutUrl, PAYWALL_ENABLED, type Plan,
 } from '../utils/entitlements';
 
 const env = (k: string): string => (import.meta as any).env?.[k] || '';
@@ -105,12 +105,18 @@ const PricingPage: React.FC = () => {
             Core data stays free. Starter adds order flow and whales; Pro adds every desk.
           </p>
           <div className="mt-4 inline-flex rounded-lg border border-white/10 bg-black/30 p-0.5">
-            {(['month', 'year'] as const).map(b => (
-              <button key={b} onClick={() => setBilling(b)}
-                className={`rounded-md px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider ${billing === b ? 'bg-brand-accent/20 text-brand-accent' : 'text-slate-500 hover:text-slate-300'}`}>
-                {b === 'month' ? 'Monthly' : 'Annual · save ~25%'}
-              </button>
-            ))}
+            {(['month', 'year'] as const).map(b => {
+              const disabled = b === 'year' && !ANNUAL_CHECKOUT_AVAILABLE;
+              return (
+                <button key={b} onClick={() => !disabled && setBilling(b)}
+                  disabled={disabled}
+                  title={disabled ? 'Annual checkout is not configured yet' : undefined}
+                  className={`rounded-md px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider ${
+                    billing === b ? 'bg-brand-accent/20 text-brand-accent' : 'text-slate-500 hover:text-slate-300'} disabled:cursor-not-allowed disabled:opacity-40`}>
+                  {b === 'month' ? 'Monthly' : ANNUAL_CHECKOUT_AVAILABLE ? 'Annual · save ~20%' : 'Annual · soon'}
+                </button>
+              );
+            })}
           </div>
         </div>
 
