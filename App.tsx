@@ -55,7 +55,7 @@ import * as firebaseAuth from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { calculateADX, calculateZScoreBands } from './utils/analytics';
 import { BookSync } from './utils/bookSync';
-import { canAccessTab, isAdminEmail, isAdminOnlyTab, PAYWALL_ENABLED, PRO_TAB_INFO, GENERIC_PRO_INFO } from './utils/entitlements';
+import { canAccessTab, isAdminEmail, isAdminOnlyTab, isStarterTab, PAYWALL_ENABLED, PRO_TAB_INFO, GENERIC_PRO_INFO } from './utils/entitlements';
 import { useSeo } from './hooks/useSeo';
 
 const motion = m as any;
@@ -439,7 +439,9 @@ const App: React.FC = () => {
                                             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-accent/15 text-brand-accent">
                                                 <Lock size={22} />
                                             </div>
-                                            <div className="mb-1 text-[9px] font-black uppercase tracking-[0.2em] text-brand-accent">Pro desk</div>
+                                            <div className="mb-1 text-[9px] font-black uppercase tracking-[0.2em] text-brand-accent">
+                                                {isStarterTab(ui.activeTab) ? 'Starter desk' : 'Pro desk'}
+                                            </div>
                                             <h2 className="text-lg font-bold text-white">
                                                 {isAdminOnlyTab(ui.activeTab) ? 'Admin only' : lockedInfo.label}
                                             </h2>
@@ -478,7 +480,7 @@ const App: React.FC = () => {
                                                         onClick={() => setActiveTab('pricing')}
                                                         className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-accent px-4 py-2.5 text-xs font-bold text-white hover:bg-brand-accent/90"
                                                     >
-                                                        <Sparkles size={14} /> Unlock with Pro
+                                                        <Sparkles size={14} /> Unlock with {isStarterTab(ui.activeTab) ? 'Starter' : 'Pro'}
                                                     </button>
                                                     <button
                                                         onClick={() => setActiveTab('dashboard')}

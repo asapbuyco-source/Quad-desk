@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store';
 import { apiFetch } from '../utils/apiClient';
-import { PORTAL_URL, upgradeHref, isAdminEmail, PRICING } from '../utils/entitlements';
+import { PORTAL_URL, upgradeHref, isAdminEmail, PRICING, PLAN_LABEL } from '../utils/entitlements';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'LINKUSDT'];
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'];
@@ -98,7 +98,9 @@ const SettingsView: React.FC = () => {
   };
 
   const admin = isAdminEmail(user?.email);
-  const pro = plan === 'pro' || (admin && !previewAsUser);
+  const pro = plan !== 'free' || (admin && !previewAsUser);
+  const planLabel = admin && !previewAsUser ? 'ADMIN' : PLAN_LABEL[plan].toUpperCase();
+  const planPrice = plan === 'free' ? 0 : PRICING[plan].price;
   const renewLabel = renewsAt ? new Date(renewsAt).toLocaleDateString() : null;
   const upgrade = upgradeHref({ email: user?.email, userId: user?.uid });
 
@@ -122,7 +124,7 @@ const SettingsView: React.FC = () => {
           <Row label="Plan" hint={admin && !previewAsUser ? 'Admin access' : status}>
             <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
               pro ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>
-              {pro ? `PRO · $${PRICING.pro.price}/mo` : 'FREE'}
+              {pro ? `${planLabel} · $${planPrice}/mo` : 'FREE'}
             </span>
           </Row>
           {renewLabel && pro && <Row label="Renews"><span className="font-mono text-[11px] text-slate-400">{renewLabel}</span></Row>}

@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Send, Sparkles, Loader2 } from 'lucide-react';
 import { useStore } from '../store';
-import { isAdminEmail } from '../utils/entitlements';
+import { isAdminEmail, AI_DAILY_LIMIT } from '../utils/entitlements';
 import { cachedJson } from '../utils/cachedFetch';
 import { runAssistant, AssistantMessage } from '../utils/groq';
 
-const LIMIT_FREE = 5;
-const LIMIT_PRO = 100;
 const USAGE_KEY = 'qd.ai.usage.v1';
 
 const readUsage = (): { day: string; count: number } => {
@@ -47,7 +45,7 @@ const AIChatPanel: React.FC = () => {
   const [usage, setUsage] = useState(readUsage);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const limit = admin ? Infinity : plan === 'pro' ? LIMIT_PRO : LIMIT_FREE;
+  const limit = admin ? Infinity : AI_DAILY_LIMIT[plan];
   const left = Math.max(0, limit - usage.count);
 
   useEffect(() => {
@@ -79,7 +77,9 @@ const AIChatPanel: React.FC = () => {
       app: {
         boards: 'Desk, AI Workspace, Chart, Coin Explorer, Markets, Positioning, RSI Screener, Liquidations, Whales, Funding & OI, Order Flow, Depth, Liquidity, Bias, Regime, Macro, Intel, Analytics, Pricing, Settings',
         free: 'prices, chart, funding, positioning, RSI, liquidations, macro, news, watchlist, 3 alerts, AI 5/day',
-        pro: 'order flow, whales, depth, liquidity, regime, bias, analytics, AI scans, unlimited alerts, AI 100/day',
+        starter: '$9/mo: order flow, whales, depth, unlimited alerts, AI 50/day',
+        pro: '$24/mo: liquidity, bias, regime, sentinel, ULIS, analytics, AI scans, AI 100/day',
+        team: '$79/mo: Pro plus API access, team seats, priority support, AI 200/day',
         disclaimer: 'data only, not investment advice',
       },
       current: {
@@ -200,7 +200,7 @@ const AIChatPanel: React.FC = () => {
         </div>
         <div className="mt-1 flex items-center justify-between font-mono text-[8px] text-slate-600">
           <span>Recorded data · not investment advice</span>
-          {plan !== 'pro' && !admin && left <= 0 && (
+          {plan === 'free' && !admin && left <= 0 && (
             <button onClick={() => setActiveTab('pricing')} className="text-brand-accent hover:underline">Upgrade</button>
           )}
         </div>

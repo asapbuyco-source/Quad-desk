@@ -150,8 +150,8 @@ const AdminControl: React.FC = () => {
 
     // Persist an entitlement to the signed-in admin's own user doc so the
     // paywall can be exercised end-to-end before billing is wired.
-    const grantPlan = async (next: 'free' | 'pro') => {
-        setSubscription(next, next === 'pro' ? 'active' : 'inactive', null);
+    const grantPlan = async (next: 'free' | 'starter' | 'pro' | 'team') => {
+        setSubscription(next, next === 'free' ? 'inactive' : 'active', null);
         try {
             const { doc, setDoc } = await import('firebase/firestore');
             const { db } = await import('../lib/firebase');
@@ -159,7 +159,7 @@ const AdminControl: React.FC = () => {
                 await setDoc(doc(db, 'users', user.uid), {
                     subscription: {
                         plan: next,
-                        status: next === 'pro' ? 'active' : 'inactive',
+                        status: next === 'free' ? 'inactive' : 'active',
                         renewsAt: null,
                         source: 'admin_grant',
                     },
@@ -276,21 +276,33 @@ const AdminControl: React.FC = () => {
                                         <div>
                                             <div className="text-sm font-bold text-white mb-1">Entitlement</div>
                                             <div className="text-[10px] font-bold uppercase text-zinc-500">
-                                                Current: <span className={plan === 'pro' ? 'text-emerald-400' : 'text-zinc-300'}>{plan.toUpperCase()}</span>
+                                                Current: <span className={plan !== 'free' ? 'text-emerald-400' : 'text-zinc-300'}>{plan.toUpperCase()}</span>
                                             </div>
                                         </div>
-                                        <div className="flex gap-2">
+                                        <div className="flex flex-wrap justify-end gap-2">
                                             <button
                                                 onClick={() => grantPlan('free')}
-                                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'free' ? 'border-white/20 bg-white/10 text-white' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
+                                                className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'free' ? 'border-white/20 bg-white/10 text-white' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
                                             >
-                                                Set Free
+                                                Free
+                                            </button>
+                                            <button
+                                                onClick={() => grantPlan('starter')}
+                                                className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'starter' ? 'border-sky-500/40 bg-sky-500/15 text-sky-300' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
+                                            >
+                                                Starter
                                             </button>
                                             <button
                                                 onClick={() => grantPlan('pro')}
-                                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'pro' ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
+                                                className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'pro' ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
                                             >
-                                                Set Pro
+                                                Pro
+                                            </button>
+                                            <button
+                                                onClick={() => grantPlan('team')}
+                                                className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-colors ${plan === 'team' ? 'border-purple-500/40 bg-purple-500/15 text-purple-300' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}
+                                            >
+                                                Team
                                             </button>
                                         </div>
                                     </div>

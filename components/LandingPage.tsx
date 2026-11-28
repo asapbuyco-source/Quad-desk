@@ -467,51 +467,69 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
 
             {/* --- Pricing --- */}
             <section id="pricing" className="py-16 sm:py-20 px-4 sm:px-6 relative z-10">
-                <div className="max-w-5xl mx-auto">
-                    <div className="text-center mb-12">
+                <div className="max-w-6xl mx-auto">
+                    <div className="text-center mb-10">
                         <span className="text-xs font-bold uppercase tracking-[0.2em] text-brand-accent">Pricing</span>
-                        <h2 className="mt-3 text-4xl md:text-5xl font-bold text-white">One upgrade. <span className="text-brand-accent">The whole desk.</span></h2>
-                        <p className="mt-4 text-zinc-400">Cancel anytime. Instant access after payment.</p>
+                        <h2 className="mt-3 text-4xl md:text-5xl font-bold text-white">Start free. <span className="text-brand-accent">Scale when you trade.</span></h2>
+                        <p className="mt-4 text-zinc-400">No card for the free tier. Cancel anytime. Annual billing saves about 20%.</p>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <div className="fintech-card p-6 flex flex-col">
-                            <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-300">Free</h3>
-                            <div className="mt-2 font-mono text-4xl font-black text-white">$0 <span className="text-xs font-normal text-zinc-500">forever</span></div>
-                            <p className="mt-1 text-xs text-zinc-500">Core market view.</p>
-                            <ul className="mt-5 flex-1 space-y-2">
-                                {PLAN_FEATURES.filter(f => f.free).map(f => (
-                                    <li key={f.label} className="flex items-start gap-2 text-sm text-zinc-300">
-                                        <Check size={15} className="mt-0.5 shrink-0 text-emerald-400" />{f.label}
-                                    </li>
-                                ))}
-                            </ul>
-                            <button onClick={handleEnter} className="mt-5 w-full rounded-xl border border-white/15 py-2.5 text-sm font-semibold text-white hover:bg-white/5">
-                                Get started free
-                            </button>
-                        </div>
-                        <div className="fintech-card p-6 flex flex-col border-brand-accent/40 relative">
-                            <span className="absolute right-4 top-4 rounded-full bg-brand-accent/15 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-brand-accent">Recommended</span>
-                            <h3 className="text-sm font-bold uppercase tracking-wider text-white">Pro</h3>
-                            <div className="mt-2 font-mono text-4xl font-black text-white">${PRICING.pro.price} <span className="text-xs font-normal text-zinc-500">/ month</span></div>
-                            <p className="mt-1 text-xs text-zinc-500">${PRICING.pro.annual}/yr — two months free.</p>
-                            <ul className="mt-5 flex-1 space-y-2">
-                                {PLAN_FEATURES.map(f => (
-                                    <li key={f.label} className="flex items-start gap-2 text-sm text-zinc-300">
-                                        <Check size={15} className="mt-0.5 shrink-0 text-emerald-400" />{f.label}
-                                    </li>
-                                ))}
-                            </ul>
-                            <a
-                                href={upgradeHref() || '#'}
-                                onClick={(e) => { if (!upgradeHref()) { e.preventDefault(); handleEnter(); } }}
-                                target={upgradeHref() ? '_blank' : undefined}
-                                rel="noopener noreferrer"
-                                className="mt-5 w-full rounded-xl bg-brand-accent py-2.5 text-center text-sm font-bold text-white hover:bg-brand-accent/90"
-                            >
-                                Upgrade to Pro
-                            </a>
-                        </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                        {(['free', 'starter', 'pro', 'team'] as const).map(tier => {
+                            const p = PRICING[tier];
+                            const extras = PLAN_FEATURES.filter(f =>
+                                tier === 'free' ? f.free
+                                    : tier === 'starter' ? f.starter && !f.free
+                                    : tier === 'pro' ? f.pro && !f.starter
+                                    : f.team && !f.pro);
+                            const featured = tier === 'pro';
+                            const href = tier === 'free' || tier === 'team'
+                                ? (tier === 'team' ? '/contact?topic=institutional' : '')
+                                : upgradeHref({}, tier);
+                            const prev = tier === 'starter' ? 'Free' : tier === 'pro' ? 'Starter' : 'Pro';
+                            return (
+                                <div key={tier} className={`fintech-card p-5 flex flex-col relative ${featured ? 'border-brand-accent/40' : ''}`}>
+                                    {featured && (
+                                        <span className="absolute right-3 top-3 rounded-full bg-brand-accent/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-wider text-brand-accent">Best value</span>
+                                    )}
+                                    <h3 className={`text-sm font-bold uppercase tracking-wider ${featured ? 'text-white' : 'text-zinc-300'}`}>{p.name}</h3>
+                                    <div className="mt-2 font-mono text-3xl font-black text-white">
+                                        ${p.price}
+                                        <span className="text-[11px] font-normal text-zinc-500">{tier === 'free' ? ' forever' : ' / month'}</span>
+                                    </div>
+                                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                                        {tier === 'free' ? 'No card required.' : `$${p.annual}/yr billed annually`}
+                                    </p>
+                                    <p className="mt-2 min-h-[32px] text-xs text-zinc-400">{p.blurb}</p>
+                                    <ul className="mt-3 flex-1 space-y-1.5">
+                                        {tier !== 'free' && (
+                                            <li className="flex items-start gap-2 text-[12px] font-semibold text-zinc-200">
+                                                <Check size={13} className="mt-0.5 shrink-0 text-emerald-400" />Everything in {prev}
+                                            </li>
+                                        )}
+                                        {extras.map(f => (
+                                            <li key={f.label} className="flex items-start gap-2 text-[12px] text-zinc-300">
+                                                <Check size={13} className="mt-0.5 shrink-0 text-emerald-400" />{f.label}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    <a
+                                        href={href || '#'}
+                                        onClick={(e) => { if (!href) { e.preventDefault(); handleEnter(); } }}
+                                        target={href.startsWith('http') ? '_blank' : undefined}
+                                        rel="noopener noreferrer"
+                                        className={`mt-4 w-full rounded-xl py-2.5 text-center text-sm font-bold ${featured
+                                            ? 'bg-brand-accent text-white hover:bg-brand-accent/90'
+                                            : 'border border-white/15 text-white hover:bg-white/5'}`}
+                                    >
+                                        {tier === 'free' ? 'Get started free' : tier === 'team' ? 'Talk to us' : `Choose ${p.name}`}
+                                    </a>
+                                </div>
+                            );
+                        })}
                     </div>
+                    <p className="mt-4 text-center text-[11px] text-zinc-500">
+                        Prices in USD. Payments and tax handled by Lemon Squeezy. Enterprise or annual invoicing: <a href="/contact?topic=billing" className="text-brand-accent hover:underline">contact billing</a>.
+                    </p>
                 </div>
             </section>
 

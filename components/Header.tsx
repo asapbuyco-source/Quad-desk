@@ -43,7 +43,7 @@ const Header: React.FC = () => {
         return h > 0 ? `${h}h ${m}m` : `${m}m`;
     })();
     const { toggleBacktest, setSymbol, setPlaybackSpeed, setBacktestDate, setActiveTab } = useStore();
-    const showUpgrade = PAYWALL_ENABLED && plan !== 'pro' && !isAdminEmail(user?.email);
+    const showUpgrade = PAYWALL_ENABLED && plan !== 'pro' && plan !== 'team' && !isAdminEmail(user?.email);
 
     return (
         <>

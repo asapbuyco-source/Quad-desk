@@ -8,7 +8,7 @@ import {
 } from '../types';
 import { MOCK_METRICS, DARK_POOL_THRESHOLDS } from '../constants';
 import { apiFetch } from '../utils/apiClient';
-import { validateLicense } from '../utils/entitlements';
+import { validateLicense, tierFromLicense, normalizePlan, type Plan } from '../utils/entitlements';
 import { analyzeRegime, calculateRSI } from '../utils/analytics';
 import { auth, googleProvider, db } from '../lib/firebase';
 import {
@@ -95,8 +95,8 @@ interface AppState {
     auth: {
         user: User | null;
         registrationOpen: boolean;
-        /** Entitlement tier. 'pro' unlocks the advanced desks. */
-        plan: 'free' | 'pro';
+        /** Entitlement tier. */
+        plan: Plan;
         subStatus: 'active' | 'inactive' | 'trialing' | 'past_due';
         subRenewsAt: number | null;
         /** Admin-only: render the app exactly as a free user would see it. */
@@ -186,7 +186,7 @@ interface AppState {
     fetchOrderFlowAnalysis: (data: any) => Promise<void>;
 
     setUser: (user: User | null) => void;
-    setSubscription: (plan: 'free' | 'pro', status?: 'active' | 'inactive' | 'trialing' | 'past_due', renewsAt?: number | null) => void;
+    setSubscription: (plan: Plan, status?: 'active' | 'inactive' | 'trialing' | 'past_due', renewsAt?: number | null) => void;
     setPreviewAsUser: (preview: boolean) => void;
     /** Start the one-shot 15-minute Pro demo (session-scoped). */
     startTrial: (minutes: number) => void;
@@ -390,7 +390,7 @@ export const useStore = create<AppState>((set, get) => ({
     }),
     addPriceAlert: (alert) => {
         const state = get();
-        const limit = state.auth.plan === 'pro' ? 100 : 3;
+        const limit = state.auth.plan === 'free' ? 3 : 100;
         if (state.priceAlerts.filter(a => !a.triggeredAt).length >= limit) return false;
         const next = [{
             ...alert,
@@ -1008,9 +1008,10 @@ export const useStore = create<AppState>((set, get) => ({
         const res = await validateLicense(key);
         if (!res.valid) return { ok: false, error: res.error };
         const expires = res.expiresAt ? Date.parse(res.expiresAt) : null;
+        const tier = tierFromLicense(res);
         const clean = key.trim();
         set(state => ({
-            auth: { ...state.auth, plan: 'pro', subStatus: 'active', subRenewsAt: expires, licenseKey: clean },
+            auth: { ...state.auth, plan: tier, subStatus: 'active', subRenewsAt: expires, licenseKey: clean },
         }));
         try {
             const user = get().auth.user;
@@ -1064,7 +1065,7 @@ export const useStore = create<AppState>((set, get) => ({
                         botSettings: { ...s.botSettings, ...restoredBot },
                         auth: {
                             ...s.auth,
-                            plan: sub?.plan === 'pro' ? 'pro' : 'free',
+                            plan: normalizePlan(sub?.plan),
                             subStatus: sub?.status || 'inactive',
                             subRenewsAt: sub?.renewsAt ?? null,
                             licenseKey: data.licenseKey || null,
@@ -1078,7 +1079,7 @@ export const useStore = create<AppState>((set, get) => ({
                             if (r.valid) {
                                 const exp = r.expiresAt ? Date.parse(r.expiresAt) : null;
                                 set(s => ({
-                                    auth: { ...s.auth, plan: 'pro', subStatus: 'active', subRenewsAt: exp },
+                                    auth: { ...s.auth, plan: tierFromLicense(r), subStatus: 'active', subRenewsAt: exp },
                                 }));
                             }
                         }).catch(() => { /* keep last known state */ });

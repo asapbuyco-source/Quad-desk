@@ -50,7 +50,7 @@ const WatchlistPage: React.FC = () => {
 
   const bySymbol = useMemo(() => new Map(rows.map(r => [r.symbol, r])), [rows]);
   const activeAlerts = priceAlerts.filter(a => !a.triggeredAt);
-  const limit = plan === 'pro' ? 100 : 3;
+  const limit = plan === 'free' ? 3 : 100;
 
   const add = () => {
     const s = addSymbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -198,7 +198,7 @@ const WatchlistPage: React.FC = () => {
                 <BellRing size={11} /> Enable browser notifications
               </button>
             )}
-            {plan !== 'pro' && (
+            {plan === 'free' && (
               <button onClick={() => setActiveTab('pricing')} className="mt-3 flex w-full items-center justify-between rounded-lg border border-brand-accent/25 bg-brand-accent/[0.06] px-3 py-2 text-[10px] text-slate-300">
                 <span>Pro: unlimited alerts + digest</span>
                 <ArrowRight size={12} className="text-brand-accent" />

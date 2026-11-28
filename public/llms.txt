@@ -1,10 +1,10 @@
 # Quant Desk
 
-> Crypto derivatives terminal with recorded order flow, cross-venue funding, open interest, liquidation clusters, RSI screener, positioning, Hyperliquid whale positions and Deribit options. Free core; Pro adds depth and automation. Data is informational only, not investment advice.
+> Crypto derivatives terminal with recorded order flow, cross-venue funding, open interest, liquidation clusters, RSI screener, positioning, Hyperliquid whale positions and Deribit options. Free core; Starter from $9/mo adds order flow, whales and depth; Pro from $24/mo adds liquidity, regime, bias, Sentinel, ULIS, AI scans and analytics; Institutional adds API access and seats. Data is informational only, not investment advice.
 
 ## Core pages
 - [Terminal](https://quantdeskterminal.com/): live market record and terminal.
-- [Platform](https://quantdeskterminal.com/platform): boards, free versus Pro.
+- [Platform](https://quantdeskterminal.com/platform): boards, free versus Starter, Pro and Institutional.
 - [Methodology](https://quantdeskterminal.com/methodology): sources, cadence and limits.
 - [Coverage](https://quantdeskterminal.com/coverage): datasets, retention and known gaps.
 - [API](https://quantdeskterminal.com/api): endpoint catalogue, private beta.

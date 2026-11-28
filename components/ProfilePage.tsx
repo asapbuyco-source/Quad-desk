@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store';
 import { PageHeader } from './Premium';
-import { PORTAL_URL, upgradeHref, isAdminEmail, PRICING } from '../utils/entitlements';
+import { PORTAL_URL, upgradeHref, isAdminEmail, PRICING, PLAN_LABEL } from '../utils/entitlements';
 
 const ProfilePage: React.FC = () => {
   const user = useStore(s => s.auth.user);
@@ -22,7 +22,7 @@ const ProfilePage: React.FC = () => {
   const setGuest = useStore(s => s.setGuest);
 
   const admin = isAdminEmail(user?.email);
-  const pro = plan === 'pro' || (admin && !previewAsUser);
+  const pro = plan !== 'free' || (admin && !previewAsUser);
   const renew = renewsAt ? new Date(renewsAt).toLocaleDateString() : null;
   const trialLeft = trialUntil && trialUntil > Date.now() ? Math.ceil((trialUntil - Date.now()) / 60000) : 0;
   const activeAlerts = priceAlerts.filter(a => !a.triggeredAt).length;
@@ -50,7 +50,7 @@ const ProfilePage: React.FC = () => {
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
                   pro ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>
-                  {pro ? 'Pro' : 'Free'}
+                  {admin && !previewAsUser ? 'Admin' : PLAN_LABEL[plan]}
                 </span>
                 {admin && <span className="rounded bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-rose-300">Admin</span>}
                 {!user && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">Guest</span>}
@@ -72,11 +72,11 @@ const ProfilePage: React.FC = () => {
               <CreditCard size={14} className="text-brand-accent" /> Plan
             </div>
             <div className="flex items-baseline justify-between">
-              <span className="font-mono text-2xl font-black text-white">{pro ? 'PRO' : 'FREE'}</span>
+              <span className="font-mono text-2xl font-black text-white">{admin && !previewAsUser ? 'ADMIN' : PLAN_LABEL[plan].toUpperCase()}</span>
               <span className="text-[10px] text-slate-500">{admin && !previewAsUser ? 'admin access' : status}</span>
             </div>
             <div className="mt-2 space-y-1 text-[11px] text-slate-400">
-              <div>Price: {pro ? `$${PRICING.pro.price}/mo` : '$0 forever'}</div>
+              <div>Price: {pro ? `$${PRICING[plan].price}/mo` : '$0 forever'}</div>
               {renew && pro && <div>Renews: {renew}</div>}
               <div className="truncate">License: {licenseKey ? `${licenseKey.slice(0, 4)}••••${licenseKey.slice(-4)}` : 'none'}</div>
             </div>
@@ -89,7 +89,7 @@ const ProfilePage: React.FC = () => {
               )}
               <button onClick={() => setActiveTab('pricing')}
                 className="rounded-lg border border-white/10 px-3 py-1.5 text-[11px] text-slate-300 hover:bg-white/5">
-                {pro ? 'View plans' : 'See Pro'}
+                {pro ? 'View plans' : 'See plans'}
               </button>
             </div>
           </section>

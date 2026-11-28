@@ -3,14 +3,14 @@ import { Users, RefreshCw, Search, ShieldAlert, Sparkles, KeyRound, Ban } from '
 import { collection, getDocs, limit, query, doc, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useStore } from '../store';
-import { isAdminEmail } from '../utils/entitlements';
+import { isAdminEmail, PLAN_LABEL, normalizePlan, type Plan } from '../utils/entitlements';
 import { PageHeader, EmptyState } from './Premium';
 
 interface Row {
   uid: string;
   email?: string;
   displayName?: string;
-  plan: 'free' | 'pro';
+  plan: Plan;
   status?: string;
   renewsAt?: string | null;
   licenseKey?: string | null;
@@ -46,7 +46,7 @@ const AdminUsers: React.FC = () => {
           uid: d.id,
           email: v.email || v.profile?.email,
           displayName: v.displayName || v.profile?.displayName,
-          plan: sub.plan === 'pro' ? 'pro' : 'free',
+          plan: normalizePlan(sub.plan),
           status: sub.status || 'inactive',
           renewsAt: sub.renewsAt || null,
           licenseKey: v.licenseKey || null,
@@ -66,22 +66,25 @@ const AdminUsers: React.FC = () => {
 
   useEffect(() => { if (admin) load(); }, [admin, load]);
 
-  const apply = async (row: Row, kind: 'pro30' | 'pro' | 'free' | 'revoke') => {
+  const apply = async (row: Row, kind: 'pro30' | 'starter' | 'pro' | 'team' | 'free' | 'revoke') => {
     setBusy(row.uid);
     setError(null);
     setNotice(null);
-    const sub = kind === 'free' || kind === 'revoke'
+    const next: Plan = kind === 'free' || kind === 'revoke'
+      ? 'free'
+      : kind === 'pro30' ? 'pro' : kind;
+    const sub = next === 'free'
       ? { plan: 'free', status: 'inactive', renewsAt: null, source: 'admin_ui' }
-      : { plan: 'pro', status: 'active', renewsAt: kind === 'pro30' ? thirtyDays() : null, source: 'admin_ui' };
+      : { plan: next, status: 'active', renewsAt: kind === 'pro30' ? thirtyDays() : null, source: 'admin_ui' };
     try {
       await setDoc(doc(db, 'users', row.uid), {
         ...(kind === 'revoke' ? { licenseKey: null } : {}),
         subscription: sub,
       }, { merge: true });
       setRows(rs => rs.map(r => r.uid === row.uid
-        ? { ...r, plan: sub.plan as 'free' | 'pro', status: sub.status, renewsAt: sub.renewsAt, licenseKey: kind === 'revoke' ? null : r.licenseKey }
+        ? { ...r, plan: next, status: sub.status, renewsAt: sub.renewsAt, licenseKey: kind === 'revoke' ? null : r.licenseKey }
         : r));
-      setNotice(`${row.email || row.uid} → ${kind === 'free' || kind === 'revoke' ? 'Free' : 'Pro'} saved. They get it on next sign-in/reload.`);
+      setNotice(`${row.email || row.uid} → ${PLAN_LABEL[next]} saved. They get it on next sign-in/reload.`);
     } catch (e: any) {
       setError(e?.code === 'permission-denied'
         ? 'Write blocked by Firestore rules. Deploy the updated firestore.rules.'
@@ -100,7 +103,7 @@ const AdminUsers: React.FC = () => {
       r.uid.toLowerCase().includes(needle));
   }, [rows, q]);
 
-  const proCount = rows.filter(r => r.plan === 'pro').length;
+  const proCount = rows.filter(r => r.plan !== 'free').length;
 
   if (!admin) {
     return (
@@ -180,10 +183,13 @@ const AdminUsers: React.FC = () => {
                   </td>
                   <td className="px-4 py-2.5">
                     <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
-                      r.plan === 'pro' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>
-                      {r.plan}
+                      r.plan === 'team' ? 'bg-purple-500/15 text-purple-300'
+                        : r.plan === 'pro' ? 'bg-emerald-500/15 text-emerald-300'
+                        : r.plan === 'starter' ? 'bg-sky-500/15 text-sky-300'
+                        : 'bg-slate-500/15 text-slate-400'}`}>
+                      {PLAN_LABEL[r.plan]}
                     </span>
-                    {r.status && r.status !== 'active' && r.plan === 'pro' && (
+                    {r.status && r.status !== 'active' && r.plan !== 'free' && (
                       <span className="ml-1.5 text-[9px] text-amber-400">{r.status}</span>
                     )}
                   </td>
@@ -197,9 +203,17 @@ const AdminUsers: React.FC = () => {
                         className="flex items-center gap-1 rounded-md bg-brand-accent px-2 py-1 text-[10px] font-bold text-white hover:bg-brand-accent/90 disabled:opacity-40">
                         <Sparkles size={10} /> Pro 30d
                       </button>
+                      <button disabled={busy === r.uid} onClick={() => apply(r, 'starter')}
+                        className="rounded-md border border-sky-500/30 px-2 py-1 text-[10px] font-bold text-sky-300 hover:bg-sky-500/10 disabled:opacity-40">
+                        Starter
+                      </button>
                       <button disabled={busy === r.uid} onClick={() => apply(r, 'pro')}
                         className="rounded-md border border-emerald-500/30 px-2 py-1 text-[10px] font-bold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">
                         Pro
+                      </button>
+                      <button disabled={busy === r.uid} onClick={() => apply(r, 'team')}
+                        className="rounded-md border border-purple-500/30 px-2 py-1 text-[10px] font-bold text-purple-300 hover:bg-purple-500/10 disabled:opacity-40">
+                        Team
                       </button>
                       <button disabled={busy === r.uid} onClick={() => apply(r, 'free')}
                         className="rounded-md border border-white/10 px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5 disabled:opacity-40">

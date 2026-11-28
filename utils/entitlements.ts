@@ -9,8 +9,28 @@
  * a "contact billing" state instead of a broken button.
  */
 
-export type Plan = 'free' | 'pro';
+export type Plan = 'free' | 'starter' | 'pro' | 'team';
 export type SubStatus = 'active' | 'inactive' | 'trialing' | 'past_due';
+
+export const PLAN_RANK: Record<Plan, number> = { free: 0, starter: 1, pro: 2, team: 3 };
+export const isPaidPlan = (plan: Plan): boolean => plan !== 'free';
+export const normalizePlan = (value?: string | null): Plan =>
+  value === 'starter' || value === 'pro' || value === 'team' ? value : 'free';
+
+export const PLAN_LABEL: Record<Plan, string> = {
+  free: 'Free',
+  starter: 'Starter',
+  pro: 'Pro',
+  team: 'Institutional',
+};
+
+/** AI requests per day by tier. Admin is unlimited. */
+export const AI_DAILY_LIMIT: Record<Plan, number> = {
+  free: 5,
+  starter: 50,
+  pro: 100,
+  team: 200,
+};
 
 export const ADMIN_EMAILS = ((import.meta as any).env?.VITE_ADMIN_EMAILS || '')
   .toLowerCase()
@@ -24,10 +44,28 @@ export const isAdminEmail = (email?: string | null): boolean =>
 export const CHECKOUT_URL: string = (import.meta as any).env?.VITE_CHECKOUT_URL || '';
 export const SALES_EMAIL: string = (import.meta as any).env?.VITE_SALES_EMAIL || '';
 
+const envUrl = (key: string): string => (import.meta as any).env?.[key] || '';
+
+/** Monthly / annual checkout links per tier. Pro falls back to the legacy vars. */
+export const CHECKOUT_URLS: Record<Exclude<Plan, 'free'>, { month: string; year: string }> = {
+  starter: {
+    month: envUrl('VITE_CHECKOUT_STARTER') || '',
+    year: envUrl('VITE_CHECKOUT_STARTER_ANNUAL') || '',
+  },
+  pro: {
+    month: envUrl('VITE_CHECKOUT_PRO') || CHECKOUT_URL,
+    year: envUrl('VITE_CHECKOUT_PRO_ANNUAL') || envUrl('VITE_CHECKOUT_URL_ANNUAL') || '',
+  },
+  team: {
+    month: envUrl('VITE_CHECKOUT_TEAM') || '',
+    year: envUrl('VITE_CHECKOUT_TEAM_ANNUAL') || '',
+  },
+};
+
 const LS_PORTAL = 'https://app.lemonsqueezy.com/my-orders';
 export const PORTAL_URL: string =
   (import.meta as any).env?.VITE_BILLING_PORTAL_URL ||
-  (CHECKOUT_URL.includes('lemonsqueezy') ? LS_PORTAL : '');
+  (Object.values(CHECKOUT_URLS).some(v => v.month.includes('lemonsqueezy')) ? LS_PORTAL : '');
 
 const LS_LICENSE_API = 'https://api.lemonsqueezy.com/v1/licenses';
 
@@ -38,7 +76,7 @@ const LS_LICENSE_API = 'https://api.lemonsqueezy.com/v1/licenses';
  */
 const truthy = (v?: string) => ['1', 'true', 'yes', 'on'].includes((v || '').toLowerCase());
 export const PAYWALL_ENABLED: boolean =
-  !!CHECKOUT_URL || truthy((import.meta as any).env?.VITE_PAYWALL_FORCE);
+  !!CHECKOUT_URL || Object.values(CHECKOUT_URLS).some(v => !!v.month) || truthy((import.meta as any).env?.VITE_PAYWALL_FORCE);
 
 /** Tabs available on the free tier. */
 export const FREE_TABS = new Set([
@@ -67,23 +105,26 @@ export const ADMIN_ONLY_TABS = new Set([
   'admin-users',
 ]);
 
-/** Tabs that require Pro. */
-export const PRO_TABS = new Set([
+/** Tabs that require Starter or above. */
+export const STARTER_TABS = new Set([
+  'order-flow',
+  'whales',
   'depth',
+]);
+
+/** Tabs that require Pro or above. */
+export const PRO_TABS = new Set([
   'liquidity',
   'bias',
   'regime',
-  'order-flow',
-  'bot-control',
   'ai-tactical',
-  'bot-mind',
   'sentinel',
   'ulis',
   'macro-strategy',
   'analytics',
-  'whales',
 ]);
 
+export const isStarterTab = (tab: string): boolean => STARTER_TABS.has(tab);
 export const isProTab = (tab: string): boolean => PRO_TABS.has(tab);
 export const isAdminOnlyTab = (tab: string): boolean => ADMIN_ONLY_TABS.has(tab);
 
@@ -104,8 +145,9 @@ export function canAccessTab(
 
   if (!PAYWALL_ENABLED) return true;          // billing not configured yet
   if (admin) return true;
-  if (!isProTab(tab)) return true;
-  return plan === 'pro' || trialActive;
+  if (isProTab(tab)) return trialActive || plan === 'pro' || plan === 'team';
+  if (isStarterTab(tab)) return trialActive || plan !== 'free';
+  return true;
 }
 
 /** Copy used by the locked-desk upsell screen. */
@@ -171,45 +213,67 @@ export const GENERIC_PRO_INFO = {
 export interface PlanFeature {
   label: string;
   free: boolean;
+  starter: boolean;
   pro: boolean;
+  team: boolean;
 }
 
 export const PLAN_FEATURES: PlanFeature[] = [
-  { label: 'Live prices, chart & order book', free: true, pro: true },
-  { label: 'Funding & open interest (cross-venue)', free: true, pro: true },
-  { label: 'Macro & FX data (FRED / ECB)', free: true, pro: true },
-  { label: 'Market news & sentiment', free: true, pro: true },
-  { label: 'Watchlist & 3 price alerts', free: true, pro: true },
-  { label: 'Guide & settings', free: true, pro: true },
-  { label: 'Executed-trades order flow + price impact', free: false, pro: true },
-  { label: 'Positioning: retail vs top traders', free: true, pro: true },
-  { label: 'RSI screener & liquidation clusters', free: true, pro: true },
-  { label: 'Whale positions (Hyperliquid)', free: false, pro: true },
-  { label: 'Sentinel edge, ULIS & AI tactical scans', free: false, pro: true },
-  { label: 'Analytics & advanced charting', free: false, pro: true },
+  { label: 'Live prices, chart & order book', free: true, starter: true, pro: true, team: true },
+  { label: 'Funding & open interest (cross-venue)', free: true, starter: true, pro: true, team: true },
+  { label: 'Positioning: retail vs top traders', free: true, starter: true, pro: true, team: true },
+  { label: 'RSI screener & liquidation clusters', free: true, starter: true, pro: true, team: true },
+  { label: 'Macro, FX & market news', free: true, starter: true, pro: true, team: true },
+  { label: 'Watchlist + 3 price alerts', free: true, starter: true, pro: true, team: true },
+  { label: 'AI assistant · 5 requests/day', free: true, starter: false, pro: false, team: false },
+  { label: 'Executed-trades order flow + CVD', free: false, starter: true, pro: true, team: true },
+  { label: 'Hyperliquid whale positions', free: false, starter: true, pro: true, team: true },
+  { label: 'Depth ladder & imbalance', free: false, starter: true, pro: true, team: true },
+  { label: 'Unlimited price alerts', free: false, starter: true, pro: true, team: true },
+  { label: 'AI assistant · 50 requests/day', free: false, starter: true, pro: false, team: false },
+  { label: 'Liquidity map & bias desks', free: false, starter: false, pro: true, team: true },
+  { label: 'Regime & macro strategy desks', free: false, starter: false, pro: true, team: true },
+  { label: 'Sentinel edge, ULIS & tactical scans', free: false, starter: false, pro: true, team: true },
+  { label: 'Analytics & advanced charting', free: false, starter: false, pro: true, team: true },
+  { label: 'AI assistant · 100 requests/day', free: false, starter: false, pro: true, team: false },
+  { label: 'API access (beta)', free: false, starter: false, pro: false, team: true },
+  { label: 'Team seats & priority support', free: false, starter: false, pro: false, team: true },
+  { label: 'AI assistant · 200 requests/day', free: false, starter: false, pro: false, team: true },
 ];
 
 /**
  * Build the hosted checkout URL, prefilling the buyer's email and attaching the
  * Firebase uid as custom data (Lemon Squeezy passes it through the webhook).
  */
-export function buildCheckoutUrl(opts: { email?: string | null; userId?: string | null } = {}): string {
-  if (!CHECKOUT_URL) return '';
+export function buildCheckoutUrl(
+  opts: { email?: string | null; userId?: string | null } = {},
+  tier: Exclude<Plan, 'free'> = 'pro',
+  annual = false,
+): string {
+  const links = CHECKOUT_URLS[tier];
+  const base = (annual ? links.year : links.month) || links.month;
+  if (!base) return '';
   try {
-    const url = new URL(CHECKOUT_URL);
+    const url = new URL(base);
     if (opts.email) url.searchParams.set('checkout[email]', opts.email);
     if (opts.userId) url.searchParams.set('checkout[custom][user_id]', opts.userId);
     return url.toString();
   } catch {
-    return CHECKOUT_URL;
+    return base;
   }
 }
 
 /** Where the Upgrade button should go: checkout, else manual sales email. */
-export function upgradeHref(opts: { email?: string | null; userId?: string | null } = {}): string {
-  const checkout = buildCheckoutUrl(opts);
+export function upgradeHref(
+  opts: { email?: string | null; userId?: string | null } = {},
+  tier: Exclude<Plan, 'free'> = 'pro',
+  annual = false,
+): string {
+  const checkout = buildCheckoutUrl(opts, tier, annual);
   if (checkout) return checkout;
-  if (SALES_EMAIL) return `mailto:${SALES_EMAIL}?subject=${encodeURIComponent('Quant Desk Pro access')}`;
+  if (SALES_EMAIL) {
+    return `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(`Quant Desk ${PLAN_LABEL[tier]} access`)}`;
+  }
   return '';
 }
 
@@ -217,7 +281,30 @@ export interface LicenseResult {
   valid: boolean;
   status?: string;
   expiresAt?: string | null;
+  variantId?: string | number | null;
+  productId?: string | number | null;
+  productName?: string | null;
   error?: string;
+}
+
+const envIds = (key: string): string[] =>
+  String((import.meta as any).env?.[key] || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+/** Map a Lemon Squeezy licence to a tier using the product/variant ids. */
+export function tierFromLicense(res: LicenseResult): Exclude<Plan, 'free'> {
+  const variant = String(res.variantId ?? '');
+  const product = String(res.productId ?? '');
+  const match = (key: string) => {
+    const ids = envIds(key);
+    return ids.includes(variant) || ids.includes(product);
+  };
+  if (match('VITE_LS_STARTER_VARIANTS')) return 'starter';
+  if (match('VITE_LS_TEAM_VARIANTS')) return 'team';
+  if (match('VITE_LS_PRO_VARIANTS')) return 'pro';
+  return 'pro';
 }
 
 /**
@@ -237,13 +324,23 @@ export async function validateLicense(licenseKey: string): Promise<LicenseResult
     const data: any = await res.json();
     if (!data?.valid) return { valid: false, error: data?.error || 'Invalid or expired license.' };
     const lk = data.license_key || {};
-    return { valid: true, status: lk.status, expiresAt: lk.expires_at || null };
+    const meta = data.meta || {};
+    return {
+      valid: true,
+      status: lk.status,
+      expiresAt: lk.expires_at || null,
+      variantId: meta.variant_id ?? null,
+      productId: meta.product_id ?? null,
+      productName: meta.product_name ?? null,
+    };
   } catch (e: any) {
     return { valid: false, error: e?.message || 'Could not reach the license server.' };
   }
 }
 
 export const PRICING = {
-  free: { name: 'Free', price: 0, period: 'forever', blurb: 'Core market view — no card.' },
-  pro: { name: 'Pro', price: 39, period: 'per month', annual: 390, blurb: 'Full desk: order flow, analytics, bot tooling.' },
+  free: { name: 'Free', price: 0, annual: 0, period: 'forever', blurb: 'Core market view — no card.' },
+  starter: { name: 'Starter', price: 9, annual: 86, period: 'per month', blurb: 'Order flow, whales and depth for active traders.' },
+  pro: { name: 'Pro', price: 24, annual: 228, period: 'per month', blurb: 'Every desk: liquidity, regime, analytics and AI scans.' },
+  team: { name: 'Institutional', price: 79, annual: 758, period: 'per month', blurb: 'Pro plus API access, seats and priority support.' },
 } as const;
