@@ -161,7 +161,7 @@ const AlertEngine: React.FC = () => {
                 }
 
             } catch (e) {
-                console.error("Alert Engine Error:", e);
+                console.warn("Alert Engine Error:", e);
                 setStatus('IDLE');
             }
         };

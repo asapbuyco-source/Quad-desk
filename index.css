@@ -90,3 +90,8 @@ html[data-motion='reduced'] *::after { animation-duration: 0.001ms !important; a
 
 /* Numeric stability */
 .font-mono, code, kbd, pre, table { font-variant-numeric: tabular-nums; }
+
+/* Accessibility: lift low-contrast utility text on dark surfaces */
+.text-slate-600 { color: #94a3b8 !important; }
+.text-slate-700 { color: #8b96a5 !important; }
+[class*='text-[8px]'], [class*='text-[9px]'] { letter-spacing: 0.01em; }

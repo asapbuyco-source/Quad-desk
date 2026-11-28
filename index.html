@@ -7,7 +7,10 @@
     <meta name="google-site-verification" content="k92KP2jyivSRal40gnKG4i__BsXw7MF5b4GPuTIJZhw" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" /></noscript>
+    <link rel="ai-catalog" type="application/ai-catalog+json" href="/.well-known/ard.json" />
 
     <title>Quant Desk — Crypto Derivatives Terminal & Order Flow</title>
     <meta name="description" content="Live crypto derivatives data: order flow, funding, open interest, liquidations, RSI and positioning. Free core terminal, recorded with sources and timestamps." />
@@ -108,7 +111,13 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;background:#050505;color:#e4e4e7;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif">
+        <div style="font-weight:700;font-size:11px;letter-spacing:.2em;color:#fff">◆ QUANT DESK</div>
+        <h1 style="margin:0;font-size:clamp(30px,8vw,60px);font-weight:800;letter-spacing:-.02em;text-align:center;color:#fff">Quant Desk</h1>
+        <p style="margin:0;max-width:520px;text-align:center;font-size:14px;line-height:1.6;color:#94a3b8">Crypto derivatives terminal — order flow, funding, liquidations and positioning, recorded with sources and timestamps.</p>
+      </div>
+    </div>
     <noscript>
       <div style="max-width:820px;margin:0 auto;padding:48px 20px;color:#e4e4e7;font-family:Inter,system-ui,sans-serif;background:#09090b">
         <h1>Quant Desk — crypto derivatives terminal</h1>

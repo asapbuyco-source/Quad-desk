@@ -207,7 +207,7 @@ const App: React.FC = () => {
                 setIsLoading(false);
                 setConnectionError(false);
             } catch (e: any) {
-                console.error("fetchHistory failed:", e);
+                console.warn("fetchHistory failed:", e);
                 setConnectionError(true);
                 setIsLoading(true);
                 retryTimer = setTimeout(fetchHistory, 5000);
@@ -323,7 +323,7 @@ const App: React.FC = () => {
                         timer = setTimeout(connect, delay);
                     }
                 };
-                ws.onerror = (e) => console.error(`${market} WebSocket error:`, e);
+                ws.onerror = (e) => console.warn(`${market} WebSocket error:`, e);
             };
             connect();
             return () => { torn = true; if (timer) clearTimeout(timer); };

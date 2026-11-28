@@ -1,0 +1,52 @@
+{
+  "entries": [
+    {
+      "identifier": "urn:air:quantdeskterminal.com:terminal",
+      "displayName": "Quant Desk Terminal",
+      "type": "text/html",
+      "url": "https://quantdeskterminal.com/",
+      "description": "Crypto derivatives terminal with recorded order flow, cross-venue funding, open interest, liquidation clusters, RSI screener, positioning and Hyperliquid whale positions.",
+      "representativeQueries": [
+        "crypto derivatives terminal",
+        "bitcoin funding rate and open interest",
+        "liquidation clusters and positioning"
+      ]
+    },
+    {
+      "identifier": "urn:air:quantdeskterminal.com:api",
+      "displayName": "Quant Desk API",
+      "type": "text/html",
+      "url": "https://quantdeskterminal.com/api",
+      "description": "API overview and endpoint catalogue for recorded funding, positioning, liquidations, RSI, whale positions and options data. Key required; private beta.",
+      "representativeQueries": [
+        "crypto derivatives API",
+        "funding history endpoint",
+        "liquidation data API"
+      ]
+    },
+    {
+      "identifier": "urn:air:quantdeskterminal.com:methodology",
+      "displayName": "Quant Desk Methodology",
+      "type": "text/html",
+      "url": "https://quantdeskterminal.com/methodology",
+      "description": "Data sources, refresh cadence, fallbacks and known limits for every board, with the rule that each panel prints its source and recording time.",
+      "representativeQueries": [
+        "how is crypto funding data collected",
+        "derivatives data sources and cadence",
+        "market data limitations"
+      ]
+    },
+    {
+      "identifier": "urn:air:quantdeskterminal.com:blog",
+      "displayName": "Quant Desk Notes",
+      "type": "text/html",
+      "url": "https://quantdeskterminal.com/blog",
+      "description": "Short notes on funding, liquidations and recorded market data. Available in English, Spanish, French and Turkish.",
+      "representativeQueries": [
+        "reading funding rates explained",
+        "liquidation clusters explained",
+        "crypto data provenance"
+      ]
+    }
+  ]
+}

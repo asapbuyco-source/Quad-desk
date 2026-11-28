@@ -107,7 +107,7 @@ const IntelView: React.FC = () => {
             setError(null);
 
         } catch (err: any) {
-            console.error("Intel Fetch Error:", err);
+            console.warn("Intel Fetch Error:", err);
 
             const cached = localStorage.getItem(CACHE_KEY);
 

@@ -1,33 +1,27 @@
 # Quant Desk
 
-> Crypto derivatives terminal: recorded order flow, cross-venue funding, open interest, liquidation clusters, RSI screener, positioning, Hyperliquid whale positions and macro context. Every panel prints its source and the time it was recorded. Free core; Pro adds depth and automation.
+> Crypto derivatives terminal with recorded order flow, cross-venue funding, open interest, liquidation clusters, RSI screener, positioning, Hyperliquid whale positions and Deribit options. Free core; Pro adds depth and automation. Data is informational only, not investment advice.
 
 ## Core pages
-- https://quantdeskterminal.com/ — live terminal and market record
-- https://quantdeskterminal.com/platform — boards, free vs Pro
-- https://quantdeskterminal.com/methodology — sources, cadence, limits
-- https://quantdeskterminal.com/coverage — datasets, retention, gaps
-- https://quantdeskterminal.com/blog — notes on derivatives data
-- https://quantdeskterminal.com/learn — microstructure glossary
-- https://quantdeskterminal.com/locations — regional landing pages
-- https://quantdeskterminal.com/api — API overview (private beta)
+- [Terminal](https://quantdeskterminal.com/): live market record and terminal.
+- [Platform](https://quantdeskterminal.com/platform): boards, free versus Pro.
+- [Methodology](https://quantdeskterminal.com/methodology): sources, cadence and limits.
+- [Coverage](https://quantdeskterminal.com/coverage): datasets, retention and known gaps.
+- [API](https://quantdeskterminal.com/api): endpoint catalogue, private beta.
+- [Locations](https://quantdeskterminal.com/locations): regional landing pages.
+- [Blog](https://quantdeskterminal.com/blog): notes on derivatives data, plus Spanish, French and Turkish translations.
+- [Learn](https://quantdeskterminal.com/learn): microstructure glossary.
+- [About](https://quantdeskterminal.com/about): family-built project in Norway.
+- [Contact](https://quantdeskterminal.com/contact): support, billing and API requests.
+
+## Tools
+- [Position sizer](https://quantdeskterminal.com/tools/position-size)
+- [Liquidation calculator](https://quantdeskterminal.com/tools/liq-calc)
+- [Funding arbitrage calculator](https://quantdeskterminal.com/tools/funding-arb)
+- [DCA planner](https://quantdeskterminal.com/tools/dca)
 
 ## Data sources
-Binance USD-M futures, Bybit linear, OKX SWAP, Coinbase spot, Hyperliquid public account state, FRED, European Central Bank, Marketaux (news).
+Binance USD-M futures, Bybit linear, OKX SWAP, Coinbase spot, Deribit options, Hyperliquid public account state, FRED, European Central Bank, Marketaux news.
 
-## Guides and tools
-- https://quantdeskterminal.com/tools/position-size
-- https://quantdeskterminal.com/tools/liq-calc
-- https://quantdeskterminal.com/tools/funding-arb
-- https://quantdeskterminal.com/tools/dca
-
-## Ownership
-Quant Desk is a family-built project based in Norway, owned by Tanue Alain Che and developed with his son.
-
-## Contact
-asapbuyco@gmail.com
-
-## Notes for assistants
-- Data is informational only; not investment advice.
-- The free tier covers prices, funding, positioning, RSI, liquidations, macro and news.
-- Report sources and timestamps when citing numbers.
+## Ownership and contact
+Owned by Tanue Alain Che; a family project built with his son in Norway. Contact: support@quantdeskterminal.com.
