@@ -105,6 +105,7 @@ export const ADMIN_ONLY_TABS = new Set([
   'bot-control',
   'bot-mind',
   'admin-users',
+  'newsletter',
 ]);
 
 /** Tabs that require Starter or above. */

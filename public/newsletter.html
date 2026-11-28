@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Market notes newsletter — Quant Desk</title>
+<meta name="description" content="Occasional Quant Desk market notes: funding extremes, liquidation clusters, options levels, new boards and plan updates. No daily spam." />
+<link rel="canonical" href="https://quantdeskterminal.com/newsletter" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#09090b;color:#e4e4e7;font:16px/1.7 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:56px 20px 80px}
+  a{color:#3b82f6;text-decoration:none} a:hover{text-decoration:underline}
+  h1{font-size:34px;line-height:1.15;margin:0 0 8px}
+  h2{font-size:19px;margin:30px 0 8px;color:#fff}
+  p{color:#a1a1aa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:26px;font-weight:700;letter-spacing:.14em;font-size:12px;color:#fff}
+  .hero{background:linear-gradient(145deg,rgba(59,130,246,.12),rgba(24,24,27,.75) 55%,rgba(168,85,247,.08));border:1px solid rgba(59,130,246,.22);border-radius:18px;padding:26px}
+  form{background:linear-gradient(180deg,rgba(24,24,27,.9),rgba(10,10,12,.85));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px;display:grid;gap:12px;margin-top:18px}
+  label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:5px}
+  input{width:100%;background:#0b0b0e;border:1px solid rgba(255,255,255,.12);border-radius:9px;padding:10px 11px;color:#fff;font:14px Inter,system-ui,sans-serif;outline:none}
+  input:focus{border-color:#3b82f6}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  button{background:#3b82f6;color:#fff;border:0;border-radius:9px;padding:11px 16px;font-weight:700;font-size:13px;cursor:pointer}
+  button:disabled{opacity:.6;cursor:wait}
+  .consent{display:flex;align-items:flex-start;gap:8px;font:12px/1.5 Inter,system-ui,sans-serif;color:#a1a1aa;text-transform:none;letter-spacing:0}
+  .consent input{width:auto;margin-top:3px;accent-color:#3b82f6}
+  .hp{position:absolute;left:-9999px;opacity:0}
+  .status{font:12px ui-monospace,monospace;min-height:18px}
+  .ok{color:#34d399}.err{color:#f87171}
+  .note{background:rgba(59,130,246,.07);border-left:2px solid #3b82f6;padding:9px 14px;color:#c7d2fe;font-size:13px;margin:16px 0}
+  ul{padding-left:18px;color:#a1a1aa;font-size:14px}
+  li{margin:4px 0}
+  nav{margin-top:40px;padding-top:18px;border-top:1px solid rgba(255,255,255,.07);display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+  @media(max-width:560px){.row{grid-template-columns:1fr}.wrap{padding-top:36px}h1{font-size:28px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">◆ QUANT DESK</div>
+  <div class="hero">
+    <h1>The market, once in a while.</h1>
+    <p>Occasional notes from the Quant Desk: funding extremes, liquidation clusters, options levels, new boards and plan updates. No daily spam.</p>
+    <div class="note">You can unsubscribe in one click from any email. Read the <a href="/privacy">privacy policy</a>.</div>
+  </div>
+
+  <form id="newsletter-form">
+    <div class="row">
+      <div><label for="name">Name (optional)</label><input id="name" name="name" autocomplete="name" placeholder="Your name" /></div>
+      <div><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com" /></div>
+    </div>
+    <label class="consent" for="consent">
+      <input id="consent" name="consent" type="checkbox" required />
+      <span>I agree to receive occasional market notes and offers from Quant Desk. Unsubscribe anytime.</span>
+    </label>
+    <div class="hp"><label for="website">Website</label><input id="website" name="website" tabindex="-1" autocomplete="off" /></div>
+    <div><button id="send" type="submit">Subscribe to notes</button></div>
+    <div id="status" class="status" role="status"></div>
+  </form>
+
+  <h2>What you get</h2>
+  <ul>
+    <li>Funding and open-interest extremes worth watching</li>
+    <li>Liquidation clusters and options levels</li>
+    <li>New data boards and the occasional plan offer</li>
+    <li>No daily email. No trade signals. Not investment advice.</li>
+  </ul>
+
+  <h2>Prefer to read now?</h2>
+  <p>Browse the <a href="/blog">notes</a>, the <a href="/learn">microstructure guide</a>, or open the <a href="/">terminal</a>.</p>
+
+  <nav>
+    <a href="/">Terminal</a>
+    <a href="/platform">Platform</a>
+    <a href="/blog">Blog</a>
+    <a href="/newsletter">Newsletter</a>
+    <a href="/contact">Contact</a>
+    <a href="/privacy">Privacy</a>
+  </nav>
+</div>
+<script>
+  const form = document.getElementById('newsletter-form');
+  const status = document.getElementById('status');
+  const btn = document.getElementById('send');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    status.textContent = '';
+    status.className = 'status';
+    btn.disabled = true;
+    try {
+      const payload = {
+        name: document.getElementById('name').value.trim(),
+        email: document.getElementById('email').value.trim(),
+        consent: document.getElementById('consent').checked,
+        website: document.getElementById('website').value,
+        source: 'newsletter-page'
+      };
+      const res = await fetch('/api/newsletter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        status.textContent = data.already ? 'You are already on the list.' : 'You are on the list. Check your inbox.';
+        status.className = 'status ok';
+        form.reset();
+      } else if (res.status === 503) {
+        status.textContent = 'Newsletter opens as soon as email delivery is verified.';
+        status.className = 'status err';
+      } else {
+        status.textContent = data.error || 'Could not subscribe. Try again.';
+        status.className = 'status err';
+      }
+    } catch {
+      status.textContent = 'Could not reach the server. Try again.';
+      status.className = 'status err';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+<script src="/site-nav.js" defer></script>
+</body>
+</html>

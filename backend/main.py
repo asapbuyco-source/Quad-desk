@@ -5,6 +5,7 @@ import json
 import math
 import re
 import time
+import html as html_lib
 import psutil
 import numpy as np
 import pandas as pd
@@ -439,7 +440,7 @@ async def security_middleware(request: Request, call_next):
     path = request.url.path
 
     # ── Always pass OPTIONS (CORS preflight) through ──────────────────────────
-    if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json", "/contact"]:
+    if request.method == "OPTIONS" or path in ["/health", "/docs", "/openapi.json", "/contact", "/newsletter"]:
         return await call_next(request)
 
     # ── AUDIT FIX #4: API Key authentication for all endpoints ─────────
@@ -2323,6 +2324,267 @@ async def contact(req: ContactRequest, request: Request):
         logger.warning(f"resend exception: {e}")
         return JSONResponse(status_code=502, content={"error": "Could not send the message."})
     return {"ok": True}
+
+
+# ── Newsletter ────────────────────────────────────────────────────────────────
+RESEND_API = "https://api.resend.com"
+
+
+class NewsletterRequest(BaseModel):
+    email: str
+    name: str = ""
+    source: str = "landing"
+    consent: bool = False
+    website: str = ""  # honeypot
+
+
+class NewsletterTestRequest(BaseModel):
+    email: str
+    subject: str
+    message: str
+
+
+class BroadcastRequest(BaseModel):
+    subject: str
+    message: str
+    name: str = "Quant Desk market note"
+    scheduled_at: str = ""
+
+
+_newsletter_hits: Dict[str, list] = defaultdict(list)
+
+
+def _email_ok(value: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value or ""))
+
+
+def _newsletter_from() -> str:
+    return os.getenv("NEWSLETTER_FROM") or os.getenv(
+        "CONTACT_FROM", "Quant Desk <support@quantdeskterminal.com>"
+    )
+
+
+def _broadcast_html(message: str) -> str:
+    tag = "{{{RESEND_UNSUBSCRIBE_URL}}}"
+    safe = html_lib.escape((message or "").replace("\r\n", "\n"))
+    blocks = []
+    for para in safe.split("\n\n"):
+        if not para.strip():
+            continue
+        blocks.append(
+            '<p style="margin:0 0 14px;line-height:1.65">'
+            + para.replace("\n", "<br/>")
+            + "</p>"
+        )
+    body = "".join(blocks)
+    return (
+        '<div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+        'max-width:600px;margin:0 auto;padding:24px;color:#18181b">'
+        + body
+        + '<hr style="border:0;border-top:1px solid #e4e4e7;margin:24px 0 12px"/>'
+        + '<p style="font-size:12px;line-height:1.6;color:#71717a">'
+        + 'Quant Desk · <a href="https://quantdeskterminal.com" style="color:#3b82f6">quantdeskterminal.com</a><br/>'
+        + 'You are receiving this because you subscribed to Quant Desk market notes. '
+        + '<a href="' + tag + '" style="color:#3b82f6">Unsubscribe</a>.'
+        + "</p></div>"
+    )
+
+
+async def _resend_contact_count(key: str, audience: str) -> int:
+    total = 0
+    after = None
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        for _ in range(20):
+            params: Dict[str, Any] = {"limit": 100}
+            if after:
+                params["after"] = after
+            r = await client.get(
+                f"{RESEND_API}/audiences/{audience}/contacts",
+                headers={"Authorization": f"Bearer {key}"},
+                params=params,
+            )
+            if r.status_code >= 400:
+                break
+            payload = r.json()
+            rows = payload.get("data") or []
+            total += len(rows)
+            if not payload.get("has_more") or not rows:
+                break
+            after = rows[-1].get("id")
+    return total
+
+
+@app.post("/newsletter")
+async def newsletter_signup(req: NewsletterRequest, request: Request):
+    """Add a subscriber to the configured Resend audience."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    hits = [t for t in _newsletter_hits[ip] if now - t < 3600]
+    if len(hits) >= 8:
+        return JSONResponse(status_code=429, content={"error": "Too many sign-ups. Try again later."})
+    _newsletter_hits[ip] = hits + [now]
+
+    if req.website.strip():
+        return {"ok": True}
+
+    email = req.email.strip().lower()
+    if not _email_ok(email):
+        return JSONResponse(status_code=400, content={"error": "Enter a valid email address."})
+    if not req.consent:
+        return JSONResponse(status_code=400, content={"error": "Please confirm you want the newsletter."})
+
+    key = os.getenv("RESEND_API_KEY", "")
+    audience = os.getenv("RESEND_AUDIENCE_ID", "")
+    if not key or not audience:
+        return JSONResponse(status_code=503, content={"error": "Newsletter is not configured yet."})
+
+    name = req.name.strip()[:80]
+    contact: Dict[str, Any] = {"email": email, "unsubscribed": False}
+    if name:
+        contact["first_name"] = name
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(
+                f"{RESEND_API}/audiences/{audience}/contacts",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=contact,
+            )
+            if r.status_code >= 400 and r.status_code != 409:
+                logger.warning(f"[newsletter] resend contact {r.status_code}: {r.text[:200]}")
+                return JSONResponse(status_code=502, content={"error": "Could not save the subscription."})
+
+            if r.status_code in (200, 201):
+                try:
+                    await client.post(
+                        f"{RESEND_API}/emails",
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                        json={
+                            "from": _newsletter_from(),
+                            "to": [email],
+                            "subject": "You're on the Quant Desk list",
+                            "text": (
+                                "Thanks for subscribing to Quant Desk market notes.\n\n"
+                                "We send a short note occasionally: funding extremes, liquidation clusters, "
+                                "new boards and the occasional plan update. No daily spam.\n\n"
+                                "Open the desk: https://quantdeskterminal.com\n"
+                                "Unsubscribe any time by replying to this email.\n\n"
+                                "— Quant Desk"
+                            ),
+                        },
+                    )
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"[newsletter] exception: {e}")
+        return JSONResponse(status_code=502, content={"error": "Could not save the subscription."})
+
+    return {"ok": True, "already": r.status_code == 409}
+
+
+@app.get("/admin/newsletter/stats")
+async def newsletter_stats():
+    key = os.getenv("RESEND_API_KEY", "")
+    audience = os.getenv("RESEND_AUDIENCE_ID", "")
+    if not key or not audience:
+        return {"configured": False, "audience": bool(audience), "from": _newsletter_from()}
+    return {
+        "configured": True,
+        "audience": True,
+        "count": await _resend_contact_count(key, audience),
+        "from": _newsletter_from(),
+    }
+
+
+@app.post("/admin/newsletter/test")
+async def newsletter_test(req: NewsletterTestRequest):
+    key = os.getenv("RESEND_API_KEY", "")
+    if not key:
+        return JSONResponse(status_code=503, content={"error": "RESEND_API_KEY is not set."})
+    email = req.email.strip()
+    if not _email_ok(email):
+        return JSONResponse(status_code=400, content={"error": "Enter a valid test email."})
+    subject = req.subject.strip()[:140]
+    message = req.message.strip()
+    if len(subject) < 3 or len(message) < 10:
+        return JSONResponse(status_code=400, content={"error": "Add a subject and a message first."})
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(
+                f"{RESEND_API}/emails",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "from": _newsletter_from(),
+                    "to": [email],
+                    "subject": f"[TEST] {subject}",
+                    "html": _broadcast_html(message),
+                    "text": message,
+                },
+            )
+        if r.status_code >= 400:
+            logger.warning(f"[newsletter] test {r.status_code}: {r.text[:200]}")
+            return JSONResponse(status_code=502, content={"error": "Resend rejected the test email."})
+    except Exception as e:
+        logger.warning(f"[newsletter] test exception: {e}")
+        return JSONResponse(status_code=502, content={"error": "Could not send the test email."})
+    return {"ok": True}
+
+
+@app.post("/admin/newsletter/broadcast")
+async def newsletter_broadcast(req: BroadcastRequest):
+    key = os.getenv("RESEND_API_KEY", "")
+    audience = os.getenv("RESEND_AUDIENCE_ID", "")
+    if not key or not audience:
+        return JSONResponse(status_code=503, content={
+            "error": "Set RESEND_API_KEY and RESEND_AUDIENCE_ID before sending."
+        })
+    subject = req.subject.strip()[:140]
+    message = req.message.strip()
+    if len(subject) < 3:
+        return JSONResponse(status_code=400, content={"error": "Subject is too short."})
+    if len(message) < 20:
+        return JSONResponse(status_code=400, content={"error": "Message is too short."})
+
+    payload: Dict[str, Any] = {
+        "audience_id": audience,
+        "from": _newsletter_from(),
+        "subject": subject,
+        "html": _broadcast_html(message),
+        "name": req.name.strip()[:80] or "Quant Desk market note",
+    }
+    if req.scheduled_at.strip():
+        payload["scheduled_at"] = req.scheduled_at.strip()
+
+    broadcast_id = None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(
+                f"{RESEND_API}/broadcasts",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+            if r.status_code >= 400:
+                logger.warning(f"[newsletter] broadcast create {r.status_code}: {r.text[:200]}")
+                return JSONResponse(status_code=502, content={"error": "Resend rejected the broadcast."})
+            data = r.json()
+            broadcast_id = data.get("id") or (data.get("data") or {}).get("id")
+            if not broadcast_id:
+                return JSONResponse(status_code=502, content={"error": "Resend did not return a broadcast id."})
+
+            if not payload.get("scheduled_at"):
+                s = await client.post(
+                    f"{RESEND_API}/broadcasts/{broadcast_id}/send",
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    json={},
+                )
+                if s.status_code >= 400:
+                    logger.warning(f"[newsletter] broadcast send {s.status_code}: {s.text[:200]}")
+                    return JSONResponse(status_code=502, content={"error": "Broadcast created but could not be sent."})
+    except Exception as e:
+        logger.warning(f"[newsletter] broadcast exception: {e}")
+        return JSONResponse(status_code=502, content={"error": "Could not create the broadcast."})
+
+    return {"ok": True, "broadcast_id": broadcast_id, "scheduled": bool(payload.get("scheduled_at"))}
 
 
 @app.get("/alerts/status")

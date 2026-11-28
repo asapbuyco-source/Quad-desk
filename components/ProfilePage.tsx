@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store';
 import { PageHeader } from './Premium';
+import NewsletterSignup from './NewsletterSignup';
 import { PORTAL_URL, upgradeHref, isAdminEmail, PRICING, PLAN_LABEL } from '../utils/entitlements';
 
 const ProfilePage: React.FC = () => {
@@ -124,6 +125,8 @@ const ProfilePage: React.FC = () => {
             </div>
           </section>
         </div>
+
+        <NewsletterSignup compact source="profile" />
 
         {admin && (
           <section className="premium-card p-5">

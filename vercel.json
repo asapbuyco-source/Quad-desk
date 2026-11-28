@@ -29,6 +29,7 @@
     { "source": "/tools/dca", "destination": "/dca-planner.html" },
     { "source": "/refer", "destination": "/refer.html" },
     { "source": "/contact", "destination": "/contact.html" },
+    { "source": "/newsletter", "destination": "/newsletter.html" },
     { "source": "/locations", "destination": "/locations.html" },
     { "source": "/locations/norway", "destination": "/location-norway.html" },
     { "source": "/locations/united-kingdom", "destination": "/location-united-kingdom.html" },

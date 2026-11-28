@@ -7,6 +7,7 @@
     { href: '/institutional', label: 'Institutional' },
     { href: '/api', label: 'API' },
     { href: '/blog', label: 'Blog' },
+    { href: '/newsletter', label: 'Newsletter' },
     { href: '/locations', label: 'Locations' },
     { href: '/about', label: 'About' },
     { href: '/contact', label: 'Contact' },

@@ -10,6 +10,7 @@
 - [API](https://quantdeskterminal.com/api): endpoint catalogue, private beta.
 - [Locations](https://quantdeskterminal.com/locations): regional landing pages.
 - [Blog](https://quantdeskterminal.com/blog): notes on derivatives data, plus Spanish, French and Turkish translations.
+- [Newsletter](https://quantdeskterminal.com/newsletter): occasional market notes on funding extremes, liquidations and new boards.
 - [Learn](https://quantdeskterminal.com/learn): microstructure glossary.
 - [About](https://quantdeskterminal.com/about): family-built project in Norway.
 - [Contact](https://quantdeskterminal.com/contact): support, billing and API requests.

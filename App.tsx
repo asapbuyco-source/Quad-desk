@@ -40,6 +40,7 @@ const ScreenerPage = React.lazy(() => import('./components/ScreenerPage'));
 const LiquidationPage = React.lazy(() => import('./components/LiquidationPage'));
 const WhalesPage = React.lazy(() => import('./components/WhalesPage'));
 const AdminUsers = React.lazy(() => import('./components/AdminUsers'));
+const NewsletterAdmin = React.lazy(() => import('./components/NewsletterAdmin'));
 const WatchlistPage = React.lazy(() => import('./components/WatchlistPage'));
 const ProfilePage = React.lazy(() => import('./components/ProfilePage'));
 const MarketsPage = React.lazy(() => import('./components/MarketsPage'));
@@ -513,6 +514,7 @@ const App: React.FC = () => {
                                 {ui.activeTab === 'liquidations' && <LiquidationPage />}
                                 {ui.activeTab === 'whales' && <WhalesPage />}
                                 {ui.activeTab === 'admin-users' && <AdminUsers />}
+                                {ui.activeTab === 'newsletter' && <NewsletterAdmin />}
                                 {ui.activeTab === 'order-flow' && <OrderFlowPage />}
                                 {ui.activeTab === 'sentinel' && <SentinelEdgePage />}
                                 {ui.activeTab === 'bot-control' && <AdminBotControl />}

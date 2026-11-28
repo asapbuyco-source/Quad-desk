@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { motion as m, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { Hexagon, Activity, ArrowRight, Terminal, Shield, Globe, Zap, Check } from 'lucide-react';
 import { upgradeHref, PLAN_FEATURES, PRICING, ANNUAL_CHECKOUT_AVAILABLE } from '../utils/entitlements';
+import NewsletterSignup from './NewsletterSignup';
 import AdSlot from './AdSlot';
 import MarketRecord from './MarketRecord';
 import LandingCharts from './LandingCharts';
@@ -537,6 +538,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                 </div>
             </section>
 
+            {/* --- Newsletter --- */}
+            <NewsletterSignup source="landing" />
+
             {/* --- Footer --- */}
             <footer className="border-t border-white/5 bg-black/50 backdrop-blur-lg py-12 relative z-20">
                 <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
@@ -549,6 +553,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onEnter }) => {
                         <a href="/institutional" className="hover:text-zinc-300 transition-colors">INSTITUTIONAL</a>
                         <a href="/api" className="hover:text-zinc-300 transition-colors">API</a>
                         <a href="/blog" className="hover:text-zinc-300 transition-colors">BLOG</a>
+                        <a href="/newsletter" className="hover:text-zinc-300 transition-colors">NEWSLETTER</a>
                         <a href="/locations" className="hover:text-zinc-300 transition-colors">LOCATIONS</a>
                         <a href="/contact" className="hover:text-zinc-300 transition-colors">CONTACT</a>
                         <a href="/learn" className="hover:text-zinc-300 transition-colors">LEARN</a>

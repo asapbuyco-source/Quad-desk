@@ -2,7 +2,7 @@
 import {
   LayoutGrid, CandlestickChart, Mountain, Droplets, Layers, Activity,
   Crosshair, Zap, Globe2, Bot, Settings, BarChart2, Radio,
-  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock, Users, Flame, Wallet, Thermometer, Star, Bitcoin, Sparkles,
+  BookOpen, Hexagon, Menu, X, Compass, Gauge, Landmark, CreditCard, Lock, Users, Flame, Wallet, Thermometer, Star, Bitcoin, Sparkles, Mail,
 } from 'lucide-react';
 import { AnimatePresence, motion as m } from 'framer-motion';
 import { useStore } from '../store';
@@ -74,6 +74,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'pricing', icon: CreditCard, label: 'Plans & Billing', hint: 'Subscription, upgrade, invoices' },
       { id: 'admin-users', icon: Users, label: 'Users', hint: 'Grant / revoke Pro access' },
+      { id: 'newsletter', icon: Mail, label: 'Newsletter', hint: 'Send market notes and promos' },
       { id: 'guide', icon: BookOpen, label: 'Guide', hint: 'How to use' },
       { id: 'settings', icon: Settings, label: 'Settings', hint: 'Preferences' },
     ],
